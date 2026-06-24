@@ -1,10 +1,10 @@
 # AGENTS.md
 
+## Folder Structure
+
+- `vendor/msf` - Mini Swift Frontend. A single-header C library that takes Swift source code and produces a fully typed abstract syntax tree. No LLVM, no codegen, no runtime — just the frontend.
+
 ## Agent skills
-
-### Programming Rust
-
-Read `rust-best-practices`.
 
 ### Issue tracker
 
