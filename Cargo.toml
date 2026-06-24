@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/msf-sys",
+    "crates/msf",
+    "crates/quick-swift-core",
+    "crates/quick-swift-std",
+    "crates/quick-swift-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/siuying/quick-swift"
+
+[workspace.dependencies]
+msf-sys = { path = "crates/msf-sys" }
+msf = { path = "crates/msf" }
+quick-swift-core = { path = "crates/quick-swift-core" }
+quick-swift-std = { path = "crates/quick-swift-std" }
