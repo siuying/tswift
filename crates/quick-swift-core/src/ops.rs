@@ -48,6 +48,24 @@ fn int_binary(op: &str, a: IntValue, b: IntValue) -> Result<SwiftValue, String> 
     if let Some(res) = compare_op(op, a.raw, b.raw) {
         return Ok(SwiftValue::Bool(res));
     }
+    // Range operators build a range value.
+    match op {
+        "..<" => {
+            return Ok(SwiftValue::Range {
+                lo: a.raw,
+                hi: b.raw,
+                inclusive: false,
+            })
+        }
+        "..." => {
+            return Ok(SwiftValue::Range {
+                lo: a.raw,
+                hi: b.raw,
+                inclusive: true,
+            })
+        }
+        _ => {}
+    }
     let trapping = |raw: i128, what: &str| -> Result<SwiftValue, String> {
         let v = IntValue::new(raw, w);
         if v.in_range() {
