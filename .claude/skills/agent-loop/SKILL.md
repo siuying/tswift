@@ -12,7 +12,7 @@ For each single issue:
 
 - create a feature branch `{username}/{issue-number}-{issue-title}`
 - use `tdd` to implement them
-- start another pi process to use codex `gpt-5.5` agent to run `request-code-review` with the selected ticket
+- run `request-code-review` and fix any issues found by the code review
 - create a PR from the branch
   - Include a short summary of the changes in the PR description.
   - Include which issues this PR closes "Closes #<issue-number>".
