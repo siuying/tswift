@@ -13,7 +13,7 @@ use msf::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
-use crate::value::{IntValue, IntWidth, StructObj, SwiftValue};
+use crate::value::{EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 
 // Declaration modifier bits used by this milestone (see msf.h §9).
 const MOD_STATIC: u32 = 1 << 5;
@@ -105,49 +105,71 @@ fn trap(msg: String) -> Signal {
 type Eval = Result<SwiftValue, Signal>;
 
 /// One declared Swift parameter, precomputed from its `AST_PARAM` node.
-struct Param<'a> {
+struct Param {
     label: Option<String>,
     name: String,
     variadic: bool,
     inout_: bool,
-    default: Option<Node<'a>>,
+    default: Option<Node<'static>>,
 }
 
 /// A user-defined function: its parameters, body, and captured scope chain.
-struct FuncDef<'a> {
-    params: Vec<Param<'a>>,
-    body: Option<Node<'a>>,
+struct FuncDef {
+    params: Vec<Param>,
+    body: Option<Node<'static>>,
     captured: Vec<Scope>,
 }
 
 /// A stored property of a struct.
-struct StoredProp<'a> {
+struct StoredProp {
     name: String,
-    default: Option<Node<'a>>,
+    default: Option<Node<'static>>,
     lazy: bool,
-    will_set: Option<(String, Node<'a>)>,
-    did_set: Option<(String, Node<'a>)>,
+    will_set: Option<(String, Node<'static>)>,
+    did_set: Option<(String, Node<'static>)>,
 }
 
 /// A computed property of a struct.
-struct ComputedProp<'a> {
-    getter: Option<Node<'a>>,
-    setter: Option<Node<'a>>,
+struct ComputedProp {
+    getter: Option<Node<'static>>,
+    setter: Option<Node<'static>>,
     setter_param: Option<String>,
 }
 
 /// A method of a struct.
-struct MethodDef<'a> {
-    params: Vec<Param<'a>>,
-    body: Option<Node<'a>>,
+struct MethodDef {
+    params: Vec<Param>,
+    body: Option<Node<'static>>,
     mutating: bool,
 }
 
 /// A struct type declaration.
-struct StructDef<'a> {
-    stored: Vec<StoredProp<'a>>,
-    computed: std::collections::HashMap<String, ComputedProp<'a>>,
-    methods: std::collections::HashMap<String, MethodDef<'a>>,
+struct StructDef {
+    stored: Vec<StoredProp>,
+    computed: std::collections::HashMap<String, ComputedProp>,
+    methods: std::collections::HashMap<String, MethodDef>,
+    subscript: Option<MethodDef>,
+}
+
+/// One case of an enum.
+struct EnumCaseDef {
+    name: String,
+    /// The precomputed raw value (with Swift's auto-increment / name defaults).
+    raw: Option<SwiftValue>,
+}
+
+/// The backing type of an enum's raw values.
+#[derive(Clone, Copy)]
+enum RawKind {
+    Int,
+    Str,
+}
+
+/// An enum type declaration.
+struct EnumDef {
+    cases: Vec<EnumCaseDef>,
+    methods: std::collections::HashMap<String, MethodDef>,
+    computed: std::collections::HashMap<String, ComputedProp>,
 }
 
 /// An assignable storage location: a root variable plus a field path.
@@ -166,17 +188,18 @@ struct CallArg {
 }
 
 /// The tree-walking interpreter.
-pub struct Interpreter<'a, 'w> {
+pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
     env: Env,
-    funcs: Vec<FuncDef<'a>>,
-    structs: HashMap<String, StructDef<'a>>,
+    funcs: Vec<FuncDef>,
+    structs: HashMap<String, StructDef>,
+    enums: HashMap<String, EnumDef>,
     statics: HashMap<String, SwiftValue>,
     depth: usize,
 }
 
-impl<'a, 'w> Interpreter<'a, 'w> {
+impl<'w> Interpreter<'w> {
     /// Create an interpreter that writes program output to `out`.
     pub fn new(out: &'w mut dyn Write) -> Self {
         Interpreter {
@@ -185,6 +208,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             env: Env::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
+            enums: HashMap::new(),
             statics: HashMap::new(),
             depth: 0,
         }
@@ -196,7 +220,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Evaluate a fully-analyzed program.
-    pub fn run(&mut self, analysis: &'a Analysis) -> Result<(), EvalError> {
+    pub fn run(&mut self, analysis: &'static Analysis) -> Result<(), EvalError> {
         if !analysis.is_ok() {
             let diags = analysis
                 .diagnostics()
@@ -218,13 +242,13 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Evaluate a node, returning its value (or a propagating [`Signal`]).
-    fn eval(&mut self, node: &Node<'a>) -> Eval {
+    fn eval(&mut self, node: &Node<'static>) -> Eval {
         match node.kind() {
             NodeKind::SourceFile => self.eval_block(node),
             NodeKind::Block => self.eval_scoped_block(node),
             NodeKind::ExprStmt => self.eval_seq(node),
             NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
-            NodeKind::StructDecl => Ok(SwiftValue::Void), // hoisted by eval_block
+            NodeKind::StructDecl | NodeKind::EnumDecl => Ok(SwiftValue::Void), // hoisted
             NodeKind::ReturnStmt => {
                 let value = match node.children().next() {
                     Some(e) => self.eval(&e)?,
@@ -256,20 +280,25 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             NodeKind::BoolLiteral => Ok(SwiftValue::Bool(node.bool().unwrap_or(false))),
             NodeKind::FloatLiteral => Ok(SwiftValue::Double(node.float().unwrap_or(0.0))),
             NodeKind::StringLiteral => self.eval_string_literal(node),
+            NodeKind::NilLiteral => Ok(SwiftValue::Nil),
+            NodeKind::ForceUnwrap => self.eval_force_unwrap(node),
+            NodeKind::OptionalChain => self.eval_only_child(node),
+            NodeKind::SubscriptExpr => self.eval_subscript(node),
+            NodeKind::Other(66) => self.eval_array_literal(node), // ARRAY_LITERAL
             other => Err(EvalError::Unsupported(format!("{other:?}")).into()),
         }
     }
 
     /// A source file: hoist function declarations first so forward references
     /// and mutual recursion resolve, then run statements in the global scope.
-    fn eval_block(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_block(&mut self, node: &Node<'static>) -> Eval {
         self.hoist(node);
         self.eval_seq(node)
     }
 
     /// A `{ … }` block: same as [`eval_block`] but in a fresh nested scope so
     /// its local bindings do not leak outward.
-    fn eval_scoped_block(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_scoped_block(&mut self, node: &Node<'static>) -> Eval {
         self.env.push();
         self.hoist(node);
         let r = self.eval_seq(node);
@@ -279,18 +308,112 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// Pre-declare function and struct declarations in `node` so forward
     /// references resolve.
-    fn hoist(&mut self, node: &Node<'a>) {
+    fn hoist(&mut self, node: &Node<'static>) {
         for child in node.children() {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => self.register_struct(&child),
+                NodeKind::EnumDecl => self.register_enum(&child),
                 _ => {}
             }
         }
     }
 
+    /// Register an enum type from its declaration.
+    fn register_enum(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        if self.enums.contains_key(&name) {
+            return;
+        }
+        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
+            return;
+        };
+        // Determine the raw-value backing type from the conformance list.
+        let raw_kind = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::Conformance)
+            .find_map(|c| match c.text().as_deref() {
+                Some("String") => Some(RawKind::Str),
+                Some(t) if IntWidth::from_type_name(t).is_some() => Some(RawKind::Int),
+                _ => None,
+            });
+        let mut next_int: i128 = 0;
+        let mut cases = Vec::new();
+        let mut methods = std::collections::HashMap::new();
+        let mut computed = std::collections::HashMap::new();
+        for member in body.children() {
+            match member.kind() {
+                NodeKind::EnumCaseDecl => {
+                    for element in member.children() {
+                        if element.kind() != NodeKind::EnumElementDecl {
+                            continue;
+                        }
+                        let Some(cname) = element.text() else {
+                            continue;
+                        };
+                        let explicit = element
+                            .children()
+                            .find(|ec| ec.kind() != NodeKind::Param)
+                            .and_then(|n| self.eval(&n).ok());
+                        let raw = match raw_kind {
+                            Some(RawKind::Int) => {
+                                let v = match &explicit {
+                                    Some(SwiftValue::Int(i)) => i.raw,
+                                    _ => next_int,
+                                };
+                                next_int = v + 1;
+                                Some(SwiftValue::int(v))
+                            }
+                            Some(RawKind::Str) => {
+                                Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
+                            }
+                            None => explicit,
+                        };
+                        cases.push(EnumCaseDef { name: cname, raw });
+                    }
+                }
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    if let Some(pname) = member.decl_name() {
+                        let acc = member.var_accessors();
+                        if acc.is_computed {
+                            computed.insert(
+                                pname,
+                                ComputedProp {
+                                    getter: acc.getter_body,
+                                    setter: acc.setter_body,
+                                    setter_param: acc.setter_param,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.enums.insert(
+            name,
+            EnumDef {
+                cases,
+                methods,
+                computed,
+            },
+        );
+    }
+
     /// Register a struct type from its declaration.
-    fn register_struct(&mut self, node: &Node<'a>) {
+    fn register_struct(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
         if self.structs.contains_key(&name) {
             return;
@@ -301,9 +424,21 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
+        let mut subscript = None;
 
         for member in body.children() {
             match member.kind() {
+                NodeKind::SubscriptDecl => {
+                    let acc = member.var_accessors();
+                    let body = acc
+                        .getter_body
+                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                    subscript = Some(MethodDef {
+                        params: parse_params(&member),
+                        body,
+                        mutating: false,
+                    });
+                }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
                         let mods = member.modifiers();
@@ -380,12 +515,13 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                 stored,
                 computed,
                 methods,
+                subscript,
             },
         );
     }
 
     /// A tuple expression `(a, b, …)`.
-    fn eval_tuple(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_tuple(&mut self, node: &Node<'static>) -> Eval {
         let mut items = Vec::new();
         for child in node.children() {
             items.push(self.eval(&child)?);
@@ -394,7 +530,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Evaluate each child in order, yielding the last value.
-    fn eval_seq(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_seq(&mut self, node: &Node<'static>) -> Eval {
         let mut last = SwiftValue::Void;
         for child in node.children() {
             last = self.eval(&child)?;
@@ -403,7 +539,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Evaluate the single meaningful child of a wrapper node (e.g. paren).
-    fn eval_only_child(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_only_child(&mut self, node: &Node<'static>) -> Eval {
         let child = node
             .children()
             .next()
@@ -413,7 +549,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// Register a function declaration as a first-class value in the current
     /// scope, capturing the enclosing scope chain.
-    fn declare_func(&mut self, node: &Node<'a>) {
+    fn declare_func(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else {
             return;
         };
@@ -435,8 +571,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// `let`/`var name [= init]`, including tuple decomposition
     /// `let (a, b) = pair`.
-    fn eval_decl(&mut self, node: &Node<'a>, mutable: bool) -> Eval {
-        let children: Vec<Node<'a>> = node.children().collect();
+    fn eval_decl(&mut self, node: &Node<'static>, mutable: bool) -> Eval {
+        let children: Vec<Node<'static>> = node.children().collect();
 
         // Tuple-pattern binding: `let (a, b) = expr`.
         if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::PatternTuple) {
@@ -465,7 +601,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// Bind the names in a tuple pattern to the elements of a tuple value.
     fn bind_tuple_pattern(
         &mut self,
-        pattern: &Node<'a>,
+        pattern: &Node<'static>,
         value: &SwiftValue,
         mutable: bool,
     ) -> Result<(), Signal> {
@@ -476,7 +612,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             ))
             .into());
         };
-        let elems: Vec<Node<'a>> = pattern.children().collect();
+        let elems: Vec<Node<'static>> = pattern.children().collect();
         for (sub, item) in elems.iter().zip(items.iter()) {
             match sub.kind() {
                 NodeKind::PatternWildcard => {}
@@ -496,7 +632,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// If the declaration carries an explicit integer type annotation, retag the
     /// initializer's width to match it. (msf collapses fixed-width ints to
     /// `Int`, so the `TYPE_IDENT` node is the only reliable source.)
-    fn coerce_to_decl_type(&self, node: &Node<'a>, value: SwiftValue) -> SwiftValue {
+    fn coerce_to_decl_type(&self, node: &Node<'static>, value: SwiftValue) -> SwiftValue {
         let SwiftValue::Int(i) = &value else {
             return value;
         };
@@ -512,7 +648,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// An identifier reference: look up a binding, falling back to an implicit
     /// `self.<name>` member when evaluating inside a method.
-    fn eval_ident(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_ident(&mut self, node: &Node<'static>) -> Eval {
         let name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("unnamed identifier".into()))?;
@@ -525,22 +661,242 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         Err(EvalError::UnknownVariable(name).into())
     }
 
-    /// If `name` is a stored/computed property of the current `self`, read it.
+    /// If `name` is a property of the current `self`, read it. Covers struct
+    /// stored/computed members and enum `rawValue`/computed members.
     fn implicit_self_member(&mut self, name: &str) -> Result<Option<SwiftValue>, Signal> {
         let Some(this) = self.env.get("self") else {
             return Ok(None);
         };
-        let SwiftValue::Struct(obj) = &this else {
+        match &this {
+            SwiftValue::Struct(obj) => {
+                if obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name) {
+                    Ok(Some(self.read_struct_member(&this, name)?))
+                } else {
+                    Ok(None)
+                }
+            }
+            SwiftValue::Enum(e) => {
+                if name == "rawValue" {
+                    return Ok(Some(self.enum_raw_value(&e.type_name, &e.case)?));
+                }
+                self.read_enum_computed(&this, name)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Construct an enum case value if `case` names a case of `type_name`.
+    /// Returns `Ok(None)` if the name is not a case.
+    fn make_enum_case(
+        &mut self,
+        type_name: &str,
+        case: &str,
+        payload: Vec<SwiftValue>,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let exists = self
+            .enums
+            .get(type_name)
+            .is_some_and(|d| d.cases.iter().any(|c| c.name == case));
+        if !exists {
+            return Ok(None);
+        }
+        Ok(Some(SwiftValue::Enum(Rc::new(EnumObj {
+            type_name: type_name.to_string(),
+            case: case.to_string(),
+            payload,
+        }))))
+    }
+
+    /// Resolve the enum type for a shorthand `.case` member from msf's resolved
+    /// type, falling back to the unique enum declaring that case.
+    fn resolve_member_enum(&self, member: &Node<'static>, case: &str) -> Option<String> {
+        // msf often resolves the member's type to the enum (or a function
+        // returning it); match a registered enum name within that string.
+        if let Some(ty) = member.type_name() {
+            for name in self.enums.keys() {
+                if ty
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|t| t == name)
+                    && self.enum_has_case(name, case)
+                {
+                    return Some(name.clone());
+                }
+            }
+        }
+        // Fall back: a single enum declaring this case name.
+        let mut found = None;
+        for (name, def) in &self.enums {
+            if def.cases.iter().any(|c| c.name == case) {
+                if found.is_some() {
+                    return None; // ambiguous
+                }
+                found = Some(name.clone());
+            }
+        }
+        found
+    }
+
+    /// Whether `name` is a case of enum `type_name`.
+    fn enum_has_case(&self, type_name: &str, name: &str) -> bool {
+        self.enums
+            .get(type_name)
+            .is_some_and(|d| d.cases.iter().any(|c| c.name == name))
+    }
+
+    /// The `rawValue` of an enum case (precomputed at registration).
+    fn enum_raw_value(&mut self, type_name: &str, case: &str) -> Eval {
+        let raw = self
+            .enums
+            .get(type_name)
+            .and_then(|d| d.cases.iter().find(|c| c.name == case))
+            .and_then(|c| c.raw.clone());
+        raw.ok_or_else(|| EvalError::Type(format!("{type_name}.{case} has no raw value")).into())
+    }
+
+    /// All cases of an enum as an array (`CaseIterable.allCases`).
+    fn enum_all_cases(&mut self, type_name: &str) -> Eval {
+        let names: Vec<String> = self
+            .enums
+            .get(type_name)
+            .map(|d| d.cases.iter().map(|c| c.name.clone()).collect())
+            .unwrap_or_default();
+        let items = names
+            .into_iter()
+            .map(|name| {
+                SwiftValue::Enum(Rc::new(EnumObj {
+                    type_name: type_name.to_string(),
+                    case: name,
+                    payload: Vec::new(),
+                }))
+            })
+            .collect();
+        Ok(SwiftValue::Array(Rc::new(items)))
+    }
+
+    /// Read a computed property off an enum value, if declared.
+    fn read_enum_computed(
+        &mut self,
+        value: &SwiftValue,
+        name: &str,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let SwiftValue::Enum(e) = value else {
             return Ok(None);
         };
-        if obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name) {
-            return Ok(Some(self.read_struct_member(&this, name)?));
+        let getter = self
+            .enums
+            .get(&e.type_name)
+            .and_then(|d| d.computed.get(name))
+            .and_then(|c| c.getter);
+        match getter {
+            Some(body) => self
+                .run_with_self(value.clone(), |me| me.eval(&body))
+                .map(|(v, _)| Some(v)),
+            None => Ok(None),
         }
-        Ok(None)
+    }
+
+    /// `value!` — force-unwrap an optional, trapping on nil.
+    fn eval_force_unwrap(&mut self, node: &Node<'static>) -> Eval {
+        let inner = node
+            .children()
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("force-unwrap without operand".into()))?;
+        let v = self.eval(&inner)?;
+        if matches!(v, SwiftValue::Nil) {
+            Err(trap(
+                "unexpectedly found nil while unwrapping an Optional".into(),
+            ))
+        } else {
+            Ok(v)
+        }
+    }
+
+    /// An array literal `[a, b, …]`.
+    fn eval_array_literal(&mut self, node: &Node<'static>) -> Eval {
+        let mut items = Vec::new();
+        for child in node.children() {
+            items.push(self.eval(&child)?);
+        }
+        Ok(SwiftValue::Array(Rc::new(items)))
+    }
+
+    /// A subscript read `base[index]` over arrays, strings, or a user
+    /// `subscript` getter.
+    fn eval_subscript(&mut self, node: &Node<'static>) -> Eval {
+        let mut kids = node.children();
+        let base = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
+        let base_value = self.eval(&base)?;
+        let index_nodes: Vec<Node<'static>> = kids.collect();
+        let indices: Vec<SwiftValue> = index_nodes
+            .iter()
+            .map(|n| self.eval(n))
+            .collect::<Result<_, _>>()?;
+        self.read_subscript(&base_value, &indices)
+    }
+
+    /// Read `base[indices]`.
+    fn read_subscript(&mut self, base: &SwiftValue, indices: &[SwiftValue]) -> Eval {
+        match base {
+            SwiftValue::Array(items) => {
+                let i = subscript_index(indices)?;
+                items
+                    .get(i)
+                    .cloned()
+                    .ok_or_else(|| trap(format!("index {i} out of range")))
+            }
+            SwiftValue::Str(s) => {
+                let i = subscript_index(indices)?;
+                s.chars()
+                    .nth(i)
+                    .map(|c| SwiftValue::Str(c.to_string()))
+                    .ok_or_else(|| trap(format!("string index {i} out of range")))
+            }
+            SwiftValue::Struct(obj) => {
+                let type_name = obj.type_name.clone();
+                let has = self
+                    .structs
+                    .get(&type_name)
+                    .is_some_and(|d| d.subscript.is_some());
+                if has {
+                    let (params, body, _) = {
+                        let m = self.structs[&type_name].subscript.as_ref().unwrap();
+                        (clone_params(&m.params), m.body, m.mutating)
+                    };
+                    let args: Vec<CallArg> = indices
+                        .iter()
+                        .map(|v| CallArg {
+                            label: None,
+                            value: v.clone(),
+                            place: None,
+                        })
+                        .collect();
+                    self.env.push();
+                    self.env.declare("self", base.clone(), false);
+                    let bound = self.bind_params(&params, args);
+                    let result = match bound {
+                        Ok(_) => match body {
+                            Some(b) => self.eval(&b),
+                            None => Ok(SwiftValue::Void),
+                        },
+                        Err(e) => Err(e),
+                    };
+                    self.env.pop();
+                    return match result {
+                        Ok(v) => Ok(v),
+                        Err(Signal::Return(v)) => Ok(v),
+                        Err(e) => Err(e),
+                    };
+                }
+                Err(EvalError::Type(format!("{type_name} has no subscript")).into())
+            }
+            other => Err(EvalError::Type(format!("cannot subscript {}", other.type_name())).into()),
+        }
     }
 
     /// The default initializer of a lazy stored property, if `name` names one.
-    fn lazy_default(&self, type_name: &str, name: &str) -> Option<Node<'a>> {
+    fn lazy_default(&self, type_name: &str, name: &str) -> Option<Node<'static>> {
         self.structs.get(type_name).and_then(|d| {
             d.stored
                 .iter()
@@ -590,7 +946,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         type_name: &str,
         args: &[(Option<String>, SwiftValue)],
     ) -> Eval {
-        let plan: Vec<(String, bool, Option<Node<'a>>)> = self
+        let plan: Vec<(String, bool, Option<Node<'static>>)> = self
             .structs
             .get(type_name)
             .map(|d| {
@@ -715,7 +1071,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// An integer literal, widened to its msf-resolved type when known.
-    fn eval_int_literal(&self, node: &Node<'a>) -> SwiftValue {
+    fn eval_int_literal(&self, node: &Node<'static>) -> SwiftValue {
         let raw = node.int().unwrap_or(0) as i128;
         let width = node
             .type_name()
@@ -725,7 +1081,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// A binary operation, with short-circuiting `&&`/`||`.
-    fn eval_binary(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_binary(&mut self, node: &Node<'static>) -> Eval {
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("binary without operator".into()))?;
@@ -736,6 +1092,16 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         let rhs = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("binary without rhs".into()))?;
+
+        // Nil-coalescing: `lhs ?? rhs` evaluates `rhs` only when `lhs` is nil.
+        if op == "??" {
+            let l = self.eval(&lhs)?;
+            return if matches!(l, SwiftValue::Nil) {
+                self.eval(&rhs)
+            } else {
+                Ok(l)
+            };
+        }
 
         if op == "&&" || op == "||" {
             let l = self.eval(&lhs)?;
@@ -760,42 +1126,87 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         ops::binary(&op, &l, &r).map_err(trap)
     }
 
-    /// `if cond { … } [else if …] [else { … }]`. Also serves `if` expressions:
-    /// the taken branch's last value is returned.
-    fn eval_if(&mut self, node: &Node<'a>) -> Eval {
-        let kids: Vec<Node<'a>> = node.children().collect();
-        let cond = kids
-            .first()
-            .ok_or_else(|| EvalError::Unsupported("if without condition".into()))?;
-        if self.eval_condition(cond)? {
-            self.eval(&kids[1])
-        } else if kids.len() > 2 {
-            self.eval(&kids[2])
-        } else {
-            Ok(SwiftValue::Void)
-        }
+    /// `if cond { … } [else if …] [else { … }]`, including `if let`/`if case`
+    /// bindings. Also serves `if` expressions: the taken branch's value.
+    fn eval_if(&mut self, node: &Node<'static>) -> Eval {
+        let kids: Vec<Node<'static>> = node.children().collect();
+        let then_idx = kids
+            .iter()
+            .position(|c| c.kind() == NodeKind::Block)
+            .ok_or_else(|| EvalError::Unsupported("if without a body".into()))?;
+        let conds = &kids[..then_idx];
+        let then = &kids[then_idx];
+        let els = kids.get(then_idx + 1);
+
+        // Bindings from `if let` live only inside the then-branch scope.
+        self.env.push();
+        let passed = self.eval_cond_list(conds);
+        let result = match passed {
+            Ok(true) => self.eval(then),
+            Ok(false) => {
+                self.env.pop();
+                return match els {
+                    Some(e) => self.eval(e),
+                    None => Ok(SwiftValue::Void),
+                };
+            }
+            Err(e) => Err(e),
+        };
+        self.env.pop();
+        result
     }
 
-    /// `guard cond else { … }` — runs the else block (which must transfer
-    /// control) when the condition is false.
-    fn eval_guard(&mut self, node: &Node<'a>) -> Eval {
-        let kids: Vec<Node<'a>> = node.children().collect();
-        let cond = kids
-            .first()
-            .ok_or_else(|| EvalError::Unsupported("guard without condition".into()))?;
-        if self.eval_condition(cond)? {
+    /// `guard <conds> else { … }`. Bindings persist in the enclosing scope; the
+    /// else block (which must transfer control) runs when a condition fails.
+    fn eval_guard(&mut self, node: &Node<'static>) -> Eval {
+        let kids: Vec<Node<'static>> = node.children().collect();
+        let els_idx = kids
+            .iter()
+            .rposition(|c| c.kind() == NodeKind::Block)
+            .ok_or_else(|| EvalError::Unsupported("guard without else".into()))?;
+        let conds = &kids[..els_idx];
+        let els = &kids[els_idx];
+        if self.eval_cond_list(conds)? {
             Ok(SwiftValue::Void)
         } else {
-            let els = kids
-                .last()
-                .ok_or_else(|| EvalError::Unsupported("guard without else".into()))?;
             self.eval(els)
         }
     }
 
+    /// Evaluate a comma-separated condition list, binding any `if let`/`guard
+    /// let` optionals into the current scope. Returns whether all passed.
+    fn eval_cond_list(&mut self, conds: &[Node<'static>]) -> Result<bool, Signal> {
+        for cond in conds {
+            match cond.kind() {
+                NodeKind::OptionalBinding => {
+                    let name = cond
+                        .text()
+                        .ok_or_else(|| EvalError::Unsupported("binding without a name".into()))?;
+                    let value = match cond.children().next() {
+                        Some(init) => self.eval(&init)?,
+                        None => self
+                            .env
+                            .get(&name)
+                            .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?,
+                    };
+                    if matches!(value, SwiftValue::Nil) {
+                        return Ok(false);
+                    }
+                    self.env.declare(&name, value, false);
+                }
+                _ => {
+                    if !self.eval_condition(cond)? {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// `while cond { … }`.
-    fn eval_while(&mut self, node: &Node<'a>) -> Eval {
-        let kids: Vec<Node<'a>> = node.children().collect();
+    fn eval_while(&mut self, node: &Node<'static>) -> Eval {
+        let kids: Vec<Node<'static>> = node.children().collect();
         let cond = kids
             .first()
             .ok_or_else(|| EvalError::Unsupported("while without condition".into()))?;
@@ -813,8 +1224,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// `repeat { … } while cond`.
-    fn eval_repeat(&mut self, node: &Node<'a>) -> Eval {
-        let kids: Vec<Node<'a>> = node.children().collect();
+    fn eval_repeat(&mut self, node: &Node<'static>) -> Eval {
+        let kids: Vec<Node<'static>> = node.children().collect();
         let body = kids
             .first()
             .ok_or_else(|| EvalError::Unsupported("repeat without body".into()))?;
@@ -834,7 +1245,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// `for v in seq [where cond] { … }` over an integer range or array.
-    fn eval_for(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_for(&mut self, node: &Node<'static>) -> Eval {
         let var_name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("for-loop without a binding".into()))?;
@@ -902,7 +1313,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// the corresponding [`LoopFlow`]; other signals propagate.
     fn run_loop_body(
         &mut self,
-        body: &Node<'a>,
+        body: &Node<'static>,
         label: &Option<String>,
     ) -> Result<LoopFlow, Signal> {
         match self.eval(body) {
@@ -916,13 +1327,13 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// `switch subject { case …: … default: … }`.
-    fn eval_switch(&mut self, node: &Node<'a>) -> Eval {
-        let kids: Vec<Node<'a>> = node.children().collect();
+    fn eval_switch(&mut self, node: &Node<'static>) -> Eval {
+        let kids: Vec<Node<'static>> = node.children().collect();
         let subject_node = kids
             .first()
             .ok_or_else(|| EvalError::Unsupported("switch without a subject".into()))?;
         let subject = self.eval(subject_node)?;
-        let cases: Vec<Node<'a>> = kids[1..]
+        let cases: Vec<Node<'static>> = kids[1..]
             .iter()
             .copied()
             .filter(|c| c.kind() == NodeKind::CaseClause)
@@ -980,7 +1391,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// Whether `case` matches `subject`, returning the names it binds.
     fn case_matches(
         &mut self,
-        case: &Node<'a>,
+        case: &Node<'static>,
         subject: &SwiftValue,
     ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
         let info = case.case_info();
@@ -1011,7 +1422,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// match (with any bound names), `Ok(None)` on a non-match.
     fn match_pattern(
         &mut self,
-        pattern: &Node<'a>,
+        pattern: &Node<'static>,
         subject: &SwiftValue,
     ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
         match pattern.kind() {
@@ -1021,7 +1432,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                 Ok(Some(vec![(name, subject.clone())]))
             }
             NodeKind::PatternRange => {
-                let bounds: Vec<Node<'a>> = pattern.children().collect();
+                let bounds: Vec<Node<'static>> = pattern.children().collect();
                 if bounds.len() != 2 {
                     return Ok(None);
                 }
@@ -1041,11 +1452,49 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                 }
                 Ok(None)
             }
+            NodeKind::PatternEnum => {
+                let case_name = pattern.op_text().unwrap_or_default();
+                let subs: Vec<Node<'static>> = pattern.children().collect();
+                // Optional patterns desugar to `.some`/`.none`.
+                if case_name == "some" {
+                    if matches!(subject, SwiftValue::Nil) {
+                        return Ok(None);
+                    }
+                    return match subs.first() {
+                        Some(p) => self.match_pattern(p, subject),
+                        None => Ok(Some(Vec::new())),
+                    };
+                }
+                if case_name == "none" {
+                    return Ok(if matches!(subject, SwiftValue::Nil) {
+                        Some(Vec::new())
+                    } else {
+                        None
+                    });
+                }
+                let SwiftValue::Enum(e) = subject else {
+                    return Ok(None);
+                };
+                if e.case != case_name {
+                    return Ok(None);
+                }
+                if !subs.is_empty() && subs.len() != e.payload.len() {
+                    return Ok(None);
+                }
+                let mut all = Vec::new();
+                for (sub, item) in subs.iter().zip(e.payload.iter()) {
+                    match self.match_pattern(sub, item)? {
+                        Some(b) => all.extend(b),
+                        None => return Ok(None),
+                    }
+                }
+                Ok(Some(all))
+            }
             NodeKind::PatternTuple => {
                 let SwiftValue::Tuple(items) = subject else {
                     return Ok(None);
                 };
-                let subs: Vec<Node<'a>> = pattern.children().collect();
+                let subs: Vec<Node<'static>> = pattern.children().collect();
                 if subs.len() != items.len() {
                     return Ok(None);
                 }
@@ -1071,7 +1520,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Evaluate a node expected to yield a `Bool`.
-    fn eval_condition(&mut self, node: &Node<'a>) -> Result<bool, Signal> {
+    fn eval_condition(&mut self, node: &Node<'static>) -> Result<bool, Signal> {
         let v = self.eval(node)?;
         v.as_bool().ok_or_else(|| {
             EvalError::Type(format!("condition is not Bool: {}", v.type_name())).into()
@@ -1079,7 +1528,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// A ternary `cond ? a : b`, evaluating only the taken branch.
-    fn eval_ternary(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_ternary(&mut self, node: &Node<'static>) -> Eval {
         let mut kids = node.children();
         let cond = kids
             .next()
@@ -1102,7 +1551,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// A unary operation (`-x`, `!b`, `~n`).
-    fn eval_unary(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_unary(&mut self, node: &Node<'static>) -> Eval {
         let op = node
             .op_text()
             .or_else(|| node.text())
@@ -1116,7 +1565,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Assignment: plain `=` and compound `+=`, `-=`, … to a binding.
-    fn eval_assign(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_assign(&mut self, node: &Node<'static>) -> Eval {
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("assignment without operator".into()))?;
@@ -1185,14 +1634,21 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// Member access: static integer members (`Int.max`/`Int.min`) and
     /// `Array.count`.
-    fn eval_member(&mut self, node: &Node<'a>) -> Eval {
-        let member = node
+    fn eval_member(&mut self, node: &Node<'static>) -> Eval {
+        let mut member = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("member without a name".into()))?;
-        let base = node
-            .children()
-            .next()
-            .ok_or_else(|| EvalError::Unsupported("member without a base".into()))?;
+
+        // Shorthand `.case` (no base): construct the inferred enum case.
+        let Some(base) = node.children().next() else {
+            if member == "." {
+                member = node.op_text().unwrap_or(member);
+            }
+            if let Some(tn) = self.resolve_member_enum(node, &member) {
+                return Ok(self.make_enum_case(&tn, &member, Vec::new())?.unwrap());
+            }
+            return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
+        };
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
@@ -1212,11 +1668,33 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                             return Ok(v.clone());
                         }
                     }
+                    // Enum case (no associated values) or `allCases`.
+                    if self.enums.contains_key(&type_name) {
+                        if member == "allCases" {
+                            return self.enum_all_cases(&type_name);
+                        }
+                        if let Some(v) = self.make_enum_case(&type_name, &member, Vec::new())? {
+                            return Ok(v);
+                        }
+                    }
                 }
             }
         }
 
         let value = self.eval(&base)?;
+        // Optional chaining: a nil base short-circuits the whole access to nil.
+        if matches!(value, SwiftValue::Nil) {
+            return Ok(SwiftValue::Nil);
+        }
+        // Enum members: rawValue and computed properties.
+        if let SwiftValue::Enum(e) = &value {
+            if member == "rawValue" {
+                return self.enum_raw_value(&e.type_name, &e.case);
+            }
+            if let Some(v) = self.read_enum_computed(&value, &member)? {
+                return Ok(v);
+            }
+        }
         if let SwiftValue::Struct(obj) = &value {
             // Lazy stored property: materialize on first access and cache it
             // back into the storage when the base is an lvalue.
@@ -1253,8 +1731,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// Evaluate a call: a method, a struct initializer, a user function, a
     /// native, or a conversion initializer.
-    fn eval_call(&mut self, node: &Node<'a>) -> Eval {
-        let children: Vec<Node<'a>> = node.children().collect();
+    fn eval_call(&mut self, node: &Node<'static>) -> Eval {
+        let children: Vec<Node<'static>> = node.children().collect();
         let callee = children
             .first()
             .ok_or_else(|| EvalError::Unsupported("call with no callee".into()))?;
@@ -1309,7 +1787,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// Evaluate call arguments, resolving `inout` (`&place`) into a write-back
     /// location.
-    fn eval_args(&mut self, arg_nodes: &[Node<'a>]) -> Result<Vec<CallArg>, Signal> {
+    fn eval_args(&mut self, arg_nodes: &[Node<'static>]) -> Result<Vec<CallArg>, Signal> {
         let mut args = Vec::new();
         for arg in arg_nodes {
             let label = arg.arg_label();
@@ -1339,21 +1817,38 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 
     /// `base.method(args)`. Binds `self`; for `mutating` methods, writes the
     /// updated `self` back to `base`'s storage.
-    fn eval_method_call(&mut self, member: &Node<'a>, arg_nodes: &[Node<'a>]) -> Eval {
-        let method = member
+    fn eval_method_call(&mut self, member: &Node<'static>, arg_nodes: &[Node<'static>]) -> Eval {
+        let mut method = member
             .text()
             .ok_or_else(|| EvalError::Unsupported("method without a name".into()))?;
-        let base = member
-            .children()
-            .next()
-            .ok_or_else(|| EvalError::Unsupported("method without a base".into()))?;
+        // A bare `.` member spells its name in the operator slot.
+        if method == "." {
+            method = member.op_text().unwrap_or(method);
+        }
 
-        // Static method: `Type.method(args)`.
+        // Shorthand `.case(args)`: resolve the enum type from msf's inference.
+        let Some(base) = member.children().next() else {
+            if let Some(tn) = self.resolve_member_enum(member, &method) {
+                let args = self.eval_args(arg_nodes)?;
+                let payload = args.into_iter().map(|a| a.value).collect();
+                return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
+            }
+            return Err(EvalError::Unsupported(format!(".{method}() (unresolved type)")).into());
+        };
+
+        // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
-                if self.env.get(&tn).is_none() && self.structs.contains_key(&tn) {
-                    let args = self.eval_args(arg_nodes)?;
-                    return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
+                if self.env.get(&tn).is_none() {
+                    if self.enum_has_case(&tn, &method) {
+                        let args = self.eval_args(arg_nodes)?;
+                        let payload = args.into_iter().map(|a| a.value).collect();
+                        return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
+                    }
+                    if self.structs.contains_key(&tn) {
+                        let args = self.eval_args(arg_nodes)?;
+                        return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
+                    }
                 }
             }
         }
@@ -1361,23 +1856,33 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         let base_value = self.eval(&base)?;
         let args = self.eval_args(arg_nodes)?;
 
-        if let SwiftValue::Struct(obj) = &base_value {
-            let type_name = obj.type_name.clone();
-            if self
-                .structs
-                .get(&type_name)
-                .is_some_and(|d| d.methods.contains_key(&method))
-            {
+        let type_name = match &base_value {
+            SwiftValue::Struct(o) => Some(o.type_name.clone()),
+            SwiftValue::Enum(e) => Some(e.type_name.clone()),
+            _ => None,
+        };
+        if let Some(type_name) = type_name {
+            if self.type_has_method(&type_name, &method) {
                 let place = self.resolve_place(&base);
                 return self.call_struct_method(base_value, &type_name, &method, args, place);
             }
         }
 
-        // Built-in value methods could go here; none needed yet.
         Err(
             EvalError::Unsupported(format!("method .{method}() on {}", base_value.type_name()))
                 .into(),
         )
+    }
+
+    /// Whether a struct or enum type declares a method `method`.
+    fn type_has_method(&self, type_name: &str, method: &str) -> bool {
+        self.structs
+            .get(type_name)
+            .is_some_and(|d| d.methods.contains_key(method))
+            || self
+                .enums
+                .get(type_name)
+                .is_some_and(|d| d.methods.contains_key(method))
     }
 
     /// Invoke a struct method with `self` bound and parameters applied.
@@ -1394,6 +1899,11 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                 .structs
                 .get(type_name)
                 .and_then(|d| d.methods.get(method))
+                .or_else(|| {
+                    self.enums
+                        .get(type_name)
+                        .and_then(|d| d.methods.get(method))
+                })
                 .ok_or_else(|| {
                     EvalError::Unsupported(format!("{type_name} has no method `{method}`"))
                 })?;
@@ -1431,7 +1941,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// A string literal, processing escapes and `\( … )` interpolation.
-    fn eval_string_literal(&mut self, node: &Node<'a>) -> Eval {
+    fn eval_string_literal(&mut self, node: &Node<'static>) -> Eval {
         let raw = node.text().unwrap_or_default();
         // Raw strings do not interpolate; decode handles delimiters/escapes.
         if raw.starts_with('#') {
@@ -1497,23 +2007,22 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         Ok(SwiftValue::Str(out))
     }
 
-    /// Evaluate an interpolated expression fragment against the current scope.
-    /// Runs in a sub-interpreter sharing this environment's scopes by reference.
+    /// Evaluate an interpolated expression fragment against the current scope,
+    /// reusing this interpreter (and thus its type/function tables).
+    ///
+    /// The fragment's analysis is intentionally leaked so its AST nodes live for
+    /// `'static`, matching the interpreter's AST lifetime. Fragments are tiny and
+    /// a program is run once, so the leak is bounded and acceptable.
     fn eval_interpolation(&mut self, fragment: &str) -> Result<SwiftValue, Signal> {
         let analysis = Analysis::analyze(fragment, "interpolation")
             .map_err(|e| EvalError::Type(format!("interpolation parse error: {e}")))?;
         if !analysis.is_ok() {
             return Err(EvalError::Type(format!("invalid interpolation `{fragment}`")).into());
         }
-        let mut sink: Vec<u8> = Vec::new();
-        let mut sub = Interpreter::new(&mut sink);
-        sub.env = self.env.clone();
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
         let root = analysis.root();
-        match sub.eval(&root) {
-            Ok(v) => Ok(v),
-            Err(Signal::Error(e)) => Err(e.into()),
-            Err(_) => Err(EvalError::Type("control flow in interpolation".into()).into()),
-        }
+        // Evaluate the wrapped expression statement directly.
+        self.eval(&root)
     }
 
     /// Invoke a user function by its table id with (possibly labeled) arguments.
@@ -1571,7 +2080,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// write-back locations for any `inout` parameters.
     fn bind_params(
         &mut self,
-        params: &[Param<'a>],
+        params: &[Param],
         args: Vec<CallArg>,
     ) -> Result<Vec<(String, Place)>, Signal> {
         let mut inout_binds = Vec::new();
@@ -1616,7 +2125,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Resolve an lvalue expression to a [`Place`] (root variable + field path).
-    fn resolve_place(&self, node: &Node<'a>) -> Option<Place> {
+    fn resolve_place(&self, node: &Node<'static>) -> Option<Place> {
         match node.kind() {
             NodeKind::IdentExpr => node.text().map(|root| Place {
                 root,
@@ -1712,7 +2221,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
 }
 
 /// Clone a parameter list (`Node` is `Copy`; only the strings allocate).
-fn clone_params<'a>(params: &[Param<'a>]) -> Vec<Param<'a>> {
+fn clone_params(params: &[Param]) -> Vec<Param> {
     params
         .iter()
         .map(|p| Param {
@@ -1726,7 +2235,7 @@ fn clone_params<'a>(params: &[Param<'a>]) -> Vec<Param<'a>> {
 }
 
 /// Parse the `AST_PARAM` children of a function/method declaration.
-fn parse_params<'a>(node: &Node<'a>) -> Vec<Param<'a>> {
+fn parse_params(node: &Node<'static>) -> Vec<Param> {
     let mut params = Vec::new();
     for child in node.children() {
         if child.kind() == NodeKind::Param {
@@ -1784,7 +2293,7 @@ fn is_statement_kind(kind: NodeKind) -> bool {
 /// Split a `case` clause into (patterns, body-statements). Patterns are the
 /// leading non-statement children; the body is everything from the first
 /// statement onward.
-fn case_parts<'a>(case: &Node<'a>) -> (Vec<Node<'a>>, Vec<Node<'a>>) {
+fn case_parts(case: &Node<'static>) -> (Vec<Node<'static>>, Vec<Node<'static>>) {
     let mut patterns = Vec::new();
     let mut body = Vec::new();
     let mut in_body = false;
@@ -1801,17 +2310,36 @@ fn case_parts<'a>(case: &Node<'a>) -> (Vec<Node<'a>>, Vec<Node<'a>>) {
     (patterns, body)
 }
 
-/// Structural value equality used by `switch` value patterns.
+/// Structural value equality used by `switch` value patterns and `==`.
 fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
     match (a, b) {
         (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw == y.raw,
         (SwiftValue::Double(x), SwiftValue::Double(y)) => x == y,
         (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x == y,
         (SwiftValue::Str(x), SwiftValue::Str(y)) => x == y,
+        (SwiftValue::Nil, SwiftValue::Nil) => true,
         (SwiftValue::Tuple(x), SwiftValue::Tuple(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
         }
+        (SwiftValue::Enum(x), SwiftValue::Enum(y)) => {
+            x.type_name == y.type_name
+                && x.case == y.case
+                && x.payload.len() == y.payload.len()
+                && x.payload
+                    .iter()
+                    .zip(&y.payload)
+                    .all(|(p, q)| values_equal(p, q))
+        }
         _ => false,
+    }
+}
+
+/// Extract a single integer subscript index from evaluated index args.
+fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
+    match indices.first() {
+        Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),
+        Some(SwiftValue::Int(i)) => Err(trap(format!("negative index {}", i.raw))),
+        _ => Err(EvalError::Type("subscript index must be an integer".into()).into()),
     }
 }
 
@@ -1895,11 +2423,12 @@ mod tests {
 
     fn run(src: &str) -> Result<String, EvalError> {
         let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut interp = Interpreter::new(&mut buf);
             crate::install_test_print(&mut interp);
-            interp.run(&analysis)?;
+            interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
     }
@@ -2069,6 +2598,57 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "42\n1\n");
+    }
+
+    #[test]
+    fn enum_associated_values_and_matching() {
+        let out = run(
+            "enum Shape { case circle(r: Int); case rect(Int, Int) }\nfunc area(_ s: Shape) -> Int {\n  switch s {\n  case .circle(let r): return 3 * r * r\n  case .rect(let w, let h): return w * h\n  }\n}\nprint(area(.circle(r: 5)))\nprint(area(Shape.rect(3, 4)))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "75\n12\n");
+    }
+
+    #[test]
+    fn enum_raw_values_and_methods() {
+        let out = run(
+            "enum Dir: Int, CaseIterable { case n = 1, e = 2, s = 3\n  func twice() -> Int { return rawValue * 2 } }\nprint(Dir.s.rawValue)\nprint(Dir.e.twice())\nprint(Dir.allCases.count)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "3\n4\n3\n");
+    }
+
+    #[test]
+    fn optionals_binding_chaining_coalescing() {
+        let out = run(
+            "var maybe: Int? = nil\nprint(maybe ?? -1)\nif let v = maybe { print(v) } else { print(\"none\") }\nmaybe = 7\nprint(maybe!)\nlet s: String? = \"hi\"\nprint(s?.count ?? 0)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "-1\nnone\n7\n2\n");
+    }
+
+    #[test]
+    fn force_unwrap_nil_traps() {
+        let err = run("let x: Int? = nil\nprint(x!)\n").unwrap_err();
+        assert!(matches!(err, EvalError::Trap(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn indirect_enum_recursion() {
+        let out = run(
+            "indirect enum E { case num(Int); case add(E, E) }\nfunc ev(_ e: E) -> Int {\n  switch e { case .num(let n): return n; case .add(let a, let b): return ev(a) + ev(b) }\n}\nprint(ev(.add(.num(3), .add(.num(4), .num(5)))))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "12\n");
+    }
+
+    #[test]
+    fn subscripts_array_and_user() {
+        let out = run(
+            "let a = [10, 20, 30]\nprint(a[1])\nstruct Grid { var cells: [Int]\n  subscript(_ i: Int) -> Int { return cells[i] * 2 } }\nlet g = Grid(cells: [5, 6, 7])\nprint(g[2])\n",
+        )
+        .unwrap();
+        assert_eq!(out, "20\n14\n");
     }
 
     #[test]

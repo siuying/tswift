@@ -54,13 +54,17 @@ fn run(path: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // The interpreter borrows the AST for `'static` (string interpolation leaks
+    // small fragment ASTs to match). The process runs one program and exits, so
+    // leaking the root analysis here is intentional and bounded.
+    let analysis: &'static Analysis = Box::leak(Box::new(analysis));
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
     let mut interp = Interpreter::new(&mut handle);
     quick_swift_std::install(&mut interp);
 
-    let result = interp.run(&analysis);
+    let result = interp.run(analysis);
     let _ = handle.flush();
 
     match result {
