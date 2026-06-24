@@ -2,6 +2,7 @@
 
 ## Folder Structure
 
+- `creates` - quick-swift rust packages.
 - `vendor/msf` - Mini Swift Frontend. A single-header C library that takes Swift source code and produces a fully typed abstract syntax tree. No LLVM, no codegen, no runtime — just the frontend.
 - `docs/plan/swift-runtime-implementation-plan.md` - overall plan
 - `docs/research` - research on msf and VM
