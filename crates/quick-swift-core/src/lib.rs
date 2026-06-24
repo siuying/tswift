@@ -1,12 +1,31 @@
 //! quick-swift-core — the evaluator spine.
 //!
 //! Language *features* live here (per the implementation plan): the value model,
-//! the `eval` dispatcher, and the seam for native standard-library functions.
-//! The walking skeleton implements the thinnest slice: scalar values and a
-//! tree-walk that can run an integer-literal call to `print`.
+//! the lexical environment, operator semantics, and the `eval` dispatcher. This
+//! milestone covers literals, arithmetic, and `let`/`var` bindings with faithful
+//! integer-width overflow/wrap semantics.
 
+mod env;
 mod interp;
+mod ops;
 mod value;
 
+pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
-pub use value::SwiftValue;
+pub use value::{format_double, IntValue, IntWidth, SwiftValue};
+
+/// Register a minimal `print` native for unit tests inside this crate.
+#[cfg(test)]
+pub(crate) fn install_test_print(interp: &mut Interpreter) {
+    use std::io::Write;
+    fn print(out: &mut dyn Write, args: &[SwiftValue]) -> SwiftValue {
+        let line = args
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = writeln!(out, "{line}");
+        SwiftValue::Void
+    }
+    interp.register_native("print", print);
+}
