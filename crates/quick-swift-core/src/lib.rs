@@ -16,7 +16,7 @@ pub use value::{format_double, IntValue, IntWidth, SwiftValue};
 
 /// Register a minimal `print` native for unit tests inside this crate.
 #[cfg(test)]
-pub(crate) fn install_test_print(interp: &mut Interpreter) {
+pub(crate) fn install_test_print(interp: &mut Interpreter<'_, '_>) {
     use std::io::Write;
     fn print(out: &mut dyn Write, args: &[SwiftValue]) -> SwiftValue {
         let line = args

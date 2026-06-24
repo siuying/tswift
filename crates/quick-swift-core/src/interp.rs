@@ -1,17 +1,24 @@
 //! The `eval(node, env)` tree-walker.
 //!
-//! Evaluates literals, arithmetic, and `let`/`var` bindings on top of msf's
-//! typed AST. Integer widths follow msf's resolved types so overflow-trapping
-//! and wrapping operators match Swift exactly.
+//! Control flow (`return`, and later `break`/`continue`/`throw`) unwinds through
+//! the `Err` channel as a [`Signal`], so a `?` naturally propagates it up to the
+//! construct that handles it — without panicking. Real interpreter failures ride
+//! the same channel as [`Signal::Error`].
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::rc::Rc;
 
 use msf::{Analysis, Node, NodeKind};
 
-use crate::env::{BindError, Env};
+use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::value::{IntValue, IntWidth, SwiftValue};
+
+/// Maximum nested Swift call depth before the interpreter traps, converting
+/// unbounded recursion into a catchable error instead of a native stack
+/// overflow.
+const MAX_CALL_DEPTH: usize = 5000;
 
 /// A native (Rust-implemented) Swift function. It receives the output sink and
 /// the already-evaluated arguments, and returns its result value.
@@ -28,7 +35,7 @@ pub enum EvalError {
     UnknownVariable(String),
     /// Assignment to a `let` binding.
     Immutable(String),
-    /// A runtime trap: overflow, division by zero, etc. (Swift `fatalError`).
+    /// A runtime trap: overflow, division by zero, deep recursion, etc.
     Trap(String),
     /// A type error the evaluator detected at runtime.
     Type(String),
@@ -57,21 +64,72 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-/// The tree-walking interpreter. Owns the native function table and the
-/// environment, and borrows an output sink for the duration of a run.
-pub struct Interpreter<'w> {
+/// A non-local control transfer produced while evaluating a node. Travels up the
+/// `Err` channel so `?` propagates it to the handling construct.
+///
+/// `Break`/`Continue`/`Throw` are wired in the control-flow and error-handling
+/// milestones; they exist here so the dispatch shape is stable.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+enum Signal {
+    /// `return [value]` — unwinds to the enclosing function call.
+    Return(SwiftValue),
+    /// `break [label]` — unwinds to the targeted loop/switch.
+    Break(Option<String>),
+    /// `continue [label]` — unwinds to the targeted loop.
+    Continue(Option<String>),
+    /// A thrown Swift error value (error handling milestone).
+    Throw(SwiftValue),
+    /// A genuine interpreter error (not Swift control flow).
+    Error(EvalError),
+}
+
+impl From<EvalError> for Signal {
+    fn from(e: EvalError) -> Self {
+        Signal::Error(e)
+    }
+}
+
+/// Convenience: an operator/runtime trap message becomes a [`Signal::Error`].
+fn trap(msg: String) -> Signal {
+    Signal::Error(EvalError::Trap(msg))
+}
+
+type Eval = Result<SwiftValue, Signal>;
+
+/// One declared Swift parameter, precomputed from its `AST_PARAM` node.
+struct Param<'a> {
+    label: Option<String>,
+    name: String,
+    variadic: bool,
+    default: Option<Node<'a>>,
+}
+
+/// A user-defined function: its parameters, body, and captured scope chain.
+struct FuncDef<'a> {
+    params: Vec<Param<'a>>,
+    body: Option<Node<'a>>,
+    captured: Vec<Scope>,
+}
+
+/// The tree-walking interpreter.
+pub struct Interpreter<'a, 'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
     env: Env,
+    funcs: Vec<FuncDef<'a>>,
+    depth: usize,
 }
 
-impl<'w> Interpreter<'w> {
+impl<'a, 'w> Interpreter<'a, 'w> {
     /// Create an interpreter that writes program output to `out`.
     pub fn new(out: &'w mut dyn Write) -> Self {
         Interpreter {
             out,
             natives: HashMap::new(),
             env: Env::new(),
+            funcs: Vec::new(),
+            depth: 0,
         }
     }
 
@@ -80,9 +138,8 @@ impl<'w> Interpreter<'w> {
         self.natives.insert(name.to_string(), f);
     }
 
-    /// Evaluate a fully-analyzed program. Refuses to run if analysis reported
-    /// errors, surfacing them as an [`EvalError::Analysis`].
-    pub fn run(&mut self, analysis: &Analysis) -> Result<(), EvalError> {
+    /// Evaluate a fully-analyzed program.
+    pub fn run(&mut self, analysis: &'a Analysis) -> Result<(), EvalError> {
         if !analysis.is_ok() {
             let diags = analysis
                 .diagnostics()
@@ -92,19 +149,29 @@ impl<'w> Interpreter<'w> {
                 .join("\n");
             return Err(EvalError::Analysis(diags));
         }
-        self.eval(&analysis.root())?;
-        Ok(())
+        match self.eval(&analysis.root()) {
+            Ok(_) => Ok(()),
+            Err(Signal::Error(e)) => Err(e),
+            Err(Signal::Throw(v)) => Err(EvalError::Trap(format!("uncaught error: {v}"))),
+            Err(Signal::Return(_)) => Ok(()),
+            Err(other) => Err(EvalError::Unsupported(format!(
+                "stray control flow: {other:?}"
+            ))),
+        }
     }
 
-    /// Evaluate a node, returning its value.
-    fn eval(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    /// Evaluate a node, returning its value (or a propagating [`Signal`]).
+    fn eval(&mut self, node: &Node<'a>) -> Eval {
         match node.kind() {
-            NodeKind::SourceFile | NodeKind::Block | NodeKind::ExprStmt => {
-                let mut last = SwiftValue::Void;
-                for child in node.children() {
-                    last = self.eval(&child)?;
-                }
-                Ok(last)
+            NodeKind::SourceFile | NodeKind::Block => self.eval_block(node),
+            NodeKind::ExprStmt => self.eval_seq(node),
+            NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
+            NodeKind::ReturnStmt => {
+                let value = match node.children().next() {
+                    Some(e) => self.eval(&e)?,
+                    None => SwiftValue::Void,
+                };
+                Err(Signal::Return(value))
             }
             NodeKind::LetDecl => self.eval_decl(node, false),
             NodeKind::VarDecl => self.eval_decl(node, true),
@@ -113,6 +180,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::UnaryExpr => self.eval_unary(node),
             NodeKind::AssignExpr => self.eval_assign(node),
             NodeKind::ParenExpr => self.eval_only_child(node),
+            NodeKind::TernaryExpr => self.eval_ternary(node),
             NodeKind::MemberExpr => self.eval_member(node),
             NodeKind::IdentExpr => self.eval_ident(node),
             NodeKind::IntegerLiteral => Ok(self.eval_int_literal(node)),
@@ -121,12 +189,32 @@ impl<'w> Interpreter<'w> {
             NodeKind::StringLiteral => Ok(SwiftValue::Str(decode_string_literal(
                 &node.text().unwrap_or_default(),
             ))),
-            other => Err(EvalError::Unsupported(format!("{other:?}"))),
+            other => Err(EvalError::Unsupported(format!("{other:?}")).into()),
         }
     }
 
+    /// A `{ … }` block or source file: hoist function declarations first so
+    /// forward references and mutual recursion resolve, then run statements.
+    fn eval_block(&mut self, node: &Node<'a>) -> Eval {
+        for child in node.children() {
+            if child.kind() == NodeKind::FuncDecl {
+                self.declare_func(&child);
+            }
+        }
+        self.eval_seq(node)
+    }
+
+    /// Evaluate each child in order, yielding the last value.
+    fn eval_seq(&mut self, node: &Node<'a>) -> Eval {
+        let mut last = SwiftValue::Void;
+        for child in node.children() {
+            last = self.eval(&child)?;
+        }
+        Ok(last)
+    }
+
     /// Evaluate the single meaningful child of a wrapper node (e.g. paren).
-    fn eval_only_child(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    fn eval_only_child(&mut self, node: &Node<'a>) -> Eval {
         let child = node
             .children()
             .next()
@@ -134,30 +222,65 @@ impl<'w> Interpreter<'w> {
         self.eval(&child)
     }
 
+    /// Register a function declaration as a first-class value in the current
+    /// scope, capturing the enclosing scope chain.
+    fn declare_func(&mut self, node: &Node<'a>) {
+        let Some(name) = node.text() else {
+            return;
+        };
+        // Avoid double-hoisting if eval_block runs twice on the same node.
+        if matches!(self.env.get(&name), Some(SwiftValue::Function(_))) {
+            return;
+        }
+        let mut params = Vec::new();
+        let mut body = None;
+        for child in node.children() {
+            match child.kind() {
+                NodeKind::Param => {
+                    let info = child.param_info();
+                    // The parameter's default value, if any, is a non-type child.
+                    let default = child.children().find(|c| c.kind() != NodeKind::TypeIdent);
+                    params.push(Param {
+                        label: info.label,
+                        name: info.name,
+                        variadic: info.variadic,
+                        default,
+                    });
+                }
+                NodeKind::Block => body = Some(child),
+                _ => {}
+            }
+        }
+        let captured = self.env.capture();
+        let id = self.funcs.len();
+        self.funcs.push(FuncDef {
+            params,
+            body,
+            captured,
+        });
+        self.env.declare(&name, SwiftValue::Function(id), false);
+    }
+
     /// `let`/`var name [= init]`.
-    fn eval_decl(&mut self, node: &Node, mutable: bool) -> Result<SwiftValue, EvalError> {
+    fn eval_decl(&mut self, node: &Node<'a>, mutable: bool) -> Eval {
         let name = node
             .decl_name()
             .ok_or_else(|| EvalError::Unsupported("declaration without a name".into()))?;
-        // The initializer, if any, is the node's last expression child.
         let value = match node.children().last() {
-            Some(init) => {
+            Some(init) if is_expr(&init) => {
                 let v = self.eval(&init)?;
                 self.coerce_to_decl_type(node, v)
             }
-            None => SwiftValue::Void,
+            _ => SwiftValue::Void,
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
     }
 
-    /// If the declaration has an explicit integer type annotation, retag the
-    /// initializer's width to match it.
-    ///
-    /// msf collapses every fixed-width integer to `Int` in its resolved types,
-    /// so the only reliable source for the declared width is the explicit
-    /// `TYPE_IDENT` annotation node, when present.
-    fn coerce_to_decl_type(&self, node: &Node, value: SwiftValue) -> SwiftValue {
+    /// If the declaration carries an explicit integer type annotation, retag the
+    /// initializer's width to match it. (msf collapses fixed-width ints to
+    /// `Int`, so the `TYPE_IDENT` node is the only reliable source.)
+    fn coerce_to_decl_type(&self, node: &Node<'a>, value: SwiftValue) -> SwiftValue {
         let SwiftValue::Int(i) = &value else {
             return value;
         };
@@ -172,18 +295,17 @@ impl<'w> Interpreter<'w> {
     }
 
     /// An identifier reference: look up a binding.
-    fn eval_ident(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    fn eval_ident(&mut self, node: &Node<'a>) -> Eval {
         let name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("unnamed identifier".into()))?;
         self.env
             .get(&name)
-            .cloned()
-            .ok_or(EvalError::UnknownVariable(name))
+            .ok_or(EvalError::UnknownVariable(name).into())
     }
 
     /// An integer literal, widened to its msf-resolved type when known.
-    fn eval_int_literal(&self, node: &Node) -> SwiftValue {
+    fn eval_int_literal(&self, node: &Node<'a>) -> SwiftValue {
         let raw = node.int().unwrap_or(0) as i128;
         let width = node
             .type_name()
@@ -193,7 +315,7 @@ impl<'w> Interpreter<'w> {
     }
 
     /// A binary operation, with short-circuiting `&&`/`||`.
-    fn eval_binary(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    fn eval_binary(&mut self, node: &Node<'a>) -> Eval {
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("binary without operator".into()))?;
@@ -205,7 +327,6 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("binary without rhs".into()))?;
 
-        // Short-circuit logical operators.
         if op == "&&" || op == "||" {
             let l = self.eval(&lhs)?;
             let lb = l.as_bool().ok_or_else(|| {
@@ -226,11 +347,34 @@ impl<'w> Interpreter<'w> {
 
         let l = self.eval(&lhs)?;
         let r = self.eval(&rhs)?;
-        ops::binary(&op, &l, &r).map_err(EvalError::Trap)
+        ops::binary(&op, &l, &r).map_err(trap)
+    }
+
+    /// A ternary `cond ? a : b`, evaluating only the taken branch.
+    fn eval_ternary(&mut self, node: &Node<'a>) -> Eval {
+        let mut kids = node.children();
+        let cond = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("ternary without condition".into()))?;
+        let then = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("ternary without then-branch".into()))?;
+        let els = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("ternary without else-branch".into()))?;
+        let c = self.eval(&cond)?;
+        let taken = c
+            .as_bool()
+            .ok_or_else(|| EvalError::Type(format!("ternary needs Bool, got {}", c.type_name())))?;
+        if taken {
+            self.eval(&then)
+        } else {
+            self.eval(&els)
+        }
     }
 
     /// A unary operation (`-x`, `!b`, `~n`).
-    fn eval_unary(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    fn eval_unary(&mut self, node: &Node<'a>) -> Eval {
         let op = node
             .op_text()
             .or_else(|| node.text())
@@ -240,11 +384,11 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("unary without operand".into()))?;
         let v = self.eval(&operand)?;
-        ops::unary(&op, &v).map_err(EvalError::Trap)
+        ops::unary(&op, &v).map_err(trap)
     }
 
     /// Assignment: plain `=` and compound `+=`, `-=`, … to a binding.
-    fn eval_assign(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    fn eval_assign(&mut self, node: &Node<'a>) -> Eval {
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("assignment without operator".into()))?;
@@ -259,7 +403,8 @@ impl<'w> Interpreter<'w> {
         if target.kind() != NodeKind::IdentExpr {
             return Err(EvalError::Unsupported(
                 "assignment target must be a simple variable for now".into(),
-            ));
+            )
+            .into());
         }
         let name = target
             .text()
@@ -268,27 +413,25 @@ impl<'w> Interpreter<'w> {
         let new_value = if op == "=" {
             self.eval(&rhs)?
         } else {
-            // Compound: strip the trailing `=` to get the binary operator.
             let bin_op = op.trim_end_matches('=');
             let current = self
                 .env
                 .get(&name)
-                .cloned()
                 .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?;
             let r = self.eval(&rhs)?;
-            ops::binary(bin_op, &current, &r).map_err(EvalError::Trap)?
+            ops::binary(bin_op, &current, &r).map_err(trap)?
         };
 
         match self.env.assign(&name, new_value) {
             Ok(()) => Ok(SwiftValue::Void),
-            Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n)),
-            Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n)),
+            Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
+            Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n).into()),
         }
     }
 
-    /// Member access. Supports static members of integer types (`Int.max`,
-    /// `Int.min`, etc.).
-    fn eval_member(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    /// Member access: static integer members (`Int.max`/`Int.min`) and
+    /// `Array.count`.
+    fn eval_member(&mut self, node: &Node<'a>) -> Eval {
         let member = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("member without a name".into()))?;
@@ -299,62 +442,145 @@ impl<'w> Interpreter<'w> {
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
-                if let Some(w) = IntWidth::from_type_name(&type_name) {
-                    return match member.as_str() {
-                        "max" => Ok(SwiftValue::Int(IntValue::new(w.max(), w))),
-                        "min" => Ok(SwiftValue::Int(IntValue::new(w.min(), w))),
-                        _ => Err(EvalError::Unsupported(format!("{type_name}.{member}"))),
-                    };
+                if self.env.get(&type_name).is_none() {
+                    if let Some(w) = IntWidth::from_type_name(&type_name) {
+                        return match member.as_str() {
+                            "max" => Ok(SwiftValue::Int(IntValue::new(w.max(), w))),
+                            "min" => Ok(SwiftValue::Int(IntValue::new(w.min(), w))),
+                            _ => {
+                                Err(EvalError::Unsupported(format!("{type_name}.{member}")).into())
+                            }
+                        };
+                    }
                 }
             }
         }
-        Err(EvalError::Unsupported(format!("member access .{member}")))
+
+        let value = self.eval(&base)?;
+        match (&value, member.as_str()) {
+            (SwiftValue::Array(items), "count") => Ok(SwiftValue::int(items.len() as i128)),
+            (SwiftValue::Array(items), "isEmpty") => Ok(SwiftValue::Bool(items.is_empty())),
+            (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
+            (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
+            _ => Err(
+                EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
+            ),
+        }
     }
 
-    /// Evaluate a call: a native function, or a numeric/string conversion
-    /// initializer like `Int(x)`, `Double(n)`, `UInt8(v)`.
-    fn eval_call(&mut self, node: &Node) -> Result<SwiftValue, EvalError> {
+    /// Evaluate a call: a user function, a native, or a conversion initializer.
+    fn eval_call(&mut self, node: &Node<'a>) -> Eval {
         let mut children = node.children();
         let callee = children
             .next()
             .ok_or_else(|| EvalError::Unsupported("call with no callee".into()))?;
 
-        let name = match callee.kind() {
-            NodeKind::IdentExpr => callee
-                .text()
-                .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?,
-            other => {
-                return Err(EvalError::Unsupported(format!("callee of kind {other:?}")));
-            }
-        };
-
-        let mut args = Vec::new();
+        // Evaluate arguments, preserving any labels.
+        let mut args: Vec<(Option<String>, SwiftValue)> = Vec::new();
         for arg in children {
-            args.push(self.eval(&arg)?);
+            let label = arg.arg_label();
+            let value = self.eval(&arg)?;
+            args.push((label, value));
         }
 
-        // Conversion initializers take exactly one argument.
-        if args.len() == 1 {
-            if let Some(v) = self.try_conversion(&name, &args[0])? {
-                return Ok(v);
+        if callee.kind() == NodeKind::IdentExpr {
+            let name = callee
+                .text()
+                .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
+
+            // A bound function value (incl. recursion) takes priority.
+            if let Some(SwiftValue::Function(id)) = self.env.get(&name) {
+                return self.call_function(id, args);
+            }
+            // Conversion initializers take exactly one argument.
+            if args.len() == 1 {
+                if let Some(v) = self.try_conversion(&name, &args[0].1)? {
+                    return Ok(v);
+                }
+            }
+            if let Some(native) = self.natives.get(&name).copied() {
+                let plain: Vec<SwiftValue> = args.into_iter().map(|(_, v)| v).collect();
+                return Ok(native(self.out, &plain));
+            }
+            return Err(EvalError::UnknownFunction(name).into());
+        }
+
+        // Callee is an arbitrary expression — must evaluate to a function value.
+        let value = self.eval(&callee)?;
+        match value {
+            SwiftValue::Function(id) => self.call_function(id, args),
+            other => {
+                Err(EvalError::Type(format!("`{}` is not callable", other.type_name())).into())
+            }
+        }
+    }
+
+    /// Invoke a user function by its table id with (possibly labeled) arguments.
+    fn call_function(&mut self, id: usize, args: Vec<(Option<String>, SwiftValue)>) -> Eval {
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap(
+                "stack overflow: recursion exceeded the maximum call depth".into(),
+            ));
+        }
+
+        // Bind parameters in a fresh scope over the function's captured chain.
+        let captured = self.funcs[id].captured.clone();
+        let call_env = Env::with_captured(captured);
+        let saved = std::mem::replace(&mut self.env, call_env);
+
+        let outcome = self.bind_and_run(id, args);
+
+        self.env = saved;
+        self.depth -= 1;
+        outcome
+    }
+
+    fn bind_and_run(&mut self, id: usize, args: Vec<(Option<String>, SwiftValue)>) -> Eval {
+        // Bind parameters. `params` are looked up by index to avoid borrowing
+        // `self.funcs` across the `self.eval` calls for default values.
+        let param_count = self.funcs[id].params.len();
+        let mut ai = 0;
+        for pi in 0..param_count {
+            let (label, name, variadic, default) = {
+                let p = &self.funcs[id].params[pi];
+                (p.label.clone(), p.name.clone(), p.variadic, p.default)
+            };
+            if variadic {
+                let mut pack = Vec::new();
+                while ai < args.len() && args[ai].0.is_none() {
+                    pack.push(args[ai].1.clone());
+                    ai += 1;
+                }
+                self.env
+                    .declare(&name, SwiftValue::Array(Rc::new(pack)), false);
+            } else if ai < args.len() {
+                let _ = &label;
+                self.env.declare(&name, args[ai].1.clone(), false);
+                ai += 1;
+            } else if let Some(def) = default {
+                let v = self.eval(&def)?;
+                self.env.declare(&name, v, false);
+            } else {
+                return Err(EvalError::Type(format!("missing argument for `{name}`")).into());
             }
         }
 
-        let native = self
-            .natives
-            .get(&name)
-            .copied()
-            .ok_or(EvalError::UnknownFunction(name))?;
-        Ok(native(self.out, &args))
+        let body = self.funcs[id].body;
+        match body {
+            Some(b) => match self.eval(&b) {
+                Ok(_) => Ok(SwiftValue::Void),
+                Err(Signal::Return(v)) => Ok(v),
+                Err(other) => Err(other),
+            },
+            None => Ok(SwiftValue::Void),
+        }
     }
 
     /// Attempt a numeric/string conversion `Type(value)`. Returns `Ok(None)` if
     /// `name` is not a known conversion type.
-    fn try_conversion(
-        &self,
-        name: &str,
-        value: &SwiftValue,
-    ) -> Result<Option<SwiftValue>, EvalError> {
+    fn try_conversion(&self, name: &str, value: &SwiftValue) -> Result<Option<SwiftValue>, Signal> {
         if let Some(w) = IntWidth::from_type_name(name) {
             let raw = match value {
                 SwiftValue::Int(i) => i.raw,
@@ -364,14 +590,13 @@ impl<'w> Interpreter<'w> {
                     return Err(EvalError::Type(format!(
                         "cannot convert {} to {name}",
                         value.type_name()
-                    )))
+                    ))
+                    .into())
                 }
             };
             let v = IntValue::new(raw, w);
             if !v.in_range() {
-                return Err(EvalError::Trap(format!(
-                    "{raw} is not representable as {name}"
-                )));
+                return Err(trap(format!("{raw} is not representable as {name}")));
             }
             return Ok(Some(SwiftValue::Int(v)));
         }
@@ -384,7 +609,8 @@ impl<'w> Interpreter<'w> {
                         return Err(EvalError::Type(format!(
                             "cannot convert {} to {name}",
                             value.type_name()
-                        )))
+                        ))
+                        .into())
                     }
                 };
                 Ok(Some(SwiftValue::Double(d)))
@@ -395,11 +621,15 @@ impl<'w> Interpreter<'w> {
     }
 }
 
+/// Whether a node is an expression (vs. a type annotation or other non-value
+/// child appearing under a declaration).
+fn is_expr(node: &Node) -> bool {
+    !matches!(node.kind(), NodeKind::TypeIdent)
+}
+
 /// Decode a Swift string literal's *source text* (including its delimiters) into
 /// the runtime string it denotes: strips quotes and processes escapes.
 fn decode_string_literal(raw: &str) -> String {
-    // Raw string: #"..."# (and ##"..."##). Strip matching #s and quotes; no
-    // escape processing inside.
     if raw.starts_with('#') {
         let hashes = raw.chars().take_while(|&c| c == '#').count();
         let inner = &raw[hashes..raw.len().saturating_sub(hashes)];
@@ -409,14 +639,12 @@ fn decode_string_literal(raw: &str) -> String {
             .unwrap_or(inner);
         return inner.to_string();
     }
-    // Multiline: """ ... """
     if let Some(body) = raw
         .strip_prefix("\"\"\"")
         .and_then(|s| s.strip_suffix("\"\"\""))
     {
         return decode_escapes(strip_multiline_indent(body));
     }
-    // Ordinary: "..."
     let body = raw
         .strip_prefix('"')
         .and_then(|s| s.strip_suffix('"'))
@@ -424,13 +652,10 @@ fn decode_string_literal(raw: &str) -> String {
     decode_escapes(body)
 }
 
-/// Remove the leading/trailing newlines and common indentation of a multiline
-/// string body (a simplified take on Swift's whitespace rules).
 fn strip_multiline_indent(body: &str) -> &str {
     body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
 }
 
-/// Process backslash escapes in a single-line/multiline string body.
 fn decode_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -448,7 +673,6 @@ fn decode_escapes(s: &str) -> String {
             Some('"') => out.push('"'),
             Some('\'') => out.push('\''),
             Some('u') => {
-                // \u{XXXX}
                 if chars.peek() == Some(&'{') {
                     chars.next();
                     let mut hex = String::new();
@@ -468,8 +692,6 @@ fn decode_escapes(s: &str) -> String {
                 }
             }
             Some(other) => {
-                // Unknown escape (e.g. interpolation `\(` handled elsewhere):
-                // keep both characters verbatim.
                 out.push('\\');
                 out.push(other);
             }
@@ -483,7 +705,6 @@ fn decode_escapes(s: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Run a program and capture its stdout.
     fn run(src: &str) -> Result<String, EvalError> {
         let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
         let mut buf: Vec<u8> = Vec::new();
@@ -515,7 +736,6 @@ mod tests {
 
     #[test]
     fn let_is_immutable() {
-        // msf rejects this at analysis time; the runtime guard is the backstop.
         let err = run("let a = 1\na = 2\n").unwrap_err();
         assert!(
             matches!(err, EvalError::Immutable(_) | EvalError::Analysis(_)),
@@ -539,5 +759,61 @@ mod tests {
     fn int_from_double_truncates() {
         let out = run("print(Int(3.9))\n").unwrap();
         assert_eq!(out, "3\n");
+    }
+
+    #[test]
+    fn factorial_recurses() {
+        let out = run(
+            "func factorial(_ n: Int) -> Int { return n == 0 ? 1 : n * factorial(n - 1) }\nprint(factorial(5))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "120\n");
+    }
+
+    #[test]
+    fn labels_defaults_and_calls() {
+        let out = run(
+            "func add(_ a: Int, to b: Int = 5) -> Int { return a + b }\nprint(add(1))\nprint(add(2, to: 3))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n5\n");
+    }
+
+    #[test]
+    fn first_class_functions() {
+        let out = run(
+            "func inc(_ n: Int) -> Int { return n + 1 }\nfunc apply(_ f: (Int) -> Int, _ x: Int) -> Int { return f(x) }\nprint(apply(inc, 5))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn variadic_collects_into_array() {
+        let out =
+            run("func n(_ xs: Int...) -> Int { return xs.count }\nprint(n(1, 2, 3))\nprint(n())\n")
+                .unwrap();
+        assert_eq!(out, "3\n0\n");
+    }
+
+    #[test]
+    fn mutual_recursion_and_forward_reference() {
+        let out = run(
+            "func isEven(_ n: Int) -> Bool { return n == 0 ? true : isOdd(n - 1) }\nfunc isOdd(_ n: Int) -> Bool { return n == 0 ? false : isEven(n - 1) }\nprint(isEven(10))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "true\n");
+    }
+
+    #[test]
+    fn deep_recursion_traps_not_crashes() {
+        // Run on a generous stack so the depth guard fires before any native
+        // overflow, proving recursion yields a catchable error.
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| run("func loop(_ n: Int) -> Int { return loop(n + 1) }\nprint(loop(0))\n"))
+            .unwrap();
+        let result = handle.join().unwrap();
+        assert!(matches!(result, Err(EvalError::Trap(_))), "got {result:?}");
     }
 }

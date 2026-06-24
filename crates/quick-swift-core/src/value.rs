@@ -5,6 +5,7 @@
 //! wrapping (`&+`/`&-`/`&*`) operators match Swift's semantics exactly.
 
 use std::fmt;
+use std::rc::Rc;
 
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
 /// width integer family. `Int`/`UInt` map to the 64-bit arms on the platforms
@@ -142,6 +143,11 @@ pub enum SwiftValue {
     Str(String),
     /// A tuple `(a, b, ...)`.
     Tuple(Vec<SwiftValue>),
+    /// An array `[a, b, ...]` (used today for variadic parameter packs).
+    Array(Rc<Vec<SwiftValue>>),
+    /// A first-class function value: an index into the interpreter's function
+    /// table paired with its captured scope chain (opaque to this crate).
+    Function(usize),
 }
 
 impl SwiftValue {
@@ -167,6 +173,8 @@ impl SwiftValue {
             SwiftValue::Double(_) => "Double".into(),
             SwiftValue::Str(_) => "String".into(),
             SwiftValue::Tuple(_) => "tuple".into(),
+            SwiftValue::Array(_) => "Array".into(),
+            SwiftValue::Function(_) => "function".into(),
         }
     }
 }
@@ -190,6 +198,17 @@ impl fmt::Display for SwiftValue {
                 }
                 write!(f, ")")
             }
+            SwiftValue::Array(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            SwiftValue::Function(_) => write!(f, "(Function)"),
         }
     }
 }
