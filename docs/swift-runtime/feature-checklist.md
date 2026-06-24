@@ -29,21 +29,21 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Integer literals (dec/hex/oct/bin, `_` separators) | ✅ | ★ | R0 |
-| [ ] | Floating-point literals (dec/hex, exponents) | ✅ | ★ | R0 |
-| [ ] | Boolean literals `true`/`false` | ✅ | ★ | R0 |
+| [x] | Integer literals (dec/hex/oct/bin, `_` separators) | ✅ | ★ | R0 |
+| [x] | Floating-point literals (dec/hex, exponents) | ✅ | ★ | R0 |
+| [x] | Boolean literals `true`/`false` | ✅ | ★ | R0 |
 | [ ] | `nil` literal | ✅ | ★ | R0 |
-| [ ] | String literals (escapes, `\u{}`) | ✅ | ★ | R0 |
-| [ ] | Multiline string literals `"""` | ✅ | ★ | R0 |
-| [ ] | Raw string literals `#"..."#` | ⚠️ | ★ | R0 |
+| [x] | String literals (escapes, `\u{}`) | ✅ | ★ | R0 |
+| [x] | Multiline string literals `"""` | ✅ | ★ | R0 |
+| [x] | Raw string literals `#"..."#` | ⚠️ | ★ | R0 |
 | [ ] | String interpolation `\(expr)` (re-parse via `msf_parse_expression`) | ✅ | ★★ | R1 |
 | [ ] | Extended string delimiters `#"\n"#` | ⚠️ | ★ | R1 |
 | [ ] | Regex literals `/.../ ` and `#/.../#` | ✅ | ★★★ | R5+ |
 | [ ] | Unicode identifiers + NFC normalization (msf vendors NFC) | ✅ | ★ | R0 |
 | [ ] | Comments (line, block, nested, doc) | ✅ | ★ | R0 |
-| [ ] | Operators: arithmetic/comparison/logical/bitwise/range | ✅ | ★ | R0 |
-| [ ] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
-| [ ] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
+| [~] | Operators: arithmetic/comparison/logical/bitwise/range | ✅ | ★ | R0 |
+| [x] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
+| [x] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
 | [ ] | Nil-coalescing `??` | ✅ | ★ | R2 |
 | [ ] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
 | [ ] | Identity operators `===` `!==` | ✅ | ★ | R3 |
@@ -57,14 +57,14 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 1a. Bindings & basic expressions
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `let` / `var` declarations + type annotations | ✅ | ★ | R0 |
-| [ ] | Type inference for initializers | ✅ | ★ | R0 |
-| [ ] | Arithmetic / comparison / logical / bitwise eval | ✅ | ★ | R0 |
-| [ ] | Compound assignment `+= -= *= …` | ✅ | ★ | R0 |
+| [x] | `let` / `var` declarations + type annotations | ✅ | ★ | R0 |
+| [x] | Type inference for initializers | ✅ | ★ | R0 |
+| [x] | Arithmetic / comparison / logical / bitwise eval | ✅ | ★ | R0 |
+| [x] | Compound assignment `+= -= *= …` | ✅ | ★ | R0 |
 | [ ] | Ternary `a ? b : c` | ✅ | ★ | R1 |
 | [ ] | Tuples + tuple decomposition `let (a,b) = …` | ✅ | ★★ | R1 |
 | [ ] | Parenthesized / wildcard `_` expressions | ✅ | ★ | R1 |
-| [ ] | Integer width conversions & `Int(x)` casts | ✅ | ★★ | R1 |
+| [x] | Integer width conversions & `Int(x)` casts | ✅ | ★★ | R1 |
 
 ### 1b. Functions
 | ✓ | Feature | FE | RT | Phase |
