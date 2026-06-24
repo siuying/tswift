@@ -36,7 +36,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | String literals (escapes, `\u{}`) | ✅ | ★ | R0 |
 | [x] | Multiline string literals `"""` | ✅ | ★ | R0 |
 | [x] | Raw string literals `#"..."#` | ⚠️ | ★ | R0 |
-| [ ] | String interpolation `\(expr)` (re-parse via `msf_parse_expression`) | ✅ | ★★ | R1 |
+| [x] | String interpolation `\(expr)` (re-parse via `msf_parse_expression`) | ✅ | ★★ | R1 |
 | [ ] | Extended string delimiters `#"\n"#` | ⚠️ | ★ | R1 |
 | [ ] | Regex literals `/.../ ` and `#/.../#` | ✅ | ★★★ | R5+ |
 | [ ] | Unicode identifiers + NFC normalization (msf vendors NFC) | ✅ | ★ | R0 |
@@ -45,7 +45,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
 | [x] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
 | [ ] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [ ] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
+| [~] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
 | [ ] | Identity operators `===` `!==` | ✅ | ★ | R3 |
 
 ---
@@ -62,8 +62,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Arithmetic / comparison / logical / bitwise eval | ✅ | ★ | R0 |
 | [x] | Compound assignment `+= -= *= …` | ✅ | ★ | R0 |
 | [x] | Ternary `a ? b : c` | ✅ | ★ | R1 |
-| [ ] | Tuples + tuple decomposition `let (a,b) = …` | ✅ | ★★ | R1 |
-| [ ] | Parenthesized / wildcard `_` expressions | ✅ | ★ | R1 |
+| [x] | Tuples + tuple decomposition `let (a,b) = …` | ✅ | ★★ | R1 |
+| [x] | Parenthesized / wildcard `_` expressions | ✅ | ★ | R1 |
 | [x] | Integer width conversions & `Int(x)` casts | ✅ | ★★ | R1 |
 
 ### 1b. Functions
@@ -83,17 +83,17 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 1c. Control flow
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `if` / `else` / `else if` | ✅ | ★ | R0 |
-| [ ] | `if` as expression (Swift 5.9) | ✅ | ★★ | R2 |
-| [ ] | `guard` / `guard let` | ✅ | ★★ | R2 |
-| [ ] | `while` / `repeat-while` | ✅ | ★ | R1 |
-| [ ] | `for-in` over ranges/arrays/sequences | ✅ | ★★ | R1 |
-| [ ] | `for case` / `for ... where` | ✅ | ★★ | R2 |
-| [ ] | `switch` + cases + `default` | ✅ | ★★★ | R1 |
-| [ ] | `switch` value/range/tuple patterns | ✅ | ★★★ | R2 |
-| [ ] | `where` clauses in cases (`cas.where_expr`) | ✅ | ★★ | R2 |
-| [ ] | `fallthrough` | ✅ | ★★ | R1 |
-| [ ] | `break` / `continue` + labeled statements | ✅ | ★★ | R1 |
+| [x] | `if` / `else` / `else if` | ✅ | ★ | R0 |
+| [x] | `if` as expression (Swift 5.9) | ✅ | ★★ | R2 |
+| [~] | `guard` / `guard let` | ✅ | ★★ | R2 |
+| [x] | `while` / `repeat-while` | ✅ | ★ | R1 |
+| [x] | `for-in` over ranges/arrays/sequences | ✅ | ★★ | R1 |
+| [~] | `for case` / `for ... where` | ✅ | ★★ | R2 |
+| [x] | `switch` + cases + `default` | ✅ | ★★★ | R1 |
+| [x] | `switch` value/range/tuple patterns | ✅ | ★★★ | R2 |
+| [x] | `where` clauses in cases (`cas.where_expr`) | ✅ | ★★ | R2 |
+| [x] | `fallthrough` | ✅ | ★★ | R1 |
+| [x] | `break` / `continue` + labeled statements | ✅ | ★★ | R1 |
 | [ ] | `switch` exhaustiveness / `@unknown default` | ✅ | ★★ | R4 |
 
 ---

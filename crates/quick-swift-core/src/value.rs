@@ -145,6 +145,12 @@ pub enum SwiftValue {
     Tuple(Vec<SwiftValue>),
     /// An array `[a, b, ...]` (used today for variadic parameter packs).
     Array(Rc<Vec<SwiftValue>>),
+    /// An integer range `lo..<hi` (exclusive) or `lo...hi` (inclusive).
+    Range {
+        lo: i128,
+        hi: i128,
+        inclusive: bool,
+    },
     /// A first-class function value: an index into the interpreter's function
     /// table paired with its captured scope chain (opaque to this crate).
     Function(usize),
@@ -174,6 +180,7 @@ impl SwiftValue {
             SwiftValue::Str(_) => "String".into(),
             SwiftValue::Tuple(_) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
+            SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
         }
     }
@@ -207,6 +214,13 @@ impl fmt::Display for SwiftValue {
                     write!(f, "{item}")?;
                 }
                 write!(f, "]")
+            }
+            SwiftValue::Range { lo, hi, inclusive } => {
+                if *inclusive {
+                    write!(f, "{lo}...{hi}")
+                } else {
+                    write!(f, "{lo}..<{hi}")
+                }
             }
             SwiftValue::Function(_) => write!(f, "(Function)"),
         }
