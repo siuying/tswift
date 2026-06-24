@@ -1,0 +1,16 @@
+[package]
+name = "quick-swift-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "quick-swift command-line interface."
+
+[[bin]]
+name = "quick-swift"
+path = "src/main.rs"
+
+[dependencies]
+msf.workspace = true
+quick-swift-core.workspace = true
+quick-swift-std.workspace = true

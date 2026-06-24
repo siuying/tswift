@@ -1,0 +1,10 @@
+[package]
+name = "quick-swift-std"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "quick-swift standard library: native Rust implementations of Swift builtins."
+
+[dependencies]
+quick-swift-core.workspace = true

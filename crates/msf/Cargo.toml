@@ -1,0 +1,10 @@
+[package]
+name = "msf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Safe Rust wrapper over msf-sys: owns analysis lifetime, exposes a borrow-checked typed AST."
+
+[dependencies]
+msf-sys.workspace = true
