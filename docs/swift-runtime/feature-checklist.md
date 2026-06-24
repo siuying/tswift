@@ -73,7 +73,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Argument labels & parameter names | ✅ | ★★ | R1 |
 | [x] | Default parameter values | ✅ | ★★ | R1 |
 | [x] | Variadic parameters `T...` | ✅ | ★★ | R1 |
-| [ ] | `inout` parameters (true lvalue aliasing) | ✅ | ★★★ | R2 |
+| [x] | `inout` parameters (true lvalue aliasing) | ✅ | ★★★ | R2 |
 | [x] | Nested functions + capture | ✅ | ★★ | R3 |
 | [x] | Function types as values / params / returns | ✅ | ★★ | R3 |
 | [ ] | Multiple return values via tuples | ✅ | ★ | R1 |
@@ -103,11 +103,11 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 2a. Structures & Enumerations (value types)
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `struct` declaration + stored properties | ✅ | ★★ | R2 |
-| [ ] | **Value semantics** (copy on assign/pass) | ✅ | ★★★ | R2 |
-| [ ] | Memberwise initializers (synthesized) | ✅ | ★★ | R2 |
-| [ ] | Methods on structs | ✅ | ★★ | R2 |
-| [ ] | `mutating` methods (inout self) | ✅ | ★★★ | R2 |
+| [x] | `struct` declaration + stored properties | ✅ | ★★ | R2 |
+| [x] | **Value semantics** (copy on assign/pass) | ✅ | ★★★ | R2 |
+| [x] | Memberwise initializers (synthesized) | ✅ | ★★ | R2 |
+| [x] | Methods on structs | ✅ | ★★ | R2 |
+| [x] | `mutating` methods (inout self) | ✅ | ★★★ | R2 |
 | [ ] | `enum` with simple cases | ✅ | ★★ | R2 |
 | [ ] | Enum **associated values** | ✅ | ★★★ | R2 |
 | [ ] | Enum **raw values** + `RawRepresentable` | ✅ | ★★ | R2 |
@@ -119,12 +119,12 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 2b. Properties
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Stored properties (let/var) | ✅ | ★ | R2 |
-| [ ] | Computed properties (get/set) | ✅ | ★★ | R2 |
-| [ ] | Read-only computed properties | ✅ | ★ | R2 |
-| [ ] | Property observers `willSet`/`didSet` | ✅ | ★★ | R3 |
-| [ ] | `lazy` stored properties | ✅ | ★★ | R3 |
-| [ ] | Type properties `static`/`class` | ✅ | ★★ | R2 |
+| [x] | Stored properties (let/var) | ✅ | ★ | R2 |
+| [x] | Computed properties (get/set) | ✅ | ★★ | R2 |
+| [x] | Read-only computed properties | ✅ | ★ | R2 |
+| [x] | Property observers `willSet`/`didSet` | ✅ | ★★ | R3 |
+| [x] | `lazy` stored properties | ✅ | ★★ | R3 |
+| [~] | Type properties `static`/`class` | ✅ | ★★ | R2 |
 | [ ] | Property wrappers `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [ ] | Projected values `$wrapper` | ⚠️ | ★★★ | R5 |
 | [ ] | Global & local variables (lazy globals) | ✅ | ★★ | R2 |
