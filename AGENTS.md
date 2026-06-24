@@ -19,7 +19,7 @@ Read `docs/swift-runtime/feature-checklist.md`. It is the feature checklist.
 
 When a feature is partially or fully implemented and fully verified, update the checklist item.
 
-Every feature have a corresponding **Golden fixtures** (tests/fixtures/*.swift) in swift.
+Every feature have a corresponding **Golden fixtures** (vendor/msf/tests/swift-fixtures/*.swift) in swift.
 
 Every rust change should be fully covered in tests.
 
