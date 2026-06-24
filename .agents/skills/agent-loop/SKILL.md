@@ -17,8 +17,6 @@ For each single issue:
   - Include a short summary of the changes in the PR description.
   - Include which issues this PR closes "Closes #<issue-number>".
   - For task with tests, include list of what is tested in the PR.
-  - For task with UI change, include screenshots of important changes.
-- Write the result to a temporary markdown file.
 - If there are anything you cannot resolve, leave a comment to the issue and label it `ready-for-agent` and `blocked`.
 
 Work until all issues are implemented / blocked. Generate a clean and beautiful summary, in html of all implemented issues and their results, open it on browser.
