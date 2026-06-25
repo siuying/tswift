@@ -154,6 +154,33 @@ pub enum SwiftValue {
     /// A first-class function value: an index into the interpreter's function
     /// table paired with its captured scope chain (opaque to this crate).
     Function(usize),
+    /// A value-semantics struct instance. The `Rc` enables copy-on-write: an
+    /// assignment shares the `Rc`; a mutation calls [`Rc::make_mut`] to clone
+    /// only when the instance is aliased.
+    Struct(Rc<StructObj>),
+}
+
+/// The storage of a struct instance: its type name and ordered fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructObj {
+    pub type_name: String,
+    pub fields: Vec<(String, SwiftValue)>,
+}
+
+impl StructObj {
+    /// Read a stored field by name.
+    pub fn get(&self, name: &str) -> Option<&SwiftValue> {
+        self.fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    /// Set a stored field, inserting it if absent.
+    pub fn set(&mut self, name: &str, value: SwiftValue) {
+        if let Some(slot) = self.fields.iter_mut().find(|(n, _)| n == name) {
+            slot.1 = value;
+        } else {
+            self.fields.push((name.to_string(), value));
+        }
+    }
 }
 
 impl SwiftValue {
@@ -182,6 +209,7 @@ impl SwiftValue {
             SwiftValue::Array(_) => "Array".into(),
             SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
+            SwiftValue::Struct(s) => s.type_name.clone(),
         }
     }
 }
@@ -223,6 +251,16 @@ impl fmt::Display for SwiftValue {
                 }
             }
             SwiftValue::Function(_) => write!(f, "(Function)"),
+            SwiftValue::Struct(s) => {
+                write!(f, "{}(", s.type_name)?;
+                for (i, (name, value)) in s.fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {value}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -240,5 +278,42 @@ pub fn format_double(d: f64) -> String {
         format!("{d:.1}")
     } else {
         format!("{d}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Copy-on-write: assigning shares the `Rc`; mutating one side clones it,
+    /// leaving the other's storage uniquely owned and unchanged.
+    #[test]
+    fn struct_cow_uniqueness() {
+        let a = SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "P".into(),
+            fields: vec![("x".into(), SwiftValue::int(1))],
+        }));
+        let mut b = a.clone(); // assignment shares the Rc
+
+        if let SwiftValue::Struct(ra) = &a {
+            assert_eq!(Rc::strong_count(ra), 2, "assignment should share storage");
+        }
+
+        if let SwiftValue::Struct(rb) = &mut b {
+            Rc::make_mut(rb).set("x", SwiftValue::int(99)); // CoW clone
+        }
+
+        match (&a, &b) {
+            (SwiftValue::Struct(ra), SwiftValue::Struct(rb)) => {
+                assert_eq!(
+                    Rc::strong_count(ra),
+                    1,
+                    "original is uniquely owned after CoW"
+                );
+                assert_eq!(ra.get("x"), Some(&SwiftValue::int(1)));
+                assert_eq!(rb.get("x"), Some(&SwiftValue::int(99)));
+            }
+            _ => unreachable!(),
+        }
     }
 }

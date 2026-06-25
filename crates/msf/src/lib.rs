@@ -277,10 +277,42 @@ impl<'a> Node<'a> {
             (label, second)
         };
         const MOD_VARIADIC: u32 = 1 << 28;
+        let is_inout = self
+            .children()
+            .any(|c| c.kind() == crate::NodeKind::TypeInout);
         ParamInfo {
             label,
             name,
             variadic: modifiers & MOD_VARIADIC != 0,
+            is_inout,
+        }
+    }
+
+    /// For a `var`/`let` property, its computed-accessor bodies and observer
+    /// bodies (with their parameter names), read from msf's `var` union arm.
+    pub fn var_accessors(&self) -> VarAccessors<'a> {
+        // SAFETY: the `var` arm is active for VAR_DECL/LET_DECL nodes.
+        let v = unsafe { (*self.ptr).data.var };
+        let node = |p: *mut msf_sys::ASTNode| {
+            if p.is_null() {
+                None
+            } else {
+                Some(Node {
+                    ptr: p,
+                    analysis: self.analysis,
+                })
+            }
+        };
+        VarAccessors {
+            is_computed: v.is_computed != 0,
+            has_setter: v.has_setter != 0,
+            getter_body: node(v.getter_body),
+            setter_body: node(v.setter_body),
+            will_set_body: node(v.will_set_body),
+            did_set_body: node(v.did_set_body),
+            setter_param: opt_tok(self.analysis, v.setter_param_name_tok),
+            will_set_param: opt_tok(self.analysis, v.will_set_param_name_tok),
+            did_set_param: opt_tok(self.analysis, v.did_set_param_name_tok),
         }
     }
 
@@ -441,6 +473,31 @@ pub struct ParamInfo {
     pub name: String,
     /// Whether the parameter is variadic (`T...`).
     pub variadic: bool,
+    /// Whether the parameter is `inout`.
+    pub is_inout: bool,
+}
+
+/// Read the text of token `tok`, treating index 0 (msf's "no token") as `None`.
+fn opt_tok(analysis: &Analysis, tok: u32) -> Option<String> {
+    if tok == 0 {
+        None
+    } else {
+        analysis.token_text_at(tok)
+    }
+}
+
+/// Computed-accessor and observer bodies of a `var`/`let` property.
+#[derive(Clone)]
+pub struct VarAccessors<'a> {
+    pub is_computed: bool,
+    pub has_setter: bool,
+    pub getter_body: Option<Node<'a>>,
+    pub setter_body: Option<Node<'a>>,
+    pub will_set_body: Option<Node<'a>>,
+    pub did_set_body: Option<Node<'a>>,
+    pub setter_param: Option<String>,
+    pub will_set_param: Option<String>,
+    pub did_set_param: Option<String>,
 }
 
 /// One analysis diagnostic (syntax or semantic error).
