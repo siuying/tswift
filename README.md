@@ -63,7 +63,7 @@ in the stack (`quick-swift-frontend` is `#![forbid(unsafe_code)]`).
      │
      ▼
 ┌────────────────────────────────┐
-│ pure-Rust frontend             │
+│ Frontend                       │
 │  swift-lexer                   │
 │    → swift-ast                 │
 │    → swift-parser              │
@@ -74,7 +74,7 @@ in the stack (`quick-swift-frontend` is `#![forbid(unsafe_code)]`).
                  │ Analysis / Node / NodeKind
                  ▼
 ┌────────────────────────────────┐
-│ Rust runtime (quick-swift)     │
+│ Runtime (quick-swift)          │
 │  core → std → cli              │
 │  language features +           │
 │  standard library              │
@@ -91,22 +91,16 @@ in the stack (`quick-swift-frontend` is `#![forbid(unsafe_code)]`).
 
 ### Workspace layout
 
-| Crate | Role | `unsafe`? |
-|---|---|---|
-| [`crates/swift-lexer`](crates/swift-lexer) | Tokenizer for Swift source | no |
-| [`crates/swift-ast`](crates/swift-ast) | AST node definitions | no |
-| [`crates/swift-parser`](crates/swift-parser) | Recursive-descent parser | no |
-| [`crates/swift-sema`](crates/swift-sema) | Semantic analysis / type resolution | no |
-| [`crates/quick-swift-frontend`](crates/quick-swift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime | no (`#![forbid(unsafe_code)]`) |
-| [`crates/quick-swift-core`](crates/quick-swift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam | no |
-| [`crates/quick-swift-std`](crates/quick-swift-std) | Native standard library builtins (e.g. `print`) | no |
-| [`crates/quick-swift-cli`](crates/quick-swift-cli) | The `quick-swift` binary | no |
-
-The `Analysis` → `Node<'a>` lifetime invariant — *nodes can never outlive the arena
-that owns them* — is enforced by the borrow checker. See
-[`docs/adr/0001-ffi-strategy-and-crate-architecture.md`](docs/adr/0001-ffi-strategy-and-crate-architecture.md)
-and the [implementation plan](docs/plan/swift-runtime-implementation-plan.md) for the
-full architecture and rationale.
+| Crate | Role |
+|---|---|
+| [`crates/swift-lexer`](crates/swift-lexer) | Tokenizer for Swift source |
+| [`crates/swift-ast`](crates/swift-ast) | AST node definitions |
+| [`crates/swift-parser`](crates/swift-parser) | Recursive-descent parser |
+| [`crates/swift-sema`](crates/swift-sema) | Semantic analysis / type resolution |
+| [`crates/quick-swift-frontend`](crates/quick-swift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime |
+| [`crates/quick-swift-core`](crates/quick-swift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam |
+| [`crates/quick-swift-std`](crates/quick-swift-std) | Native standard library builtins (e.g. `print`) |
+| [`crates/quick-swift-cli`](crates/quick-swift-cli) | The `quick-swift` binary |
 
 ---
 
