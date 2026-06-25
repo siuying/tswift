@@ -99,8 +99,36 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Result<NodeId, ParseError> {
-        if self.at_keyword("let") || self.at_keyword("var") {
-            return self.parse_binding();
+        // Labeled loop/switch: `outer: for ...`.
+        if self.peek().kind == TokenKind::Identifier
+            && self.tokens[self.pos + 1].kind == TokenKind::Colon
+            && is_labelable(self.tokens[self.pos + 2].text)
+        {
+            let label = self.bump();
+            self.bump(); // ':'
+            return self.parse_labeled(label.text);
+        }
+        if self.peek().kind == TokenKind::Keyword {
+            match self.peek().text {
+                "let" | "var" => return self.parse_binding(),
+                "func" => return self.parse_func(),
+                "return" => return self.parse_return(),
+                "if" => return self.parse_if(),
+                "guard" => return self.parse_guard(),
+                "while" => return self.parse_while(None),
+                "repeat" => return self.parse_repeat(None),
+                "for" => return self.parse_for(None),
+                "switch" => return self.parse_switch(None),
+                "break" => return self.parse_jump(NodeKind::BreakStmt),
+                "continue" => return self.parse_jump(NodeKind::ContinueStmt),
+                "fallthrough" => {
+                    let kw = self.bump();
+                    return Ok(self
+                        .ast
+                        .add(NodeKind::FallthroughStmt, None, kw.line, kw.col));
+                }
+                _ => {}
+            }
         }
         // Expression statement, possibly an assignment `lhs op= rhs`.
         let expr = self.parse_expr(0)?;
@@ -146,6 +174,258 @@ impl<'a> Parser<'a> {
             self.ast.append_child(decl, init);
         }
         Ok(decl)
+    }
+
+    fn parse_labeled(&mut self, label: &str) -> Result<NodeId, ParseError> {
+        match self.peek().text {
+            "while" => self.parse_while(Some(label)),
+            "repeat" => self.parse_repeat(Some(label)),
+            "for" => self.parse_for(Some(label)),
+            "switch" => self.parse_switch(Some(label)),
+            _ => self.error("expected a loop or switch after a statement label"),
+        }
+    }
+
+    /// A braced `{ statements }` block.
+    fn parse_block(&mut self) -> Result<NodeId, ParseError> {
+        let open = self.expect(TokenKind::LBrace)?;
+        let block = self.ast.add(NodeKind::Block, None, open.line, open.col);
+        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+            let stmt = self.parse_statement()?;
+            self.ast.append_child(block, stmt);
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(block)
+    }
+
+    /// `func name(params) [-> Ret] { body }`. Children: params, optional return
+    /// `TypeRef`, then the body `Block`.
+    fn parse_func(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let name = self.expect(TokenKind::Identifier)?;
+        let func = self
+            .ast
+            .add(NodeKind::FuncDecl, Some(name.text), kw.line, kw.col);
+        self.expect(TokenKind::LParen)?;
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                let p = self.parse_param()?;
+                self.ast.append_child(func, p);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        if self.at_oper("->") {
+            self.bump();
+            let ret = self.parse_type()?;
+            self.ast.append_child(func, ret);
+        }
+        let body = self.parse_block()?;
+        self.ast.append_child(func, body);
+        Ok(func)
+    }
+
+    /// `[externalLabel] name: [inout] Type [...] [= default]`.
+    fn parse_param(&mut self) -> Result<NodeId, ParseError> {
+        let first = self.peek();
+        if first.kind != TokenKind::Identifier {
+            return self.error(format!("expected a parameter name, found {:?}", first.kind));
+        }
+        self.bump();
+        // A second identifier before the colon means `first` was the label.
+        let name = if self.peek().kind == TokenKind::Identifier {
+            self.bump().text
+        } else {
+            first.text
+        };
+        let param = self
+            .ast
+            .add(NodeKind::Param, Some(name), first.line, first.col);
+        self.expect(TokenKind::Colon)?;
+        if self.at_keyword("inout") {
+            self.bump();
+        }
+        let ty = self.parse_type()?;
+        self.ast.append_child(param, ty);
+        if self.at_oper("...") {
+            self.bump(); // variadic marker
+        }
+        if self.at_oper("=") {
+            self.bump();
+            let default = self.parse_expr(0)?;
+            self.ast.append_child(param, default);
+        }
+        Ok(param)
+    }
+
+    /// `return [expr]`. The value, when present, is on the same line.
+    fn parse_return(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::ReturnStmt, None, kw.line, kw.col);
+        let next = self.peek();
+        let ends = matches!(next.kind, TokenKind::RBrace | TokenKind::Eof);
+        if !ends && !next.leading_newline {
+            let expr = self.parse_expr(0)?;
+            self.ast.append_child(node, expr);
+        }
+        Ok(node)
+    }
+
+    /// `if cond { } [else (if ... | { })]`. Usable as a statement or expression.
+    fn parse_if(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::IfStmt, None, kw.line, kw.col);
+        let cond = self.parse_expr(0)?;
+        self.ast.append_child(node, cond);
+        let then = self.parse_block()?;
+        self.ast.append_child(node, then);
+        if self.at_keyword("else") {
+            self.bump();
+            let else_branch = if self.at_keyword("if") {
+                self.parse_if()?
+            } else {
+                self.parse_block()?
+            };
+            self.ast.append_child(node, else_branch);
+        }
+        Ok(node)
+    }
+
+    fn parse_guard(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::GuardStmt, None, kw.line, kw.col);
+        let cond = self.parse_expr(0)?;
+        self.ast.append_child(node, cond);
+        if !self.at_keyword("else") {
+            return self.error("expected 'else' after the guard condition");
+        }
+        self.bump();
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    fn parse_while(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::WhileStmt, label, kw.line, kw.col);
+        let cond = self.parse_expr(0)?;
+        self.ast.append_child(node, cond);
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    fn parse_repeat(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::RepeatStmt, label, kw.line, kw.col);
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        if !self.at_keyword("while") {
+            return self.error("expected 'while' after a repeat body");
+        }
+        self.bump();
+        let cond = self.parse_expr(0)?;
+        self.ast.append_child(node, cond);
+        Ok(node)
+    }
+
+    /// `for pattern in iterable [where cond] { body }`. Children: pattern,
+    /// iterable, optional where-expr, then the body `Block` (always last).
+    fn parse_for(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::ForStmt, label, kw.line, kw.col);
+        let pattern = self.parse_pattern()?;
+        self.ast.append_child(node, pattern);
+        if !self.at_keyword("in") {
+            return self.error("expected 'in' in a for-loop");
+        }
+        self.bump();
+        let iterable = self.parse_expr(0)?;
+        self.ast.append_child(node, iterable);
+        if self.at_keyword("where") {
+            self.bump();
+            let cond = self.parse_expr(0)?;
+            self.ast.append_child(node, cond);
+        }
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// `switch subject { case ... / default ... }`.
+    fn parse_switch(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::SwitchStmt, label, kw.line, kw.col);
+        let subject = self.parse_expr(0)?;
+        self.ast.append_child(node, subject);
+        self.expect(TokenKind::LBrace)?;
+        while self.at_keyword("case") || self.at_keyword("default") {
+            let clause = self.parse_case_clause()?;
+            self.ast.append_child(node, clause);
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(node)
+    }
+
+    /// One `case items [where cond]:` or `default:` clause. Children: the case
+    /// items, an optional where-expr, then a `Block` of the clause body (last).
+    fn parse_case_clause(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let is_default = kw.text == "default";
+        let label = if is_default { Some("default") } else { None };
+        let clause = self.ast.add(NodeKind::CaseClause, label, kw.line, kw.col);
+        if !is_default {
+            loop {
+                let item = self.parse_case_item()?;
+                self.ast.append_child(clause, item);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+            if self.at_keyword("where") {
+                self.bump();
+                let cond = self.parse_expr(0)?;
+                self.ast.append_child(clause, cond);
+            }
+        }
+        self.expect(TokenKind::Colon)?;
+        let body = self.ast.add(NodeKind::Block, None, kw.line, kw.col);
+        while !self.at_keyword("case")
+            && !self.at_keyword("default")
+            && self.peek().kind != TokenKind::RBrace
+            && !self.at_eof()
+        {
+            let stmt = self.parse_statement()?;
+            self.ast.append_child(body, stmt);
+        }
+        self.ast.append_child(clause, body);
+        Ok(clause)
+    }
+
+    /// A `case` item: a `let`/`var` binding pattern or a value-pattern expression.
+    fn parse_case_item(&mut self) -> Result<NodeId, ParseError> {
+        if self.at_keyword("let") || self.at_keyword("var") {
+            self.bump();
+            return self.parse_pattern();
+        }
+        self.parse_expr(0)
+    }
+
+    /// `break`/`continue` with an optional same-line target label.
+    fn parse_jump(&mut self, kind: NodeKind) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let label = if self.peek().kind == TokenKind::Identifier && !self.peek().leading_newline {
+            Some(self.bump().text)
+        } else {
+            None
+        };
+        Ok(self.ast.add(kind, label, kw.line, kw.col))
     }
 
     fn parse_pattern(&mut self) -> Result<NodeId, ParseError> {
@@ -319,6 +599,7 @@ impl<'a> Parser<'a> {
                 self.ast
                     .add(NodeKind::StringLiteral, Some(t.text), t.line, t.col)
             }
+            TokenKind::Keyword if t.text == "if" => return self.parse_if(),
             TokenKind::Keyword if t.text == "true" || t.text == "false" => {
                 self.bump();
                 self.ast
@@ -426,6 +707,11 @@ fn binding_power(op: &str) -> Option<(u8, u8)> {
         _ => return None,
     };
     Some((p, p + 1))
+}
+
+/// Whether `kw` is a statement that may carry a leading `label:`.
+fn is_labelable(kw: &str) -> bool {
+    matches!(kw, "for" | "while" | "repeat" | "switch")
 }
 
 /// Whether `op` is a plain or compound assignment operator.
@@ -637,5 +923,161 @@ mod tests {
     fn trailing_operator_is_an_error() {
         let err = parse("1 +").unwrap_err();
         assert!(err.message.contains("expression"), "{}", err.message);
+    }
+
+    #[test]
+    fn function_declaration() {
+        let ast = ast_of("func add(_ a: Int, b: Int = 0) -> Int { return a + b }");
+        let func = first_stmt(&ast);
+        assert_eq!(func.kind(), NodeKind::FuncDecl);
+        assert_eq!(func.text(), Some("add"));
+        let kinds: Vec<_> = func.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                NodeKind::Param,
+                NodeKind::Param,
+                NodeKind::TypeRef, // return type
+                NodeKind::Block,
+            ]
+        );
+        // The second param has a default-value child after its type.
+        let p2 = func.children().nth(1).unwrap();
+        assert_eq!(p2.text(), Some("b"));
+        assert_eq!(
+            p2.children().nth(1).unwrap().kind(),
+            NodeKind::IntegerLiteral
+        );
+        // The body's lone statement is a return with a value.
+        let body = func.children().nth(3).unwrap();
+        let ret = body.children().next().unwrap();
+        assert_eq!(ret.kind(), NodeKind::ReturnStmt);
+        assert_eq!(ret.children().next().unwrap().kind(), NodeKind::BinaryExpr);
+    }
+
+    #[test]
+    fn variadic_and_inout_params_parse() {
+        let ast = ast_of("func f(_ xs: Int..., flag: inout Bool) { }");
+        let func = first_stmt(&ast);
+        let params: Vec<_> = func
+            .children()
+            .filter(|c| c.kind() == NodeKind::Param)
+            .map(|c| c.text())
+            .collect();
+        assert_eq!(params, vec![Some("xs"), Some("flag")]);
+    }
+
+    #[test]
+    fn if_else_if_chain() {
+        let ast = ast_of("if a { } else if b { } else { }");
+        let iff = first_stmt(&ast);
+        assert_eq!(iff.kind(), NodeKind::IfStmt);
+        // cond, then-block, else (nested if)
+        let else_branch = iff.children().nth(2).unwrap();
+        assert_eq!(else_branch.kind(), NodeKind::IfStmt);
+    }
+
+    #[test]
+    fn if_as_expression_in_binding() {
+        let ast = ast_of("let g = if c { 1 } else { 2 }");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::IfStmt);
+    }
+
+    #[test]
+    fn guard_statement() {
+        let ast = ast_of("guard x > 0 else { return }");
+        let g = first_stmt(&ast);
+        assert_eq!(g.kind(), NodeKind::GuardStmt);
+        assert_eq!(g.children().next().unwrap().kind(), NodeKind::BinaryExpr);
+        assert_eq!(g.children().nth(1).unwrap().kind(), NodeKind::Block);
+    }
+
+    #[test]
+    fn while_and_repeat_loops() {
+        assert_eq!(
+            first_stmt(&ast_of("while n > 0 { }")).kind(),
+            NodeKind::WhileStmt
+        );
+        let r = ast_of("repeat { } while n < 3");
+        let node = first_stmt(&r);
+        assert_eq!(node.kind(), NodeKind::RepeatStmt);
+        // body block first, condition second
+        assert_eq!(node.children().next().unwrap().kind(), NodeKind::Block);
+        assert_eq!(node.children().nth(1).unwrap().kind(), NodeKind::BinaryExpr);
+    }
+
+    #[test]
+    fn for_in_with_where_clause() {
+        let ast = ast_of("for x in 0 ..< 5 where x > 1 { }");
+        let f = first_stmt(&ast);
+        assert_eq!(f.kind(), NodeKind::ForStmt);
+        let kinds: Vec<_> = f.children().map(|c| c.kind()).collect();
+        // pattern, iterable, where-expr, body block
+        assert_eq!(
+            kinds,
+            vec![
+                NodeKind::NamePattern,
+                NodeKind::BinaryExpr,
+                NodeKind::BinaryExpr,
+                NodeKind::Block,
+            ]
+        );
+    }
+
+    #[test]
+    fn switch_with_cases_and_default() {
+        let src = "switch n {\n\
+                   case 0: return\n\
+                   case 1, 2: break\n\
+                   case let x where x < 0: return\n\
+                   default: break\n\
+                   }";
+        let ast = ast_of(src);
+        let sw = first_stmt(&ast);
+        assert_eq!(sw.kind(), NodeKind::SwitchStmt);
+        let clauses: Vec<_> = sw
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        assert_eq!(clauses.len(), 4);
+        // The `case 1, 2:` clause has two value items before its body block.
+        let multi = &clauses[1];
+        let items = multi
+            .children()
+            .filter(|c| c.kind() != NodeKind::Block)
+            .count();
+        assert_eq!(items, 2);
+        // The default clause is labelled.
+        assert_eq!(clauses[3].text(), Some("default"));
+    }
+
+    #[test]
+    fn labeled_loop_with_break_label() {
+        let src = "outer: for i in xs {\n\
+                   for j in ys {\n\
+                   break outer\n\
+                   }\n\
+                   }";
+        let ast = ast_of(src);
+        let outer = first_stmt(&ast);
+        assert_eq!(outer.kind(), NodeKind::ForStmt);
+        assert_eq!(outer.text(), Some("outer"));
+        // Drill to the inner break and check its captured label.
+        let inner_body = outer.children().last().unwrap();
+        let inner_for = inner_body.children().next().unwrap();
+        let inner_block = inner_for.children().last().unwrap();
+        let brk = inner_block.children().next().unwrap();
+        assert_eq!(brk.kind(), NodeKind::BreakStmt);
+        assert_eq!(brk.text(), Some("outer"));
+    }
+
+    #[test]
+    fn bare_break_has_no_label() {
+        let ast = ast_of("while c { break\nfoo() }");
+        let body = first_stmt(&ast).children().nth(1).unwrap();
+        let brk = body.children().next().unwrap();
+        assert_eq!(brk.kind(), NodeKind::BreakStmt);
+        assert_eq!(brk.text(), None); // `foo` on the next line is not its label
     }
 }

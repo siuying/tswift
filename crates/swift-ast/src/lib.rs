@@ -38,6 +38,34 @@ pub enum NodeKind {
     LetDecl,
     /// A `var` binding declaration.
     VarDecl,
+    /// A function declaration, `func name(params) -> Ret { body }`.
+    FuncDecl,
+    /// A single function parameter.
+    Param,
+    /// A braced statement block `{ ... }`.
+    Block,
+    /// A `return [expr]` statement.
+    ReturnStmt,
+    /// An `if`/`else` statement (or expression).
+    IfStmt,
+    /// A `guard ... else { }` statement.
+    GuardStmt,
+    /// A `while` loop.
+    WhileStmt,
+    /// A `repeat { } while ...` loop.
+    RepeatStmt,
+    /// A `for ... in ... [where ...] { }` loop.
+    ForStmt,
+    /// A `switch` statement.
+    SwitchStmt,
+    /// One `case`/`default` clause of a `switch`.
+    CaseClause,
+    /// A `break [label]` statement.
+    BreakStmt,
+    /// A `continue [label]` statement.
+    ContinueStmt,
+    /// A `fallthrough` statement.
+    FallthroughStmt,
     /// A written type annotation, e.g. the `Int` in `let x: Int`.
     TypeRef,
     /// A binding pattern that names a value, e.g. the `x` in `let x = 1`.
@@ -74,6 +102,20 @@ impl NodeKind {
             NodeKind::MemberExpr => "member_expr",
             NodeKind::LetDecl => "let_decl",
             NodeKind::VarDecl => "var_decl",
+            NodeKind::FuncDecl => "func_decl",
+            NodeKind::Param => "param",
+            NodeKind::Block => "block",
+            NodeKind::ReturnStmt => "return_stmt",
+            NodeKind::IfStmt => "if_stmt",
+            NodeKind::GuardStmt => "guard_stmt",
+            NodeKind::WhileStmt => "while_stmt",
+            NodeKind::RepeatStmt => "repeat_stmt",
+            NodeKind::ForStmt => "for_stmt",
+            NodeKind::SwitchStmt => "switch_stmt",
+            NodeKind::CaseClause => "case_clause",
+            NodeKind::BreakStmt => "break_stmt",
+            NodeKind::ContinueStmt => "continue_stmt",
+            NodeKind::FallthroughStmt => "fallthrough_stmt",
             NodeKind::TypeRef => "type_ref",
             NodeKind::NamePattern => "name_pattern",
             NodeKind::WildcardPattern => "wildcard_pattern",
