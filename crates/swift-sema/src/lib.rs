@@ -68,12 +68,17 @@ impl Resolver {
         match ast.node(stmt).kind() {
             NodeKind::LetDecl | NodeKind::VarDecl => self.resolve_binding(ast, stmt),
             NodeKind::FuncDecl => self.resolve_func(ast, stmt, &kids),
-            NodeKind::StructDecl | NodeKind::EnumDecl => {
+            NodeKind::StructDecl | NodeKind::EnumDecl | NodeKind::ClassDecl => {
                 self.push_scope();
                 for &member in &kids {
                     self.resolve_statement(ast, member);
                 }
                 self.pop_scope();
+            }
+            NodeKind::DeinitDecl => {
+                for &c in &kids {
+                    self.resolve_statement(ast, c);
+                }
             }
             NodeKind::InitDecl | NodeKind::SubscriptDecl => {
                 self.push_scope();
@@ -300,6 +305,27 @@ impl Resolver {
                     self.infer(ast, *c);
                 }
                 Some(Type::Void)
+            }
+            NodeKind::ClosureExpr => {
+                self.push_scope();
+                for c in &children {
+                    self.resolve_statement(ast, *c);
+                }
+                self.pop_scope();
+                None
+            }
+            NodeKind::CastExpr => {
+                if let Some(c) = children.first() {
+                    self.infer(ast, *c);
+                }
+                match node.text() {
+                    Some("is") => Some(Type::Bool),
+                    Some("as?") => None,
+                    _ => children
+                        .get(1)
+                        .and_then(|c| ast.node(*c).text())
+                        .and_then(parse_type_name),
+                }
             }
             _ => {
                 for c in &children {
@@ -550,5 +576,25 @@ mod tests {
     fn if_let_binding_resolves() {
         let (_ast, diags) = resolved("var maybe = 1\nif let value = maybe { let doubled = value }");
         assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    // --- Tier 3 ---
+
+    #[test]
+    fn classes_and_closures_resolve() {
+        let src = "class Animal {\n\
+                   let name: String\n\
+                   init(name: String) { self.name = name }\n\
+                   deinit { }\n\
+                   }\n\
+                   let twice = numbers.map { x in x + x }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn is_cast_is_bool() {
+        let (ast, _diags) = resolved("let flag = value is Int");
+        assert_eq!(first_binding_init_type(&ast), Some("Bool"));
     }
 }
