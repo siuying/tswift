@@ -29,6 +29,7 @@ pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
         diags: Vec::new(),
     };
     let root = ast.root();
+    r.prebind_func_decls(ast, root);
     for stmt in child_ids(ast, root) {
         r.resolve_statement(ast, stmt);
     }
@@ -47,6 +48,22 @@ struct Resolver {
 }
 
 impl Resolver {
+    fn prebind_func_decls(&mut self, ast: &Ast, parent: NodeId) {
+        for child in child_ids(ast, parent) {
+            if ast.node(child).kind() != NodeKind::FuncDecl {
+                continue;
+            }
+            let ret = child_ids(ast, child)
+                .into_iter()
+                .find(|c| ast.node(*c).kind() == NodeKind::TypeRef)
+                .and_then(|c| ast.node(c).text().and_then(parse_type_name))
+                .unwrap_or(Type::Void);
+            if let Some(name) = ast.node(child).text() {
+                self.bind(name, ret);
+            }
+        }
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -109,6 +126,7 @@ impl Resolver {
             }
             NodeKind::Block => {
                 self.push_scope();
+                self.prebind_func_decls(ast, stmt);
                 for &s in &kids {
                     self.resolve_statement(ast, s);
                 }
@@ -301,10 +319,11 @@ impl Resolver {
             NodeKind::NilLiteral => None,
             NodeKind::IdentExpr => node.text().and_then(|name| self.lookup(name)),
             NodeKind::CallExpr => {
-                for c in &children {
+                let callee_ty = children.first().and_then(|c| self.infer(ast, *c));
+                for c in children.iter().skip(1) {
                     self.infer(ast, *c);
                 }
-                Some(Type::Void)
+                callee_ty.or(Some(Type::Void))
             }
             NodeKind::PrefixExpr => {
                 let operand = children.first().and_then(|c| self.infer(ast, *c));
@@ -543,6 +562,14 @@ mod tests {
     }
 
     // --- Tier 1b/1c ---
+
+    #[test]
+    fn recursive_function_calls_use_declared_return_type() {
+        let (_ast, diags) = resolved(
+            "func factorial(_ n: Int) -> Int { return n == 0 ? 1 : n * factorial(n - 1) }",
+        );
+        assert!(diags.is_empty(), "{diags:?}");
+    }
 
     #[test]
     fn function_params_are_in_scope_in_the_body() {

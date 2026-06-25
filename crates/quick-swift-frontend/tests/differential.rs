@@ -1,3 +1,5 @@
+#![cfg(not(feature = "rust-backend"))]
+
 //! Differential test: the pure-Rust frontend vs the C `msf` oracle.
 //!
 //! For every snippet, we analyze it with **both** backends and compare their

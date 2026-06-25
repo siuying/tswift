@@ -13,7 +13,7 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use quick_swift_core::Interpreter;
-use quick_swift_frontend::Analysis;
+use quick_swift_frontend::{Analysis, AnalyzeError};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -69,7 +69,7 @@ fn dump(path: &str, json: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let analysis = match Analysis::analyze(&source, path) {
+    let analysis = match analyze_source(&source, path) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("error: {e}");
@@ -86,6 +86,16 @@ fn dump(path: &str, json: bool) -> ExitCode {
         print!("{}", root.dump());
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(feature = "rust-backend")]
+fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError> {
+    Analysis::analyze_rust(source, filename)
+}
+
+#[cfg(not(feature = "rust-backend"))]
+fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError> {
+    Analysis::analyze(source, filename)
 }
 
 /// Analyze and evaluate the Swift file(s) at `paths`. Multiple files form one
@@ -106,7 +116,7 @@ fn run(paths: &[String]) -> ExitCode {
     }
     let path = paths[0].as_str();
 
-    let analysis = match Analysis::analyze(&source, path) {
+    let analysis = match analyze_source(&source, path) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("error: {e}");
