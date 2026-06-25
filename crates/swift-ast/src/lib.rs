@@ -91,6 +91,9 @@ pub enum NodeKind {
     Attribute,
     /// A closure expression `{ [captures] params in body }`.
     ClosureExpr,
+    /// One entry of a closure capture list (`[weak self]`, `[base = 100]`).
+    /// Text is the captured name; an optional child is the capture initializer.
+    ClosureCapture,
     /// A type-cast expression `operand is/as/as?/as! Type` (text is the operator).
     CastExpr,
     /// One `case` of an enum (text is the case name; children are associated
@@ -204,6 +207,7 @@ impl NodeKind {
             NodeKind::CompilerDirective => "compiler_directive",
             NodeKind::Attribute => "attribute",
             NodeKind::ClosureExpr => "closure_expr",
+            NodeKind::ClosureCapture => "closure_capture",
             NodeKind::CastExpr => "cast_expr",
             NodeKind::EnumCaseDecl => "enum_case_decl",
             NodeKind::InitDecl => "init_decl",

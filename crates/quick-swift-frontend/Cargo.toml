@@ -4,22 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Safe Rust wrapper over msf-sys: owns analysis lifetime, exposes a borrow-checked typed AST."
-
-[features]
-default = []
-rust-backend = ["dep:swift-ast", "dep:swift-parser", "dep:swift-sema"]
+description = "Pure-Rust Swift frontend: drives the lexer/parser/sema pipeline and exposes the runtime-facing typed AST."
 
 [dependencies]
-msf-sys.workspace = true
-swift-ast = { path = "../swift-ast", optional = true }
-swift-parser = { path = "../swift-parser", optional = true }
-swift-sema = { path = "../swift-sema", optional = true }
-
-# Dev-only: the pure-Rust pipeline is used by the differential test to check the
-# new frontend against the C oracle.
-[dev-dependencies]
-swift-lexer = { path = "../swift-lexer" }
 swift-ast = { path = "../swift-ast" }
 swift-parser = { path = "../swift-parser" }
 swift-sema = { path = "../swift-sema" }
+
+[dev-dependencies]
+swift-lexer = { path = "../swift-lexer" }

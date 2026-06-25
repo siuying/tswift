@@ -30,6 +30,8 @@ struct RuntimeNode {
     /// For a `for await` loop, the real loop binding (the node's text is the
     /// `await` sentinel the runtime keys on; `token_text_offset(1)` returns it).
     for_await_binding: Option<String>,
+    /// For a `for`/`while`/`repeat` loop, its statement label (`outer:`), if any.
+    loop_label: Option<String>,
     children: Vec<NodeId>,
 }
 
@@ -73,6 +75,7 @@ impl RuntimeAst {
                 is_default: false,
                 where_expr: None,
                 for_await_binding: None,
+                loop_label: None,
                 children: Vec::new(),
             }],
             diagnostics: vec![Diagnostic { message, line, col }],
@@ -92,6 +95,7 @@ impl RuntimeAst {
             is_default: false,
             where_expr: None,
             for_await_binding: None,
+            loop_label: None,
             children: Vec::new(),
         });
         id
@@ -131,7 +135,16 @@ impl RuntimeAst {
         let id = self.alloc(kind, text, node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
+        // The runtime reads the optional-cast flag (`as?`) from bit 0x800 on a
+        // CastExpr, not from its operator text.
+        if node.kind() == swift_ast::NodeKind::CastExpr && node.text() == Some("as?") {
+            self.nodes[id.0].modifier_bits |= 0x800;
+        }
         self.nodes[id.0].arg_label = node.arg_label().map(ToOwned::to_owned);
+        // A `repeat` loop's text is its statement label, if any.
+        if node.kind() == swift_ast::NodeKind::RepeatStmt {
+            self.nodes[id.0].loop_label = node.text().map(ToOwned::to_owned);
+        }
 
         let children = self.lower_child_list(node.children());
         self.set_children(id, children);
@@ -266,6 +279,10 @@ impl RuntimeAst {
         let kind = map_kind(node.kind());
         let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
+        // A `while` loop's text is its statement label, if any.
+        if node.kind() == swift_ast::NodeKind::WhileStmt {
+            self.nodes[id.0].loop_label = node.text().map(ToOwned::to_owned);
+        }
         let mut children: Vec<NodeId> = Vec::new();
         for child in node.children() {
             match child.kind() {
@@ -307,6 +324,9 @@ impl RuntimeAst {
     fn lower_for(&mut self, node: swift_ast::Node<'_>) -> NodeId {
         use swift_ast::NodeKind as K;
         let id = self.alloc(NodeKind::ForStmt, None, node.line());
+        // The `for` node's text is its statement label (`outer:`), if any; the
+        // loop binding comes from the pattern child below.
+        self.nodes[id.0].loop_label = node.text().map(ToOwned::to_owned);
         // `for await` is recorded as the async modifier by the parser; the
         // runtime detects it via the `await` sentinel text (ADR-0005), reading
         // the real binding through `token_text_offset(1)`.
@@ -354,6 +374,10 @@ impl RuntimeAst {
                 // not keep it as a child (matching the msf `var x` shape).
                 K::NamePattern if name.is_none() => {
                     name = child.text().map(ToOwned::to_owned);
+                }
+                // A wildcard binding (`let _ = e`) names itself `_`.
+                K::WildcardPattern if name.is_none() => {
+                    name = Some("_".to_string());
                 }
                 _ => children.push(self.lower_node(child)),
             }
@@ -409,6 +433,10 @@ impl RuntimeAst {
 
     pub(crate) fn for_await_binding(&self, id: NodeId) -> Option<String> {
         self.node(id).for_await_binding.clone()
+    }
+
+    pub(crate) fn loop_label(&self, id: NodeId) -> Option<String> {
+        self.node(id).loop_label.clone()
     }
 
     pub(crate) fn children(&self, id: NodeId) -> Children {
@@ -514,6 +542,7 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::CompilerDirective => NodeKind::MacroExpansion,
         K::Attribute => NodeKind::Attribute,
         K::ClosureExpr => NodeKind::ClosureExpr,
+        K::ClosureCapture => NodeKind::ClosureCapture,
         K::CastExpr => NodeKind::CastExpr,
         K::EnumCaseDecl => NodeKind::EnumCaseDecl,
         K::InitDecl => NodeKind::InitDecl,

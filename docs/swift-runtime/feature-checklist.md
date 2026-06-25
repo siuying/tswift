@@ -1,7 +1,16 @@
 # Swift Runtime — Complete Feature Checklist
 
 **Goal:** support **every** Swift language feature, end to end (parse → typecheck →
-run), on top of msf's typed AST.
+run), on top of the typed AST.
+
+> **Frontend cutover (#56, done):** the default frontend is now the **pure-Rust**
+> pipeline (`swift-lexer`/`-ast`/`-parser`/`-sema` → `quick-swift-frontend::compat`).
+> The vendored `msf` C frontend, `msf-sys`, `bindgen`, `cc`, and the C submodule have
+> been **removed** — the default build/test needs no C toolchain. All 53 runtime
+> fixtures pass on the Rust backend with no Rust-vs-msf AST special cases in
+> `quick-swift-core`/`-std`. Remaining broader Tier 0–10 spec syntax the Rust frontend
+> does not yet model is tracked as `// rust-gap:` fixtures under #37. The **FE** column
+> below records the historical msf status; frontend gaps are now ours to close.
 
 **Reference:** *The Swift Programming Language* (TSPL), **Swift 6.3** —
 `github.com/swiftlang/swift-book` (Language Guide: 28 chapters; Reference Manual:
