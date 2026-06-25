@@ -22,7 +22,7 @@ fn fixtures_dir() -> PathBuf {
 }
 
 /// Collect `(swift_path, expected_path)` pairs, sorted for stable output.
-#[cfg(not(feature = "rust-backend"))]
+
 fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     let dir = fixtures_dir();
     let mut pairs = Vec::new();
@@ -63,7 +63,6 @@ fn run_cli(swift_path: &Path) -> String {
     String::from_utf8(output.stdout).expect("stdout is valid UTF-8")
 }
 
-#[cfg(not(feature = "rust-backend"))]
 #[test]
 fn golden_fixtures_match() {
     let pairs = fixtures();
@@ -98,7 +97,7 @@ fn golden_fixtures_match() {
 /// Every `fixtures/multifile/<case>/` directory is one multi-file program: all
 /// its `.swift` files (sorted) form a single module and must produce
 /// `expected.txt`. Exercises cross-file reference resolution.
-#[cfg(not(feature = "rust-backend"))]
+
 #[test]
 fn multi_file_modules_match() {
     let root = fixtures_dir().join("multifile");
@@ -147,7 +146,7 @@ fn multi_file_modules_match() {
 
 /// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
 /// AST shape: `quick-swift dump` must reproduce the snapshot byte-for-byte.
-#[cfg(not(feature = "rust-backend"))]
+
 #[test]
 fn ast_snapshots_match() {
     let dir = fixtures_dir().join("ast");
@@ -185,59 +184,6 @@ fn ast_snapshots_match() {
             "AST snapshot {} mismatched",
             swift.display()
         );
-    }
-}
-
-#[cfg(feature = "rust-backend")]
-#[test]
-fn rust_backend_tracer_fixtures_match() {
-    for fixture in [
-        "hello",
-        "arithmetic",
-        "functions_recursion",
-        // #51 — nominal declarations + Codable shell on the Rust backend.
-        "codable",
-        // #52 — modifiers, attributes, ownership, static/lazy on the Rust backend.
-        "main_entry",
-        "property_wrapper",
-        "struct_static_lazy",
-        "deinit_weak",
-        // #53 — Swift patterns (switch/optional/enum/tuple) on the Rust backend.
-        "optionals",
-        "enum_matching",
-        "switch_patterns",
-        "indirect_enum",
-        "enum_raw_caseiterable",
-        "control_flow",
-        // #54 — effects, directives, concurrency on the Rust backend.
-        "errors",
-        "try_variants",
-        "defer_order",
-        "conditional_compilation",
-        "concurrency_tasks",
-        "concurrency_async_await",
-        "concurrency_async_let",
-        "concurrency_actors",
-        "concurrency_task_group",
-        "concurrency_async_sequence",
-        // #55 — calls, accessors, subscripts, custom operators on the Rust backend.
-        "func_labels_defaults",
-        "func_variadic",
-        "struct_inout",
-        "struct_observers",
-        "struct_value",
-        "subscripts",
-        "custom_operator",
-        "super_init",
-        "protocols",
-        "generics",
-        "classes_inheritance",
-    ] {
-        let swift = fixtures_dir().join(format!("{fixture}.swift"));
-        let expected = std::fs::read_to_string(swift.with_extension("expected"))
-            .expect("read tracer expected output");
-        let actual = run_cli(&swift);
-        assert_eq!(actual, expected, "rust backend tracer fixture {fixture}");
     }
 }
 

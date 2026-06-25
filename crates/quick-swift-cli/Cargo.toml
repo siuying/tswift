@@ -10,10 +10,6 @@ description = "quick-swift command-line interface."
 name = "quick-swift"
 path = "src/main.rs"
 
-[features]
-default = []
-rust-backend = ["quick-swift-frontend/rust-backend"]
-
 [dependencies]
 quick-swift-frontend.workspace = true
 quick-swift-core.workspace = true

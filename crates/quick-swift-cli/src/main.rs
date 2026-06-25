@@ -88,12 +88,6 @@ fn dump(path: &str, json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(feature = "rust-backend")]
-fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError> {
-    Analysis::analyze_rust(source, filename)
-}
-
-#[cfg(not(feature = "rust-backend"))]
 fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError> {
     Analysis::analyze(source, filename)
 }
