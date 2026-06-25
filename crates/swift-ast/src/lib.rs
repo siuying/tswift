@@ -126,6 +126,14 @@ pub enum NodeKind {
     WildcardPattern,
     /// A tuple destructuring pattern, e.g. `(a, b)` in `let (a, b) = pair`.
     TuplePattern,
+    /// An enum-case pattern, e.g. `.some(let n)` or `Shape.rect(let w, let h)`.
+    /// Text is the case name; children are the payload sub-patterns.
+    EnumCasePattern,
+    /// A range pattern in a `switch` case, e.g. `0...9` (text is the operator).
+    RangePattern,
+    /// A `where` guard clause attached to a `switch` case (single child: the
+    /// guard expression).
+    WhereClause,
     /// An integer literal.
     IntegerLiteral,
     /// A floating-point literal.
@@ -197,6 +205,9 @@ impl NodeKind {
             NodeKind::NamePattern => "name_pattern",
             NodeKind::WildcardPattern => "wildcard_pattern",
             NodeKind::TuplePattern => "tuple_pattern",
+            NodeKind::EnumCasePattern => "enum_case_pattern",
+            NodeKind::RangePattern => "range_pattern",
+            NodeKind::WhereClause => "where_clause",
             NodeKind::IntegerLiteral => "integer_literal",
             NodeKind::FloatLiteral => "float_literal",
             NodeKind::BoolLiteral => "bool_literal",
@@ -317,6 +328,13 @@ impl Ast {
     /// Set the resolved [`Type`] of `id` (called by sema).
     pub fn set_type(&mut self, id: NodeId, ty: Type) {
         self.nodes[id.0 as usize].ty = Some(ty);
+    }
+
+    /// Re-tag the [`NodeKind`] of `id` (used by the parser to reinterpret a
+    /// parsed expression as a pattern, e.g. a range expression as a
+    /// [`NodeKind::RangePattern`]).
+    pub fn set_kind(&mut self, id: NodeId, kind: NodeKind) {
+        self.nodes[id.0 as usize].kind = kind;
     }
 
     /// A read cursor over `id`.

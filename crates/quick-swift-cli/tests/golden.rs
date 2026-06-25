@@ -202,6 +202,13 @@ fn rust_backend_tracer_fixtures_match() {
         "property_wrapper",
         "struct_static_lazy",
         "deinit_weak",
+        // #53 — Swift patterns (switch/optional/enum/tuple) on the Rust backend.
+        "optionals",
+        "enum_matching",
+        "switch_patterns",
+        "indirect_enum",
+        "enum_raw_caseiterable",
+        "control_flow",
     ] {
         let swift = fixtures_dir().join(format!("{fixture}.swift"));
         let expected = std::fs::read_to_string(swift.with_extension("expected"))
