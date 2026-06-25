@@ -27,8 +27,8 @@
 use std::io::{self, Write};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use quick_swift_frontend::Analysis;
 use quick_swift_core::Interpreter;
+use quick_swift_frontend::Analysis;
 
 #[path = "support/corpus.rs"]
 mod corpus;
@@ -86,8 +86,8 @@ fn bench_analysis(c: &mut Criterion) {
         let source = program.read_source();
         group.bench_function(&program.name, |b| {
             b.iter(|| {
-                let analysis =
-                    Analysis::analyze(black_box(&source), "bench.swift").expect("analysis succeeds");
+                let analysis = Analysis::analyze(black_box(&source), "bench.swift")
+                    .expect("analysis succeeds");
                 black_box(analysis);
             })
         });
