@@ -191,7 +191,13 @@ fn ast_snapshots_match() {
 #[cfg(feature = "rust-backend")]
 #[test]
 fn rust_backend_tracer_fixtures_match() {
-    for fixture in ["hello", "arithmetic", "functions_recursion"] {
+    for fixture in [
+        "hello",
+        "arithmetic",
+        "functions_recursion",
+        // #51 — nominal declarations + Codable shell on the Rust backend.
+        "codable",
+    ] {
         let swift = fixtures_dir().join(format!("{fixture}.swift"));
         let expected = std::fs::read_to_string(swift.with_extension("expected"))
             .expect("read tracer expected output");

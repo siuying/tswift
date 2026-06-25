@@ -242,6 +242,11 @@ struct NodeData {
     line: u32,
     col: u32,
     ty: Option<Type>,
+    /// Declaration modifier/effect keywords written before this node
+    /// (`static`, `mutating`, `weak`, `throws`, `public`, …), in source order.
+    modifiers: Vec<String>,
+    /// For a call argument, its written label (`x` in `f(x: 1)`), if any.
+    arg_label: Option<String>,
     children: Vec<NodeId>,
 }
 
@@ -261,6 +266,8 @@ impl Ast {
             line: 1,
             col: 1,
             ty: None,
+            modifiers: Vec::new(),
+            arg_label: None,
             children: Vec::new(),
         }];
         Ast {
@@ -283,6 +290,8 @@ impl Ast {
             line,
             col,
             ty: None,
+            modifiers: Vec::new(),
+            arg_label: None,
             children: Vec::new(),
         });
         id
@@ -291,6 +300,18 @@ impl Ast {
     /// Append `child` to `parent`'s child list (in source order).
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
         self.nodes[parent.0 as usize].children.push(child);
+    }
+
+    /// Record a declaration modifier/effect keyword on `id` (in source order).
+    pub fn add_modifier(&mut self, id: NodeId, modifier: &str) {
+        self.nodes[id.0 as usize]
+            .modifiers
+            .push(modifier.to_string());
+    }
+
+    /// Record the call-argument label written for `id` (`x` in `f(x: 1)`).
+    pub fn set_arg_label(&mut self, id: NodeId, label: &str) {
+        self.nodes[id.0 as usize].arg_label = Some(label.to_string());
     }
 
     /// Set the resolved [`Type`] of `id` (called by sema).
@@ -356,6 +377,16 @@ impl<'a> Node<'a> {
     /// The node's resolved type's surface name (`Int`, `String`, …), if sema set one.
     pub fn type_name(&self) -> Option<&'static str> {
         self.ast.data(self.id).ty.map(Type::name)
+    }
+
+    /// The declaration modifier/effect keywords recorded on this node.
+    pub fn modifiers(&self) -> &'a [String] {
+        &self.ast.data(self.id).modifiers
+    }
+
+    /// The call-argument label recorded on this node, if any.
+    pub fn arg_label(&self) -> Option<&'a str> {
+        self.ast.data(self.id).arg_label.as_deref()
     }
 
     /// Iterator over the node's direct children, in source order.
