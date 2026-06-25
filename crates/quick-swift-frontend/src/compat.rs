@@ -468,7 +468,7 @@ impl RuntimeAst {
         if self.kind(id) != NodeKind::FloatLiteral {
             return None;
         }
-        self.node(id).text.as_deref()?.replace('_', "").parse().ok()
+        parse_float_literal(self.node(id).text.as_deref()?)
     }
 
     pub(crate) fn param_info(&self, id: NodeId) -> ParamInfo {
@@ -528,6 +528,7 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::ExtensionDecl => NodeKind::ExtensionDecl,
         K::AssociatedTypeDecl => NodeKind::ProtocolReq,
         K::TypeAliasDecl => NodeKind::TypealiasDecl,
+        K::ImportDecl => NodeKind::ImportDecl,
         K::GenericParam => NodeKind::GenericParam,
         K::DeinitDecl => NodeKind::DeinitDecl,
         K::DoStmt => NodeKind::DoStmt,
@@ -635,4 +636,66 @@ fn parse_int_literal(text: &str) -> Option<i64> {
     };
     let value = i64::from_str_radix(digits, radix).ok()?;
     Some(if negative { -value } else { value })
+}
+
+/// Parse a Swift floating-point literal, including the hexadecimal form
+/// (`0x1.8p1`) that Rust's `str::parse::<f64>` rejects.
+fn parse_float_literal(text: &str) -> Option<f64> {
+    let s = text.replace('_', "");
+    let body = s.strip_prefix('-').unwrap_or(&s);
+    let value = if let Some(rest) = body.strip_prefix("0x").or_else(|| body.strip_prefix("0X")) {
+        parse_hex_float(rest)?
+    } else {
+        body.parse().ok()?
+    };
+    Some(if s.starts_with('-') { -value } else { value })
+}
+
+/// Parse the mantissa/exponent of a hex float (the part after `0x`): hexadecimal
+/// `int[.frac]` scaled by a binary exponent `p[±]dec`, e.g. `1.8p1` → 3.0.
+fn parse_hex_float(rest: &str) -> Option<f64> {
+    let p = rest.find(['p', 'P'])?;
+    let mantissa = &rest[..p];
+    let exponent: i32 = rest[p + 1..].parse().ok()?;
+    let (int_part, frac_part) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+
+    let mut value = 0.0f64;
+    for c in int_part.chars() {
+        value = value * 16.0 + f64::from(c.to_digit(16)?);
+    }
+    let mut scale = 1.0 / 16.0;
+    for c in frac_part.chars() {
+        value += f64::from(c.to_digit(16)?) * scale;
+        scale /= 16.0;
+    }
+    Some(value * 2f64.powi(exponent))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_float_literal, parse_int_literal};
+
+    #[test]
+    fn integer_literals_in_every_radix() {
+        assert_eq!(parse_int_literal("1_000"), Some(1000));
+        assert_eq!(parse_int_literal("0xFF"), Some(255));
+        assert_eq!(parse_int_literal("0o755"), Some(493));
+        assert_eq!(parse_int_literal("0b1010"), Some(10));
+        assert_eq!(parse_int_literal("-42"), Some(-42));
+    }
+
+    #[test]
+    fn decimal_floats_parse() {
+        assert_eq!(parse_float_literal("3.5"), Some(3.5));
+        assert_eq!(parse_float_literal("1.5e3"), Some(1500.0));
+        assert_eq!(parse_float_literal("1_000.5"), Some(1000.5));
+    }
+
+    #[test]
+    fn hex_floats_parse() {
+        assert_eq!(parse_float_literal("0x1.8p1"), Some(3.0));
+        assert_eq!(parse_float_literal("0x1p4"), Some(16.0));
+        assert_eq!(parse_float_literal("0xA.8p0"), Some(10.5));
+        assert_eq!(parse_float_literal("-0x1.0p2"), Some(-4.0));
+    }
 }
