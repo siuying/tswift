@@ -58,6 +58,25 @@ pub enum NodeKind {
     GenericParam,
     /// A `deinit { }` declaration.
     DeinitDecl,
+    /// A `do { } catch { }` statement.
+    DoStmt,
+    /// A `catch` clause of a `do` statement.
+    CatchClause,
+    /// A `throw expr` statement.
+    ThrowStmt,
+    /// A `defer { }` statement.
+    DeferStmt,
+    /// A `try` / `try?` / `try!` expression (text is the operator).
+    TryExpr,
+    /// An `operator` declaration (`infix operator <> : Group`).
+    OperatorDecl,
+    /// A `precedencegroup` declaration.
+    PrecedenceGroupDecl,
+    /// A compiler directive used as a statement or expression (`#warning`,
+    /// `#error`, `#file`, `#line`, …); text is the directive (with `#`).
+    CompilerDirective,
+    /// An attribute such as `@main` (text includes the `@`).
+    Attribute,
     /// A closure expression `{ [captures] params in body }`.
     ClosureExpr,
     /// A type-cast expression `operand is/as/as?/as! Type` (text is the operator).
@@ -145,6 +164,15 @@ impl NodeKind {
             NodeKind::TypeAliasDecl => "typealias_decl",
             NodeKind::GenericParam => "generic_param",
             NodeKind::DeinitDecl => "deinit_decl",
+            NodeKind::DoStmt => "do_stmt",
+            NodeKind::CatchClause => "catch_clause",
+            NodeKind::ThrowStmt => "throw_stmt",
+            NodeKind::DeferStmt => "defer_stmt",
+            NodeKind::TryExpr => "try_expr",
+            NodeKind::OperatorDecl => "operator_decl",
+            NodeKind::PrecedenceGroupDecl => "precedencegroup_decl",
+            NodeKind::CompilerDirective => "compiler_directive",
+            NodeKind::Attribute => "attribute",
             NodeKind::ClosureExpr => "closure_expr",
             NodeKind::CastExpr => "cast_expr",
             NodeKind::EnumCaseDecl => "enum_case_decl",
