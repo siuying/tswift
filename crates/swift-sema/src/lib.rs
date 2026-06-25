@@ -152,11 +152,35 @@ impl Resolver {
                     self.resolve_case_clause(ast, clause);
                 }
             }
-            NodeKind::ReturnStmt => {
+            NodeKind::ReturnStmt | NodeKind::ThrowStmt => {
                 if let Some(&value) = kids.first() {
                     self.infer(ast, value);
                 }
             }
+            NodeKind::DoStmt => {
+                for &c in &kids {
+                    self.resolve_statement(ast, c);
+                }
+            }
+            NodeKind::CatchClause => {
+                // The catch pattern bindings are visible in the catch body.
+                self.push_scope();
+                for &c in &kids {
+                    self.resolve_statement(ast, c);
+                }
+                self.pop_scope();
+            }
+            NodeKind::DeferStmt => {
+                if let Some(&body) = kids.first() {
+                    self.resolve_statement(ast, body);
+                }
+            }
+            NodeKind::CompilerDirective => {
+                for &c in &kids {
+                    self.resolve_statement(ast, c);
+                }
+            }
+            NodeKind::OperatorDecl | NodeKind::PrecedenceGroupDecl => {}
             NodeKind::BreakStmt | NodeKind::ContinueStmt | NodeKind::FallthroughStmt => {}
             // Expression statements and assignments.
             _ => {
@@ -318,6 +342,13 @@ impl Resolver {
                     self.resolve_statement(ast, *c);
                 }
                 self.pop_scope();
+                None
+            }
+            NodeKind::TryExpr => children.first().and_then(|c| self.infer(ast, *c)),
+            NodeKind::CompilerDirective => {
+                for c in &children {
+                    self.infer(ast, *c);
+                }
                 None
             }
             NodeKind::CastExpr => {
@@ -605,6 +636,30 @@ mod tests {
     }
 
     // --- Tier 4 ---
+
+    #[test]
+    fn errors_and_directives_resolve() {
+        let src = "func load() {\n\
+                   defer { close() }\n\
+                   do {\n\
+                   let data = try read()\n\
+                   process(data)\n\
+                   } catch let error {\n\
+                   report(error)\n\
+                   }\n\
+                   }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn conditional_compilation_binding_is_visible() {
+        // The active branch's binding must register in the enclosing scope.
+        let src = "#if DEBUG\n let level = 1\n #else\n let level = 0\n #endif\n\
+                   let next = level + 1";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
 
     #[test]
     fn protocols_generics_extensions_resolve() {

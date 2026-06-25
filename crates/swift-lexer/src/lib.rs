@@ -50,6 +50,10 @@ pub enum TokenKind {
     Question,
     /// Any operator lexeme (`+`, `==`, `&&`, `..<`, `->`, `&+`, …), text in [`Token::text`].
     Oper,
+    /// An attribute, e.g. `@main`, `@discardableResult` (text includes the `@`).
+    Attribute,
+    /// A compiler directive, e.g. `#if`, `#file`, `#warning` (text includes the `#`).
+    Directive,
     /// End of input. Always the final token of a [`tokenize`] result.
     Eof,
 }
@@ -276,6 +280,18 @@ impl<'a> Lexer<'a> {
             b':' => self.single(TokenKind::Colon),
             b';' => self.single(TokenKind::Semicolon),
             b'"' => return self.string(start, line, col),
+            // `@name` attribute and `#name` compiler directive lex as one token.
+            b'@' | b'#' => {
+                self.advance_byte();
+                while self.peek().is_some_and(is_ident_continue) {
+                    self.advance_byte();
+                }
+                if c == b'@' {
+                    TokenKind::Attribute
+                } else {
+                    TokenKind::Directive
+                }
+            }
             b'.' => {
                 // `...`/`..<` are operators; a lone `.` is member/tuple access.
                 if self.starts_with("...") || self.starts_with("..<") {
@@ -690,5 +706,27 @@ mod tests {
         let err = tokenize("\\").unwrap_err();
         assert!(err.message.contains("unexpected"), "{}", err.message);
         assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn attributes_and_directives_lex_as_single_tokens() {
+        assert_eq!(
+            lex("@main @available(macOS)"),
+            vec![
+                (TokenKind::Attribute, "@main"),
+                (TokenKind::Attribute, "@available"),
+                (TokenKind::LParen, "("),
+                (TokenKind::Identifier, "macOS"),
+                (TokenKind::RParen, ")"),
+            ]
+        );
+        assert_eq!(
+            lex("#if #file #warning"),
+            vec![
+                (TokenKind::Directive, "#if"),
+                (TokenKind::Directive, "#file"),
+                (TokenKind::Directive, "#warning"),
+            ]
+        );
     }
 }

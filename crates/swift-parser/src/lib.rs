@@ -115,8 +115,26 @@ impl<'a> Parser<'a> {
         // Skip declaration modifiers (`static`, `public`, `final`, …) that
         // precede a declaration keyword.
         self.skip_modifiers();
+        // Compiler directives as statements (`#if`, `#warning`, `#error`).
+        if self.peek().kind == TokenKind::Directive {
+            return self.parse_directive_stmt();
+        }
+        // Custom operator / precedence-group declarations (contextual keywords).
+        if self.peek().kind == TokenKind::Identifier {
+            let w = self.peek().text;
+            if w == "operator"
+                || w == "precedencegroup"
+                || (matches!(w, "infix" | "prefix" | "postfix")
+                    && self.tokens[self.pos + 1].text == "operator")
+            {
+                return self.parse_operator_or_precedence();
+            }
+        }
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
+                "do" => return self.parse_do(),
+                "throw" => return self.parse_throw(),
+                "defer" => return self.parse_defer(),
                 "let" | "var" => {
                     let decl = self.parse_binding()?;
                     // A same-line `{` introduces computed-property accessors or observers.
@@ -538,13 +556,49 @@ impl<'a> Parser<'a> {
     /// declaration keyword (so they are accepted but not yet modelled).
     fn skip_modifiers(&mut self) {
         let mut i = self.pos;
-        while is_modifier_word(self.tokens[i].text) {
-            i += 1;
+        loop {
+            let t = self.tokens[i];
+            if t.kind == TokenKind::Attribute {
+                i += 1;
+                if self.tokens[i].kind == TokenKind::LParen {
+                    i = self.scan_balanced_parens(i);
+                }
+            } else if is_modifier_word(t.text) {
+                i += 1;
+                // Argumented modifier such as `private(set)`.
+                if self.tokens[i].kind == TokenKind::LParen {
+                    i = self.scan_balanced_parens(i);
+                }
+            } else {
+                break;
+            }
         }
-        if i > self.pos && is_decl_keyword(self.tokens[i].text) {
+        // Only consume the run when it actually precedes a declaration.
+        if i > self.pos
+            && (is_decl_keyword(self.tokens[i].text) || self.tokens[i].kind == TokenKind::Attribute)
+        {
             while self.pos < i {
                 self.bump();
             }
+        }
+    }
+
+    /// Given an index at a `(`, return the index just past the matching `)`.
+    fn scan_balanced_parens(&self, mut i: usize) -> usize {
+        let mut depth = 0;
+        loop {
+            match self.tokens[i].kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1;
+                    }
+                }
+                TokenKind::Eof => return i,
+                _ => {}
+            }
+            i += 1;
         }
     }
 
@@ -556,6 +610,293 @@ impl<'a> Parser<'a> {
         let node = self.ast.add(NodeKind::DeinitDecl, None, kw.line, kw.col);
         let body = self.parse_block()?;
         self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// `do { } [catch [pattern] [where ...] { }]...`.
+    fn parse_do(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::DoStmt, None, kw.line, kw.col);
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        while self.at_keyword("catch") {
+            let ckw = self.bump();
+            let clause = self.ast.add(NodeKind::CatchClause, None, ckw.line, ckw.col);
+            // Optional catch pattern(s) before the `{`.
+            if self.peek().kind != TokenKind::LBrace {
+                let saved = self.no_trailing_closure;
+                self.no_trailing_closure = true;
+                loop {
+                    let pat = if self.at_keyword("let") || self.at_keyword("var") {
+                        self.parse_binding()?
+                    } else {
+                        self.parse_expr(0)?
+                    };
+                    self.ast.append_child(clause, pat);
+                    if self.peek().kind == TokenKind::Comma {
+                        self.bump();
+                        continue;
+                    }
+                    break;
+                }
+                if self.at_keyword("where") {
+                    self.skip_where_clause();
+                }
+                self.no_trailing_closure = saved;
+            }
+            let cbody = self.parse_block()?;
+            self.ast.append_child(clause, cbody);
+            self.ast.append_child(node, clause);
+        }
+        Ok(node)
+    }
+
+    /// `throw expr`.
+    fn parse_throw(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::ThrowStmt, None, kw.line, kw.col);
+        let expr = self.parse_expr(0)?;
+        self.ast.append_child(node, expr);
+        Ok(node)
+    }
+
+    /// `defer { }`.
+    fn parse_defer(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::DeferStmt, None, kw.line, kw.col);
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// A compiler directive used as a statement: `#warning(...)`, `#error(...)`,
+    /// or a `#if` / `#elseif` / `#else` / `#endif` conditional-compilation
+    /// block. The active branch's statements are spliced into a directive node.
+    fn parse_directive_stmt(&mut self) -> Result<NodeId, ParseError> {
+        let d = self.peek();
+        if d.text == "#if" {
+            return self.parse_conditional_compilation();
+        }
+        let dir = self.bump();
+        let node = self.ast.add(
+            NodeKind::CompilerDirective,
+            Some(dir.text),
+            dir.line,
+            dir.col,
+        );
+        if self.peek().kind == TokenKind::LParen {
+            self.bump();
+            if self.peek().kind != TokenKind::RParen {
+                let arg = self.parse_expr(0)?;
+                self.ast.append_child(node, arg);
+            }
+            self.expect(TokenKind::RParen)?;
+        }
+        Ok(node)
+    }
+
+    /// `#if cond ... [#elseif cond ...] [#else ...] #endif`. Only the first
+    /// active branch's statements are parsed; inactive branches are skipped.
+    fn parse_conditional_compilation(&mut self) -> Result<NodeId, ParseError> {
+        let start = self.bump(); // `#if`
+        let node = self.ast.add(
+            NodeKind::CompilerDirective,
+            Some("#if"),
+            start.line,
+            start.col,
+        );
+        let mut taken = false;
+        // Evaluate the `#if` condition (rest of the line).
+        let mut active = self.eval_directive_condition();
+        loop {
+            if active && !taken {
+                taken = true;
+                while !self.at_directive_boundary() {
+                    let stmt = self.parse_statement()?;
+                    self.ast.append_child(node, stmt);
+                }
+            } else {
+                self.skip_to_directive_boundary();
+            }
+            match self.peek().text {
+                "#elseif" => {
+                    self.bump();
+                    active = self.eval_directive_condition();
+                }
+                "#else" => {
+                    self.bump();
+                    active = true;
+                }
+                "#endif" => {
+                    self.bump();
+                    return Ok(node);
+                }
+                _ => return Ok(node),
+            }
+        }
+    }
+
+    /// Whether the cursor is at a `#elseif`/`#else`/`#endif` boundary or EOF.
+    fn at_directive_boundary(&self) -> bool {
+        matches!(self.peek().text, "#elseif" | "#else" | "#endif") || self.at_eof()
+    }
+
+    /// Skip an inactive conditional-compilation branch, honouring nesting.
+    fn skip_to_directive_boundary(&mut self) {
+        let mut depth = 0;
+        loop {
+            let t = self.peek();
+            if t.kind == TokenKind::Eof {
+                return;
+            }
+            if t.text == "#if" {
+                depth += 1;
+            } else if depth == 0 && matches!(t.text, "#elseif" | "#else" | "#endif") {
+                return;
+            } else if t.text == "#endif" {
+                depth -= 1;
+            }
+            self.bump();
+        }
+    }
+
+    /// Evaluate a conditional-compilation condition. Unknown custom flags are
+    /// false; `true` is true; `os()`/`canImport()`/`swift()`/`compiler()` are
+    /// treated as available. Consumes the rest of the directive line.
+    fn eval_directive_condition(&mut self) -> bool {
+        let mut value = false;
+        let mut negate = false;
+        let mut saw_and_false = false;
+        let mut any = false;
+        while !self.peek().leading_newline && !self.at_eof() {
+            let t = self.peek();
+            match t.kind {
+                TokenKind::Identifier => {
+                    let avail = matches!(
+                        t.text,
+                        "os" | "canImport" | "arch" | "swift" | "compiler" | "targetEnvironment"
+                    );
+                    self.bump();
+                    let mut flag = if avail {
+                        true
+                    } else {
+                        t.text == "DEBUG" || t.text == "true"
+                    };
+                    if self.peek().kind == TokenKind::LParen {
+                        let end = self.scan_balanced_parens(self.pos);
+                        while self.pos < end {
+                            self.bump();
+                        }
+                    }
+                    if negate {
+                        flag = !flag;
+                        negate = false;
+                    }
+                    if saw_and_false {
+                        // already short-circuited
+                    } else if !any {
+                        value = flag;
+                    }
+                    any = true;
+                }
+                TokenKind::Keyword if t.text == "true" => {
+                    self.bump();
+                    if !any {
+                        value = !negate;
+                    }
+                    negate = false;
+                    any = true;
+                }
+                TokenKind::Keyword if t.text == "false" => {
+                    self.bump();
+                    if !any {
+                        value = negate;
+                    }
+                    negate = false;
+                    any = true;
+                }
+                TokenKind::Oper if t.text == "!" => {
+                    negate = !negate;
+                    self.bump();
+                }
+                TokenKind::Oper if t.text == "&&" => {
+                    self.bump();
+                    if !value {
+                        saw_and_false = true;
+                    }
+                    any = false;
+                }
+                TokenKind::Oper if t.text == "||" => {
+                    self.bump();
+                    if value {
+                        // keep true
+                        self.skip_rest_of_line();
+                        return true;
+                    }
+                    any = false;
+                }
+                TokenKind::LParen | TokenKind::RParen => {
+                    self.bump();
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+        value && !saw_and_false
+    }
+
+    fn skip_rest_of_line(&mut self) {
+        while !self.peek().leading_newline && !self.at_eof() {
+            self.bump();
+        }
+    }
+
+    /// `[infix|prefix|postfix] operator <op> [: Group]` or
+    /// `precedencegroup Name { ... }`.
+    fn parse_operator_or_precedence(&mut self) -> Result<NodeId, ParseError> {
+        if self.peek().text == "precedencegroup" {
+            let kw = self.bump();
+            let name = self.expect(TokenKind::Identifier)?;
+            let node = self.ast.add(
+                NodeKind::PrecedenceGroupDecl,
+                Some(name.text),
+                kw.line,
+                kw.col,
+            );
+            self.expect(TokenKind::LBrace)?;
+            while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+                self.bump();
+            }
+            self.expect(TokenKind::RBrace)?;
+            return Ok(node);
+        }
+        // Optional fixity word before `operator`.
+        if matches!(self.peek().text, "infix" | "prefix" | "postfix") {
+            self.bump();
+        }
+        self.bump(); // `operator`
+                     // The operator name may span several adjacent operator tokens (`<>`).
+        let first = self.peek();
+        let mut name = String::new();
+        while self.peek().kind == TokenKind::Oper && !self.peek().leading_newline {
+            name.push_str(self.bump().text);
+        }
+        if name.is_empty() {
+            // Fall back to a single token (e.g. an identifier-like operator).
+            name.push_str(self.bump().text);
+        }
+        let node = self
+            .ast
+            .add(NodeKind::OperatorDecl, Some(&name), first.line, first.col);
+        if self.peek().kind == TokenKind::Colon {
+            self.bump();
+            let group = self.expect(TokenKind::Identifier)?;
+            let g = self
+                .ast
+                .add(NodeKind::IdentExpr, Some(group.text), group.line, group.col);
+            self.ast.append_child(node, g);
+        }
         Ok(node)
     }
 
@@ -1084,6 +1425,23 @@ impl<'a> Parser<'a> {
     /// A prefix unary operator, else a primary with trailing call/member suffixes.
     fn parse_prefix(&mut self) -> Result<NodeId, ParseError> {
         let t = self.peek();
+        // `try` / `try?` / `try!` — an error-propagation prefix.
+        if t.kind == TokenKind::Keyword && t.text == "try" {
+            self.bump();
+            let mut op = String::from("try");
+            if self.peek().kind == TokenKind::Question || self.at_oper("!") {
+                op.push_str(self.bump().text);
+            }
+            let operand = self.parse_prefix()?;
+            let node = self.ast.add(NodeKind::TryExpr, Some(&op), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
+        }
+        // `await` simply propagates its operand at the frontend level.
+        if t.kind == TokenKind::Identifier && t.text == "await" && !self.is_value_ident_context() {
+            self.bump();
+            return self.parse_prefix();
+        }
         if t.kind == TokenKind::Oper && matches!(t.text, "-" | "+" | "!" | "~") {
             self.bump();
             let operand = self.parse_prefix()?;
@@ -1095,6 +1453,20 @@ impl<'a> Parser<'a> {
         }
         let primary = self.parse_primary()?;
         self.parse_postfix(primary)
+    }
+
+    /// Heuristic: `await` is a contextual keyword only when followed by an
+    /// expression start; treat a bare `await` used as an identifier normally.
+    fn is_value_ident_context(&self) -> bool {
+        matches!(
+            self.tokens[self.pos + 1].kind,
+            TokenKind::Oper
+                | TokenKind::Dot
+                | TokenKind::RParen
+                | TokenKind::Comma
+                | TokenKind::Colon
+                | TokenKind::Eof
+        )
     }
 
     fn parse_primary(&mut self) -> Result<NodeId, ParseError> {
@@ -1137,6 +1509,12 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBrace => return self.parse_closure(),
             TokenKind::LParen => return self.parse_paren_or_tuple(),
+            // Directive expression `#file`, `#line`, `#function`, `#column`.
+            TokenKind::Directive => {
+                self.bump();
+                self.ast
+                    .add(NodeKind::CompilerDirective, Some(t.text), t.line, t.col)
+            }
             // Implicit member expression `.case` (no base).
             TokenKind::Dot => {
                 self.bump();
@@ -1336,6 +1714,7 @@ fn is_decl_keyword(w: &str) -> bool {
             | "var"
             | "case"
             | "typealias"
+            | "associatedtype"
             | "deinit"
     )
 }
@@ -2050,5 +2429,101 @@ mod tests {
         let func = first_stmt(&ast).children().next().unwrap();
         assert_eq!(func.kind(), NodeKind::FuncDecl);
         assert_eq!(func.text(), Some("=="));
+    }
+
+    // --- Tier 5/6/9: errors, attributes, operators & directives ---
+
+    #[test]
+    fn do_catch_with_pattern() {
+        let src = "do {\n\
+                   try risky()\n\
+                   } catch let error {\n\
+                   recover()\n\
+                   } catch {\n\
+                   fail()\n\
+                   }";
+        let ast = ast_of(src);
+        let d = first_stmt(&ast);
+        assert_eq!(d.kind(), NodeKind::DoStmt);
+        let kinds: Vec<_> = d.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                NodeKind::Block,
+                NodeKind::CatchClause,
+                NodeKind::CatchClause
+            ]
+        );
+    }
+
+    #[test]
+    fn throw_try_and_defer() {
+        let ast = ast_of("func f() { defer { cleanup() }\n throw Err.bad }");
+        let body = first_stmt(&ast).children().last().unwrap();
+        let kinds: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(kinds, vec![NodeKind::DeferStmt, NodeKind::ThrowStmt]);
+
+        let ast = ast_of("let v = try? parse()");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::TryExpr);
+        assert_eq!(init.text(), Some("try?"));
+    }
+
+    #[test]
+    fn attributes_and_private_set_before_declarations() {
+        let ast = ast_of("@main struct App { }");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::StructDecl);
+        let ast = ast_of("@available(macOS 10.15, *) func feature() { }");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::FuncDecl);
+        let ast = ast_of("private(set) var count = 0");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::VarDecl);
+    }
+
+    #[test]
+    fn custom_operator_and_precedencegroup() {
+        let ast = ast_of("infix operator <> : AdditionPrecedence");
+        let op = first_stmt(&ast);
+        assert_eq!(op.kind(), NodeKind::OperatorDecl);
+        assert_eq!(op.text(), Some("<>"));
+
+        let ast = ast_of("precedencegroup MyPrecedence { higherThan: AdditionPrecedence }");
+        let pg = first_stmt(&ast);
+        assert_eq!(pg.kind(), NodeKind::PrecedenceGroupDecl);
+        assert_eq!(pg.text(), Some("MyPrecedence"));
+    }
+
+    #[test]
+    fn pound_directives() {
+        // `#warning` as a statement.
+        let ast = ast_of("#warning(\"todo\")");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::CompilerDirective);
+        assert_eq!(first_stmt(&ast).text(), Some("#warning"));
+        // `#file` as an expression.
+        let ast = ast_of("let here = #file");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::CompilerDirective);
+        assert_eq!(init.text(), Some("#file"));
+    }
+
+    #[test]
+    fn conditional_compilation_selects_active_branch() {
+        // `DEBUG` is treated as defined -> first branch active.
+        let ast = ast_of("#if DEBUG\n let mode = 1\n #else\n let mode = 2\n #endif");
+        let dir = first_stmt(&ast);
+        assert_eq!(dir.kind(), NodeKind::CompilerDirective);
+        let active: Vec<_> = dir.children().collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].kind(), NodeKind::LetDecl);
+        // The active binding initializes to 1, not the #else's 2.
+        assert_eq!(active[0].children().nth(1).unwrap().text(), Some("1"));
+    }
+
+    #[test]
+    fn conditional_compilation_false_flag_takes_else() {
+        let ast = ast_of("#if UNDEFINED_FLAG\n let x = 1\n #else\n let x = 2\n #endif");
+        let dir = first_stmt(&ast);
+        let active: Vec<_> = dir.children().collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].children().nth(1).unwrap().text(), Some("2"));
     }
 }
