@@ -21,6 +21,8 @@ struct RuntimeNode {
     text: Option<String>,
     line: u32,
     ty: Option<String>,
+    modifier_bits: u32,
+    arg_label: Option<String>,
     children: Vec<NodeId>,
 }
 
@@ -59,39 +61,122 @@ impl RuntimeAst {
                 text: None,
                 line: 1,
                 ty: None,
+                modifier_bits: 0,
+                arg_label: None,
                 children: Vec::new(),
             }],
             diagnostics: vec![Diagnostic { message, line, col }],
         }
     }
 
-    fn lower_node(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+    /// Allocate a runtime node and return its id.
+    fn alloc(&mut self, kind: NodeKind, text: Option<String>, line: u32) -> NodeId {
         let id = NodeId(self.nodes.len());
-        let kind = map_kind(node.kind());
         self.nodes.push(RuntimeNode {
             kind,
-            text: node.text().map(ToOwned::to_owned),
-            line: node.line(),
-            ty: node.type_name().map(ToOwned::to_owned),
+            text,
+            line,
+            ty: None,
+            modifier_bits: 0,
+            arg_label: None,
             children: Vec::new(),
         });
+        id
+    }
+
+    fn set_children(&mut self, id: NodeId, children: Vec<NodeId>) {
+        self.nodes[id.0].children = children;
+    }
+
+    fn lower_node(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        match node.kind() {
+            K::StructDecl | K::EnumDecl | K::ClassDecl | K::ProtocolDecl | K::ExtensionDecl => {
+                return self.lower_nominal(node)
+            }
+            K::LetDecl | K::VarDecl => return self.lower_binding(node),
+            _ => {}
+        }
+
+        let kind = map_kind(node.kind());
+        let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
+        self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
+        self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
+        self.nodes[id.0].arg_label = node.arg_label().map(ToOwned::to_owned);
 
         let children: Vec<NodeId> = node
             .children()
             .map(|child| self.lower_node(child))
             .collect();
-        let inferred_decl_name = if matches!(kind, NodeKind::LetDecl | NodeKind::VarDecl) {
-            children
-                .iter()
-                .find_map(|&child| self.node(child).text.clone())
-        } else {
-            None
-        };
-        let out = &mut self.nodes[id.0];
-        out.children = children;
-        if out.text.is_none() {
-            out.text = inferred_decl_name;
+        self.set_children(id, children);
+        id
+    }
+
+    /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
+    /// the runtime-facing shape: name as text, inherited types as `Conformance`
+    /// children, attributes as `Attribute` children, and members wrapped in a
+    /// `Block`. This is the shape `quick-swift-core`'s `register_*` expects.
+    fn lower_nominal(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let kind = map_kind(node.kind());
+        let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
+        self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
+        self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
+
+        let mut children: Vec<NodeId> = Vec::new();
+        let mut members: Vec<NodeId> = Vec::new();
+        let line = node.line();
+        for child in node.children() {
+            match child.kind() {
+                // Attributes (`@main`, …) stay as direct children of the decl.
+                K::Attribute => children.push(self.lower_node(child)),
+                // Generic parameters stay as direct children.
+                K::GenericParam => children.push(self.lower_node(child)),
+                // Inherited protocols / superclass / raw type lower into
+                // `Conformance` nodes the runtime reads via `record_conformances`.
+                K::TypeRef => {
+                    let name = child.text().map(ToOwned::to_owned);
+                    let conf = self.alloc(NodeKind::Conformance, name.clone(), child.line());
+                    let ident = self.alloc(NodeKind::TypeIdent, name, child.line());
+                    self.set_children(conf, vec![ident]);
+                    children.push(conf);
+                }
+                // Everything else is a member of the type body.
+                _ => members.push(self.lower_node(child)),
+            }
         }
+        let block = self.alloc(NodeKind::Block, Some("{".to_string()), line);
+        self.set_children(block, members);
+        children.push(block);
+        self.set_children(id, children);
+        id
+    }
+
+    /// Lower a `let`/`var` binding into the runtime-facing shape: the binding
+    /// name as the node's text, a `TypeIdent` child for the annotation, then the
+    /// initializer/accessor children. The runtime reads the name via
+    /// `decl_name()` and the default via the first value child.
+    fn lower_binding(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let kind = map_kind(node.kind());
+        let id = self.alloc(kind, None, node.line());
+        self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
+        self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
+
+        let mut name: Option<String> = None;
+        let mut children: Vec<NodeId> = Vec::new();
+        for child in node.children() {
+            match child.kind() {
+                // The simple name pattern becomes the decl's own text; we do
+                // not keep it as a child (matching the msf `var x` shape).
+                K::NamePattern if name.is_none() => {
+                    name = child.text().map(ToOwned::to_owned);
+                }
+                _ => children.push(self.lower_node(child)),
+            }
+        }
+        self.nodes[id.0].text = name;
+        self.set_children(id, children);
         id
     }
 
@@ -121,6 +206,14 @@ impl RuntimeAst {
 
     pub(crate) fn type_name(&self, id: NodeId) -> Option<String> {
         self.node(id).ty.clone()
+    }
+
+    pub(crate) fn modifiers(&self, id: NodeId) -> u32 {
+        self.node(id).modifier_bits
+    }
+
+    pub(crate) fn arg_label(&self, id: NodeId) -> Option<String> {
+        self.node(id).arg_label.clone()
     }
 
     pub(crate) fn children(&self, id: NodeId) -> Children {
@@ -245,6 +338,40 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::NilLiteral => NodeKind::NilLiteral,
         K::StringLiteral => NodeKind::StringLiteral,
     }
+}
+
+/// Translate parser modifier keywords into the runtime-facing modifier bitmask
+/// (the same bit layout `quick-swift-core` reads and `modifier_names` decodes).
+/// This is the frontend's stable modifier contract, independent of any C enum.
+fn modifier_bits(modifiers: &[String]) -> u32 {
+    let mut bits = 0u32;
+    for m in modifiers {
+        bits |= match m.as_str() {
+            "public" => 1 << 0,
+            "private" => 1 << 1,
+            "internal" => 1 << 2,
+            "fileprivate" => 1 << 3,
+            "open" => 1 << 4,
+            // `static` and a type-level `class` member both mean "static".
+            "static" | "class" => 1 << 5,
+            "final" => 1 << 6,
+            "override" => 1 << 7,
+            "mutating" => 1 << 8,
+            "nonmutating" => 1 << 9,
+            "lazy" => 1 << 10,
+            "weak" => 1 << 11,
+            "unowned" => 1 << 12,
+            "async" => 1 << 13,
+            "throws" => 1 << 14,
+            "rethrows" => 1 << 15,
+            "indirect" => 1 << 16,
+            "required" => 1 << 17,
+            "convenience" => 1 << 18,
+            "dynamic" => 1 << 19,
+            _ => 0,
+        };
+    }
+    bits
 }
 
 fn parse_int_literal(text: &str) -> Option<i64> {
