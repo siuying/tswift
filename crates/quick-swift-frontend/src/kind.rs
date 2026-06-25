@@ -6,6 +6,6 @@
 //! no `Other(N)` archaeology. [`NodeKind::Other`] remains only as a
 //! forward-compatible catch-all for a kind newer than the generated table.
 //!
-//! To inspect the generated source: `target/<profile>/build/msf-*/out/node_kind.rs`.
+//! To inspect the generated source: `target/<profile>/build/quick-swift-frontend-*/out/node_kind.rs`.
 
 include!(concat!(env!("OUT_DIR"), "/node_kind.rs"));

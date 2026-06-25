@@ -12,8 +12,8 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use msf::Analysis;
 use quick_swift_core::Interpreter;
+use quick_swift_frontend::Analysis;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::rc::Rc;
 
-use msf::{Analysis, Node, NodeKind};
+use quick_swift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
