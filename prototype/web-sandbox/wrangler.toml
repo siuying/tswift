@@ -1,0 +1,9 @@
+name = "qswift-web-sandbox-prototype"
+compatibility_date = "2026-06-26"
+pages_build_output_dir = "./dist"
+
+# Cloudflare Workers cannot spawn `cargo` or execute local qswift binaries.
+# Set this variable in Cloudflare Pages to a small qswift runner service that
+# accepts POST { "source": "..." } and returns the same JSON shape as /api/run.
+# [vars]
+# QSWIFT_RUNNER_URL = "https://your-qswift-runner.example.com/run"

@@ -1,0 +1,20 @@
+{
+  "name": "qswift-web-sandbox-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1 --port 4321",
+    "start": "astro dev --host 127.0.0.1 --port 4321",
+    "build": "astro build",
+    "preview": "wrangler pages dev ./dist --compatibility-date=2025-04-01",
+    "deploy": "npm run build && wrangler pages deploy ./dist"
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/cloudflare": "^12.6.13",
+    "wrangler": "^4.83.0"
+  }
+}
