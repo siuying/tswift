@@ -154,33 +154,33 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `class` declaration + reference semantics | ✅ | ★★★ | R3 |
-| [ ] | **ARC retain/release** (refcount, no cycle GC) | ✅ | ★★★ | R3 |
-| [ ] | Deterministic `deinit` at refcount 0 | ✅ | ★★ | R3 |
-| [ ] | Inheritance + method/property override | ✅ | ★★★ | R3 |
-| [ ] | `final` / `override` semantics | ✅ | ★★ | R3 |
-| [ ] | Dynamic dispatch (vtables) | ✅ | ★★★ | R3 |
-| [ ] | `super.` calls | ✅ | ★★ | R3 |
-| [ ] | Designated / convenience initializers | ✅ | ★★★ | R3 |
-| [ ] | Initializer delegation + 2-phase init | ✅ | ★★★★ | R3 |
+| [x] | `class` declaration + reference semantics | ✅ | ★★★ | R3 |
+| [x] | **ARC retain/release** (refcount, no cycle GC) | ✅ | ★★★ | R3 |
+| [~] | Deterministic `deinit` at refcount 0 | ✅ | ★★ | R3 |
+| [x] | Inheritance + method/property override | ✅ | ★★★ | R3 |
+| [~] | `final` / `override` semantics | ✅ | ★★ | R3 |
+| [x] | Dynamic dispatch (vtables) | ✅ | ★★★ | R3 |
+| [x] | `super.` calls | ✅ | ★★ | R3 |
+| [~] | Designated / convenience initializers | ✅ | ★★★ | R3 |
+| [~] | Initializer delegation + 2-phase init | ✅ | ★★★★ | R3 |
 | [ ] | `required` initializers | ✅ | ★★ | R3 |
 | [ ] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
-| [ ] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
-| [ ] | `unowned` references | ✅ | ★★ | R3 |
+| [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
+| [~] | `unowned` references | ✅ | ★★ | R3 |
 | [ ] | `unowned(unsafe)` | ⚠️ | ★★ | R3 |
-| [ ] | Identity `===` `!==` | ✅ | ★ | R3 |
-| [ ] | Type casting `is` / `as?` / `as!` / `as` | ✅ | ★★★ | R3 |
-| [ ] | Downcasting in class hierarchies | ✅ | ★★★ | R3 |
+| [x] | Identity `===` `!==` | ✅ | ★ | R3 |
+| [x] | Type casting `is` / `as?` / `as!` / `as` | ✅ | ★★★ | R3 |
+| [x] | Downcasting in class hierarchies | ✅ | ★★★ | R3 |
 
 ### 3a. Closures
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Closure expressions | ✅ | ★★★ | R3 |
-| [ ] | Trailing closures (+ multiple) | ✅ | ★★ | R3 |
-| [ ] | Shorthand args `$0 $1` | ✅ | ★★ | R3 |
-| [ ] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
-| [ ] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
-| [ ] | `@escaping` closures | ✅ | ★★★ | R3 |
+| [x] | Closure expressions | ✅ | ★★★ | R3 |
+| [x] | Trailing closures (+ multiple) | ✅ | ★★ | R3 |
+| [x] | Shorthand args `$0 $1` | ✅ | ★★ | R3 |
+| [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
+| [~] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
+| [~] | `@escaping` closures | ✅ | ★★★ | R3 |
 | [ ] | `@autoclosure` | ✅ | ★★ | R3 |
 | [ ] | Closures capturing `inout` | ✅ | ★★★ | R3 |
 
