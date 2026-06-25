@@ -238,38 +238,62 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick-swift-cli"
+name = "qswift-ast"
+version = "0.0.0"
+
+[[package]]
+name = "qswift-cli"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "quick-swift-core",
- "quick-swift-frontend",
- "quick-swift-std",
+ "qswift-core",
+ "qswift-frontend",
+ "qswift-std",
 ]
 
 [[package]]
-name = "quick-swift-core"
+name = "qswift-core"
 version = "0.0.0"
 dependencies = [
  "corosensei",
- "quick-swift-frontend",
+ "qswift-frontend",
 ]
 
 [[package]]
-name = "quick-swift-frontend"
+name = "qswift-frontend"
 version = "0.0.0"
 dependencies = [
- "swift-ast",
- "swift-lexer",
- "swift-parser",
- "swift-sema",
+ "qswift-ast",
+ "qswift-lexer",
+ "qswift-parser",
+ "qswift-sema",
 ]
 
 [[package]]
-name = "quick-swift-std"
+name = "qswift-lexer"
+version = "0.0.0"
+
+[[package]]
+name = "qswift-parser"
 version = "0.0.0"
 dependencies = [
- "quick-swift-core",
+ "qswift-ast",
+ "qswift-lexer",
+]
+
+[[package]]
+name = "qswift-sema"
+version = "0.0.0"
+dependencies = [
+ "qswift-ast",
+ "qswift-parser",
+]
+
+[[package]]
+name = "qswift-std"
+version = "0.0.0"
+dependencies = [
+ "qswift-core",
 ]
 
 [[package]]
@@ -366,30 +390,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "swift-ast"
-version = "0.0.0"
-
-[[package]]
-name = "swift-lexer"
-version = "0.0.0"
-
-[[package]]
-name = "swift-parser"
-version = "0.0.0"
-dependencies = [
- "swift-ast",
- "swift-lexer",
-]
-
-[[package]]
-name = "swift-sema"
-version = "0.0.0"
-dependencies = [
- "swift-ast",
- "swift-parser",
 ]
 
 [[package]]

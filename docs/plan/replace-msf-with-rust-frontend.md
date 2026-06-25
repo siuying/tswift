@@ -17,7 +17,7 @@ Replace the vendored C library **msf** (lexer → parser → 3-pass sema, reache
 `bindgen`/`cc` FFI in `crates/msf-sys`) with our **own Swift frontend written in safe
 Rust**. After this work:
 
-- `quick-swift` builds with **no C toolchain, no `cc`, no `bindgen`, no `make`** — pure
+- `qswift` builds with **no C toolchain, no `cc`, no `bindgen`, no `make`** — pure
   Rust, trivially cross-compilable (incl. `wasm32`) and `cargo`-cacheable.
 - The frontend is **debuggable, Miri-clean, and editable in one language**.
 - We control the AST and diagnostics end-to-end (fix "FE gap" rows in the checklist
@@ -29,7 +29,7 @@ wording, the SWAR/3-pass designs) but **write original Rust**. No translation of
 as a **reference oracle** for differential testing (§6), then is removed (§8).
 
 **Non-goals:** changing runtime behaviour, the `SwiftValue` model, or the stdlib. The
-runtime (`quick-swift-core`/`-std`) should compile **unchanged** against the new
+runtime (`qswift-core`/`-std`) should compile **unchanged** against the new
 frontend (§3 makes that the hard contract).
 
 ---
@@ -38,13 +38,13 @@ frontend (§3 makes that the hard contract).
 
 The runtime never touches msf's C ABI. Today it depends only on the **safe `msf` crate**
 (`crates/msf`). That crate's public surface is the entire contract our Rust frontend
-must satisfy. As part of this work the crate is **renamed `quick-swift-frontend`**
+must satisfy. As part of this work the crate is **renamed `qswift-frontend`**
 (matching the `quick-swift-*` workspace convention) so nothing in the tree is called
 `msf` once the C library is gone — no name collision with the thing we replaced.
 
 > **Rename impact:** the runtime's `use msf::{Analysis, Node, NodeKind}` becomes
-> `use quick_swift_frontend::{Analysis, Node, NodeKind}` — a single mechanical
-> find-replace across `quick-swift-core`/`-std`, landed in Step 0 while the C backend is
+> `use qswift_frontend::{Analysis, Node, NodeKind}` — a single mechanical
+> find-replace across `qswift-core`/`-std`, landed in Step 0 while the C backend is
 > still live (so it is verified green before the engine swap). The *types and their
 > methods are unchanged*; only the crate path moves.
 
@@ -67,13 +67,13 @@ The contract surface (unchanged by the rename):
 | `NodeKind` enum (66 variants + `Other`) | `crates/msf/src/kind.rs` | AST vocabulary |
 
 **Strategy:** keep this crate as the **stable public façade** (renamed
-`quick-swift-frontend`), and swap its *backing*. Today it wraps `msf_sys` raw pointers.
+`qswift-frontend`), and swap its *backing*. Today it wraps `msf_sys` raw pointers.
 After this work it drives the pure-Rust pipeline (§3) over an owned Rust AST. The runtime
 sees only `Analysis`/`Node`/`NodeKind`, whose shapes never change.
 
 ### 2.1 Kill the raw-discriminant dependency first (prerequisite)
 
-`quick-swift-core/src/interp.rs:351–354` matches **raw msf discriminants** —
+`qswift-core/src/interp.rs:351–354` matches **raw msf discriminants** —
 `NodeKind::Other(28)` (operator decl), `Other(27)` (precedencegroup), `Other(11)`
 (typealias), `Other(10)` (import). These leak msf's C enum numbering into the runtime
 and would pin us to msf's value assignments.
@@ -90,23 +90,23 @@ internally however it likes.
 ## 3. Architecture of the new frontend
 
 Replace `msf-sys` (FFI) with native Rust crates; rename `crates/msf` →
-`quick-swift-frontend` and re-point it at the pure-Rust pipeline.
+`qswift-frontend` and re-point it at the pure-Rust pipeline.
 
 ```
             BEFORE                                AFTER
   ┌─────────────────────────┐         ┌──────────────────────────────┐
-  │ msf-sys  (cc+bindgen,    │         │ swift-lexer  ─┐              │
-  │          C .a, unsafe)   │         │ swift-ast    ─┼─ pure Rust   │
-  └───────────▲─────────────┘         │ swift-parser ─┤   (safe)     │
-              │                        │ swift-sema   ─┘              │
+  │ msf-sys  (cc+bindgen,    │         │ qswift-lexer  ─┐              │
+  │          C .a, unsafe)   │         │ qswift-ast    ─┼─ pure Rust   │
+  └───────────▲─────────────┘         │ qswift-parser ─┤   (safe)     │
+              │                        │ qswift-sema   ─┘              │
   ┌───────────┴─────────────┐         └──────────────▲──────────────┘
   │ msf  (safe wrapper)      │  ===>   ┌──────────────┴──────────────┐
-  │  Analysis/Node/NodeKind  │         │ quick-swift-frontend         │
+  │  Analysis/Node/NodeKind  │         │ qswift-frontend         │
   └───────────▲─────────────┘         │  (same API, drives pipeline) │
               │   (use msf::…)         └──────────────▲──────────────┘
-  ┌───────────┴─────────────┐               (use quick_swift_frontend::…)
-  │ quick-swift-core / -std  │         ┌──────────────┴──────────────┐
-  └─────────────────────────┘         │ quick-swift-core / -std      │
+  ┌───────────┴─────────────┐               (use qswift_frontend::…)
+  │ qswift-core / -std  │         ┌──────────────┴──────────────┐
+  └─────────────────────────┘         │ qswift-core / -std      │
                                        └──────────────────────────────┘
 ```
 
@@ -114,14 +114,14 @@ Replace `msf-sys` (FFI) with native Rust crates; rename `crates/msf` →
 
 | Crate | Responsibility | Study in msf |
 |---|---|---|
-| `swift-lexer` | UTF-8 → token stream; zero-copy spans; NFC for idents; string interpolation spans; raw/multiline/regex delimiters; trivia (comments) | `src/lexer/**`, `src/unicode/**` |
-| `swift-ast` | the AST + `NodeKind` (the *owned* node arena, `TypeRef`, spans). The public `Node`/`NodeKind`/`Type` map onto this. | `src/ast/**`, `generated/` kind tables |
-| `swift-parser` | recursive-descent decls/stmts + Pratt expressions; operator precedence; produces `swift-ast`; recovers + emits parse diagnostics | `src/parser/**` |
-| `swift-sema` | name resolution + type inference + conformance/witness tables; 3-pass (declare → resolve → conform); emits sema diagnostics | `src/semantic/**`, `src/type/**` |
-| `quick-swift-frontend` | **the consumer-facing crate** (renamed from `msf`): same public API (`Analysis`/`Node`/`NodeKind`/`Diagnostic`); drives the pipeline, owns the resulting `Tree { ast, types, diagnostics }`, and the multi-file module driver | `include/msf.h`, `src/msf.c` |
+| `qswift-lexer` | UTF-8 → token stream; zero-copy spans; NFC for idents; string interpolation spans; raw/multiline/regex delimiters; trivia (comments) | `src/lexer/**`, `src/unicode/**` |
+| `qswift-ast` | the AST + `NodeKind` (the *owned* node arena, `TypeRef`, spans). The public `Node`/`NodeKind`/`Type` map onto this. | `src/ast/**`, `generated/` kind tables |
+| `qswift-parser` | recursive-descent decls/stmts + Pratt expressions; operator precedence; produces `qswift-ast`; recovers + emits parse diagnostics | `src/parser/**` |
+| `qswift-sema` | name resolution + type inference + conformance/witness tables; 3-pass (declare → resolve → conform); emits sema diagnostics | `src/semantic/**`, `src/type/**` |
+| `qswift-frontend` | **the consumer-facing crate** (renamed from `msf`): same public API (`Analysis`/`Node`/`NodeKind`/`Diagnostic`); drives the pipeline, owns the resulting `Tree { ast, types, diagnostics }`, and the multi-file module driver | `include/msf.h`, `src/msf.c` |
 
 > Naming: the old `msf` safe-wrapper crate and the throwaway `swift-frontend` façade
-> idea are **merged into one** crate, `quick-swift-frontend`. Internal pipeline crates
+> idea are **merged into one** crate, `qswift-frontend`. Internal pipeline crates
 > stay `swift-*` (engine), the public crate carries the `quick-swift-*` prefix (product).
 > This removes every `msf` name from the workspace once the C lib is decommissioned (§8).
 
@@ -157,20 +157,20 @@ so the runtime's borrow patterns are unaffected.
 ## 4. Migration milestones (F-series, frontend)
 
 Each milestone keeps the workspace **green** by running the *existing* runtime fixtures
-(`crates/quick-swift-cli/tests/fixtures`, 95 pairs) **and** the new frontend golden
+(`crates/qswift-cli/tests/fixtures`, 95 pairs) **and** the new frontend golden
 fixtures (§5) against the new engine, diffed vs the C oracle (§6) where it still exists.
 
 **F0 — Scaffold + de-risk the seam (the contract test).**
 - Do **Step 0** (§2.1): promote raw-discriminant matches to named `NodeKind`. Verify
   green against C msf.
-- Rename `crates/msf` → `quick-swift-frontend` and update the two `use msf::…` sites in
-  `quick-swift-core`/`-std`. Create `swift-lexer`, `swift-ast`, `swift-parser`,
-  `swift-sema`.
-- Stand up the **dual-backend switch**: `quick-swift-frontend` compiles with either
+- Rename `crates/msf` → `qswift-frontend` and update the two `use msf::…` sites in
+  `qswift-core`/`-std`. Create `qswift-lexer`, `qswift-ast`, `qswift-parser`,
+  `qswift-sema`.
+- Stand up the **dual-backend switch**: `qswift-frontend` compiles with either
   `feature="c-oracle"` (old FFI) or `feature="rust"` (new), defaulting to C until F-end.
 - Stand up the **golden-fixture harness** (§5) and the **differential harness** (§6).
 - *Exit:* lexer + parser + sema produce an AST for `print("hi")`;
-  `quick-swift-frontend`'s `Node`/`NodeKind`/`diagnostics` API returns identical results
+  `qswift-frontend`'s `Node`/`NodeKind`/`diagnostics` API returns identical results
   to C msf for it.
 
 **F1 — Tier 0 lexical + Tier 1a (the foundation).** All literals (incl. raw/multiline/
@@ -267,9 +267,9 @@ vendor/msf/tests/swift-fixtures/
    harness writes these with `UPDATE_EXPECT=1` and diffs otherwise.
 
 **Two harnesses** (Rust, replacing msf's `test_swift_fixtures.c`):
-- `frontend-fixtures` test in `quick-swift-frontend`: walk the tree, run `analyze`,
+- `frontend-fixtures` test in `qswift-frontend`: walk the tree, run `analyze`,
   assert diagnostics satisfy the directives and `.ast` snapshots match.
-- The existing runtime golden harness (`crates/quick-swift-cli/tests/golden.rs`)
+- The existing runtime golden harness (`crates/qswift-cli/tests/golden.rs`)
   continues to validate end-to-end *behaviour* — unchanged.
 
 **Definition of done per checklist row:** ≥1 frontend fixture (parse+sema clean, or the
@@ -343,7 +343,7 @@ After F7 cutover and a soak period with the `c-oracle` differential job green:
    *ours*. Preserve git history of the fixtures.
 4. Update `AGENTS.md`, `README.md`, and the implementation plan to drop FFI language.
 5. Confirm **no crate, path, or `use` named `msf` remains** — the public crate is
-   `quick-swift-frontend`, the engine crates are `swift-*`. The only surviving `msf`
+   `qswift-frontend`, the engine crates are `swift-*`. The only surviving `msf`
    reference is historical (research docs).
 
 > The fixtures currently sit inside the `vendor/msf` **submodule**; new fixtures we add
@@ -449,12 +449,12 @@ file intentionally covers several closely-related rows.)
 
 1. **Step 0** — (a) promote runtime's `NodeKind::Other(10/11/27/28)` matches to named
    variants (`ImportDecl`/`TypeAliasDecl`/`PrecedenceGroupDecl`/`OperatorDecl`); and
-   (b) rename `crates/msf` → `quick-swift-frontend`, updating the `use msf::…` sites in
-   `quick-swift-core`/`-std`. Keep the C backend; verify green. (Decouples us from msf's
+   (b) rename `crates/msf` → `qswift-frontend`, updating the `use msf::…` sites in
+   `qswift-core`/`-std`. Keep the C backend; verify green. (Decouples us from msf's
    integers *and* its name before any engine work.)
 2. **Bootstrap the golden fixtures** (§9) under `vendor/msf/tests/swift-fixtures/` — done
    alongside this plan.
 3. **Stand up the differential harness** (§6) so every new fixture is checked against the
    C oracle from the first commit.
-4. **Scaffold** `swift-lexer` and start F1 (Tier 0 lexical), diffing tokens/AST vs oracle.
+4. **Scaffold** `qswift-lexer` and start F1 (Tier 0 lexical), diffing tokens/AST vs oracle.
 5. Convert `feature-checklist.md` "FE" column statuses into F0–F8 issues.

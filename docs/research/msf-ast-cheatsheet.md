@@ -9,15 +9,15 @@ learn the first time. **Add to it whenever msf surprises you.**
 Don't hand-write a recursive walker. Use the built-in dump:
 
 ```bash
-quick-swift dump path/to/snippet.swift          # kind, text, line, type, modifiers
-quick-swift dump --json path/to/snippet.swift   # structured, for tooling
+qswift dump path/to/snippet.swift          # kind, text, line, type, modifiers
+qswift dump --json path/to/snippet.swift   # structured, for tooling
 ```
 
 The text form prints one node per line: `Kind "text" L<line> :<ResolvedType>
 [mods]`. Diagnostics (errors/warnings) go to stderr, so you still see them even
 when analysis half-fails. To pin a construct's parse shape in a test, drop a
-`crates/quick-swift-cli/tests/fixtures/ast/<name>.swift` + `<name>.ast` pair
-(regenerate with `quick-swift dump`).
+`crates/qswift-cli/tests/fixtures/ast/<name>.swift` + `<name>.ast` pair
+(regenerate with `qswift dump`).
 
 msf itself also exposes `msf_dump_text` / `msf_dump_json` / `msf_dump_sexpr` in
 `vendor/msf/include/msf.h` if you ever need the frontend's own format.

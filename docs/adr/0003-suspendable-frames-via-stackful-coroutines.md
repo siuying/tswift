@@ -13,7 +13,7 @@ actor reentrancy, generators — requires a **suspension primitive**: save the f
 execution state at an `await`, return to a scheduler, and resume later exactly
 where execution paused.
 
-Our evaluator (`crates/quick-swift-core/src/interp.rs`) is a **tree-walker** that
+Our evaluator (`crates/qswift-core/src/interp.rs`) is a **tree-walker** that
 recurses on the **Rust call stack**. At an `await`, the in-flight evaluation chain
 lives in native stack frames that cannot be frozen — so #12 was modelled as
 **blocked by #11** (the register bytecode VM, whose frames are explicitly
@@ -96,4 +96,4 @@ open as the fallback record.
 
 - The `unsafe` confinement principle from ADR-0001 is preserved: stack-switching
   `unsafe` lives behind the coroutine crate's safe API, not in
-  `quick-swift-core`.
+  `qswift-core`.
