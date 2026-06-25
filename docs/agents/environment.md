@@ -41,7 +41,11 @@ all cost time to rediscover.
 
 ## Build/codegen
 
-- `crates/msf/build.rs` generates `NodeKind` from
-  `vendor/msf/generated/ast_kinds.h`; `crates/msf-sys/build.rs` compiles the
-  vendored C and runs bindgen. Both require the **msf submodule checked out**
-  (`git submodule update --init`).
+- `crates/msf/build.rs` generates `NodeKind` from the `ASTNodeKind` enum in
+  `vendor/msf/include/msf.h` — deliberately the **same** public header
+  `crates/msf-sys/build.rs` feeds to bindgen, so the generated enum and the raw
+  `AST_*` constants share one source of truth and cannot drift. Do not repoint
+  it at `vendor/msf/generated/ast_kinds.h`: that splits the source of truth and
+  lets `msf` emit match arms against constants `msf-sys` doesn't expose.
+  `crates/msf-sys/build.rs` also compiles the vendored C. Both require the **msf
+  submodule checked out** (`git submodule update --init`).
