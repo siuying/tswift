@@ -125,8 +125,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Property observers `willSet`/`didSet` | ✅ | ★★ | R3 |
 | [x] | `lazy` stored properties | ✅ | ★★ | R3 |
 | [~] | Type properties `static`/`class` | ✅ | ★★ | R2 |
-| [ ] | Property wrappers `@propertyWrapper` | ✅ | ★★★ | R5 |
-| [ ] | Projected values `$wrapper` | ⚠️ | ★★★ | R5 |
+| [x] | Property wrappers `@propertyWrapper` | ✅ | ★★★ | R5 |
+| [x] | Projected values `$wrapper` | ⚠️ | ★★★ | R5 |
 | [ ] | Global & local variables (lazy globals) | ✅ | ★★ | R2 |
 
 ### 2c. Optionals
@@ -237,15 +237,15 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [ ] | `Error` protocol + custom errors | ✅ | ★★ | R5 |
-| [ ] | `throws` functions | ✅ | ★★★ | R5 |
-| [ ] | `throw` statement | ✅ | ★★ | R5 |
-| [ ] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
-| [ ] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
-| [ ] | `rethrows` | ✅ | ★★★ | R5 |
-| [ ] | Typed throws `throws(E)` (Swift 6) | ⚠️ | ★★★ | R5 |
-| [ ] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
-| [ ] | Error propagation through call stack | ✅ | ★★★ | R5 |
-| [ ] | `Result<Success, Failure>` (stdlib) | ✅ | ★★ | R5 |
+| [x] | `throws` functions | ✅ | ★★★ | R5 |
+| [x] | `throw` statement | ✅ | ★★ | R5 |
+| [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
+| [x] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
+| [~] | `rethrows` | ✅ | ★★★ | R5 |
+| [~] | Typed throws `throws(E)` (Swift 6) | ⚠️ | ★★★ | R5 |
+| [x] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
+| [x] | Error propagation through call stack | ✅ | ★★★ | R5 |
+| [x] | `Result<Success, Failure>` (stdlib) | ✅ | ★★ | R5 |
 
 ---
 

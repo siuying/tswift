@@ -1,0 +1,10 @@
+start
+iter 1
+loop defer 1
+iter 2
+loop defer 2
+iter 3
+loop defer 3
+end
+defer 2
+defer 1

@@ -153,6 +153,10 @@ struct StructDef {
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
     subscript: Option<MethodDef>,
+    /// A custom initializer, if the struct declares one (else memberwise).
+    init: Option<MethodDef>,
+    /// Stored property name → its `@propertyWrapper` type, when wrapped.
+    wrappers: std::collections::HashMap<String, String>,
 }
 
 /// One case of an enum.
@@ -232,6 +236,8 @@ pub struct Interpreter<'w> {
     statics: HashMap<String, SwiftValue>,
     /// Stack of class names for the methods currently executing (for `super`).
     class_ctx: Vec<String>,
+    /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
+    defer_stack: Vec<Vec<Node<'static>>>,
     depth: usize,
 }
 
@@ -251,6 +257,7 @@ impl<'w> Interpreter<'w> {
             closures: Vec::new(),
             statics: HashMap::new(),
             class_ctx: Vec::new(),
+            defer_stack: Vec::new(),
             depth: 0,
         }
     }
@@ -258,6 +265,27 @@ impl<'w> Interpreter<'w> {
     /// Register a native function callable from Swift source by `name`.
     pub fn register_native(&mut self, name: &str, f: NativeFn) {
         self.natives.insert(name.to_string(), f);
+    }
+
+    /// Predeclare `Result<Success, Failure>` as a two-case enum so
+    /// `.success`/`.failure` construct and `.get()` can throw.
+    fn register_builtin_result(&mut self) {
+        self.enums
+            .entry("Result".into())
+            .or_insert_with(|| EnumDef {
+                cases: vec![
+                    EnumCaseDef {
+                        name: "success".into(),
+                        raw: None,
+                    },
+                    EnumCaseDef {
+                        name: "failure".into(),
+                        raw: None,
+                    },
+                ],
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            });
     }
 
     /// Evaluate a fully-analyzed program.
@@ -271,6 +299,7 @@ impl<'w> Interpreter<'w> {
                 .join("\n");
             return Err(EvalError::Analysis(diags));
         }
+        self.register_builtin_result();
         let outcome = self.eval(&analysis.root());
         // Run `deinit` for class instances still alive at program end (LIFO).
         let mut released = self.env.drain_global();
@@ -313,6 +342,24 @@ impl<'w> Interpreter<'w> {
                     None => SwiftValue::Void,
                 };
                 Err(Signal::Return(value))
+            }
+            NodeKind::ThrowStmt => {
+                let e = node
+                    .children()
+                    .next()
+                    .ok_or_else(|| EvalError::Unsupported("throw without a value".into()))?;
+                let value = self.eval(&e)?;
+                Err(Signal::Throw(value))
+            }
+            NodeKind::DoStmt => self.eval_do(node),
+            NodeKind::TryExpr => self.eval_try(node),
+            NodeKind::DeferStmt => {
+                if let Some(block) = node.children().next() {
+                    if let Some(frame) = self.defer_stack.last_mut() {
+                        frame.push(block);
+                    }
+                }
+                Ok(SwiftValue::Void)
             }
             NodeKind::IfStmt => self.eval_if(node),
             NodeKind::GuardStmt => self.eval_guard(node),
@@ -358,8 +405,15 @@ impl<'w> Interpreter<'w> {
     /// its local bindings do not leak outward.
     fn eval_scoped_block(&mut self, node: &Node<'static>) -> Eval {
         self.env.push();
+        self.defer_stack.push(Vec::new());
         self.hoist(node);
         let r = self.eval_seq(node);
+        // Run `defer` blocks LIFO on every exit path (normal, return, throw),
+        // while the scope's bindings are still in scope.
+        let defers = self.defer_stack.pop().unwrap_or_default();
+        for d in defers.iter().rev() {
+            let _ = self.eval(d);
+        }
         // Run `deinit` for class instances released as the scope exits (LIFO).
         let mut released = self.env.pop_owned();
         released.reverse();
@@ -367,6 +421,83 @@ impl<'w> Interpreter<'w> {
             self.run_deinit(&v);
         }
         r
+    }
+
+    /// `do { … } catch <pattern> { … } …` — run the body; on a thrown error,
+    /// dispatch to the first matching catch clause.
+    fn eval_do(&mut self, node: &Node<'static>) -> Eval {
+        let children: Vec<Node<'static>> = node.children().collect();
+        let body = children
+            .iter()
+            .find(|c| c.kind() == NodeKind::Block)
+            .ok_or_else(|| EvalError::Unsupported("do without a body".into()))?;
+        let catches: Vec<Node<'static>> = children
+            .iter()
+            .copied()
+            .filter(|c| c.kind() == NodeKind::CatchClause)
+            .collect();
+
+        match self.eval(body) {
+            Err(Signal::Throw(err)) => {
+                for catch in &catches {
+                    if let Some(binds) = self.match_catch(catch, &err)? {
+                        let cbody = catch
+                            .children()
+                            .find(|c| c.kind() == NodeKind::Block)
+                            .ok_or_else(|| EvalError::Unsupported("catch without a body".into()))?;
+                        self.env.push();
+                        for (n, v) in &binds {
+                            self.env.declare(n, v.clone(), false);
+                        }
+                        let r = self.eval(&cbody);
+                        self.env.pop();
+                        return r;
+                    }
+                }
+                Err(Signal::Throw(err)) // unhandled — re-propagate
+            }
+            other => other,
+        }
+    }
+
+    /// Whether a catch clause matches `err`, returning any bound names. A
+    /// pattern-less `catch` matches everything and binds `error`.
+    fn match_catch(
+        &mut self,
+        catch: &Node<'static>,
+        err: &SwiftValue,
+    ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
+        let pattern = catch.children().find(|c| c.kind() != NodeKind::Block);
+        match pattern {
+            None => Ok(Some(vec![("error".into(), err.clone())])),
+            Some(p) => self.match_pattern(&p, err),
+        }
+    }
+
+    /// `try expr` / `try? expr` / `try! expr`.
+    fn eval_try(&mut self, node: &Node<'static>) -> Eval {
+        let kind = node.text();
+        let inner = node
+            .children()
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("try without an expression".into()))?;
+        let result = self.eval(&inner);
+        match kind.as_deref() {
+            // `try?` turns a thrown error into nil.
+            Some("?") => match result {
+                Ok(v) => Ok(v),
+                Err(Signal::Throw(_)) => Ok(SwiftValue::Nil),
+                Err(other) => Err(other),
+            },
+            // `try!` traps on a thrown error.
+            Some("!") => match result {
+                Ok(v) => Ok(v),
+                Err(Signal::Throw(e)) => Err(trap(format!("unexpected error: {e}"))),
+                Err(other) => Err(other),
+            },
+            // Plain `try` is transparent; the error propagates.
+            _ => result,
+        }
     }
 
     /// Pre-declare function and struct declarations in `node` so forward
@@ -747,10 +878,19 @@ impl<'w> Interpreter<'w> {
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
+        let mut wrappers = std::collections::HashMap::new();
         let mut subscript = None;
+        let mut init = None;
 
         for member in body.children() {
             match member.kind() {
+                NodeKind::InitDecl => {
+                    init = Some(MethodDef {
+                        params: parse_params(&member),
+                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        mutating: true,
+                    });
+                }
                 NodeKind::SubscriptDecl => {
                     let acc = member.var_accessors();
                     let body = acc
@@ -792,6 +932,13 @@ impl<'w> Interpreter<'w> {
                             },
                         );
                     } else {
+                        if let Some(attr) = member
+                            .children()
+                            .find(|c| c.kind() == NodeKind::Other(16))
+                            .and_then(|a| a.text())
+                        {
+                            wrappers.insert(pname.clone(), attr);
+                        }
                         let default = member.children().find(|c| is_value_node(c));
                         let will_set = acc.will_set_body.map(|b| {
                             (
@@ -837,6 +984,8 @@ impl<'w> Interpreter<'w> {
                 computed,
                 methods,
                 subscript,
+                init,
+                wrappers,
             },
         );
     }
@@ -1656,7 +1805,19 @@ impl<'w> Interpreter<'w> {
             ))
             .into());
         };
+        // Projected value `$name` reads the wrapper's `projectedValue`.
+        if let Some(stripped) = name.strip_prefix('$') {
+            if self.wrapped_field(&obj.type_name, stripped) {
+                if let Some(wrapper) = obj.get(stripped).cloned() {
+                    return self.read_struct_member(&wrapper, "projectedValue");
+                }
+            }
+        }
         if let Some(v) = obj.get(name) {
+            // A wrapped stored property exposes its wrapper's `wrappedValue`.
+            if self.wrapped_field(&obj.type_name, name) {
+                return self.read_struct_member(&v.clone(), "wrappedValue");
+            }
             return Ok(v.clone());
         }
         let getter = self
@@ -1679,6 +1840,42 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         args: &[(Option<String>, SwiftValue)],
     ) -> Eval {
+        // A custom initializer runs against a fresh empty value, binding `self`.
+        let custom_init = self
+            .structs
+            .get(type_name)
+            .and_then(|d| d.init.as_ref().map(|m| (clone_params(&m.params), m.body)));
+        if let Some((params, body)) = custom_init {
+            let this = SwiftValue::Struct(Rc::new(StructObj {
+                type_name: type_name.to_string(),
+                fields: Vec::new(),
+            }));
+            let call_args: Vec<CallArg> = args
+                .iter()
+                .map(|(label, value)| CallArg {
+                    label: label.clone(),
+                    value: value.clone(),
+                    place: None,
+                })
+                .collect();
+            self.env.push();
+            self.env.declare("self", this, true);
+            let bound = self.bind_params(&params, call_args);
+            let result = match bound {
+                Ok(_) => match body {
+                    Some(b) => self.eval(&b),
+                    None => Ok(SwiftValue::Void),
+                },
+                Err(e) => Err(e),
+            };
+            let built = self.env.get("self").unwrap_or(SwiftValue::Void);
+            self.env.pop();
+            return match result {
+                Ok(_) | Err(Signal::Return(_)) => Ok(built),
+                Err(e) => Err(e),
+            };
+        }
+
         let plan: Vec<(String, bool, Option<Node<'static>>)> = self
             .structs
             .get(type_name)
@@ -1712,12 +1909,31 @@ impl<'w> Interpreter<'w> {
                 ))
                 .into());
             };
+            // Wrap `@propertyWrapper` fields in their wrapper instance.
+            let wrapper = self
+                .structs
+                .get(type_name)
+                .and_then(|d| d.wrappers.get(&pname))
+                .cloned();
+            let value = match wrapper {
+                Some(wt) => {
+                    self.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
+                }
+                None => value,
+            };
             fields.push((pname, value));
         }
         Ok(SwiftValue::Struct(Rc::new(StructObj {
             type_name: type_name.to_string(),
             fields,
         })))
+    }
+
+    /// The `@propertyWrapper` type of `field` on struct `type_name`, if any.
+    fn wrapped_field(&self, type_name: &str, field: &str) -> bool {
+        self.structs
+            .get(type_name)
+            .is_some_and(|d| d.wrappers.contains_key(field))
     }
 
     /// Run `body` with `self` bound to `this` in a fresh scope, returning the
@@ -1752,6 +1968,22 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Struct(o) => o.type_name.clone(),
             _ => return Err(EvalError::Type("cannot set a member on a non-struct".into()).into()),
         };
+
+        // A wrapped property's set goes through its wrapper's `wrappedValue`.
+        if self.wrapped_field(&type_name, name) {
+            let current = match &value {
+                SwiftValue::Struct(o) => o.get(name).cloned(),
+                _ => None,
+            };
+            if let Some(wrapper) = current {
+                let updated = self.set_struct_field(wrapper, "wrappedValue", new_value)?;
+                let mut value = value;
+                if let SwiftValue::Struct(obj) = &mut value {
+                    Rc::make_mut(obj).set(name, updated);
+                }
+                return Ok(value);
+            }
+        }
 
         let setter = self
             .structs
@@ -2233,7 +2465,12 @@ impl<'w> Interpreter<'w> {
             }
             NodeKind::PatternEnum => {
                 let case_name = pattern.op_text().unwrap_or_default();
-                let subs: Vec<Node<'static>> = pattern.children().collect();
+                // The leading `TypeIdent` (e.g. the `E` in `E.bad`) is not a
+                // sub-pattern; only payload bindings are.
+                let subs: Vec<Node<'static>> = pattern
+                    .children()
+                    .filter(|c| c.kind() != NodeKind::TypeIdent)
+                    .collect();
                 // Optional patterns desugar to `.some`/`.none`.
                 if case_name == "some" {
                     if matches!(subject, SwiftValue::Nil) {
@@ -2768,6 +3005,18 @@ impl<'w> Interpreter<'w> {
             ) {
                 let args = self.eval_args(arg_nodes)?;
                 return self.array_higher_order(&base_value, &method, args);
+            }
+        }
+
+        // `Result.get()`: unwrap success, or throw the failure error.
+        if let SwiftValue::Enum(e) = &base_value {
+            if e.type_name == "Result" && method == "get" {
+                return match e.case.as_str() {
+                    "success" => Ok(e.payload.first().cloned().unwrap_or(SwiftValue::Void)),
+                    _ => Err(Signal::Throw(
+                        e.payload.first().cloned().unwrap_or(SwiftValue::Nil),
+                    )),
+                };
             }
         }
 
@@ -3876,6 +4125,51 @@ mod tests {
         })
         .unwrap();
         assert_eq!(out, "42\n");
+    }
+
+    #[test]
+    fn throw_catch_with_payload_and_defer() {
+        let out = run(
+            "enum FileError: Error { case notFound(String) }\nfunc read(_ name: String) throws -> String {\n  guard name == \"a.txt\" else { throw FileError.notFound(name) }\n  return \"data\"\n}\ndo {\n  defer { print(\"cleanup\") }\n  print(try read(\"x.txt\"))\n} catch FileError.notFound(let n) { print(\"missing \\(n)\") }\n",
+        )
+        .unwrap();
+        assert_eq!(out, "cleanup\nmissing x.txt\n");
+    }
+
+    #[test]
+    fn try_optional_and_bang() {
+        let out = run(
+            "enum E: Error { case bad }\nfunc f(_ ok: Bool) throws -> Int { if ok { return 7 } else { throw E.bad } }\nprint((try? f(true)) ?? -1)\nprint((try? f(false)) ?? -1)\nprint(try! f(true))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "7\n-1\n7\n");
+    }
+
+    #[test]
+    fn defer_runs_lifo_on_all_exits() {
+        let out = run(
+            "func g() {\n  defer { print(\"a\") }\n  defer { print(\"b\") }\n  print(\"body\")\n}\ng()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "body\nb\na\n");
+    }
+
+    #[test]
+    fn result_get_throws() {
+        let out = run(
+            "enum E: Error { case bad(Int) }\nfunc r(_ x: Int) -> Result<Int, E> { if x < 0 { return .failure(E.bad(x)) } \n return .success(x * 10) }\ndo { print(try r(4).get()) ; _ = try r(-1).get() } catch E.bad(let n) { print(\"failed \\(n)\") }\n",
+        )
+        .unwrap();
+        assert_eq!(out, "40\nfailed -1\n");
+    }
+
+    #[test]
+    fn property_wrapper_with_projected_value() {
+        let out = run(
+            "@propertyWrapper struct Clamped {\n  private var value: Int\n  let limit: Int\n  var wrappedValue: Int { get { value } set { value = newValue > limit ? limit : newValue } }\n  var projectedValue: Bool { value == limit }\n  init(wrappedValue: Int) { limit = 10; value = wrappedValue > 10 ? 10 : wrappedValue }\n}\nstruct P { @Clamped var hp: Int = 5 }\nvar p = P()\nprint(p.hp)\np.hp = 100\nprint(p.hp)\nprint(p.$hp)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "5\n10\ntrue\n");
     }
 
     #[test]
