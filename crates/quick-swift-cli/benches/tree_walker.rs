@@ -27,7 +27,7 @@
 use std::io::{self, Write};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use msf::Analysis;
+use quick_swift_frontend::Analysis;
 use quick_swift_core::Interpreter;
 
 #[path = "support/corpus.rs"]
