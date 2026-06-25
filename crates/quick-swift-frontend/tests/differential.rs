@@ -60,6 +60,13 @@ const CLEAN: &[&str] = &[
     "for i in 0 ..< 5 { print(i) }",
     "func g(_ x: Int) -> Int { guard x > 0 else { return 0 }\n return x }",
     "func classify(_ x: Int) -> Int { switch x { case 0: return 0\n default: return 1 } }",
+    // Tier 2 — value & nominal types.
+    "struct Point { var x: Int\n var y: Int }",
+    "struct Sized { let n: Int\n var area: Int { return n * n } }",
+    "enum Direction { case north, south, east, west }",
+    "enum Planet: Int { case mercury = 1, venus, earth }",
+    "enum Barcode { case upc(Int, Int)\n case qr(String) }",
+    "struct Counter { var count = 0\n mutating func bump() { count += 1 } }",
 ];
 
 /// Snippets the permissive C oracle accepts but the Rust frontend rejects: a

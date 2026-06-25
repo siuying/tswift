@@ -68,6 +68,34 @@ impl Resolver {
         match ast.node(stmt).kind() {
             NodeKind::LetDecl | NodeKind::VarDecl => self.resolve_binding(ast, stmt),
             NodeKind::FuncDecl => self.resolve_func(ast, stmt, &kids),
+            NodeKind::StructDecl | NodeKind::EnumDecl => {
+                self.push_scope();
+                for &member in &kids {
+                    self.resolve_statement(ast, member);
+                }
+                self.pop_scope();
+            }
+            NodeKind::InitDecl | NodeKind::SubscriptDecl => {
+                self.push_scope();
+                for &c in &kids {
+                    match ast.node(c).kind() {
+                        NodeKind::Param => self.bind_param(ast, c),
+                        NodeKind::TypeRef => {}
+                        _ => self.resolve_statement(ast, c),
+                    }
+                }
+                self.pop_scope();
+            }
+            NodeKind::Accessor => {
+                for &c in &kids {
+                    self.resolve_statement(ast, c);
+                }
+            }
+            NodeKind::EnumCaseDecl => {
+                for &c in &kids {
+                    self.infer(ast, c);
+                }
+            }
             NodeKind::Block => {
                 self.push_scope();
                 for &s in &kids {
@@ -75,19 +103,10 @@ impl Resolver {
                 }
                 self.pop_scope();
             }
-            NodeKind::IfStmt => {
-                if let Some(&cond) = kids.first() {
-                    self.infer(ast, cond);
-                }
-                for &c in &kids[1..] {
-                    self.resolve_statement(ast, c); // then/else: Block or nested IfStmt
-                }
-            }
-            NodeKind::GuardStmt | NodeKind::WhileStmt => {
-                if let Some(&cond) = kids.first() {
-                    self.infer(ast, cond);
-                }
-                for &c in &kids[1..] {
+            // `if`/`guard`/`while`: conditions (expressions or `let` bindings),
+            // then their block(s) / nested `if`.
+            NodeKind::IfStmt | NodeKind::GuardStmt | NodeKind::WhileStmt => {
+                for &c in &kids {
                     self.resolve_statement(ast, c);
                 }
             }
@@ -500,6 +519,36 @@ mod tests {
         // `a` is bound inside the if-block and used there; the outer `let r`
         // does not see it, so no spurious diagnostics arise.
         let (_ast, diags) = resolved("if true { let a = 1\nlet b = a + 1 }");
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    // --- Tier 2 ---
+
+    #[test]
+    fn value_types_resolve_without_diagnostics() {
+        let src = "struct Point {\n\
+                   var x: Int\n\
+                   var y: Int\n\
+                   func sumSquares() -> Int { return x * x + y * y }\n\
+                   var magnitudeHint: Int { return x + y }\n\
+                   }\n\
+                   enum Suit: Int {\n\
+                   case hearts = 1, spades\n\
+                   }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn method_params_and_body_resolve() {
+        let src = "struct Calc { func add(a: Int, b: Int) -> Int { return a + b } }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn if_let_binding_resolves() {
+        let (_ast, diags) = resolved("var maybe = 1\nif let value = maybe { let doubled = value }");
         assert!(diags.is_empty(), "{diags:?}");
     }
 }

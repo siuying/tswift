@@ -108,10 +108,24 @@ impl<'a> Parser<'a> {
             self.bump(); // ':'
             return self.parse_labeled(label.text);
         }
+        // Skip declaration modifiers (`static`, `public`, `final`, …) that
+        // precede a declaration keyword.
+        self.skip_modifiers();
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
-                "let" | "var" => return self.parse_binding(),
+                "let" | "var" => {
+                    let decl = self.parse_binding()?;
+                    // A same-line `{` introduces computed-property accessors or observers.
+                    if self.peek().kind == TokenKind::LBrace && !self.peek().leading_newline {
+                        self.parse_accessor_block(decl)?;
+                    }
+                    return Ok(decl);
+                }
                 "func" => return self.parse_func(),
+                "struct" => return self.parse_nominal(NodeKind::StructDecl),
+                "enum" => return self.parse_nominal(NodeKind::EnumDecl),
+                "init" => return self.parse_init(),
+                "subscript" => return self.parse_subscript(),
                 "return" => return self.parse_return(),
                 "if" => return self.parse_if(),
                 "guard" => return self.parse_guard(),
@@ -279,8 +293,7 @@ impl<'a> Parser<'a> {
     fn parse_if(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::IfStmt, None, kw.line, kw.col);
-        let cond = self.parse_expr(0)?;
-        self.ast.append_child(node, cond);
+        self.parse_conditions(node)?;
         let then = self.parse_block()?;
         self.ast.append_child(node, then);
         if self.at_keyword("else") {
@@ -298,8 +311,7 @@ impl<'a> Parser<'a> {
     fn parse_guard(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::GuardStmt, None, kw.line, kw.col);
-        let cond = self.parse_expr(0)?;
-        self.ast.append_child(node, cond);
+        self.parse_conditions(node)?;
         if !self.at_keyword("else") {
             return self.error("expected 'else' after the guard condition");
         }
@@ -312,8 +324,7 @@ impl<'a> Parser<'a> {
     fn parse_while(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::WhileStmt, label, kw.line, kw.col);
-        let cond = self.parse_expr(0)?;
-        self.ast.append_child(node, cond);
+        self.parse_conditions(node)?;
         let body = self.parse_block()?;
         self.ast.append_child(node, body);
         Ok(node)
@@ -426,6 +437,193 @@ impl<'a> Parser<'a> {
             None
         };
         Ok(self.ast.add(kind, label, kw.line, kw.col))
+    }
+
+    /// Consume any run of leading declaration modifiers that precede a
+    /// declaration keyword (so they are accepted but not yet modelled).
+    fn skip_modifiers(&mut self) {
+        let mut i = self.pos;
+        while is_modifier_word(self.tokens[i].text) {
+            i += 1;
+        }
+        if i > self.pos && is_decl_keyword(self.tokens[i].text) {
+            while self.pos < i {
+                self.bump();
+            }
+        }
+    }
+
+    /// One or more comma-separated conditions for `if`/`guard`/`while`. A
+    /// condition is either an optional binding (`let x = e`) or an expression.
+    fn parse_conditions(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        loop {
+            let cond = if self.at_keyword("let") || self.at_keyword("var") {
+                self.parse_binding()?
+            } else {
+                self.parse_expr(0)?
+            };
+            self.ast.append_child(parent, cond);
+            if self.peek().kind == TokenKind::Comma {
+                self.bump();
+                continue;
+            }
+            break;
+        }
+        Ok(())
+    }
+
+    /// `struct`/`enum Name [: Conformances] { members }`.
+    fn parse_nominal(&mut self, kind: NodeKind) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let name = self.expect(TokenKind::Identifier)?;
+        let node = self.ast.add(kind, Some(name.text), kw.line, kw.col);
+        // Inheritance / conformance / raw-value clause `: A, B`.
+        if self.peek().kind == TokenKind::Colon {
+            self.bump();
+            loop {
+                let ty = self.parse_type()?;
+                self.ast.append_child(node, ty);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::LBrace)?;
+        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+            if self.at_keyword("case") {
+                self.parse_enum_cases(node)?;
+            } else {
+                let member = self.parse_statement()?;
+                self.ast.append_child(node, member);
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(node)
+    }
+
+    /// One `case a, b(Int), c = 1` line, appending an [`NodeKind::EnumCaseDecl`]
+    /// per element to `parent`.
+    fn parse_enum_cases(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        self.bump(); // `case`
+        loop {
+            let name = self.expect(TokenKind::Identifier)?;
+            let case = self
+                .ast
+                .add(NodeKind::EnumCaseDecl, Some(name.text), name.line, name.col);
+            if self.peek().kind == TokenKind::LParen {
+                self.bump();
+                if self.peek().kind != TokenKind::RParen {
+                    loop {
+                        let ty = self.parse_type()?;
+                        self.ast.append_child(case, ty);
+                        if self.peek().kind == TokenKind::Comma {
+                            self.bump();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+            } else if self.at_oper("=") {
+                self.bump();
+                let raw = self.parse_expr(0)?;
+                self.ast.append_child(case, raw);
+            }
+            self.ast.append_child(parent, case);
+            if self.peek().kind == TokenKind::Comma {
+                self.bump();
+                continue;
+            }
+            break;
+        }
+        Ok(())
+    }
+
+    /// `init[?]([params]) [throws] { body }`.
+    fn parse_init(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::InitDecl, None, kw.line, kw.col);
+        if self.peek().kind == TokenKind::Question || self.at_oper("!") {
+            self.bump(); // failable `init?` / `init!`
+        }
+        self.parse_param_list(node)?;
+        if self.at_keyword("throws") || self.at_keyword("rethrows") {
+            self.bump();
+        }
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// `subscript([params]) -> Type { accessors }`.
+    fn parse_subscript(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::SubscriptDecl, None, kw.line, kw.col);
+        self.parse_param_list(node)?;
+        if self.at_oper("->") {
+            self.bump();
+            let ret = self.parse_type()?;
+            self.ast.append_child(node, ret);
+        }
+        self.parse_accessor_block(node)?;
+        Ok(node)
+    }
+
+    /// Parse a parenthesised, comma-separated parameter list into `parent`.
+    fn parse_param_list(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        self.expect(TokenKind::LParen)?;
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                let p = self.parse_param()?;
+                self.ast.append_child(parent, p);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(())
+    }
+
+    /// A `{ ... }` accessor block: explicit `get`/`set`/`willSet`/`didSet`
+    /// accessors, or a read-only getter written as a bare statement block.
+    fn parse_accessor_block(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        let open = self.expect(TokenKind::LBrace)?;
+        if is_accessor_kw(self.peek().text) {
+            while is_accessor_kw(self.peek().text) {
+                let kw = self.bump();
+                let acc = self
+                    .ast
+                    .add(NodeKind::Accessor, Some(kw.text), kw.line, kw.col);
+                if self.peek().kind == TokenKind::LParen {
+                    self.bump();
+                    self.expect(TokenKind::Identifier)?;
+                    self.expect(TokenKind::RParen)?;
+                }
+                let body = self.parse_block()?;
+                self.ast.append_child(acc, body);
+                self.ast.append_child(parent, acc);
+            }
+            self.expect(TokenKind::RBrace)?;
+        } else {
+            // Read-only getter shorthand: the block's statements are the getter.
+            let getter = self
+                .ast
+                .add(NodeKind::Accessor, Some("get"), open.line, open.col);
+            let block = self.ast.add(NodeKind::Block, None, open.line, open.col);
+            while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+                let stmt = self.parse_statement()?;
+                self.ast.append_child(block, stmt);
+            }
+            self.expect(TokenKind::RBrace)?;
+            self.ast.append_child(getter, block);
+            self.ast.append_child(parent, getter);
+        }
+        Ok(())
     }
 
     fn parse_pattern(&mut self) -> Result<NodeId, ParseError> {
@@ -615,6 +813,13 @@ impl<'a> Parser<'a> {
                     .add(NodeKind::IdentExpr, Some(t.text), t.line, t.col)
             }
             TokenKind::LParen => return self.parse_paren_or_tuple(),
+            // Implicit member expression `.case` (no base).
+            TokenKind::Dot => {
+                self.bump();
+                let name = self.expect(TokenKind::Identifier)?;
+                self.ast
+                    .add(NodeKind::MemberExpr, Some(name.text), t.line, t.col)
+            }
             other => return self.error(format!("expected an expression, found {other:?}")),
         };
         Ok(node)
@@ -646,6 +851,19 @@ impl<'a> Parser<'a> {
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
         loop {
             match self.peek().kind {
+                // Forced unwrap `expr!`.
+                TokenKind::Oper if self.peek().text == "!" => {
+                    let bang = self.bump();
+                    let node = self
+                        .ast
+                        .add(NodeKind::PostfixExpr, Some("!"), bang.line, bang.col);
+                    self.ast.append_child(node, expr);
+                    expr = node;
+                }
+                // Optional chaining `expr?.member`: drop the `?`, let `.` handle it.
+                TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
+                    self.bump();
+                }
                 TokenKind::LParen => {
                     let open = self.bump();
                     let call = self.ast.add(NodeKind::CallExpr, None, open.line, open.col);
@@ -707,6 +925,57 @@ fn binding_power(op: &str) -> Option<(u8, u8)> {
         _ => return None,
     };
     Some((p, p + 1))
+}
+
+/// Declaration modifiers consumed (and currently discarded) before a declaration.
+fn is_modifier_word(w: &str) -> bool {
+    matches!(
+        w,
+        "static"
+            | "class"
+            | "mutating"
+            | "nonmutating"
+            | "lazy"
+            | "final"
+            | "override"
+            | "required"
+            | "convenience"
+            | "public"
+            | "private"
+            | "internal"
+            | "fileprivate"
+            | "open"
+            | "package"
+            | "weak"
+            | "unowned"
+            | "indirect"
+            | "dynamic"
+    )
+}
+
+/// Keywords that introduce a declaration a modifier run may precede.
+fn is_decl_keyword(w: &str) -> bool {
+    matches!(
+        w,
+        "struct"
+            | "enum"
+            | "class"
+            | "protocol"
+            | "extension"
+            | "func"
+            | "init"
+            | "subscript"
+            | "let"
+            | "var"
+            | "case"
+            | "typealias"
+            | "deinit"
+    )
+}
+
+/// Accessor introducers inside a property/subscript body.
+fn is_accessor_kw(w: &str) -> bool {
+    matches!(w, "get" | "set" | "willSet" | "didSet")
 }
 
 /// Whether `kw` is a statement that may carry a leading `label:`.
@@ -1079,5 +1348,138 @@ mod tests {
         let brk = body.children().next().unwrap();
         assert_eq!(brk.kind(), NodeKind::BreakStmt);
         assert_eq!(brk.text(), None); // `foo` on the next line is not its label
+    }
+
+    // --- Tier 2: value & nominal types ---
+
+    #[test]
+    fn struct_with_members() {
+        let src = "struct Point {\n\
+                   var x: Int\n\
+                   var y: Int\n\
+                   func sum() -> Int { return x + y }\n\
+                   mutating func move() { x += 1 }\n\
+                   }";
+        let ast = ast_of(src);
+        let s = first_stmt(&ast);
+        assert_eq!(s.kind(), NodeKind::StructDecl);
+        assert_eq!(s.text(), Some("Point"));
+        let members: Vec<_> = s.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            members,
+            vec![
+                NodeKind::VarDecl,
+                NodeKind::VarDecl,
+                NodeKind::FuncDecl,
+                NodeKind::FuncDecl, // `mutating` modifier consumed
+            ]
+        );
+    }
+
+    #[test]
+    fn enum_cases_simple_associated_and_raw() {
+        let src = "enum Token: Int {\n\
+                   case comma, dot\n\
+                   case number(Int)\n\
+                   case eof = 0\n\
+                   }";
+        let ast = ast_of(src);
+        let e = first_stmt(&ast);
+        assert_eq!(e.kind(), NodeKind::EnumDecl);
+        // First child is the `: Int` raw-type conformance; then the cases.
+        let cases: Vec<_> = e
+            .children()
+            .filter(|c| c.kind() == NodeKind::EnumCaseDecl)
+            .map(|c| c.text())
+            .collect();
+        assert_eq!(
+            cases,
+            vec![Some("comma"), Some("dot"), Some("number"), Some("eof")]
+        );
+        // `number(Int)` carries a TypeRef child; `eof = 0` carries a literal.
+        let number = e.children().find(|c| c.text() == Some("number")).unwrap();
+        assert_eq!(number.children().next().unwrap().kind(), NodeKind::TypeRef);
+    }
+
+    #[test]
+    fn computed_property_with_get_set() {
+        let src = "struct T {\n\
+                   var v: Int { get { return 1 } set { } }\n\
+                   var ro: Int { 42 }\n\
+                   }";
+        let ast = ast_of(src);
+        let s = first_stmt(&ast);
+        let computed = s.children().next().unwrap();
+        let accessors: Vec<_> = computed
+            .children()
+            .filter(|c| c.kind() == NodeKind::Accessor)
+            .map(|c| c.text())
+            .collect();
+        assert_eq!(accessors, vec![Some("get"), Some("set")]);
+        // The read-only property gets a synthesised `get` accessor.
+        let ro = s.children().nth(1).unwrap();
+        assert_eq!(ro.children().last().unwrap().kind(), NodeKind::Accessor);
+    }
+
+    #[test]
+    fn property_observers() {
+        let src = "struct T { var n: Int { willSet { } didSet { } } }";
+        let ast = ast_of(src);
+        let prop = first_stmt(&ast).children().next().unwrap();
+        let accessors: Vec<_> = prop
+            .children()
+            .filter(|c| c.kind() == NodeKind::Accessor)
+            .map(|c| c.text())
+            .collect();
+        assert_eq!(accessors, vec![Some("willSet"), Some("didSet")]);
+    }
+
+    #[test]
+    fn init_and_subscript() {
+        let src = "struct Grid {\n\
+                   init?(n: Int) { }\n\
+                   subscript(i: Int) -> Int { return i }\n\
+                   }";
+        let ast = ast_of(src);
+        let s = first_stmt(&ast);
+        let kinds: Vec<_> = s.children().map(|c| c.kind()).collect();
+        assert_eq!(kinds, vec![NodeKind::InitDecl, NodeKind::SubscriptDecl]);
+    }
+
+    #[test]
+    fn if_let_optional_binding() {
+        let ast = ast_of("if let x = maybe { print(x) }");
+        let iff = first_stmt(&ast);
+        assert_eq!(iff.kind(), NodeKind::IfStmt);
+        // The condition is a `let` binding.
+        assert_eq!(iff.children().next().unwrap().kind(), NodeKind::LetDecl);
+    }
+
+    #[test]
+    fn forced_unwrap_and_optional_chaining() {
+        let ast = ast_of("let v = maybe!");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::PostfixExpr);
+        assert_eq!(init.text(), Some("!"));
+        // Optional chaining `a?.b` parses as member access on `a`.
+        let ast = ast_of("let w = a?.b");
+        let chain = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(chain.kind(), NodeKind::MemberExpr);
+        assert_eq!(chain.text(), Some("b"));
+    }
+
+    #[test]
+    fn implicit_member_expression() {
+        let ast = ast_of("let d = .north");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::MemberExpr);
+        assert_eq!(init.text(), Some("north"));
+        assert_eq!(init.children().count(), 0); // implicit: no base
+    }
+
+    #[test]
+    fn modifiers_before_declarations_are_accepted() {
+        let ast = ast_of("static let shared = 1");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::LetDecl);
     }
 }
