@@ -46,6 +46,16 @@ pub enum NodeKind {
     EnumDecl,
     /// A `class` declaration.
     ClassDecl,
+    /// A `protocol` declaration.
+    ProtocolDecl,
+    /// An `extension` declaration.
+    ExtensionDecl,
+    /// An `associatedtype` requirement.
+    AssociatedTypeDecl,
+    /// A `typealias` declaration.
+    TypeAliasDecl,
+    /// A generic parameter `T` (optionally constrained).
+    GenericParam,
     /// A `deinit { }` declaration.
     DeinitDecl,
     /// A closure expression `{ [captures] params in body }`.
@@ -129,6 +139,11 @@ impl NodeKind {
             NodeKind::StructDecl => "struct_decl",
             NodeKind::EnumDecl => "enum_decl",
             NodeKind::ClassDecl => "class_decl",
+            NodeKind::ProtocolDecl => "protocol_decl",
+            NodeKind::ExtensionDecl => "extension_decl",
+            NodeKind::AssociatedTypeDecl => "associatedtype_decl",
+            NodeKind::TypeAliasDecl => "typealias_decl",
+            NodeKind::GenericParam => "generic_param",
             NodeKind::DeinitDecl => "deinit_decl",
             NodeKind::ClosureExpr => "closure_expr",
             NodeKind::CastExpr => "cast_expr",

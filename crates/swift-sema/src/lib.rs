@@ -68,13 +68,19 @@ impl Resolver {
         match ast.node(stmt).kind() {
             NodeKind::LetDecl | NodeKind::VarDecl => self.resolve_binding(ast, stmt),
             NodeKind::FuncDecl => self.resolve_func(ast, stmt, &kids),
-            NodeKind::StructDecl | NodeKind::EnumDecl | NodeKind::ClassDecl => {
+            NodeKind::StructDecl
+            | NodeKind::EnumDecl
+            | NodeKind::ClassDecl
+            | NodeKind::ProtocolDecl
+            | NodeKind::ExtensionDecl => {
                 self.push_scope();
                 for &member in &kids {
                     self.resolve_statement(ast, member);
                 }
                 self.pop_scope();
             }
+            // Type-level declarations carry no value bindings to resolve.
+            NodeKind::AssociatedTypeDecl | NodeKind::TypeAliasDecl | NodeKind::GenericParam => {}
             NodeKind::DeinitDecl => {
                 for &c in &kids {
                     self.resolve_statement(ast, c);
@@ -596,5 +602,26 @@ mod tests {
     fn is_cast_is_bool() {
         let (ast, _diags) = resolved("let flag = value is Int");
         assert_eq!(first_binding_init_type(&ast), Some("Bool"));
+    }
+
+    // --- Tier 4 ---
+
+    #[test]
+    fn protocols_generics_extensions_resolve() {
+        let src = "protocol Shape {\n\
+                   var area: Double { get }\n\
+                   func scaled(by factor: Double) -> Double\n\
+                   }\n\
+                   struct Square: Shape {\n\
+                   let side: Double\n\
+                   var area: Double { return side * side }\n\
+                   func scaled(by factor: Double) -> Double { return side * factor }\n\
+                   }\n\
+                   extension Square {\n\
+                   func describe() -> Double { return area }\n\
+                   }\n\
+                   func maxOf<T>(a: T, b: T, pick: T) -> T { return pick }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
     }
 }
