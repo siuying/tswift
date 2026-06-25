@@ -2,6 +2,10 @@
 resolver = "2"
 members = [
     "crates/msf-sys",
+    "crates/swift-lexer",
+    "crates/swift-ast",
+    "crates/swift-parser",
+    "crates/swift-sema",
     "crates/quick-swift-frontend",
     "crates/quick-swift-core",
     "crates/quick-swift-std",
