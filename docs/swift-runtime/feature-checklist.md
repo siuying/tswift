@@ -271,25 +271,39 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 
 ## Tier 7 — Concurrency
 
-*Requires a scheduler/executor; tree-walker can't suspend the C stack — needs the
-R6 bytecode VM (save/restore frame) per the design doc §13.*
+*Runs on a single-threaded cooperative executor (ADR-0005) over the suspension
+primitive (ADR-0004, `corosensei`). Suspension is decoupled from the #11 bytecode
+VM, so the tree-walker handles concurrency directly. The executor uses
+run-to-completion-at-await scheduling: results and structure are faithful;
+preemptive interleaving order may differ (documented in ADR-0005).*
 
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `async` functions | ✅ | ★★★★ | R6+ |
-| [ ] | `await` expressions | ✅ | ★★★★ | R6+ |
-| [ ] | `async let` | ⚠️ | ★★★★ | R6+ |
-| [ ] | `Task` / `Task.detached` | ✅(stdlib) | ★★★★ | R6+ |
-| [ ] | Task groups (`withTaskGroup`) | ✅(stdlib) | ★★★★ | R6+ |
-| [ ] | Task cancellation | n/a | ★★★ | R6+ |
-| [ ] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
-| [ ] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
-| [ ] | `@MainActor` / global actors | ✅ | ★★★★ | R6+ |
-| [ ] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
-| [ ] | `Sendable` checking | ✅ | ★★★ | R6+ |
-| [ ] | `AsyncSequence` / `for await` | ⚠️ | ★★★★ | R6+ |
+| [x] | `async` functions | ✅ | ★★★★ | R6+ |
+| [x] | `await` expressions | ✅ | ★★★★ | R6+ |
+| [x] | `async let` | ⚠️ | ★★★★ | R6+ |
+| [x] | `Task` / `Task.detached` | ✅(stdlib) | ★★★★ | R6+ |
+| [x] | Task groups (`withTaskGroup`) | ✅(stdlib) | ★★★★ | R6+ |
+| [~] | Task cancellation | n/a | ★★★ | R6+ |
+| [x] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
+| [~] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
+| [x] | `@MainActor` / global actors | ✅ | ★★★★ | R6+ |
+| [~] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
+| [~] | `Sendable` checking | ✅ | ★★★ | R6+ |
+| [x] | `AsyncSequence` / `for await` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |
 | [ ] | Strict concurrency (Swift 6 mode) | ✅ | ★★★ | R6+ |
+
+**Implemented this milestone (#12):** `async`/`await`, `async let`,
+`Task`/`Task.detached` (+ `.value`/`.cancel()`/`.isCancelled`), `withTaskGroup` +
+`addTask` + `for await` aggregation + `cancelAll()`, `actor` declarations
+(serialized for free on one thread), `@MainActor`/global-actor annotations
+(accepted; run on the cooperative main), custom `AsyncSequence`/`for await`.
+`Sendable` and `@Sendable` are **accepted and parsed but not statically checked**
+(every value is effectively sendable on one thread). **Gaps:** preemptive
+ordering / `Task.yield` interleaving (the `corosensei` primitive in
+`suspend.rs` is the migration path), continuations, and strict-concurrency
+diagnostics. See ADR-0005 for the fidelity boundary.
 
 ---
 

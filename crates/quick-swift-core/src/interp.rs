@@ -240,9 +240,38 @@ pub struct Interpreter<'w> {
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
     main_type: Option<String>,
+    /// The structured-concurrency task table (see ADR-0005). Each `async let`,
+    /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
+    /// `SwiftValue::Task` drives the matching slot to completion.
+    tasks: Vec<TaskSlot>,
+    /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
+    /// drained in order by `for await`.
+    groups: Vec<Vec<usize>>,
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
+}
+
+/// A spawned structured-concurrency task: a zero-argument closure producing the
+/// task's result, plus the class context it was spawned in and its run state.
+struct TaskSlot {
+    /// Index into [`Interpreter::closures`] of the task body (a 0-arg thunk).
+    closure: usize,
+    /// The `super`/`self` dispatch context captured at spawn time.
+    class_ctx: Vec<String>,
+    state: TaskState,
+    /// Cooperative-cancellation flag (set by `cancelAll()` / group teardown).
+    cancelled: bool,
+}
+
+/// Where a task is in its lifecycle.
+enum TaskState {
+    /// Spawned but not yet run.
+    Pending,
+    /// Currently executing (used to detect `await`-on-self deadlock).
+    Running,
+    /// Finished, carrying its memoized outcome (value or thrown signal).
+    Done(Eval),
 }
 
 impl<'w> Interpreter<'w> {
@@ -263,6 +292,8 @@ impl<'w> Interpreter<'w> {
             class_ctx: Vec::new(),
             defer_stack: Vec::new(),
             main_type: None,
+            tasks: Vec::new(),
+            groups: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
         }
@@ -319,6 +350,13 @@ impl<'w> Interpreter<'w> {
                     self.call_struct_method(SwiftValue::Void, &main_type, "main", vec![], None);
             }
         }
+        // Drain any spawned-but-unawaited tasks (detached `Task { }`) so their
+        // side effects run before the program's outermost scope exits.
+        if outcome.is_ok() {
+            if let Err(sig) = self.drain_pending_tasks() {
+                outcome = Err(sig);
+            }
+        }
         // Run `deinit` for class instances still alive at program end (LIFO).
         let mut released = self.env.drain_global();
         released.reverse();
@@ -347,6 +385,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::EnumDecl
             | NodeKind::ClassDecl
             | NodeKind::ProtocolDecl
+            | NodeKind::ActorDecl
             | NodeKind::ExtensionDecl
             | NodeKind::OperatorDecl
             | NodeKind::PrecedenceGroupDecl
@@ -354,6 +393,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
+            NodeKind::AwaitExpr => self.eval_await(node),
             NodeKind::ReturnStmt => {
                 let value = match node.children().next() {
                     Some(e) => self.eval(&e)?,
@@ -528,7 +568,10 @@ impl<'w> Interpreter<'w> {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => self.register_struct(&child),
                 NodeKind::EnumDecl => self.register_enum(&child),
-                NodeKind::ClassDecl => self.register_class(&child),
+                // An `actor` is a reference type whose isolation is provided
+                // for free by our single-threaded executor (ADR-0005), so it is
+                // registered exactly like a class.
+                NodeKind::ClassDecl | NodeKind::ActorDecl => self.register_class(&child),
                 NodeKind::ProtocolDecl => self.register_protocol(&child),
                 _ => {}
             }
@@ -1083,6 +1126,17 @@ impl<'w> Interpreter<'w> {
         let name = node
             .decl_name()
             .ok_or_else(|| EvalError::Unsupported("declaration without a name".into()))?;
+
+        // `async let name = expr` spawns a child task; the binding holds its
+        // handle and `await name` later retrieves the result (ADR-0005).
+        if node.is_async_let() {
+            if let Some(init) = children.last().filter(|c| is_expr(c)) {
+                let id = self.spawn_expr_task(*init);
+                self.env.declare(&name, SwiftValue::Task(id), mutable);
+                return Ok(SwiftValue::Void);
+            }
+        }
+
         let value = match children.last() {
             Some(init) if is_expr(init) => {
                 let v = self.eval(init)?;
@@ -1619,6 +1673,218 @@ impl<'w> Interpreter<'w> {
         self.env = saved;
         self.depth -= 1;
         result
+    }
+
+    // ----- Structured concurrency (ADR-0005) -----
+
+    /// `await <expr>`: evaluate the operand, then, if it is a task handle, drive
+    /// that task to completion and yield its result. Awaiting any other value is
+    /// the identity (an `await f()` on an inline `async` call already ran).
+    fn eval_await(&mut self, node: &Node<'static>) -> Eval {
+        let inner = node
+            .children()
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("await without an operand".into()))?;
+        let value = self.eval(&inner)?;
+        self.await_value(value)
+    }
+
+    /// Resolve a value an `await` produced: drive a task handle, pass anything
+    /// else through unchanged.
+    fn await_value(&mut self, value: SwiftValue) -> Eval {
+        match value {
+            SwiftValue::Task(id) => self.run_task(id),
+            other => Ok(other),
+        }
+    }
+
+    /// Register a 0-argument closure body as a task and return its handle index.
+    fn spawn_task_closure(&mut self, closure_id: usize) -> usize {
+        let id = self.tasks.len();
+        self.tasks.push(TaskSlot {
+            closure: closure_id,
+            class_ctx: self.class_ctx.clone(),
+            state: TaskState::Pending,
+            cancelled: false,
+        });
+        id
+    }
+
+    /// Spawn a task whose body is a single expression (used by `async let`),
+    /// capturing the current lexical scope so the expression sees local state.
+    fn spawn_expr_task(&mut self, expr: Node<'static>) -> usize {
+        let captured = self.env.capture();
+        let closure_id = self.closures.len();
+        self.closures.push((
+            ClosureDef {
+                params: Vec::new(),
+                body: vec![expr],
+            },
+            captured,
+        ));
+        self.spawn_task_closure(closure_id)
+    }
+
+    /// Drive task `id` to completion (cooperatively, on the current stack) and
+    /// return its memoized outcome. Re-awaiting a finished task returns the
+    /// stored result; awaiting a task that is mid-flight is a deadlock trap.
+    fn run_task(&mut self, id: usize) -> Eval {
+        match &self.tasks[id].state {
+            TaskState::Done(result) => return result.clone(),
+            TaskState::Running => {
+                return Err(trap("await on a task awaiting itself (deadlock)".into()));
+            }
+            TaskState::Pending => {}
+        }
+        let closure = self.tasks[id].closure;
+        let ctx = self.tasks[id].class_ctx.clone();
+        self.tasks[id].state = TaskState::Running;
+        let saved_ctx = std::mem::replace(&mut self.class_ctx, ctx);
+        let result = self.call_closure(closure, Vec::new());
+        self.class_ctx = saved_ctx;
+        self.tasks[id].state = TaskState::Done(result.clone());
+        result
+    }
+
+    /// Run every spawned-but-unawaited task to completion. Called at the end of
+    /// the program so detached `Task { }` side effects still happen (structured
+    /// concurrency guarantees a child finishes before its scope exits; here the
+    /// whole program is the outermost scope).
+    fn drain_pending_tasks(&mut self) -> Result<(), Signal> {
+        let mut i = 0;
+        while i < self.tasks.len() {
+            if matches!(self.tasks[i].state, TaskState::Pending) {
+                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
+                    return Err(sig);
+                }
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// The first closure handle among already-evaluated call arguments (the
+    /// trailing `{ ... }` of `group.addTask { }`).
+    fn first_closure(args: &[CallArg]) -> Option<usize> {
+        args.iter().find_map(|a| match a.value {
+            SwiftValue::Closure(id) => Some(id),
+            _ => None,
+        })
+    }
+
+    /// Evaluate the trailing body closure of a concurrency call to a closure
+    /// handle, ignoring non-closure arguments (e.g. `of: Int.self`).
+    fn eval_body_closure(&mut self, arg_nodes: &[Node<'static>]) -> Result<Option<usize>, Signal> {
+        for arg in arg_nodes {
+            if arg.kind() == NodeKind::ClosureExpr {
+                if let SwiftValue::Closure(id) = self.eval(arg)? {
+                    return Ok(Some(id));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Dispatch the free-function concurrency entry points (`Task { }`,
+    /// `withTaskGroup { }`). Returns `None` if `name` is not one of them so
+    /// normal call resolution continues.
+    fn try_concurrency_builtin(
+        &mut self,
+        name: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        match name {
+            "Task" => {
+                let closure = self
+                    .eval_body_closure(arg_nodes)?
+                    .ok_or_else(|| EvalError::Unsupported("Task without a body closure".into()))?;
+                Ok(Some(SwiftValue::Task(self.spawn_task_closure(closure))))
+            }
+            "withTaskGroup" | "withThrowingTaskGroup" => {
+                let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
+                    EvalError::Unsupported("withTaskGroup without a body closure".into())
+                })?;
+                let gid = self.groups.len();
+                self.groups.push(Vec::new());
+                let result = self.call_closure(body, vec![SwiftValue::TaskGroup(gid)]);
+                // The group's children are structured: drain any not consumed by
+                // a `for await` so they complete before the group returns.
+                self.drain_group(gid)?;
+                result.map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Dispatch instance methods on a task handle or task group. Returns `None`
+    /// when `base` is neither, so normal method resolution continues.
+    fn try_concurrency_method(
+        &mut self,
+        base: &SwiftValue,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        match base {
+            SwiftValue::TaskGroup(gid) => {
+                let gid = *gid;
+                match method {
+                    "addTask" | "addTaskUnlessCancelled" => {
+                        let args = self.eval_args(arg_nodes)?;
+                        let closure = Self::first_closure(&args).ok_or_else(|| {
+                            EvalError::Unsupported("addTask without a body closure".into())
+                        })?;
+                        let tid = self.spawn_task_closure(closure);
+                        self.groups[gid].push(tid);
+                        Ok(Some(SwiftValue::Bool(true)))
+                    }
+                    "cancelAll" => {
+                        for &tid in &self.groups[gid].clone() {
+                            self.tasks[tid].cancelled = true;
+                        }
+                        Ok(Some(SwiftValue::Void))
+                    }
+                    "waitForAll" => {
+                        self.drain_group(gid)?;
+                        Ok(Some(SwiftValue::Void))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            SwiftValue::Task(tid) => {
+                let tid = *tid;
+                match method {
+                    "cancel" => {
+                        self.tasks[tid].cancelled = true;
+                        Ok(Some(SwiftValue::Void))
+                    }
+                    _ => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Run any still-pending child tasks of group `gid` (structured-concurrency
+    /// guarantee: the group does not return until its children finish).
+    fn drain_group(&mut self, gid: usize) -> Result<(), Signal> {
+        let ids = std::mem::take(&mut self.groups[gid]);
+        for id in ids {
+            if let Err(sig @ Signal::Error(_)) = self.run_task(id) {
+                return Err(sig);
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume a group's children for `for await`, returning their results in
+    /// completion order (our cooperative executor runs them in add order).
+    fn drain_group_results(&mut self, gid: usize) -> Result<Vec<SwiftValue>, Signal> {
+        let ids = std::mem::take(&mut self.groups[gid]);
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            out.push(self.run_task(id)?);
+        }
+        Ok(out)
     }
 
     // ----- Casting -----
@@ -2371,9 +2637,17 @@ impl<'w> Interpreter<'w> {
 
     /// `for v in seq [where cond] { … }` over an integer range or array.
     fn eval_for(&mut self, node: &Node<'static>) -> Eval {
-        let var_name = node
+        let mut var_name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("for-loop without a binding".into()))?;
+        // `for await r in seq`: msf anchors the node on the `await` keyword, so
+        // the binding name is the next token (ADR-0005).
+        let is_for_await = var_name == "await";
+        if is_for_await {
+            var_name = node
+                .token_text_offset(1)
+                .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?;
+        }
         let mut iterable = None;
         let mut where_clause = None;
         let mut body = None;
@@ -2396,27 +2670,141 @@ impl<'w> Interpreter<'w> {
         let label = node.loop_label();
 
         let seq = self.eval(&iterable)?;
-        let items = self.iterate(&seq)?;
+        // `for await r in group`: each iteration consumes one finished child.
+        // `for await r in customSequence`: drive its async iterator protocol.
+        let items = match &seq {
+            SwiftValue::TaskGroup(gid) => self.drain_group_results(*gid)?,
+            _ if is_for_await && !is_builtin_iterable(&seq) => {
+                return self.run_async_sequence(&seq, &var_name, where_clause, &body, &label);
+            }
+            _ => self.iterate(&seq)?,
+        };
 
-        self.env.push();
         for item in items {
+            // A fresh scope per iteration so a closure/task created in the body
+            // captures *this* iteration's binding (Swift's per-iteration `let`),
+            // not a single shared, mutated slot.
+            self.env.push();
             self.env.declare(&var_name, item, false);
             if let Some(w) = where_clause {
-                if !self.eval_condition(&w)? {
-                    continue;
+                match self.eval_condition(&w) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.env.pop();
+                        continue;
+                    }
+                    Err(s) => {
+                        self.env.pop();
+                        return Err(s);
+                    }
                 }
             }
-            match self.run_loop_body(&body, &label) {
+            let flow = self.run_loop_body(&body, &label);
+            self.env.pop();
+            match flow {
                 Ok(LoopFlow::Continue) => {}
                 Ok(LoopFlow::Break) => break,
-                Err(s) => {
-                    self.env.pop();
-                    return Err(s);
-                }
+                Err(s) => return Err(s),
             }
         }
-        self.env.pop();
         Ok(SwiftValue::Void)
+    }
+
+    /// `for await x in seq` over a custom `AsyncSequence`: obtain its async
+    /// iterator, then drive `next()` (which may itself `await`) until it yields
+    /// `nil`. The iterator is `mutating`, so it lives in a temp binding that the
+    /// method call writes back to between iterations (ADR-0005).
+    fn run_async_sequence(
+        &mut self,
+        seq: &SwiftValue,
+        var_name: &str,
+        where_clause: Option<Node<'static>>,
+        body: &Node<'static>,
+        label: &Option<String>,
+    ) -> Eval {
+        const ITER: &str = "$asynciter";
+        // A type that *is* its own iterator (conforms to AsyncIteratorProtocol)
+        // skips `makeAsyncIterator`; otherwise we ask the sequence for one.
+        let seq_ty = self.value_type_name(seq);
+        let iter = if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "next"))
+        {
+            seq.clone()
+        } else if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "makeAsyncIterator"))
+        {
+            let ty = seq_ty.clone().unwrap();
+            self.call_struct_method(seq.clone(), &ty, "makeAsyncIterator", Vec::new(), None)?
+        } else {
+            return Err(EvalError::Type(format!(
+                "cannot iterate over {} (not an AsyncSequence)",
+                seq.type_name()
+            ))
+            .into());
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("async iterator has no type".into()))?;
+
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let outcome = loop {
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            let next = match self.call_struct_method(
+                current,
+                &iter_ty,
+                "next",
+                Vec::new(),
+                Some(place),
+            ) {
+                Ok(v) => v,
+                Err(e) => break Err(e),
+            };
+            // `next()` returns `Element?`: `nil` ends the sequence.
+            if matches!(next, SwiftValue::Nil) {
+                break Ok(SwiftValue::Void);
+            }
+            self.env.push();
+            self.env.declare(var_name, next, false);
+            if let Some(w) = where_clause {
+                match self.eval_condition(&w) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.env.pop();
+                        continue;
+                    }
+                    Err(s) => {
+                        self.env.pop();
+                        break Err(s);
+                    }
+                }
+            }
+            let flow = self.run_loop_body(body, label);
+            self.env.pop();
+            match flow {
+                Ok(LoopFlow::Continue) => {}
+                Ok(LoopFlow::Break) => break Ok(SwiftValue::Void),
+                Err(s) => break Err(s),
+            }
+        };
+        self.env.pop();
+        outcome
+    }
+
+    /// The nominal type name backing a value, for protocol/method lookup.
+    fn value_type_name(&self, value: &SwiftValue) -> Option<String> {
+        match value {
+            SwiftValue::Struct(o) => Some(o.type_name.clone()),
+            SwiftValue::Enum(e) => Some(e.type_name.clone()),
+            SwiftValue::Object(o) => Some(o.borrow().class_name.clone()),
+            _ => None,
+        }
     }
 
     /// Expand a sequence value (range or array) into the values to iterate.
@@ -2868,6 +3256,15 @@ impl<'w> Interpreter<'w> {
         if matches!(value, SwiftValue::Nil) {
             return Ok(SwiftValue::Nil);
         }
+        // Task handle members: `.value`/`.result` keep the handle so the
+        // enclosing `await` drives it; `.isCancelled` reads the flag (ADR-0005).
+        if let SwiftValue::Task(tid) = &value {
+            match member.as_str() {
+                "value" | "result" => return Ok(value.clone()),
+                "isCancelled" => return Ok(SwiftValue::Bool(self.tasks[*tid].cancelled)),
+                _ => {}
+            }
+        }
         // Class instance members.
         if let SwiftValue::Object(_) = &value {
             return self.read_object_member(&value, &member);
@@ -2927,6 +3324,17 @@ impl<'w> Interpreter<'w> {
         // Method call: `base.method(args)`.
         if callee.kind() == NodeKind::MemberExpr {
             return self.eval_method_call(callee, arg_nodes);
+        }
+
+        // Structured-concurrency entry points (ADR-0005). Handled before
+        // argument evaluation so a metatype label like `of: Int.self` is never
+        // eagerly evaluated; only the trailing body closure matters.
+        if callee.kind() == NodeKind::IdentExpr {
+            if let Some(name) = callee.text() {
+                if let Some(v) = self.try_concurrency_builtin(&name, arg_nodes)? {
+                    return Ok(v);
+                }
+            }
         }
 
         let args = self.eval_args(arg_nodes)?;
@@ -3092,6 +3500,25 @@ impl<'w> Interpreter<'w> {
             return self.dispatch_class_method(this, &start, &method, args);
         }
 
+        // `Task.detached { }` / `Task.yield()` / `Task.sleep(...)` (ADR-0005).
+        if base.kind() == NodeKind::IdentExpr
+            && base.text().as_deref() == Some("Task")
+            && self.env.get("Task").is_none()
+        {
+            let args = self.eval_args(arg_nodes)?;
+            match method.as_str() {
+                "detached" => {
+                    let closure = Self::first_closure(&args).ok_or_else(|| {
+                        EvalError::Unsupported("Task.detached without a body closure".into())
+                    })?;
+                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure)));
+                }
+                // Cooperative no-ops on our single-threaded executor.
+                "yield" | "sleep" | "checkCancellation" => return Ok(SwiftValue::Void),
+                _ => {}
+            }
+        }
+
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
@@ -3110,6 +3537,13 @@ impl<'w> Interpreter<'w> {
         }
 
         let base_value = self.eval(&base)?;
+
+        // `group.addTask { }` / `group.cancelAll()` and `task.cancel()`.
+        if let Some(result) =
+            self.try_concurrency_method(&base_value, &method, arg_nodes)?
+        {
+            return Ok(result);
+        }
 
         // `JSONEncoder().encode(value)` → a JSON `Data` (modeled as a String).
         if let SwiftValue::Struct(o) = &base_value {
@@ -3772,6 +4206,16 @@ fn is_expr(node: &Node) -> bool {
     is_value_node(node) && node.kind() != NodeKind::PatternTuple
 }
 
+/// Whether `value` is a sequence the synchronous `iterate` already understands
+/// (so a `for await` over it can use the eager path rather than the async
+/// iterator protocol).
+fn is_builtin_iterable(value: &SwiftValue) -> bool {
+    matches!(
+        value,
+        SwiftValue::Range { .. } | SwiftValue::Array(_) | SwiftValue::Str(_)
+    )
+}
+
 /// Whether a node is a value expression (not a type annotation, accessor, or
 /// pattern node that can appear as a declaration child).
 fn is_value_node(node: &Node) -> bool {
@@ -4381,5 +4825,89 @@ mod tests {
             .unwrap();
         let result = handle.join().unwrap();
         assert!(matches!(result, Err(EvalError::Trap(_))), "got {result:?}");
+    }
+
+    // ----- Structured concurrency (ADR-0005) -----
+
+    #[test]
+    fn async_await_round_trips() {
+        let out = run(
+            "func double(_ x: Int) async -> Int { x * 2 }\nfunc run() async { print(await double(21)) }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "42\n");
+    }
+
+    #[test]
+    fn async_let_runs_children_and_awaits_results() {
+        let out = run(
+            "func fetch(_ id: Int) async -> Int { id * 2 }\nfunc run() async {\n  async let a = fetch(1)\n  async let b = fetch(2)\n  print(await a + await b)\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn task_value_and_detached_complete() {
+        let out = run(
+            "func run() async {\n  let t = Task { 20 + 1 }\n  let d = Task.detached { 7 * 6 }\n  print(await t.value)\n  print(await d.value)\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "21\n42\n");
+    }
+
+    #[test]
+    fn detached_task_drains_at_program_end() {
+        // A `Task { }` whose handle is never awaited still runs before the
+        // program's outermost scope exits.
+        let out = run("Task { print(\"ran\") }\nprint(\"main\")\n").unwrap();
+        assert_eq!(out, "main\nran\n");
+    }
+
+    #[test]
+    fn task_cancellation_is_cooperative() {
+        let out = run(
+            "func run() async {\n  let t = Task { 5 }\n  t.cancel()\n  print(t.isCancelled)\n  print(await t.value)\n}\nrun()\n",
+        )
+        .unwrap();
+        // The flag flips, but a body that does not check it still completes.
+        assert_eq!(out, "true\n5\n");
+    }
+
+    #[test]
+    fn task_group_aggregates_child_results() {
+        let out = run(
+            "func sum(_ n: Int) async -> Int {\n  await withTaskGroup(of: Int.self) { group in\n    for i in 1...n { group.addTask { i * i } }\n    var total = 0\n    for await r in group { total += r }\n    return total\n  }\n}\nfunc run() async { print(await sum(4)) }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "30\n");
+    }
+
+    #[test]
+    fn actor_serializes_state_and_main_actor_runs() {
+        let out = run(
+            "actor Counter { private var v = 0\n func inc() { v += 1 }\n func get() -> Int { v } }\n@MainActor func show(_ n: Int) { print(n) }\nfunc run() async {\n  let c = Counter()\n  await c.inc(); await c.inc()\n  await show(await c.get())\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "2\n");
+    }
+
+    #[test]
+    fn for_await_drives_custom_async_sequence() {
+        let out = run(
+            "struct Down: AsyncSequence, AsyncIteratorProtocol {\n  var n: Int\n  mutating func next() async -> Int? { if n > 0 { let c = n; n -= 1; return c } else { return nil } }\n  func makeAsyncIterator() -> Down { self }\n}\nfunc run() async {\n  var s = 0\n  for await x in Down(n: 3) { s += x }\n  print(s)\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn for_loop_gives_each_iteration_a_fresh_binding() {
+        // A task created per iteration must capture *that* iteration's value.
+        let out = run(
+            "func run() async {\n  await withTaskGroup(of: Int.self) { group in\n    for i in 1...3 { group.addTask { i } }\n    var total = 0\n    for await r in group { total += r }\n    print(total)\n  }\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n");
     }
 }
