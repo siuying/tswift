@@ -188,6 +188,25 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// For a `var`/`let` property, the ownership keyword (`weak`/`unowned`)
+    /// written before its declaration keyword, if any. msf does not surface this
+    /// in `modifiers`, so we recover it from the token stream.
+    pub fn ownership(&self) -> Option<String> {
+        let ti = self.tok_idx();
+        if ti < 2 {
+            return None;
+        }
+        let kw = self.analysis.token_text_at(ti - 1)?;
+        if !matches!(kw.as_str(), "var" | "let") {
+            return None;
+        }
+        match self.analysis.token_text_at(ti - 2).as_deref() {
+            Some("weak") => Some("weak".into()),
+            Some("unowned") => Some("unowned".into()),
+            _ => None,
+        }
+    }
+
     /// For a `for`/`while`/`repeat` loop, the statement label written before the
     /// loop keyword (e.g. `outer: for …`), if any.
     pub fn loop_label(&self) -> Option<String> {

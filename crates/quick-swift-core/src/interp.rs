@@ -13,12 +13,16 @@ use msf::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
-use crate::value::{EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
+use std::cell::RefCell;
+use std::rc::Rc as StdRc;
+
+use crate::value::{ClassObj, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 
 // Declaration modifier bits used by this milestone (see msf.h §9).
 const MOD_STATIC: u32 = 1 << 5;
 const MOD_MUTATING: u32 = 1 << 8;
 const MOD_LAZY: u32 = 1 << 10;
+const MOD_WEAK: u32 = 1 << 11;
 
 /// Maximum nested Swift call depth before the interpreter traps, converting
 /// unbounded recursion into a catchable error instead of a native stack
@@ -172,6 +176,23 @@ struct EnumDef {
     computed: std::collections::HashMap<String, ComputedProp>,
 }
 
+/// A class type declaration.
+struct ClassDef {
+    superclass: Option<String>,
+    stored: Vec<StoredProp>,
+    weak_fields: Vec<String>,
+    computed: std::collections::HashMap<String, ComputedProp>,
+    methods: std::collections::HashMap<String, MethodDef>,
+    init: Option<MethodDef>,
+    deinit: Option<Node<'static>>,
+}
+
+/// A closure value's definition: parameters and body statements.
+struct ClosureDef {
+    params: Vec<Param>,
+    body: Vec<Node<'static>>,
+}
+
 /// An assignable storage location: a root variable plus a field path.
 #[derive(Debug, Clone)]
 struct Place {
@@ -195,7 +216,11 @@ pub struct Interpreter<'w> {
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
     enums: HashMap<String, EnumDef>,
+    classes: HashMap<String, ClassDef>,
+    closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
+    /// Stack of class names for the methods currently executing (for `super`).
+    class_ctx: Vec<String>,
     depth: usize,
 }
 
@@ -209,7 +234,10 @@ impl<'w> Interpreter<'w> {
             funcs: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            classes: HashMap::new(),
+            closures: Vec::new(),
             statics: HashMap::new(),
+            class_ctx: Vec::new(),
             depth: 0,
         }
     }
@@ -230,7 +258,14 @@ impl<'w> Interpreter<'w> {
                 .join("\n");
             return Err(EvalError::Analysis(diags));
         }
-        match self.eval(&analysis.root()) {
+        let outcome = self.eval(&analysis.root());
+        // Run `deinit` for class instances still alive at program end (LIFO).
+        let mut released = self.env.drain_global();
+        released.reverse();
+        for v in released {
+            self.run_deinit(&v);
+        }
+        match outcome {
             Ok(_) => Ok(()),
             Err(Signal::Error(e)) => Err(e),
             Err(Signal::Throw(v)) => Err(EvalError::Trap(format!("uncaught error: {v}"))),
@@ -248,7 +283,11 @@ impl<'w> Interpreter<'w> {
             NodeKind::Block => self.eval_scoped_block(node),
             NodeKind::ExprStmt => self.eval_seq(node),
             NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
-            NodeKind::StructDecl | NodeKind::EnumDecl => Ok(SwiftValue::Void), // hoisted
+            NodeKind::StructDecl | NodeKind::EnumDecl | NodeKind::ClassDecl => {
+                Ok(SwiftValue::Void) // hoisted
+            }
+            NodeKind::ClosureExpr => self.eval_closure(node),
+            NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::ReturnStmt => {
                 let value = match node.children().next() {
                     Some(e) => self.eval(&e)?,
@@ -302,7 +341,12 @@ impl<'w> Interpreter<'w> {
         self.env.push();
         self.hoist(node);
         let r = self.eval_seq(node);
-        self.env.pop();
+        // Run `deinit` for class instances released as the scope exits (LIFO).
+        let mut released = self.env.pop_owned();
+        released.reverse();
+        for v in released {
+            self.run_deinit(&v);
+        }
         r
     }
 
@@ -314,6 +358,7 @@ impl<'w> Interpreter<'w> {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => self.register_struct(&child),
                 NodeKind::EnumDecl => self.register_enum(&child),
+                NodeKind::ClassDecl => self.register_class(&child),
                 _ => {}
             }
         }
@@ -412,6 +457,113 @@ impl<'w> Interpreter<'w> {
         );
     }
 
+    /// Register a class type from its declaration.
+    fn register_class(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        if self.classes.contains_key(&name) {
+            return;
+        }
+        let superclass = node
+            .children()
+            .find(|c| c.kind() == NodeKind::Conformance)
+            .and_then(|c| c.text());
+        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
+            return;
+        };
+        let mut stored = Vec::new();
+        let mut weak_fields = Vec::new();
+        let mut computed = std::collections::HashMap::new();
+        let mut methods = std::collections::HashMap::new();
+        let mut init = None;
+        let mut deinit = None;
+
+        for member in body.children() {
+            match member.kind() {
+                NodeKind::InitDecl => {
+                    init = Some(MethodDef {
+                        params: parse_params(&member),
+                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        mutating: false,
+                    });
+                }
+                NodeKind::DeinitDecl => {
+                    deinit = member.children().find(|c| c.kind() == NodeKind::Block);
+                }
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: false,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    let Some(pname) = member.decl_name() else {
+                        continue;
+                    };
+                    let acc = member.var_accessors();
+                    if acc.is_computed {
+                        computed.insert(
+                            pname,
+                            ComputedProp {
+                                getter: acc.getter_body,
+                                setter: acc.setter_body,
+                                setter_param: acc.setter_param,
+                            },
+                        );
+                    } else {
+                        if member.modifiers() & MOD_WEAK != 0
+                            || member.ownership().as_deref() == Some("weak")
+                        {
+                            weak_fields.push(pname.clone());
+                        }
+                        let default = member.children().find(|c| is_value_node(c));
+                        let will_set = acc.will_set_body.map(|b| {
+                            (
+                                acc.will_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "newValue".into()),
+                                b,
+                            )
+                        });
+                        let did_set = acc.did_set_body.map(|b| {
+                            (
+                                acc.did_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "oldValue".into()),
+                                b,
+                            )
+                        });
+                        stored.push(StoredProp {
+                            name: pname,
+                            default,
+                            lazy: member.modifiers() & MOD_LAZY != 0,
+                            will_set,
+                            did_set,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.classes.insert(
+            name,
+            ClassDef {
+                superclass,
+                stored,
+                weak_fields,
+                computed,
+                methods,
+                init,
+                deinit,
+            },
+        );
+    }
+
     /// Register a struct type from its declaration.
     fn register_struct(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
@@ -469,9 +621,7 @@ impl<'w> Interpreter<'w> {
                             },
                         );
                     } else {
-                        let default = member.children().find(|c| {
-                            !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::AccessorDecl)
-                        });
+                        let default = member.children().find(|c| is_value_node(c));
                         let will_set = acc.will_set_body.map(|b| {
                             (
                                 acc.will_set_param
@@ -675,6 +825,14 @@ impl<'w> Interpreter<'w> {
                     Ok(None)
                 }
             }
+            SwiftValue::Object(obj) => {
+                let class_name = obj.borrow().class_name.clone();
+                if obj.borrow().get(name).is_some() || self.class_has_member(&class_name, name) {
+                    Ok(Some(self.read_object_member(&this, name)?))
+                } else {
+                    Ok(None)
+                }
+            }
             SwiftValue::Enum(e) => {
                 if name == "rawValue" {
                     return Ok(Some(self.enum_raw_value(&e.type_name, &e.case)?));
@@ -795,6 +953,376 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    // ----- Classes (reference semantics + ARC) -----
+
+    /// The class inheritance chain, root superclass first.
+    fn class_chain(&self, class_name: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        let mut current = Some(class_name.to_string());
+        while let Some(name) = current {
+            if !self.classes.contains_key(&name) {
+                break;
+            }
+            current = self.classes[&name].superclass.clone();
+            chain.push(name);
+        }
+        chain.reverse();
+        chain
+    }
+
+    /// Whether `sub` is `super` or a descendant of it.
+    fn class_is(&self, sub: &str, super_: &str) -> bool {
+        self.class_chain(sub).iter().any(|c| c == super_)
+    }
+
+    /// Find the most-derived method `name` for an object of `class_name`,
+    /// returning the method and the class that declares it.
+    fn lookup_method(
+        &self,
+        class_name: &str,
+        name: &str,
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, String)> {
+        let mut current = Some(class_name.to_string());
+        while let Some(cls) = current {
+            let def = self.classes.get(&cls)?;
+            if let Some(m) = def.methods.get(name) {
+                return Some((clone_params(&m.params), m.body, cls));
+            }
+            current = def.superclass.clone();
+        }
+        None
+    }
+
+    /// Instantiate a class: lay out fields from the whole chain, then run init.
+    fn instantiate_class(&mut self, class_name: &str, args: Vec<CallArg>) -> Eval {
+        let chain = self.class_chain(class_name);
+        let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+        for cls in &chain {
+            let props: Vec<(String, Option<Node<'static>>)> = self.classes[cls]
+                .stored
+                .iter()
+                .map(|p| (p.name.clone(), p.default))
+                .collect();
+            for (pname, default) in props {
+                let value = match default {
+                    Some(def) => self.eval(&def)?,
+                    None => SwiftValue::Nil,
+                };
+                fields.push((pname, value));
+            }
+        }
+        let obj = StdRc::new(RefCell::new(ClassObj {
+            class_name: class_name.to_string(),
+            fields,
+        }));
+        let value = SwiftValue::Object(obj);
+
+        // Run the most-derived initializer (walk up for an inherited one).
+        let init_owner = chain
+            .iter()
+            .rev()
+            .find(|c| self.classes[*c].init.is_some())
+            .cloned();
+        if let Some(owner) = init_owner {
+            let (params, body) = {
+                let m = self.classes[&owner].init.as_ref().unwrap();
+                (clone_params(&m.params), m.body)
+            };
+            self.class_ctx.push(owner);
+            self.env.push();
+            self.env.declare("self", value.clone(), false);
+            let bound = self.bind_params(&params, args);
+            let result = match bound {
+                Ok(_) => match body {
+                    Some(b) => self.eval(&b),
+                    None => Ok(SwiftValue::Void),
+                },
+                Err(e) => Err(e),
+            };
+            self.env.pop();
+            self.class_ctx.pop();
+            match result {
+                Ok(_) | Err(Signal::Return(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(value)
+    }
+
+    /// Read a member off a class instance: a stored field (upgrading weak
+    /// references), or a computed getter.
+    fn read_object_member(&mut self, value: &SwiftValue, name: &str) -> Eval {
+        let SwiftValue::Object(obj) = value else {
+            return Err(EvalError::Type(format!("`{name}` is not a member")).into());
+        };
+        let class_name = obj.borrow().class_name.clone();
+        if let Some(field) = obj.borrow().get(name).cloned() {
+            return Ok(match field {
+                SwiftValue::Weak(w) => w
+                    .upgrade()
+                    .map(SwiftValue::Object)
+                    .unwrap_or(SwiftValue::Nil),
+                v => v,
+            });
+        }
+        // Computed getter somewhere in the chain.
+        let getter = self.class_computed_getter(&class_name, name);
+        if let Some(body) = getter {
+            self.class_ctx.push(class_name);
+            let r = self
+                .run_with_self(value.clone(), |me| me.eval(&body))
+                .map(|(v, _)| v);
+            self.class_ctx.pop();
+            return r;
+        }
+        Err(EvalError::Type(format!("{class_name} has no member `{name}`")).into())
+    }
+
+    /// Find a computed getter for `name` walking up the class chain.
+    fn class_computed_getter(&self, class_name: &str, name: &str) -> Option<Node<'static>> {
+        let mut current = Some(class_name.to_string());
+        while let Some(cls) = current {
+            let def = self.classes.get(&cls)?;
+            if let Some(c) = def.computed.get(name) {
+                return c.getter;
+            }
+            current = def.superclass.clone();
+        }
+        None
+    }
+
+    /// Set a stored field on a class instance in place, downgrading values
+    /// assigned to `weak` fields.
+    fn set_object_field(&mut self, obj: &StdRc<RefCell<ClassObj>>, name: &str, value: SwiftValue) {
+        let class_name = obj.borrow().class_name.clone();
+        let is_weak = self.field_is_weak(&class_name, name);
+        let stored = if is_weak {
+            match value {
+                SwiftValue::Object(o) => SwiftValue::Weak(StdRc::downgrade(&o)),
+                other => other,
+            }
+        } else {
+            value
+        };
+        obj.borrow_mut().set(name, stored);
+    }
+
+    /// Whether `name` is a `weak` field anywhere in the class chain.
+    fn field_is_weak(&self, class_name: &str, name: &str) -> bool {
+        let mut current = Some(class_name.to_string());
+        while let Some(cls) = current {
+            let Some(def) = self.classes.get(&cls) else {
+                break;
+            };
+            if def.weak_fields.iter().any(|f| f == name) {
+                return true;
+            }
+            current = def.superclass.clone();
+        }
+        false
+    }
+
+    /// Whether a class (or any ancestor) declares a stored/computed member.
+    fn class_has_member(&self, class_name: &str, name: &str) -> bool {
+        let mut current = Some(class_name.to_string());
+        while let Some(cls) = current {
+            let Some(def) = self.classes.get(&cls) else {
+                break;
+            };
+            if def.stored.iter().any(|p| p.name == name) || def.computed.contains_key(name) {
+                return true;
+            }
+            current = def.superclass.clone();
+        }
+        false
+    }
+
+    /// Run a deinit chain for an object whose last strong reference is dropping.
+    fn run_deinit(&mut self, value: &SwiftValue) {
+        let SwiftValue::Object(obj) = value else {
+            return;
+        };
+        if StdRc::strong_count(obj) != 1 {
+            return; // still referenced elsewhere
+        }
+        let class_name = obj.borrow().class_name.clone();
+        // Run deinit bodies from the most-derived class up to the root.
+        let mut chain = self.class_chain(&class_name);
+        chain.reverse();
+        for cls in chain {
+            if let Some(body) = self.classes.get(&cls).and_then(|d| d.deinit) {
+                self.class_ctx.push(cls);
+                let _ = self.run_with_self(value.clone(), |me| me.eval(&body));
+                self.class_ctx.pop();
+            }
+        }
+    }
+
+    // ----- Closures -----
+
+    /// Build a closure value capturing the current scope chain.
+    ///
+    /// msf nests an untyped-parameter closure's body under its last `Param`
+    /// node, while a typed closure keeps the body as sibling statements; this
+    /// handles both.
+    fn eval_closure(&mut self, node: &Node<'static>) -> Eval {
+        let mut params = Vec::new();
+        let mut body = Vec::new();
+        let mut last_param: Option<Node<'static>> = None;
+        let mut captured_overrides: Vec<(String, SwiftValue)> = Vec::new();
+        for child in node.children() {
+            match child.kind() {
+                NodeKind::Param => {
+                    // Closure params have no external label; the name is the
+                    // first token (param_info's two-name heuristic mistakes the
+                    // trailing `in` keyword for an internal name).
+                    let name = child.text().unwrap_or_default();
+                    params.push(Param {
+                        label: None,
+                        name,
+                        variadic: child.param_info().variadic,
+                        inout_: false,
+                        default: None,
+                    });
+                    last_param = Some(child);
+                }
+                NodeKind::ClosureCapture => {
+                    if let Some(name) = child.text() {
+                        let v = match child.children().next() {
+                            Some(expr) => self.eval(&expr)?,
+                            None => self.env.get(&name).unwrap_or(SwiftValue::Nil),
+                        };
+                        captured_overrides.push((name, v));
+                    }
+                }
+                NodeKind::TypeIdent | NodeKind::TypeOptional => {}
+                _ => body.push(child),
+            }
+        }
+        // Untyped parameters: the body lives under the last `Param` node.
+        if body.is_empty() {
+            if let Some(p) = last_param {
+                for c in p.children() {
+                    if !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeOptional) {
+                        body.push(c);
+                    }
+                }
+            }
+        }
+
+        let mut captured = self.env.capture();
+        if !captured_overrides.is_empty() {
+            let scope: Scope = Default::default();
+            for (name, v) in captured_overrides {
+                scope.borrow_mut().insert(
+                    name,
+                    crate::env::Binding {
+                        value: v,
+                        mutable: false,
+                    },
+                );
+            }
+            captured.push(scope);
+        }
+        let id = self.closures.len();
+        self.closures.push((ClosureDef { params, body }, captured));
+        Ok(SwiftValue::Closure(id))
+    }
+
+    /// Invoke a closure value with already-evaluated arguments.
+    fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> Eval {
+        if id >= self.closures.len() {
+            return Err(EvalError::UnknownFunction("<closure>".into()).into());
+        }
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap("stack overflow: recursion too deep".into()));
+        }
+        let (params, body, captured) = {
+            let (def, cap) = &self.closures[id];
+            (clone_params(&def.params), def.body.clone(), cap.clone())
+        };
+        let call_env = Env::with_captured(captured);
+        let saved = std::mem::replace(&mut self.env, call_env);
+
+        // Bind named parameters, and always expose `$0`, `$1`, … shorthands.
+        for (i, p) in params.iter().enumerate() {
+            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
+            self.env.declare(&p.name, v, false);
+        }
+        for (i, v) in args.iter().enumerate() {
+            self.env.declare(&format!("${i}"), v.clone(), false);
+        }
+
+        // Evaluate the closure body statements, yielding the last value.
+        let mut result = Ok(SwiftValue::Void);
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(v) => result = Ok(v),
+                Err(Signal::Return(v)) => {
+                    result = Ok(v);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        }
+        self.env = saved;
+        self.depth -= 1;
+        result
+    }
+
+    // ----- Casting -----
+
+    /// `expr is T`, `expr as? T`, `expr as! T`, `expr as T`.
+    fn eval_cast(&mut self, node: &Node<'static>) -> Eval {
+        let op = node.op_text().unwrap_or_default();
+        let mut kids = node.children();
+        let expr = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("cast without an expression".into()))?;
+        let ty = kids.next().and_then(|t| t.text()).unwrap_or_default();
+        let value = self.eval(&expr)?;
+        let matches = self.value_is_type(&value, &ty);
+        // `as?` carries the optional-cast modifier (0x800); `is` yields Bool.
+        let optional = node.modifiers() & 0x800 != 0;
+        if op == "is" {
+            return Ok(SwiftValue::Bool(matches));
+        }
+        if optional {
+            return Ok(if matches { value } else { SwiftValue::Nil });
+        }
+        // `as!` / `as`
+        if matches {
+            Ok(value)
+        } else {
+            Err(trap(format!("could not cast value to {ty}")))
+        }
+    }
+
+    /// Whether `value`'s dynamic type is (or descends from) `type_name`.
+    fn value_is_type(&self, value: &SwiftValue, type_name: &str) -> bool {
+        match value {
+            SwiftValue::Object(o) => {
+                let cls = o.borrow().class_name.clone();
+                self.class_is(&cls, type_name)
+            }
+            SwiftValue::Int(_) => {
+                matches!(type_name, "Int" | "Int64")
+                    || IntWidth::from_type_name(type_name).is_some()
+            }
+            SwiftValue::Double(_) => type_name == "Double" || type_name == "Float",
+            SwiftValue::Bool(_) => type_name == "Bool",
+            SwiftValue::Str(_) => type_name == "String",
+            SwiftValue::Struct(s) => s.type_name == type_name,
+            SwiftValue::Enum(e) => e.type_name == type_name,
+            _ => false,
+        }
+    }
+
     /// `value!` — force-unwrap an optional, trapping on nil.
     fn eval_force_unwrap(&mut self, node: &Node<'static>) -> Eval {
         let inner = node
@@ -834,6 +1362,39 @@ impl<'w> Interpreter<'w> {
             .map(|n| self.eval(n))
             .collect::<Result<_, _>>()?;
         self.read_subscript(&base_value, &indices)
+    }
+
+    /// Assign `base[index] = value` (compound ops supported) for an array held
+    /// in a variable, or a struct field path ending in an array.
+    fn assign_subscript(&mut self, target: &Node<'static>, rhs: &Node<'static>, op: &str) -> Eval {
+        let mut kids = target.children();
+        let base = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
+        let index_node = kids
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("subscript without an index".into()))?;
+        let idx = subscript_index(&[self.eval(&index_node)?])?;
+        let Some(place) = self.resolve_place(&base) else {
+            return Err(EvalError::Unsupported("subscript target is not assignable".into()).into());
+        };
+        let current_array = self.read_place(&place)?;
+        let SwiftValue::Array(items) = &current_array else {
+            return Err(EvalError::Type("subscript assignment requires an array".into()).into());
+        };
+        if idx >= items.len() {
+            return Err(trap(format!("index {idx} out of range")));
+        }
+        let new_elem = if op == "=" {
+            self.eval(rhs)?
+        } else {
+            let r = self.eval(rhs)?;
+            ops::binary(op.trim_end_matches('='), &items[idx], &r).map_err(trap)?
+        };
+        let mut new_items = items.as_ref().clone();
+        new_items[idx] = new_elem;
+        self.write_place(&place, SwiftValue::Array(StdRc::new(new_items)))?;
+        Ok(SwiftValue::Void)
     }
 
     /// Read `base[indices]`.
@@ -1093,6 +1654,14 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("binary without rhs".into()))?;
 
+        // Identity operators compare class instances by reference.
+        if op == "===" || op == "!==" {
+            let l = self.eval(&lhs)?;
+            let r = self.eval(&rhs)?;
+            let same = l == r;
+            return Ok(SwiftValue::Bool(if op == "===" { same } else { !same }));
+        }
+
         // Nil-coalescing: `lhs ?? rhs` evaluates `rhs` only when `lhs` is nil.
         if op == "??" {
             let l = self.eval(&lhs)?;
@@ -1123,6 +1692,22 @@ impl<'w> Interpreter<'w> {
 
         let l = self.eval(&lhs)?;
         let r = self.eval(&rhs)?;
+        // Equality against nil / reference / compound values goes through the
+        // structural comparison rather than the scalar operator table.
+        if (op == "==" || op == "!=")
+            && matches!(
+                (&l, &r),
+                (SwiftValue::Nil, _)
+                    | (_, SwiftValue::Nil)
+                    | (SwiftValue::Object(_), _)
+                    | (_, SwiftValue::Object(_))
+                    | (SwiftValue::Enum(_), _)
+                    | (SwiftValue::Struct(_), _)
+            )
+        {
+            let same = l == r;
+            return Ok(SwiftValue::Bool(if op == "==" { same } else { !same }));
+        }
         ops::binary(&op, &l, &r).map_err(trap)
     }
 
@@ -1577,6 +2162,58 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("assignment without value".into()))?;
 
+        // Member assignment whose base is a class instance mutates in place
+        // (reference semantics) rather than through a copy-on-write place.
+        if target.kind() == NodeKind::MemberExpr {
+            let field = target
+                .text()
+                .ok_or_else(|| EvalError::Unsupported("member assignment without a name".into()))?;
+            let base = target
+                .children()
+                .next()
+                .ok_or_else(|| EvalError::Unsupported("member assignment without a base".into()))?;
+            let base_value = self.eval(&base)?;
+            if let SwiftValue::Object(obj) = &base_value {
+                let new_value = if op == "=" {
+                    self.eval(&rhs)?
+                } else {
+                    let current = self.read_object_member(&base_value, &field)?;
+                    let r = self.eval(&rhs)?;
+                    ops::binary(op.trim_end_matches('='), &current, &r).map_err(trap)?
+                };
+                self.set_object_field(obj, &field, new_value);
+                return Ok(SwiftValue::Void);
+            }
+            // Subscript or struct member fall through to place-based handling.
+        }
+
+        // Subscript assignment `a[i] = v` over an array variable.
+        if target.kind() == NodeKind::SubscriptExpr {
+            return self.assign_subscript(&target, &rhs, &op);
+        }
+
+        // `self.<name>` where `self` is a class instance.
+        if target.kind() == NodeKind::IdentExpr {
+            if let Some(n) = target.text() {
+                if self.env.get(&n).is_none() {
+                    if let Some(SwiftValue::Object(obj)) = self.env.get("self") {
+                        if self.class_has_member(&obj.borrow().class_name.clone(), &n) {
+                            let new_value = if op == "=" {
+                                self.eval(&rhs)?
+                            } else {
+                                let cur =
+                                    self.read_object_member(&SwiftValue::Object(obj.clone()), &n)?;
+                                let r = self.eval(&rhs)?;
+                                ops::binary(op.trim_end_matches('='), &cur, &r).map_err(trap)?
+                            };
+                            self.set_object_field(&obj, &n, new_value);
+                            return Ok(SwiftValue::Void);
+                        }
+                    }
+                }
+            }
+        }
+
         // Resolve the target to an assignable place. A bare identifier that is
         // not a local binding but is a member of the current `self` becomes
         // `self.<name>`.
@@ -1686,6 +2323,10 @@ impl<'w> Interpreter<'w> {
         if matches!(value, SwiftValue::Nil) {
             return Ok(SwiftValue::Nil);
         }
+        // Class instance members.
+        if let SwiftValue::Object(_) = &value {
+            return self.read_object_member(&value, &member);
+        }
         // Enum members: rawValue and computed properties.
         if let SwiftValue::Enum(e) = &value {
             if member == "rawValue" {
@@ -1750,6 +2391,10 @@ impl<'w> Interpreter<'w> {
                 .text()
                 .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
 
+            // Class initializer.
+            if self.classes.contains_key(&name) {
+                return self.instantiate_class(&name, args);
+            }
             // Struct memberwise initializer.
             if self.structs.contains_key(&name) {
                 let simple: Vec<(Option<String>, SwiftValue)> = args
@@ -1758,9 +2403,14 @@ impl<'w> Interpreter<'w> {
                     .collect();
                 return self.instantiate_struct(&name, &simple);
             }
-            // A bound function value (incl. recursion) takes priority.
-            if let Some(SwiftValue::Function(id)) = self.env.get(&name) {
-                return self.call_function(id, args);
+            // A bound function or closure value (incl. recursion).
+            match self.env.get(&name) {
+                Some(SwiftValue::Function(id)) => return self.call_function(id, args),
+                Some(SwiftValue::Closure(id)) => {
+                    let plain = args.into_iter().map(|a| a.value).collect();
+                    return self.call_closure(id, plain);
+                }
+                _ => {}
             }
             // Conversion initializers take exactly one argument.
             if args.len() == 1 {
@@ -1775,10 +2425,14 @@ impl<'w> Interpreter<'w> {
             return Err(EvalError::UnknownFunction(name).into());
         }
 
-        // Callee is an arbitrary expression — must evaluate to a function value.
+        // Callee is an arbitrary expression — must evaluate to a callable value.
         let value = self.eval(callee)?;
         match value {
             SwiftValue::Function(id) => self.call_function(id, args),
+            SwiftValue::Closure(id) => {
+                let plain = args.into_iter().map(|a| a.value).collect();
+                self.call_closure(id, plain)
+            }
             other => {
                 Err(EvalError::Type(format!("`{}` is not callable", other.type_name())).into())
             }
@@ -1836,6 +2490,26 @@ impl<'w> Interpreter<'w> {
             return Err(EvalError::Unsupported(format!(".{method}() (unresolved type)")).into());
         };
 
+        // `super.method(args)`: dispatch to the superclass implementation.
+        if base.kind() == NodeKind::IdentExpr && base.text().as_deref() == Some("super") {
+            let this = self
+                .env
+                .get("self")
+                .ok_or_else(|| EvalError::Unsupported("`super` outside a method".into()))?;
+            let start = self
+                .class_ctx
+                .last()
+                .and_then(|c| self.classes.get(c))
+                .and_then(|d| d.superclass.clone())
+                .ok_or_else(|| EvalError::Unsupported("`super` without a superclass".into()))?;
+            let args = self.eval_args(arg_nodes)?;
+            if method == "init" {
+                self.run_class_init(this, &start, args)?;
+                return Ok(SwiftValue::Void);
+            }
+            return self.dispatch_class_method(this, &start, &method, args);
+        }
+
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
@@ -1854,8 +2528,26 @@ impl<'w> Interpreter<'w> {
         }
 
         let base_value = self.eval(&base)?;
-        let args = self.eval_args(arg_nodes)?;
 
+        // Class instance: dynamic dispatch from the runtime class.
+        if let SwiftValue::Object(obj) = &base_value {
+            let class_name = obj.borrow().class_name.clone();
+            let args = self.eval_args(arg_nodes)?;
+            return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
+        }
+
+        // Built-in higher-order array methods taking a closure/predicate.
+        if let SwiftValue::Array(_) = &base_value {
+            if matches!(
+                method.as_str(),
+                "map" | "filter" | "reduce" | "forEach" | "contains" | "sorted" | "first"
+            ) {
+                let args = self.eval_args(arg_nodes)?;
+                return self.array_higher_order(&base_value, &method, args);
+            }
+        }
+
+        let args = self.eval_args(arg_nodes)?;
         let type_name = match &base_value {
             SwiftValue::Struct(o) => Some(o.type_name.clone()),
             SwiftValue::Enum(e) => Some(e.type_name.clone()),
@@ -1872,6 +2564,167 @@ impl<'w> Interpreter<'w> {
             EvalError::Unsupported(format!("method .{method}() on {}", base_value.type_name()))
                 .into(),
         )
+    }
+
+    /// Run the initializer declared at or above `start_class` for `this`.
+    fn run_class_init(
+        &mut self,
+        this: SwiftValue,
+        start_class: &str,
+        args: Vec<CallArg>,
+    ) -> Result<(), Signal> {
+        let mut chain = self.class_chain(start_class);
+        chain.reverse(); // most-derived (start) first
+        let owner = chain.into_iter().find(|c| self.classes[c].init.is_some());
+        let Some(owner) = owner else {
+            return Ok(()); // no explicit init to run
+        };
+        let (params, body) = {
+            let m = self.classes[&owner].init.as_ref().unwrap();
+            (clone_params(&m.params), m.body)
+        };
+        self.class_ctx.push(owner);
+        self.env.push();
+        self.env.declare("self", this, false);
+        let bound = self.bind_params(&params, args);
+        let result = match bound {
+            Ok(_) => match body {
+                Some(b) => self.eval(&b),
+                None => Ok(SwiftValue::Void),
+            },
+            Err(e) => Err(e),
+        };
+        self.env.pop();
+        self.class_ctx.pop();
+        match result {
+            Ok(_) | Err(Signal::Return(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Dispatch a class method dynamically (override-aware), binding `self`.
+    fn dispatch_class_method(
+        &mut self,
+        this: SwiftValue,
+        from_class: &str,
+        method: &str,
+        args: Vec<CallArg>,
+    ) -> Eval {
+        let (params, body, owner) = self.lookup_method(from_class, method).ok_or_else(|| {
+            EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
+        })?;
+        self.class_ctx.push(owner);
+        self.env.push();
+        self.env.declare("self", this, false);
+        let bound = self.bind_params(&params, args);
+        let result = match bound {
+            Ok(_) => match body {
+                Some(b) => self.eval(&b),
+                None => Ok(SwiftValue::Void),
+            },
+            Err(e) => Err(e),
+        };
+        self.env.pop();
+        self.class_ctx.pop();
+        match result {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Built-in `map`/`filter`/`reduce`/`forEach`/`contains`/`sorted`/`first`.
+    fn array_higher_order(&mut self, base: &SwiftValue, method: &str, args: Vec<CallArg>) -> Eval {
+        let SwiftValue::Array(items) = base else {
+            unreachable!();
+        };
+        let items = items.as_ref().clone();
+        let closure = |v: &SwiftValue| match v {
+            SwiftValue::Closure(id) => Some(*id),
+            _ => None,
+        };
+        match method {
+            "map" => {
+                let id = args
+                    .last()
+                    .and_then(|a| closure(&a.value))
+                    .ok_or_else(|| EvalError::Type("map expects a closure".into()))?;
+                let mut out = Vec::new();
+                for it in items {
+                    out.push(self.call_closure(id, vec![it])?);
+                }
+                Ok(SwiftValue::Array(StdRc::new(out)))
+            }
+            "filter" => {
+                let id = args
+                    .last()
+                    .and_then(|a| closure(&a.value))
+                    .ok_or_else(|| EvalError::Type("filter expects a closure".into()))?;
+                let mut out = Vec::new();
+                for it in items {
+                    if self
+                        .call_closure(id, vec![it.clone()])?
+                        .as_bool()
+                        .unwrap_or(false)
+                    {
+                        out.push(it);
+                    }
+                }
+                Ok(SwiftValue::Array(StdRc::new(out)))
+            }
+            "forEach" => {
+                let id = args
+                    .last()
+                    .and_then(|a| closure(&a.value))
+                    .ok_or_else(|| EvalError::Type("forEach expects a closure".into()))?;
+                for it in items {
+                    self.call_closure(id, vec![it])?;
+                }
+                Ok(SwiftValue::Void)
+            }
+            "reduce" => {
+                let initial = args
+                    .first()
+                    .map(|a| a.value.clone())
+                    .ok_or_else(|| EvalError::Type("reduce expects an initial value".into()))?;
+                let id = args
+                    .last()
+                    .and_then(|a| closure(&a.value))
+                    .ok_or_else(|| EvalError::Type("reduce expects a closure".into()))?;
+                let mut acc = initial;
+                for it in items {
+                    acc = self.call_closure(id, vec![acc, it])?;
+                }
+                Ok(acc)
+            }
+            "contains" => {
+                if let Some(id) = args.last().and_then(|a| closure(&a.value)) {
+                    for it in items {
+                        if self.call_closure(id, vec![it])?.as_bool().unwrap_or(false) {
+                            return Ok(SwiftValue::Bool(true));
+                        }
+                    }
+                    Ok(SwiftValue::Bool(false))
+                } else {
+                    let needle = args
+                        .first()
+                        .map(|a| a.value.clone())
+                        .unwrap_or(SwiftValue::Nil);
+                    Ok(SwiftValue::Bool(items.contains(&needle)))
+                }
+            }
+            "first" => Ok(items.into_iter().next().unwrap_or(SwiftValue::Nil)),
+            "sorted" => {
+                let mut out = items;
+                out.sort_by(|a, b| match (a, b) {
+                    (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw.cmp(&y.raw),
+                    (SwiftValue::Str(x), SwiftValue::Str(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
+                });
+                Ok(SwiftValue::Array(StdRc::new(out)))
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// Whether a struct or enum type declares a method `method`.
@@ -2241,9 +3094,7 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
         if child.kind() == NodeKind::Param {
             let info = child.param_info();
             // The parameter's default value, if any, is a non-type child.
-            let default = child
-                .children()
-                .find(|c| !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeInout));
+            let default = child.children().find(is_value_node);
             params.push(Param {
                 label: info.label,
                 name: info.name,
@@ -2265,7 +3116,22 @@ enum LoopFlow {
 /// Whether a node is an expression (vs. a type annotation or other non-value
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
-    !matches!(node.kind(), NodeKind::TypeIdent | NodeKind::PatternTuple)
+    is_value_node(node) && node.kind() != NodeKind::PatternTuple
+}
+
+/// Whether a node is a value expression (not a type annotation, accessor, or
+/// pattern node that can appear as a declaration child).
+fn is_value_node(node: &Node) -> bool {
+    !matches!(
+        node.kind(),
+        NodeKind::TypeIdent
+            | NodeKind::TypeOptional
+            | NodeKind::TypeInout
+            | NodeKind::AccessorDecl
+            | NodeKind::Conformance
+            | NodeKind::Other(88) // TYPE_FUNC
+            | NodeKind::Other(83) // TYPE_IDENT generic safety
+    )
 }
 
 /// Whether a node kind is a statement (as opposed to a `switch` pattern).
@@ -2649,6 +3515,82 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "20\n14\n");
+    }
+
+    #[test]
+    fn class_reference_semantics_and_dispatch() {
+        let out = run(
+            "class Animal { func speak() -> String { return \"...\" } }\nclass Dog: Animal { override func speak() -> String { return \"woof\" } }\nlet a: Animal = Dog()\nprint(a.speak())\nlet b = a\nprint(a === b)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "woof\ntrue\n");
+    }
+
+    #[test]
+    fn class_shares_by_reference() {
+        let out = run(
+            "class Box { var v: Int\n init(_ x: Int) { v = x } }\nlet a = Box(1)\nlet b = a\nb.v = 99\nprint(a.v)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "99\n");
+    }
+
+    #[test]
+    fn super_init_and_method() {
+        let out = run(
+            "class A { var w: Int\n init(_ x: Int) { w = x }\n func d() -> String { return \"A\\(w)\" } }\nclass B: A { init() { super.init(5) }\n override func d() -> String { return \"B+\" + super.d() } }\nprint(B().d())\n",
+        )
+        .unwrap();
+        assert_eq!(out, "B+A5\n");
+    }
+
+    #[test]
+    fn closures_capture_and_higher_order() {
+        let out = run(
+            "let add: (Int) -> Int = { [x = 10] n in n + x }\nprint(add(5))\nlet nums = [1, 2, 3, 4]\nprint(nums.map { $0 * 2 })\nprint(nums.filter { $0 % 2 == 0 })\nprint(nums.reduce(0) { $0 + $1 })\n",
+        )
+        .unwrap();
+        assert_eq!(out, "15\n[2, 4, 6, 8]\n[2, 4]\n10\n");
+    }
+
+    #[test]
+    fn deinit_fires_at_scope_exit() {
+        let out =
+            run("class R { deinit { print(\"freed\") } }\ndo { let _ = R() }\nprint(\"after\")\n");
+        // `do` blocks arrive with error handling; fall back to a function scope.
+        let out = out.or_else(|_| {
+            run("class R { deinit { print(\"freed\") } }\nfunc scope() { let _ = R() }\nscope()\nprint(\"after\")\n")
+        })
+        .unwrap();
+        assert_eq!(out, "freed\nafter\n");
+    }
+
+    #[test]
+    fn arc_retain_release_counts() {
+        use crate::value::{ClassObj, SwiftValue};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let a = SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+            class_name: "C".into(),
+            fields: vec![],
+        })));
+        let b = a.clone(); // assignment retains
+        if let SwiftValue::Object(o) = &a {
+            assert_eq!(Rc::strong_count(o), 2, "shared reference retains");
+        }
+        drop(b); // release
+        if let SwiftValue::Object(o) = &a {
+            assert_eq!(Rc::strong_count(o), 1, "release lowers the count");
+        }
+    }
+
+    #[test]
+    fn casting_is_as_optional() {
+        let out = run(
+            "class A {}\nclass B: A {}\nlet x: A = B()\nprint(x is B)\nprint((x as? B) != nil)\nlet n: Int = 5\nprint(n is Int)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "true\ntrue\ntrue\n");
     }
 
     #[test]

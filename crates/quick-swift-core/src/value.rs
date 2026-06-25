@@ -4,8 +4,9 @@
 //! their *width* (`Int8`..`UInt64`) so overflow-trapping (`+`/`-`/`*`) and
 //! wrapping (`&+`/`&-`/`&*`) operators match Swift's semantics exactly.
 
+use std::cell::RefCell;
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
 /// width integer family. `Int`/`UInt` map to the 64-bit arms on the platforms
@@ -133,7 +134,7 @@ impl IntValue {
 }
 
 /// A Swift runtime value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum SwiftValue {
     /// The empty tuple `()` — the result of a statement with no value.
     Void,
@@ -163,6 +164,34 @@ pub enum SwiftValue {
     Nil,
     /// An enum case value, with any associated values.
     Enum(Rc<EnumObj>),
+    /// A reference-semantics class instance. ARC is the `Rc` strong count;
+    /// shared mutation goes through the `RefCell`.
+    Object(Rc<RefCell<ClassObj>>),
+    /// A `weak` reference to a class instance (zeroes to `nil` on dealloc).
+    Weak(Weak<RefCell<ClassObj>>),
+    /// A closure value: an index into the interpreter's closure table.
+    Closure(usize),
+}
+
+/// The storage of a class instance.
+#[derive(Debug)]
+pub struct ClassObj {
+    pub class_name: String,
+    pub fields: Vec<(String, SwiftValue)>,
+}
+
+impl ClassObj {
+    pub fn get(&self, name: &str) -> Option<&SwiftValue> {
+        self.fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    pub fn set(&mut self, name: &str, value: SwiftValue) {
+        if let Some(slot) = self.fields.iter_mut().find(|(n, _)| n == name) {
+            slot.1 = value;
+        } else {
+            self.fields.push((name.to_string(), value));
+        }
+    }
 }
 
 /// The storage of an enum case value.
@@ -226,6 +255,32 @@ impl SwiftValue {
             SwiftValue::Struct(s) => s.type_name.clone(),
             SwiftValue::Nil => "Optional".into(),
             SwiftValue::Enum(e) => e.type_name.clone(),
+            SwiftValue::Object(o) => o.borrow().class_name.clone(),
+            SwiftValue::Weak(_) => "Optional".into(),
+            SwiftValue::Closure(_) => "closure".into(),
+        }
+    }
+}
+
+impl PartialEq for SwiftValue {
+    fn eq(&self, other: &Self) -> bool {
+        use SwiftValue::*;
+        match (self, other) {
+            (Void, Void) | (Nil, Nil) => true,
+            (Bool(a), Bool(b)) => a == b,
+            (Int(a), Int(b)) => a == b,
+            (Double(a), Double(b)) => a == b,
+            (Str(a), Str(b)) => a == b,
+            (Tuple(a), Tuple(b)) => a == b,
+            (Array(a), Array(b)) => a == b,
+            (Function(a), Function(b)) => a == b,
+            (Closure(a), Closure(b)) => a == b,
+            (Struct(a), Struct(b)) => a == b,
+            (Enum(a), Enum(b)) => a == b,
+            // Class instances compare by identity (`===`).
+            (Object(a), Object(b)) => Rc::ptr_eq(a, b),
+            (Weak(a), Weak(b)) => a.ptr_eq(b),
+            _ => false,
         }
     }
 }
@@ -278,6 +333,22 @@ impl fmt::Display for SwiftValue {
                 write!(f, ")")
             }
             SwiftValue::Nil => write!(f, "nil"),
+            SwiftValue::Object(o) => {
+                let obj = o.borrow();
+                write!(f, "{}(", obj.class_name)?;
+                for (i, (name, value)) in obj.fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {value}")?;
+                }
+                write!(f, ")")
+            }
+            SwiftValue::Weak(w) => match w.upgrade() {
+                Some(o) => write!(f, "{}", SwiftValue::Object(o)),
+                None => write!(f, "nil"),
+            },
+            SwiftValue::Closure(_) => write!(f, "(Function)"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;
                 if !e.payload.is_empty() {
