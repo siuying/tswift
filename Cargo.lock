@@ -135,13 +135,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "msf"
-version = "0.0.0"
-dependencies = [
- "msf-sys",
-]
-
-[[package]]
 name = "msf-sys"
 version = "0.0.0"
 dependencies = [
@@ -182,8 +175,8 @@ dependencies = [
 name = "quick-swift-cli"
 version = "0.0.0"
 dependencies = [
- "msf",
  "quick-swift-core",
+ "quick-swift-frontend",
  "quick-swift-std",
 ]
 
@@ -191,7 +184,14 @@ dependencies = [
 name = "quick-swift-core"
 version = "0.0.0"
 dependencies = [
- "msf",
+ "quick-swift-frontend",
+]
+
+[[package]]
+name = "quick-swift-frontend"
+version = "0.0.0"
+dependencies = [
+ "msf-sys",
 ]
 
 [[package]]
