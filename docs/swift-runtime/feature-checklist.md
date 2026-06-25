@@ -191,28 +191,28 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 4a. Protocols
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Protocol declaration (methods/props/init) | ✅ | ★★★ | R4 |
-| [ ] | Conformance + **witness tables** (msf ConformanceTable) | ✅ | ★★★ | R4 |
-| [ ] | Protocol inheritance | ✅ | ★★ | R4 |
-| [ ] | Protocol composition `P & Q` | ✅ | ★★ | R4 |
-| [ ] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
+| [x] | Protocol declaration (methods/props/init) | ✅ | ★★★ | R4 |
+| [x] | Conformance + **witness tables** (msf ConformanceTable) | ✅ | ★★★ | R4 |
+| [~] | Protocol inheritance | ✅ | ★★ | R4 |
+| [x] | Protocol composition `P & Q` | ✅ | ★★ | R4 |
+| [x] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
 | [ ] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
-| [ ] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
+| [x] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
 | [ ] | `Self` requirements | ✅ | ★★★ | R4 |
 | [ ] | Protocol witness for operators | ✅ | ★★ | R4 |
 | [ ] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [ ] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [ ] | Conditional conformance | ✅ | ★★★ | R4 |
-| [ ] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
+| [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
 | [ ] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
 
 ### 4b. Generics
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Generic functions `<T>` | ✅ | ★★★ | R4 |
-| [ ] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
-| [ ] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
-| [ ] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
+| [x] | Generic functions `<T>` | ✅ | ★★★ | R4 |
+| [~] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
+| [x] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
+| [~] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
 | [ ] | Associated-type constraints | ✅ | ★★★ | R4 |
 | [ ] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
@@ -224,9 +224,9 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 4c. Extensions
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Extend struct/class/enum/protocol | ✅ | ★★ | R4 |
-| [ ] | Add methods/computed props/inits/subscripts | ✅ | ★★ | R4 |
-| [ ] | Add protocol conformance via extension | ✅ | ★★★ | R4 |
+| [x] | Extend struct/class/enum/protocol | ✅ | ★★ | R4 |
+| [~] | Add methods/computed props/inits/subscripts | ✅ | ★★ | R4 |
+| [x] | Add protocol conformance via extension | ✅ | ★★★ | R4 |
 | [ ] | Conditional extensions (`where`) | ✅ | ★★★ | R4 |
 | [ ] | Extensions on generic types | ✅ | ★★★ | R4 |
 
