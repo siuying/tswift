@@ -73,6 +73,12 @@ const CLEAN: &[&str] = &[
     "let doubled = numbers.map { $0 * 2 }",
     "let pick = numbers.filter { x in x > 0 }",
     "let same = a === b",
+    // Tier 4 — protocols, generics & extensions.
+    "protocol Shape { var area: Double { get }\n func draw() }",
+    "struct Stack<Element> { var items: [Element] }",
+    "func pick<T>(a: T, b: T, flag: Bool) -> T { return a }",
+    "extension Int { func doubled() -> Int { return self * 2 } }",
+    "typealias Pair = (Int, Int)",
 ];
 
 /// Snippets the permissive C oracle accepts but the Rust frontend rejects: a
