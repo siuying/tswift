@@ -1,3 +1,5 @@
+#![cfg(not(feature = "rust-backend"))]
+
 //! Validates the benchmark corpus (`benches/programs/*.swift`) actually runs and
 //! produces its `.expected` output through the tree-walker.
 //!

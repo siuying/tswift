@@ -1648,7 +1648,7 @@ impl<'a> Parser<'a> {
 }
 
 /// Precedence of the ternary conditional (Swift `TernaryPrecedence`, /10).
-const TERNARY_BP: u8 = 10;
+const TERNARY_BP: u8 = 6;
 
 /// Precedence of `is`/`as` casts (Swift `CastingPrecedence`, /10).
 const CAST_BP: u8 = 13;
@@ -1885,6 +1885,14 @@ mod tests {
         assert_eq!(tern.kind(), NodeKind::TernaryExpr);
         let else_branch = tern.children().nth(2).unwrap();
         assert_eq!(else_branch.kind(), NodeKind::TernaryExpr);
+    }
+
+    #[test]
+    fn binary_condition_binds_before_ternary() {
+        let ast = ast_of("n == 0 ? 1 : 2");
+        let tern = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(tern.kind(), NodeKind::TernaryExpr);
+        assert_eq!(tern.children().next().unwrap().kind(), NodeKind::BinaryExpr);
     }
 
     #[test]
