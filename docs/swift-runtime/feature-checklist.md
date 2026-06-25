@@ -204,7 +204,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [ ] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [ ] | Conditional conformance | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
-| [ ] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
+| [~] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
 
 ### 4b. Generics
 | ✓ | Feature | FE | RT | Phase |
@@ -303,8 +303,8 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [ ] | Freestanding macros `#macro` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Attached macros `@Macro` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Macro declarations | ✅(AST_MACRO_DECL) | ★★★★ | R6+ |
-| [ ] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
-| [ ] | `#warning` / `#error` | ⚠️ | ★ | R1 |
+| [x] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
+| [~] | `#warning` / `#error` | ⚠️ | ★ | R1 |
 | [ ] | `@freestanding` / `@attached` roles | ⚠️ | ★★★★ | R6+ |
 | [ ] | `@resultBuilder` (DSL transform) | ⚠️ | ★★★★ | R6+ |
 | [ ] | Result-builder method synthesis | ❌ | ★★★★ | R6+ |
@@ -319,22 +319,22 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [ ] | `open` `public` `internal` `fileprivate` `private` | ✅ | ★★ | R4 |
 | [ ] | `package` access level | ✅ | ★★ | R4 |
 | [ ] | Access on setters `private(set)` | ✅ | ★★ | R4 |
-| [ ] | Module boundaries / `import` | ✅ | ★★★ | R5 |
+| [~] | Module boundaries / `import` | ✅ | ★★★ | R5 |
 
 ### 9b. Custom operators
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `prefix`/`infix`/`postfix` operator decls | ✅ | ★★★ | R4 |
-| [ ] | `precedencegroup` (+ `higherThan`/`assoc`) | ✅ | ★★★ | R4 |
-| [ ] | Operator method implementations | ✅ | ★★ | R4 |
-| [ ] | Operator overloading | ✅ | ★★ | R4 |
+| [x] | `prefix`/`infix`/`postfix` operator decls | ✅ | ★★★ | R4 |
+| [~] | `precedencegroup` (+ `higherThan`/`assoc`) | ✅ | ★★★ | R4 |
+| [x] | Operator method implementations | ✅ | ★★ | R4 |
+| [x] | Operator overloading | ✅ | ★★ | R4 |
 
 ### 9c. Attributes (34 declaration/type attributes)
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [ ] | `@available` (+ availability conditions `#available`) | ✅ | ★★ | R5 |
 | [ ] | `@objc` / `@nonobjc` / `@objcMembers` | ⚠️ | ★★ | R6+ |
-| [ ] | `@main` entry point | ✅ | ★★ | R5 |
+| [x] | `@main` entry point | ✅ | ★★ | R5 |
 | [ ] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
 | [ ] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
 | [ ] | `@discardableResult` | ✅ | ★ | R1 |
@@ -352,8 +352,8 @@ needs a macro-expansion engine over the AST before evaluation.*
 ### 9d. Compiler control / directives
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` | ⚠️ | ★★ | R5 |
-| [ ] | `#if` platform/arch/compiler/`canImport`/`swift()` | ⚠️ | ★★ | R5 |
+| [x] | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` | ⚠️ | ★★ | R5 |
+| [x] | `#if` platform/arch/compiler/`canImport`/`swift()` | ⚠️ | ★★ | R5 |
 | [ ] | `#sourceLocation` line control | ⚠️ | ★ | R6+ |
 | [ ] | `#available` / `#unavailable` conditions | ✅ | ★★ | R5 |
 

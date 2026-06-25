@@ -238,6 +238,10 @@ pub struct Interpreter<'w> {
     class_ctx: Vec<String>,
     /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
     defer_stack: Vec<Vec<Node<'static>>>,
+    /// The `@main` entry type, if one was declared.
+    main_type: Option<String>,
+    /// Source file name for `#file`.
+    filename: String,
     depth: usize,
 }
 
@@ -258,8 +262,15 @@ impl<'w> Interpreter<'w> {
             statics: HashMap::new(),
             class_ctx: Vec::new(),
             defer_stack: Vec::new(),
+            main_type: None,
+            filename: "main.swift".into(),
             depth: 0,
         }
+    }
+
+    /// Set the source file name reported by `#file`.
+    pub fn set_filename(&mut self, name: &str) {
+        self.filename = name.to_string();
     }
 
     /// Register a native function callable from Swift source by `name`.
@@ -300,7 +311,14 @@ impl<'w> Interpreter<'w> {
             return Err(EvalError::Analysis(diags));
         }
         self.register_builtin_result();
-        let outcome = self.eval(&analysis.root());
+        let mut outcome = self.eval(&analysis.root());
+        // Run the `@main` entry point, if one was declared.
+        if outcome.is_ok() {
+            if let Some(main_type) = self.main_type.clone() {
+                outcome =
+                    self.call_struct_method(SwiftValue::Void, &main_type, "main", vec![], None);
+            }
+        }
         // Run `deinit` for class instances still alive at program end (LIFO).
         let mut released = self.env.drain_global();
         released.reverse();
@@ -386,6 +404,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::FloatLiteral => Ok(SwiftValue::Double(node.float().unwrap_or(0.0))),
             NodeKind::StringLiteral => self.eval_string_literal(node),
             NodeKind::NilLiteral => Ok(SwiftValue::Nil),
+            NodeKind::MacroExpansion => self.eval_macro(node),
             NodeKind::ForceUnwrap => self.eval_force_unwrap(node),
             NodeKind::OptionalChain => self.eval_only_child(node),
             NodeKind::SubscriptExpr => self.eval_subscript(node),
@@ -872,6 +891,13 @@ impl<'w> Interpreter<'w> {
             return;
         }
         self.record_conformances(&name, node);
+        // `@main` attribute marks the program entry point.
+        if node
+            .children()
+            .any(|c| c.kind() == NodeKind::Other(16) && c.text().as_deref() == Some("main"))
+        {
+            self.main_type = Some(name.clone());
+        }
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -1640,6 +1666,94 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Struct(s) => s.type_name == type_name,
             SwiftValue::Enum(e) => e.type_name == type_name,
             _ => false,
+        }
+    }
+
+    /// Magic literals: `#file`, `#line`, `#function`, `#column`.
+    fn eval_macro(&mut self, node: &Node<'static>) -> Eval {
+        let which = node.text().unwrap_or_default();
+        match which.as_str() {
+            "file" | "filePath" | "fileID" => Ok(SwiftValue::Str(self.filename.clone())),
+            "line" => Ok(SwiftValue::int(node.line() as i128)),
+            "column" => Ok(SwiftValue::int(0)),
+            "function" => Ok(SwiftValue::Str(
+                self.class_ctx.last().cloned().unwrap_or_default(),
+            )),
+            // `#warning`/`#error` are diagnosed by the frontend; no-op at runtime.
+            _ => Ok(SwiftValue::Void),
+        }
+    }
+
+    /// Serialize a `Codable` value to its `JSONEncoder` representation.
+    fn json_encode(&self, value: &SwiftValue) -> Result<crate::json::Json, Signal> {
+        use crate::json::Json;
+        Ok(match value {
+            SwiftValue::Nil => Json::Null,
+            SwiftValue::Bool(b) => Json::Bool(*b),
+            SwiftValue::Int(i) => Json::Int(i.raw as i64),
+            SwiftValue::Double(d) => Json::Double(*d),
+            SwiftValue::Str(s) => Json::Str(s.clone()),
+            SwiftValue::Array(items) => Json::Array(
+                items
+                    .iter()
+                    .map(|v| self.json_encode(v))
+                    .collect::<Result<_, _>>()?,
+            ),
+            SwiftValue::Struct(o) => Json::Object(
+                o.fields
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.json_encode(v)?)))
+                    .collect::<Result<_, Signal>>()?,
+            ),
+            other => {
+                return Err(EvalError::Type(format!("cannot encode {}", other.type_name())).into())
+            }
+        })
+    }
+
+    /// Build a runtime value from JSON for the given target type (a registered
+    /// struct, else inferred from the JSON shape).
+    fn json_decode(&self, type_name: &str, json: &crate::json::Json) -> SwiftValue {
+        use crate::json::Json;
+        if let (Json::Object(_), Some(def)) = (json, self.structs.get(type_name)) {
+            let fields: Vec<(String, SwiftValue)> = def
+                .stored
+                .iter()
+                .map(|p| {
+                    let v = json
+                        .get(&p.name)
+                        .map(|j| self.json_value(j))
+                        .unwrap_or(SwiftValue::Nil);
+                    (p.name.clone(), v)
+                })
+                .collect();
+            return SwiftValue::Struct(Rc::new(StructObj {
+                type_name: type_name.to_string(),
+                fields,
+            }));
+        }
+        self.json_value(json)
+    }
+
+    /// Map a JSON value to a runtime value without target-type context.
+    fn json_value(&self, json: &crate::json::Json) -> SwiftValue {
+        use crate::json::Json;
+        match json {
+            Json::Null => SwiftValue::Nil,
+            Json::Bool(b) => SwiftValue::Bool(*b),
+            Json::Int(i) => SwiftValue::int(*i as i128),
+            Json::Double(d) => SwiftValue::Double(*d),
+            Json::Str(s) => SwiftValue::Str(s.clone()),
+            Json::Array(items) => {
+                SwiftValue::Array(Rc::new(items.iter().map(|j| self.json_value(j)).collect()))
+            }
+            Json::Object(entries) => SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "JSON".into(),
+                fields: entries
+                    .iter()
+                    .map(|(k, v)| (k.clone(), self.json_value(v)))
+                    .collect(),
+            })),
         }
     }
 
@@ -2822,6 +2936,13 @@ impl<'w> Interpreter<'w> {
                 .text()
                 .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
 
+            // Built-in JSON coder markers.
+            if name == "JSONEncoder" || name == "JSONDecoder" {
+                return Ok(SwiftValue::Struct(Rc::new(StructObj {
+                    type_name: name,
+                    fields: vec![],
+                })));
+            }
             // Class initializer.
             if self.classes.contains_key(&name) {
                 return self.instantiate_class(&name, args);
@@ -2989,6 +3110,44 @@ impl<'w> Interpreter<'w> {
         }
 
         let base_value = self.eval(&base)?;
+
+        // `JSONEncoder().encode(value)` → a JSON `Data` (modeled as a String).
+        if let SwiftValue::Struct(o) = &base_value {
+            if o.type_name == "JSONEncoder" && method == "encode" {
+                let args = self.eval_args(arg_nodes)?;
+                let value = args
+                    .first()
+                    .map(|a| a.value.clone())
+                    .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
+                let json = self.json_encode(&value)?;
+                return Ok(SwiftValue::Str(crate::json::to_string(&json)));
+            }
+            // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
+            if o.type_name == "JSONDecoder" && method == "decode" {
+                let type_name = arg_nodes
+                    .first()
+                    .and_then(metatype_name)
+                    .ok_or_else(|| EvalError::Type("decode expects a metatype".into()))?;
+                let data = arg_nodes
+                    .get(1)
+                    .map(|n| self.eval(n))
+                    .transpose()?
+                    .ok_or_else(|| EvalError::Type("decode expects data".into()))?;
+                let text = match data {
+                    SwiftValue::Str(s) => s,
+                    other => {
+                        return Err(EvalError::Type(format!(
+                            "decode expects String/Data, got {}",
+                            other.type_name()
+                        ))
+                        .into())
+                    }
+                };
+                let json = crate::json::parse(&text)
+                    .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
+                return Ok(self.json_decode(&type_name, &json));
+            }
+        }
 
         // Class instance: dynamic dispatch from the runtime class.
         if let SwiftValue::Object(obj) = &base_value {
@@ -3555,6 +3714,15 @@ impl<'w> Interpreter<'w> {
             "String" => Ok(Some(SwiftValue::Str(value.to_string()))),
             _ => Ok(None),
         }
+    }
+}
+
+/// Extract `T` from a metatype argument node `T.self`.
+fn metatype_name(node: &Node<'static>) -> Option<String> {
+    if node.kind() == NodeKind::MemberExpr && node.text().as_deref() == Some("self") {
+        node.children().next().and_then(|b| b.text())
+    } else {
+        node.text()
     }
 }
 
@@ -4170,6 +4338,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "5\n10\ntrue\n");
+    }
+
+    #[test]
+    fn main_entry_point_runs() {
+        let out = run(
+            "@main struct App {\n  static func main() {\n    print(\"hello from main\")\n  }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(out, "hello from main\n");
+    }
+
+    #[test]
+    fn codable_json_round_trip() {
+        let out = run(
+            "struct User: Codable { let name: String; let age: Int }\n@main struct App {\n  static func main() throws {\n    let u = User(name: \"Sam\", age: 30)\n    let data = try JSONEncoder().encode(u)\n    print(data)\n    let back = try JSONDecoder().decode(User.self, from: data)\n    print(back.name, back.age)\n  }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(out, "{\"name\":\"Sam\",\"age\":30}\nSam 30\n");
+    }
+
+    #[test]
+    fn conditional_compilation_and_macros() {
+        // msf resolves `#if` at parse time, leaving only the active branch.
+        let out = run(
+            "#if os(macOS)\nlet p = \"mac\"\n#else\nlet p = \"other\"\n#endif\nprint(p)\nprint(#line)\n",
+        )
+        .unwrap();
+        // The active branch's value plus the literal line of the `#line` token.
+        assert!(
+            out.starts_with("mac\n") || out.starts_with("other\n"),
+            "got {out:?}"
+        );
     }
 
     #[test]

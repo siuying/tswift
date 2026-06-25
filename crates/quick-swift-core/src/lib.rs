@@ -7,6 +7,7 @@
 
 mod env;
 mod interp;
+mod json;
 mod ops;
 mod value;
 

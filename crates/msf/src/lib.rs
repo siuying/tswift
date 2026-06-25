@@ -173,6 +173,17 @@ impl<'a> Node<'a> {
         unsafe { (*self.ptr).tok_idx }
     }
 
+    /// The 1-based source line of this node's first token.
+    pub fn line(&self) -> u32 {
+        let tokens = self.analysis.tokens();
+        if tokens.is_null() {
+            return 0;
+        }
+        // SAFETY: `tok_idx` indexes the result-owned token array; `line` is a
+        // plain integer field.
+        unsafe { (*tokens.add(self.tok_idx() as usize)).line }
+    }
+
     /// For a `break`/`continue` statement, the target loop label that follows
     /// the keyword (e.g. `break outer`), if any. msf points the node's `tok_idx`
     /// at the label token itself when present, else at the following token.
