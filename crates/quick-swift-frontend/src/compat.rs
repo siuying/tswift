@@ -95,6 +95,7 @@ impl RuntimeAst {
                 return self.lower_nominal(node)
             }
             K::LetDecl | K::VarDecl => return self.lower_binding(node),
+            K::ForStmt => return self.lower_for(node),
             _ => {}
         }
 
@@ -148,6 +149,31 @@ impl RuntimeAst {
         let block = self.alloc(NodeKind::Block, Some("{".to_string()), line);
         self.set_children(block, members);
         children.push(block);
+        self.set_children(id, children);
+        id
+    }
+
+    /// Lower a `for pattern in seq { body }` loop into the runtime-facing shape:
+    /// the loop variable name becomes the `ForStmt`'s text (as msf anchors it),
+    /// and the simple binding pattern is not re-emitted as a child — so the
+    /// runtime reads the iterable as the first non-`Block` child.
+    fn lower_for(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let id = self.alloc(NodeKind::ForStmt, None, node.line());
+        let mut binding: Option<String> = None;
+        let mut children: Vec<NodeId> = Vec::new();
+        for child in node.children() {
+            match child.kind() {
+                K::NamePattern if binding.is_none() => {
+                    binding = child.text().map(ToOwned::to_owned);
+                }
+                K::WildcardPattern if binding.is_none() => {
+                    binding = Some("_".to_string());
+                }
+                _ => children.push(self.lower_node(child)),
+            }
+        }
+        self.nodes[id.0].text = binding;
         self.set_children(id, children);
         id
     }
