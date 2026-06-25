@@ -8,3 +8,4 @@ description = "quick-swift evaluator spine: SwiftValue, the eval dispatcher, and
 
 [dependencies]
 quick-swift-frontend.workspace = true
+corosensei = "0.3.4"

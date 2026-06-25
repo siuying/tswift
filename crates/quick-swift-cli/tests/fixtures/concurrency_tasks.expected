@@ -1,0 +1,4 @@
+task value 21
+detached value 42
+isCancelled true
+still completes 5
