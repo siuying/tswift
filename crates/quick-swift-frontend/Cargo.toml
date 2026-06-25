@@ -8,3 +8,11 @@ description = "Safe Rust wrapper over msf-sys: owns analysis lifetime, exposes a
 
 [dependencies]
 msf-sys.workspace = true
+
+# Dev-only: the pure-Rust pipeline, used by the differential test to check the
+# new frontend against the C oracle. Not part of the public crate's build.
+[dev-dependencies]
+swift-lexer = { path = "../swift-lexer" }
+swift-ast = { path = "../swift-ast" }
+swift-parser = { path = "../swift-parser" }
+swift-sema = { path = "../swift-sema" }
