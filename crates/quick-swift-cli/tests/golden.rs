@@ -5,6 +5,14 @@
 //! file byte-for-byte. A mismatch fails the test with a readable diff.
 //!
 //! Adding a feature? Drop in a `.swift` + `.expected` pair — no code changes.
+//!
+//! Two more fixture flavors, also zero-code to add:
+//!   * **Multi-file modules** — a directory `fixtures/multifile/<case>/` holding
+//!     several `.swift` files plus `expected.txt`. All `.swift` files (sorted)
+//!     are passed to one `run` invocation, exercising cross-file resolution.
+//!   * **AST snapshots** — `fixtures/ast/<name>.swift` with a sibling
+//!     `<name>.ast` holding the expected `quick-swift dump` output. These pin
+//!     down *how msf parses a construct*, so AST-shape changes are caught.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -85,24 +93,95 @@ fn golden_fixtures_match() {
     );
 }
 
-/// Multiple source files passed to `run` form one module: declarations in an
-/// earlier file are visible to a later file.
+/// Every `fixtures/multifile/<case>/` directory is one multi-file program: all
+/// its `.swift` files (sorted) form a single module and must produce
+/// `expected.txt`. Exercises cross-file reference resolution.
 #[test]
-fn multi_file_module_resolves_cross_file() {
-    let dir = fixtures_dir().join("multifile");
-    let output = Command::new(env!("CARGO_BIN_EXE_quick-swift"))
-        .arg("run")
-        .arg(dir.join("models.swift"))
-        .arg(dir.join("main.swift"))
-        .output()
-        .expect("spawn quick-swift");
+fn multi_file_modules_match() {
+    let root = fixtures_dir().join("multifile");
+    let mut cases: Vec<PathBuf> = std::fs::read_dir(&root)
+        .expect("multifile dir is readable")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    cases.sort();
     assert!(
-        output.status.success(),
-        "stderr:\n{}",
-        String::from_utf8_lossy(&output.stderr)
+        !cases.is_empty(),
+        "no multifile cases in {}",
+        root.display()
     );
-    let expected = std::fs::read_to_string(dir.join("expected.txt")).expect("read expected");
-    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+
+    for case in cases {
+        let mut sources: Vec<PathBuf> = std::fs::read_dir(&case)
+            .expect("case dir is readable")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("swift"))
+            .collect();
+        sources.sort();
+        let output = Command::new(env!("CARGO_BIN_EXE_quick-swift"))
+            .arg("run")
+            .args(&sources)
+            .output()
+            .expect("spawn quick-swift");
+        assert!(
+            output.status.success(),
+            "multifile case {} failed:\n{}",
+            case.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected =
+            std::fs::read_to_string(case.join("expected.txt")).expect("read expected.txt");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            expected,
+            "multifile case {} mismatched",
+            case.display()
+        );
+    }
+}
+
+/// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
+/// AST shape: `quick-swift dump` must reproduce the snapshot byte-for-byte.
+#[test]
+fn ast_snapshots_match() {
+    let dir = fixtures_dir().join("ast");
+    let mut cases: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("ast dir is readable")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("swift"))
+        .collect();
+    cases.sort();
+    assert!(!cases.is_empty(), "no ast snapshots in {}", dir.display());
+
+    for swift in cases {
+        let snapshot = swift.with_extension("ast");
+        assert!(
+            snapshot.exists(),
+            "AST fixture {} has no .ast sibling",
+            swift.display()
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_quick-swift"))
+            .arg("dump")
+            .arg(&swift)
+            .output()
+            .expect("spawn quick-swift");
+        assert!(
+            output.status.success(),
+            "dump failed on {}:\n{}",
+            swift.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let expected = std::fs::read_to_string(&snapshot).expect("read .ast");
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            expected,
+            "AST snapshot {} mismatched",
+            swift.display()
+        );
+    }
 }
 
 /// A deliberately broken fixture must make the harness notice a mismatch — this

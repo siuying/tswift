@@ -348,10 +348,10 @@ impl<'w> Interpreter<'w> {
             | NodeKind::ClassDecl
             | NodeKind::ProtocolDecl
             | NodeKind::ExtensionDecl
-            | NodeKind::Other(28) // operator declaration
-            | NodeKind::Other(27) // precedencegroup declaration
-            | NodeKind::Other(11) // typealias
-            | NodeKind::Other(10) => Ok(SwiftValue::Void), // import (hoisted/ignored)
+            | NodeKind::OperatorDecl
+            | NodeKind::PrecedenceGroupDecl
+            | NodeKind::TypealiasDecl
+            | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::ReturnStmt => {
@@ -408,7 +408,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::ForceUnwrap => self.eval_force_unwrap(node),
             NodeKind::OptionalChain => self.eval_only_child(node),
             NodeKind::SubscriptExpr => self.eval_subscript(node),
-            NodeKind::Other(66) => self.eval_array_literal(node), // ARRAY_LITERAL
+            NodeKind::ArrayLiteral => self.eval_array_literal(node),
             other => Err(EvalError::Unsupported(format!("{other:?}")).into()),
         }
     }
@@ -894,7 +894,7 @@ impl<'w> Interpreter<'w> {
         // `@main` attribute marks the program entry point.
         if node
             .children()
-            .any(|c| c.kind() == NodeKind::Other(16) && c.text().as_deref() == Some("main"))
+            .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main"))
         {
             self.main_type = Some(name.clone());
         }
@@ -960,7 +960,7 @@ impl<'w> Interpreter<'w> {
                     } else {
                         if let Some(attr) = member
                             .children()
-                            .find(|c| c.kind() == NodeKind::Other(16))
+                            .find(|c| c.kind() == NodeKind::Attribute)
                             .and_then(|a| a.text())
                         {
                             wrappers.insert(pname.clone(), attr);
@@ -3027,7 +3027,7 @@ impl<'w> Interpreter<'w> {
         let mut args = Vec::new();
         for arg in arg_nodes {
             let label = arg.arg_label();
-            if arg.kind() == NodeKind::InOutExpr {
+            if arg.kind() == NodeKind::InoutExpr {
                 let inner = arg
                     .children()
                     .next()
@@ -3782,8 +3782,7 @@ fn is_value_node(node: &Node) -> bool {
             | NodeKind::TypeInout
             | NodeKind::AccessorDecl
             | NodeKind::Conformance
-            | NodeKind::Other(88) // TYPE_FUNC
-            | NodeKind::Other(83) // TYPE_IDENT generic safety
+            | NodeKind::TypeFunc
     )
 }
 
