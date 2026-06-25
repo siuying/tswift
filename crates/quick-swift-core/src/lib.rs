@@ -9,6 +9,7 @@ mod env;
 mod interp;
 mod json;
 mod ops;
+pub mod suspend;
 mod value;
 
 pub use env::{BindError, Binding, Env};

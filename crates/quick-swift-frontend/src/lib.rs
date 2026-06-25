@@ -167,6 +167,24 @@ impl<'a> Node<'a> {
         self.analysis.token_text_at(name_tok)
     }
 
+    /// The source text of the token at `tok_idx + offset` from this node's
+    /// start. Useful where a leading keyword shifts the token of interest, e.g.
+    /// the binding in `for await r in …` sits one token past the `await`.
+    pub fn token_text_offset(&self, offset: u32) -> Option<String> {
+        // SAFETY: `tok_idx` is the node's starting token index; the token array
+        // is result-owned and `token_text_at` bounds-reads against it.
+        let idx = unsafe { (*self.ptr).tok_idx };
+        self.analysis.token_text_at(idx + offset)
+    }
+
+    /// For a `LetDecl`/`VarDecl`, whether it was written `async let` (an
+    /// implicit child task whose value is produced concurrently).
+    pub fn is_async_let(&self) -> bool {
+        // SAFETY: the `var` arm is active for VAR_DECL/LET_DECL nodes; reading
+        // the plain `is_async_let` byte is valid there and harmless elsewhere.
+        unsafe { (*self.ptr).data.var.is_async_let != 0 }
+    }
+
     /// The first token index of this node (`ASTNode.tok_idx`).
     fn tok_idx(&self) -> u32 {
         // SAFETY: `tok_idx` is a plain integer field on a live node.
@@ -774,6 +792,39 @@ mod tests {
         assert!(dump.contains("FuncDecl"), "{dump}");
         assert!(dump.contains("[static,throws]"), "{dump}");
         assert!(dump.contains("L1"), "{dump}");
+    }
+
+    /// `is_async_let` distinguishes `async let` bindings from plain `let`, and
+    /// `token_text_offset` reaches the loop binding past a leading keyword.
+    #[test]
+    fn async_let_and_token_offset() {
+        let a = Analysis::analyze(
+            "func f() async {\n  async let a = g()\n  let b = 1\n  for await r in s {}\n}\n",
+            "m.swift",
+        )
+        .unwrap();
+        let body = a
+            .root()
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let lets: Vec<_> = body
+            .children()
+            .filter(|c| c.kind() == NodeKind::LetDecl)
+            .collect();
+        assert!(lets[0].is_async_let(), "`async let a` should be async");
+        assert!(!lets[1].is_async_let(), "plain `let b` should not be");
+
+        // `for await r in s` anchors on `await`; the binding is one token later.
+        let for_stmt = body
+            .children()
+            .find(|c| c.kind() == NodeKind::ForStmt)
+            .expect("for-await");
+        assert_eq!(for_stmt.text().as_deref(), Some("await"));
+        assert_eq!(for_stmt.token_text_offset(1).as_deref(), Some("r"));
     }
 
     /// A syntax error surfaces as a diagnostic, not a crash.
