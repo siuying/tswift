@@ -129,6 +129,10 @@ impl<'a> Parser<'a> {
                 "struct" => return self.parse_nominal(NodeKind::StructDecl),
                 "enum" => return self.parse_nominal(NodeKind::EnumDecl),
                 "class" => return self.parse_nominal(NodeKind::ClassDecl),
+                "protocol" => return self.parse_nominal(NodeKind::ProtocolDecl),
+                "extension" => return self.parse_extension(),
+                "associatedtype" => return self.parse_associatedtype(),
+                "typealias" => return self.parse_typealias(),
                 "deinit" => return self.parse_deinit(),
                 "init" => return self.parse_init(),
                 "subscript" => return self.parse_subscript(),
@@ -222,10 +226,18 @@ impl<'a> Parser<'a> {
     /// `TypeRef`, then the body `Block`.
     fn parse_func(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let name = self.expect(TokenKind::Identifier)?;
+        // The name is an identifier or an operator (`func == `, `func + `).
+        let name_tok = self.peek();
+        let name = match name_tok.kind {
+            TokenKind::Identifier | TokenKind::Oper => self.bump().text,
+            other => return self.error(format!("expected a function name, found {other:?}")),
+        };
         let func = self
             .ast
-            .add(NodeKind::FuncDecl, Some(name.text), kw.line, kw.col);
+            .add(NodeKind::FuncDecl, Some(name), kw.line, kw.col);
+        if self.at_oper("<") {
+            self.parse_generic_clause(func);
+        }
         self.expect(TokenKind::LParen)?;
         if self.peek().kind != TokenKind::RParen {
             loop {
@@ -239,14 +251,91 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RParen)?;
+        self.skip_effects();
         if self.at_oper("->") {
             self.bump();
             let ret = self.parse_type()?;
             self.ast.append_child(func, ret);
         }
-        let body = self.parse_block()?;
-        self.ast.append_child(func, body);
+        if self.at_keyword("where") {
+            self.skip_where_clause();
+        }
+        // Protocol method requirements have no body.
+        if self.peek().kind == TokenKind::LBrace {
+            let body = self.parse_block()?;
+            self.ast.append_child(func, body);
+        }
         Ok(func)
+    }
+
+    /// Consume effect markers (`async`/`throws`/`rethrows`, incl. typed throws).
+    fn skip_effects(&mut self) {
+        if self.at_keyword("async") {
+            self.bump();
+        }
+        if self.at_keyword("throws") || self.at_keyword("rethrows") {
+            self.bump();
+            // Typed throws `throws(E)`.
+            if self.peek().kind == TokenKind::LParen {
+                while !matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof) {
+                    self.bump();
+                }
+                self.bump();
+            }
+        }
+    }
+
+    /// Consume a generic parameter clause `<T, U: P>` (depth-balanced, robust
+    /// to `>>`), recording its source text on a [`NodeKind::GenericParam`].
+    fn parse_generic_clause(&mut self, parent: NodeId) {
+        let start = self.peek();
+        let text = self.consume_angle_group();
+        let gp = self
+            .ast
+            .add(NodeKind::GenericParam, Some(&text), start.line, start.col);
+        self.ast.append_child(parent, gp);
+    }
+
+    /// Consume a balanced `< ... >` group, returning its concatenated text.
+    /// Handles nested groups and merged closers like `>>`.
+    fn consume_angle_group(&mut self) -> String {
+        let mut out = String::new();
+        let mut depth = 0i32;
+        loop {
+            let t = self.peek();
+            match t.kind {
+                TokenKind::Eof => break,
+                TokenKind::Oper => {
+                    for ch in t.text.chars() {
+                        if ch == '<' {
+                            depth += 1;
+                        } else if ch == '>' {
+                            depth -= 1;
+                        }
+                    }
+                    out.push_str(t.text);
+                    self.bump();
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                _ => {
+                    out.push_str(t.text);
+                    self.bump();
+                }
+            }
+        }
+        out
+    }
+
+    /// Consume a `where` constraint clause up to the body `{` or end of line.
+    fn skip_where_clause(&mut self) {
+        self.bump(); // `where`
+        while !matches!(self.peek().kind, TokenKind::LBrace | TokenKind::Eof)
+            && !self.peek().leading_newline
+        {
+            self.bump();
+        }
     }
 
     /// `[externalLabel] name: [inout] Type [...] [= default]`.
@@ -570,6 +659,9 @@ impl<'a> Parser<'a> {
         let kw = self.bump();
         let name = self.expect(TokenKind::Identifier)?;
         let node = self.ast.add(kind, Some(name.text), kw.line, kw.col);
+        if self.at_oper("<") {
+            self.parse_generic_clause(node);
+        }
         // Inheritance / conformance / raw-value clause `: A, B`.
         if self.peek().kind == TokenKind::Colon {
             self.bump();
@@ -582,6 +674,9 @@ impl<'a> Parser<'a> {
                 }
                 break;
             }
+        }
+        if self.at_keyword("where") {
+            self.skip_where_clause();
         }
         self.expect(TokenKind::LBrace)?;
         while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
@@ -642,11 +737,91 @@ impl<'a> Parser<'a> {
             self.bump(); // failable `init?` / `init!`
         }
         self.parse_param_list(node)?;
-        if self.at_keyword("throws") || self.at_keyword("rethrows") {
-            self.bump();
+        self.skip_effects();
+        // Protocol initializer requirements have no body.
+        if self.peek().kind == TokenKind::LBrace {
+            let body = self.parse_block()?;
+            self.ast.append_child(node, body);
         }
-        let body = self.parse_block()?;
-        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// `extension Type[: P, Q] [where ...] { members }`.
+    fn parse_extension(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let name = self.parse_type_text()?;
+        let node = self
+            .ast
+            .add(NodeKind::ExtensionDecl, Some(&name), kw.line, kw.col);
+        if self.peek().kind == TokenKind::Colon {
+            self.bump();
+            loop {
+                let ty = self.parse_type()?;
+                self.ast.append_child(node, ty);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        if self.at_keyword("where") {
+            self.skip_where_clause();
+        }
+        self.expect(TokenKind::LBrace)?;
+        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+            if self.at_keyword("case") {
+                self.parse_enum_cases(node)?;
+            } else {
+                let member = self.parse_statement()?;
+                self.ast.append_child(node, member);
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(node)
+    }
+
+    /// `associatedtype Name[: Constraint] [= Default] [where ...]`.
+    fn parse_associatedtype(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let name = self.expect(TokenKind::Identifier)?;
+        let node = self.ast.add(
+            NodeKind::AssociatedTypeDecl,
+            Some(name.text),
+            kw.line,
+            kw.col,
+        );
+        if self.peek().kind == TokenKind::Colon {
+            self.bump();
+            let ty = self.parse_type()?;
+            self.ast.append_child(node, ty);
+        }
+        if self.at_oper("=") {
+            self.bump();
+            let default = self.parse_type()?;
+            self.ast.append_child(node, default);
+        }
+        if self.at_keyword("where") {
+            self.skip_where_clause();
+        }
+        Ok(node)
+    }
+
+    /// `typealias Name[<...>] = Type`.
+    fn parse_typealias(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let name = self.expect(TokenKind::Identifier)?;
+        let node = self
+            .ast
+            .add(NodeKind::TypeAliasDecl, Some(name.text), kw.line, kw.col);
+        if self.at_oper("<") {
+            self.parse_generic_clause(node);
+        }
+        if self.at_oper("=") {
+            self.bump();
+            let ty = self.parse_type()?;
+            self.ast.append_child(node, ty);
+        }
         Ok(node)
     }
 
@@ -697,8 +872,12 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::Identifier)?;
                     self.expect(TokenKind::RParen)?;
                 }
-                let body = self.parse_block()?;
-                self.ast.append_child(acc, body);
+                self.skip_effects(); // `get throws`, `get async` in protocols
+                                     // Protocol accessor requirements (`{ get set }`) have no body.
+                if self.peek().kind == TokenKind::LBrace {
+                    let body = self.parse_block()?;
+                    self.ast.append_child(acc, body);
+                }
                 self.ast.append_child(parent, acc);
             }
             self.expect(TokenKind::RBrace)?;
@@ -765,6 +944,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_text(&mut self) -> Result<String, ParseError> {
+        // Existential / opaque prefixes: `any P`, `some P`, `inout T`.
+        if (self.at_keyword("any") || self.at_keyword("some") || self.at_keyword("inout"))
+            && self.tokens[self.pos + 1].kind != TokenKind::Eof
+        {
+            let kw = self.bump();
+            let rest = self.parse_type_text()?;
+            return Ok(format!("{} {}", kw.text, rest));
+        }
         let mut text = match self.peek().kind {
             TokenKind::LBracket => {
                 self.bump();
@@ -797,12 +984,19 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Identifier => {
                 let mut name = self.bump().text.to_string();
+                // Generic arguments `Array<Int>`, `Dictionary<K, V>`.
+                if self.at_oper("<") {
+                    name.push_str(&self.consume_angle_group());
+                }
                 while self.peek().kind == TokenKind::Dot
                     && self.tokens[self.pos + 1].kind == TokenKind::Identifier
                 {
                     self.bump();
                     name.push('.');
                     name.push_str(self.bump().text);
+                    if self.at_oper("<") {
+                        name.push_str(&self.consume_angle_group());
+                    }
                 }
                 name
             }
@@ -811,6 +1005,19 @@ impl<'a> Parser<'a> {
         // Optional / IUO suffixes.
         while self.peek().kind == TokenKind::Question || self.at_oper("!") {
             text.push_str(self.bump().text);
+        }
+        // Protocol composition `P & Q`.
+        while self.at_oper("&") {
+            self.bump();
+            let rhs = self.parse_type_text()?;
+            text = format!("{text} & {rhs}");
+        }
+        // Function type `(A) -> B`, with optional effects.
+        self.skip_effects();
+        if self.at_oper("->") {
+            self.bump();
+            let ret = self.parse_type_text()?;
+            text = format!("{text} -> {ret}");
         }
         Ok(text)
     }
@@ -1747,5 +1954,101 @@ mod tests {
         let body = first_stmt(&ast).children().last().unwrap();
         let call = body.children().next().unwrap().children().next().unwrap();
         assert_eq!(call.kind(), NodeKind::CallExpr);
+    }
+
+    // --- Tier 4: protocols, generics & extensions ---
+
+    #[test]
+    fn protocol_with_requirements() {
+        let src = "protocol Shape {\n\
+                   var area: Double { get }\n\
+                   func draw()\n\
+                   associatedtype Point\n\
+                   }";
+        let ast = ast_of(src);
+        let p = first_stmt(&ast);
+        assert_eq!(p.kind(), NodeKind::ProtocolDecl);
+        let kinds: Vec<_> = p.children().map(|m| m.kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                NodeKind::VarDecl,
+                NodeKind::FuncDecl,
+                NodeKind::AssociatedTypeDecl
+            ]
+        );
+        // The method requirement has no body.
+        let draw = p.children().nth(1).unwrap();
+        assert!(draw.children().all(|c| c.kind() != NodeKind::Block));
+    }
+
+    #[test]
+    fn generic_function_and_struct() {
+        let ast = ast_of("func pick<T>(a: T, b: T) -> T { return a }");
+        let f = first_stmt(&ast);
+        assert_eq!(f.kind(), NodeKind::FuncDecl);
+        assert_eq!(f.children().next().unwrap().kind(), NodeKind::GenericParam);
+        assert_eq!(f.children().next().unwrap().text(), Some("<T>"));
+
+        let ast = ast_of("struct Stack<Element> { var items: [Element] }");
+        let s = first_stmt(&ast);
+        assert_eq!(s.kind(), NodeKind::StructDecl);
+        assert_eq!(s.children().next().unwrap().kind(), NodeKind::GenericParam);
+    }
+
+    #[test]
+    fn constrained_generics_and_where_clause() {
+        let ast = ast_of("func sorted<T: Comparable>(xs: T) -> T where T: Equatable { return xs }");
+        let f = first_stmt(&ast);
+        assert_eq!(f.kind(), NodeKind::FuncDecl);
+        assert_eq!(f.children().next().unwrap().text(), Some("<T:Comparable>"));
+        // Body still parses after the trailing `where`.
+        assert_eq!(f.children().last().unwrap().kind(), NodeKind::Block);
+    }
+
+    #[test]
+    fn extension_with_conformance() {
+        let ast = ast_of("extension Int: Comparable { func double() -> Int { return self * 2 } }");
+        let e = first_stmt(&ast);
+        assert_eq!(e.kind(), NodeKind::ExtensionDecl);
+        assert_eq!(e.text(), Some("Int"));
+        let kinds: Vec<_> = e.children().map(|c| c.kind()).collect();
+        assert_eq!(kinds, vec![NodeKind::TypeRef, NodeKind::FuncDecl]);
+    }
+
+    #[test]
+    fn typealias_declaration() {
+        let ast = ast_of("typealias Pair = (Int, Int)");
+        let t = first_stmt(&ast);
+        assert_eq!(t.kind(), NodeKind::TypeAliasDecl);
+        assert_eq!(t.text(), Some("Pair"));
+        assert_eq!(t.children().next().unwrap().text(), Some("(Int, Int)"));
+    }
+
+    #[test]
+    fn existential_composition_and_function_types() {
+        let ty = |src| {
+            let ast = ast_of(src);
+            let text = first_stmt(&ast)
+                .children()
+                .nth(1)
+                .unwrap()
+                .text()
+                .unwrap()
+                .to_string();
+            text
+        };
+        assert_eq!(ty("let a: any Shape = s"), "any Shape");
+        assert_eq!(ty("let b: Codable & Equatable = z"), "Codable & Equatable");
+        assert_eq!(ty("let c: (Int) -> Int = g"), "(Int) -> Int");
+        assert_eq!(ty("let d: Array<Int> = e"), "Array<Int>");
+    }
+
+    #[test]
+    fn operator_requirement_in_type() {
+        let ast = ast_of("struct V { static func == (a: V, b: V) -> Bool { return true } }");
+        let func = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(func.kind(), NodeKind::FuncDecl);
+        assert_eq!(func.text(), Some("=="));
     }
 }
