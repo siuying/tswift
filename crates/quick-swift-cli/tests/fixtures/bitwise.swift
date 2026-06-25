@@ -1,0 +1,6 @@
+print(0b1100 & 0b1010)
+print(0b1100 | 0b1010)
+print(0b1100 ^ 0b1010)
+print(1 << 4)
+print(255 >> 4)
+print(~0)
