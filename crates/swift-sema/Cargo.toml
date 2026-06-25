@@ -1,0 +1,13 @@
+[package]
+name = "swift-sema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Semantic analysis (type resolution) for the quick-swift frontend pipeline."
+
+[dependencies]
+swift-ast = { path = "../swift-ast" }
+
+[dev-dependencies]
+swift-parser = { path = "../swift-parser" }
