@@ -79,6 +79,11 @@ const CLEAN: &[&str] = &[
     "func pick<T>(a: T, b: T, flag: Bool) -> T { return a }",
     "extension Int { func doubled() -> Int { return self * 2 } }",
     "typealias Pair = (Int, Int)",
+    // Tier 5/6/9 — errors, attributes, operators & directives.
+    "enum NetworkError: Error { case offline, timeout }",
+    "func mayFail() throws -> Int { return 1 }",
+    "@discardableResult func compute() -> Int { return 0 }",
+    "func guarded() { do { try risky() } catch { recover() } }",
 ];
 
 /// Snippets the permissive C oracle accepts but the Rust frontend rejects: a
