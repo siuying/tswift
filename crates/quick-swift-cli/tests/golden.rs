@@ -85,6 +85,26 @@ fn golden_fixtures_match() {
     );
 }
 
+/// Multiple source files passed to `run` form one module: declarations in an
+/// earlier file are visible to a later file.
+#[test]
+fn multi_file_module_resolves_cross_file() {
+    let dir = fixtures_dir().join("multifile");
+    let output = Command::new(env!("CARGO_BIN_EXE_quick-swift"))
+        .arg("run")
+        .arg(dir.join("models.swift"))
+        .arg(dir.join("main.swift"))
+        .output()
+        .expect("spawn quick-swift");
+    assert!(
+        output.status.success(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = std::fs::read_to_string(dir.join("expected.txt")).expect("read expected");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}
+
 /// A deliberately broken fixture must make the harness notice a mismatch — this
 /// guards the harness itself against silently passing.
 #[test]
