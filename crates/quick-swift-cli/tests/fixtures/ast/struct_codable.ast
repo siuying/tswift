@@ -1,9 +1,9 @@
-SourceFile "struct" L1
-  StructDecl "User" L1 :User
+SourceFile L1
+  StructDecl "User" L1
     Conformance "Codable" L1
       TypeIdent "Codable" L1
     Block "{" L1
       LetDecl "name" L2 :String
-        TypeIdent "String" L2 :String
+        TypeIdent "String" L2
       VarDecl "age" L3 :Int
-        TypeIdent "Int" L3 :Int
+        TypeIdent "Int" L3

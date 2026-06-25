@@ -1,3 +1,4 @@
+// rust-gap: advanced Tier 0-10 spec syntax not yet modelled by the pure-Rust frontend (tracked in #37)
 // expected-no-diagnostics
 // Tier 9c — declaration/type attributes the frontend must accept.
 

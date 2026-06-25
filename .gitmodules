@@ -1,3 +1,0 @@
-[submodule "vendor/msf"]
-	path = vendor/msf
-	url = https://github.com/toprakdeviren/msf
