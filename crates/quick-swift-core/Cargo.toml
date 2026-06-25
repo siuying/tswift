@@ -7,4 +7,4 @@ repository.workspace = true
 description = "quick-swift evaluator spine: SwiftValue, the eval dispatcher, and native registration."
 
 [dependencies]
-msf.workspace = true
+quick-swift-frontend.workspace = true
