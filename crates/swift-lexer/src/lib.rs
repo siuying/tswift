@@ -50,6 +50,10 @@ pub enum TokenKind {
     Question,
     /// Any operator lexeme (`+`, `==`, `&&`, `..<`, `->`, `&+`, …), text in [`Token::text`].
     Oper,
+    /// An attribute, e.g. `@main`, `@discardableResult` (text includes the `@`).
+    Attribute,
+    /// A compiler directive, e.g. `#if`, `#file`, `#warning` (text includes the `#`).
+    Directive,
     /// End of input. Always the final token of a [`tokenize`] result.
     Eof,
 }
@@ -65,6 +69,9 @@ pub struct Token<'a> {
     pub line: u32,
     /// 1-based source column of the token's first character.
     pub col: u32,
+    /// Whether a newline was consumed between the previous token and this one.
+    /// Lets the parser tell `break outer` (label) from `break` then a new line.
+    pub leading_newline: bool,
 }
 
 /// An error produced while lexing, with the location it was detected.
@@ -109,6 +116,7 @@ const KEYWORDS: &[&str] = &[
     "extension",
     "init",
     "deinit",
+    "subscript",
     "self",
     "super",
     "nil",
@@ -159,6 +167,8 @@ struct Lexer<'a> {
     pos: usize,
     line: u32,
     col: u32,
+    /// Set when trivia before the next token contained a newline.
+    pending_newline: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -169,13 +179,14 @@ impl<'a> Lexer<'a> {
             pos: 0,
             line: 1,
             col: 1,
+            pending_newline: false,
         }
     }
 
     fn run(mut self) -> Result<Vec<Token<'a>>, LexError> {
         let mut out = Vec::new();
         loop {
-            self.skip_trivia()?;
+            self.pending_newline = self.skip_trivia()?;
             if self.pos >= self.bytes.len() {
                 out.push(self.make(TokenKind::Eof, self.pos, self.line, self.col));
                 return Ok(out);
@@ -185,10 +196,13 @@ impl<'a> Lexer<'a> {
     }
 
     /// Skip whitespace, line comments (`//`), and nested block comments (`/* */`).
-    fn skip_trivia(&mut self) -> Result<(), LexError> {
+    /// Returns whether any newline was consumed.
+    fn skip_trivia(&mut self) -> Result<bool, LexError> {
+        let mut saw_newline = false;
         loop {
             match self.peek() {
                 Some(b'\n') => {
+                    saw_newline = true;
                     self.pos += 1;
                     self.line += 1;
                     self.col = 1;
@@ -202,15 +216,19 @@ impl<'a> Lexer<'a> {
                         self.advance_byte();
                     }
                 }
-                Some(b'/') if self.peek_at(1) == Some(b'*') => self.block_comment()?,
-                _ => return Ok(()),
+                Some(b'/') if self.peek_at(1) == Some(b'*') => {
+                    saw_newline |= self.block_comment()?;
+                }
+                _ => return Ok(saw_newline),
             }
         }
     }
 
-    /// Consume a `/* ... */` comment, honouring nesting.
-    fn block_comment(&mut self) -> Result<(), LexError> {
+    /// Consume a `/* ... */` comment, honouring nesting. Returns whether it
+    /// spanned a newline.
+    fn block_comment(&mut self) -> Result<bool, LexError> {
         let (line, col) = (self.line, self.col);
+        let mut saw_newline = false;
         self.advance_byte(); // '/'
         self.advance_byte(); // '*'
         let mut depth = 1;
@@ -224,6 +242,7 @@ impl<'a> Lexer<'a> {
                     })
                 }
                 Some(b'\n') => {
+                    saw_newline = true;
                     self.pos += 1;
                     self.line += 1;
                     self.col = 1;
@@ -241,7 +260,7 @@ impl<'a> Lexer<'a> {
                 Some(_) => self.advance_byte(),
             }
         }
-        Ok(())
+        Ok(saw_newline)
     }
 
     fn next_token(&mut self) -> Result<Token<'a>, LexError> {
@@ -261,6 +280,18 @@ impl<'a> Lexer<'a> {
             b':' => self.single(TokenKind::Colon),
             b';' => self.single(TokenKind::Semicolon),
             b'"' => return self.string(start, line, col),
+            // `@name` attribute and `#name` compiler directive lex as one token.
+            b'@' | b'#' => {
+                self.advance_byte();
+                while self.peek().is_some_and(is_ident_continue) {
+                    self.advance_byte();
+                }
+                if c == b'@' {
+                    TokenKind::Attribute
+                } else {
+                    TokenKind::Directive
+                }
+            }
             b'.' => {
                 // `...`/`..<` are operators; a lone `.` is member/tuple access.
                 if self.starts_with("...") || self.starts_with("..<") {
@@ -445,16 +476,18 @@ impl<'a> Lexer<'a> {
             text: &self.src[start..self.pos],
             line,
             col,
+            leading_newline: self.pending_newline,
         }
     }
 }
 
 fn is_ident_start(c: u8) -> bool {
-    c == b'_' || c.is_ascii_alphabetic() || c >= 0x80
+    // `$` begins closure shorthand args (`$0`) and projected wrapper values (`$x`).
+    c == b'_' || c == b'$' || c.is_ascii_alphabetic() || c >= 0x80
 }
 
 fn is_ident_continue(c: u8) -> bool {
-    c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80
+    c == b'_' || c == b'$' || c.is_ascii_alphanumeric() || c >= 0x80
 }
 
 fn is_dec_or_us(c: u8) -> bool {
@@ -629,6 +662,15 @@ mod tests {
     }
 
     #[test]
+    fn leading_newline_is_recorded() {
+        let toks = tokenize("break\nfoo break outer").unwrap();
+        assert!(!toks[0].leading_newline); // break
+        assert!(toks[1].leading_newline); // foo, after newline
+        assert!(!toks[2].leading_newline); // break, same line as foo
+        assert!(!toks[3].leading_newline); // outer, same line
+    }
+
+    #[test]
     fn empty_input_is_just_eof() {
         let toks = tokenize("").unwrap();
         assert_eq!(toks.len(), 1);
@@ -664,5 +706,27 @@ mod tests {
         let err = tokenize("\\").unwrap_err();
         assert!(err.message.contains("unexpected"), "{}", err.message);
         assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn attributes_and_directives_lex_as_single_tokens() {
+        assert_eq!(
+            lex("@main @available(macOS)"),
+            vec![
+                (TokenKind::Attribute, "@main"),
+                (TokenKind::Attribute, "@available"),
+                (TokenKind::LParen, "("),
+                (TokenKind::Identifier, "macOS"),
+                (TokenKind::RParen, ")"),
+            ]
+        );
+        assert_eq!(
+            lex("#if #file #warning"),
+            vec![
+                (TokenKind::Directive, "#if"),
+                (TokenKind::Directive, "#file"),
+                (TokenKind::Directive, "#warning"),
+            ]
+        );
     }
 }

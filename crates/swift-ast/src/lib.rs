@@ -38,6 +38,86 @@ pub enum NodeKind {
     LetDecl,
     /// A `var` binding declaration.
     VarDecl,
+    /// A function declaration, `func name(params) -> Ret { body }`.
+    FuncDecl,
+    /// A `struct` declaration.
+    StructDecl,
+    /// An `enum` declaration.
+    EnumDecl,
+    /// A `class` declaration.
+    ClassDecl,
+    /// A `protocol` declaration.
+    ProtocolDecl,
+    /// An `extension` declaration.
+    ExtensionDecl,
+    /// An `associatedtype` requirement.
+    AssociatedTypeDecl,
+    /// A `typealias` declaration.
+    TypeAliasDecl,
+    /// A generic parameter `T` (optionally constrained).
+    GenericParam,
+    /// A `deinit { }` declaration.
+    DeinitDecl,
+    /// A `do { } catch { }` statement.
+    DoStmt,
+    /// A `catch` clause of a `do` statement.
+    CatchClause,
+    /// A `throw expr` statement.
+    ThrowStmt,
+    /// A `defer { }` statement.
+    DeferStmt,
+    /// A `try` / `try?` / `try!` expression (text is the operator).
+    TryExpr,
+    /// An `operator` declaration (`infix operator <> : Group`).
+    OperatorDecl,
+    /// A `precedencegroup` declaration.
+    PrecedenceGroupDecl,
+    /// A compiler directive used as a statement or expression (`#warning`,
+    /// `#error`, `#file`, `#line`, …); text is the directive (with `#`).
+    CompilerDirective,
+    /// An attribute such as `@main` (text includes the `@`).
+    Attribute,
+    /// A closure expression `{ [captures] params in body }`.
+    ClosureExpr,
+    /// A type-cast expression `operand is/as/as?/as! Type` (text is the operator).
+    CastExpr,
+    /// One `case` of an enum (text is the case name; children are associated
+    /// type refs or a raw-value expression).
+    EnumCaseDecl,
+    /// An initializer declaration `init(...) { }`.
+    InitDecl,
+    /// A `subscript(...) -> T { ... }` declaration.
+    SubscriptDecl,
+    /// A property/subscript accessor (`get`/`set`/`willSet`/`didSet`), text is its kind.
+    Accessor,
+    /// A postfix unary expression `operand op` (`x!`).
+    PostfixExpr,
+    /// A single function parameter.
+    Param,
+    /// A braced statement block `{ ... }`.
+    Block,
+    /// A `return [expr]` statement.
+    ReturnStmt,
+    /// An `if`/`else` statement (or expression).
+    IfStmt,
+    /// A `guard ... else { }` statement.
+    GuardStmt,
+    /// A `while` loop.
+    WhileStmt,
+    /// A `repeat { } while ...` loop.
+    RepeatStmt,
+    /// A `for ... in ... [where ...] { }` loop.
+    ForStmt,
+    /// A `switch` statement.
+    SwitchStmt,
+    /// One `case`/`default` clause of a `switch`.
+    CaseClause,
+    /// A `break [label]` statement.
+    BreakStmt,
+    /// A `continue [label]` statement.
+    ContinueStmt,
+    /// A `fallthrough` statement.
+    FallthroughStmt,
     /// A written type annotation, e.g. the `Int` in `let x: Int`.
     TypeRef,
     /// A binding pattern that names a value, e.g. the `x` in `let x = 1`.
@@ -74,6 +154,45 @@ impl NodeKind {
             NodeKind::MemberExpr => "member_expr",
             NodeKind::LetDecl => "let_decl",
             NodeKind::VarDecl => "var_decl",
+            NodeKind::FuncDecl => "func_decl",
+            NodeKind::StructDecl => "struct_decl",
+            NodeKind::EnumDecl => "enum_decl",
+            NodeKind::ClassDecl => "class_decl",
+            NodeKind::ProtocolDecl => "protocol_decl",
+            NodeKind::ExtensionDecl => "extension_decl",
+            NodeKind::AssociatedTypeDecl => "associatedtype_decl",
+            NodeKind::TypeAliasDecl => "typealias_decl",
+            NodeKind::GenericParam => "generic_param",
+            NodeKind::DeinitDecl => "deinit_decl",
+            NodeKind::DoStmt => "do_stmt",
+            NodeKind::CatchClause => "catch_clause",
+            NodeKind::ThrowStmt => "throw_stmt",
+            NodeKind::DeferStmt => "defer_stmt",
+            NodeKind::TryExpr => "try_expr",
+            NodeKind::OperatorDecl => "operator_decl",
+            NodeKind::PrecedenceGroupDecl => "precedencegroup_decl",
+            NodeKind::CompilerDirective => "compiler_directive",
+            NodeKind::Attribute => "attribute",
+            NodeKind::ClosureExpr => "closure_expr",
+            NodeKind::CastExpr => "cast_expr",
+            NodeKind::EnumCaseDecl => "enum_case_decl",
+            NodeKind::InitDecl => "init_decl",
+            NodeKind::SubscriptDecl => "subscript_decl",
+            NodeKind::Accessor => "accessor",
+            NodeKind::PostfixExpr => "postfix_expr",
+            NodeKind::Param => "param",
+            NodeKind::Block => "block",
+            NodeKind::ReturnStmt => "return_stmt",
+            NodeKind::IfStmt => "if_stmt",
+            NodeKind::GuardStmt => "guard_stmt",
+            NodeKind::WhileStmt => "while_stmt",
+            NodeKind::RepeatStmt => "repeat_stmt",
+            NodeKind::ForStmt => "for_stmt",
+            NodeKind::SwitchStmt => "switch_stmt",
+            NodeKind::CaseClause => "case_clause",
+            NodeKind::BreakStmt => "break_stmt",
+            NodeKind::ContinueStmt => "continue_stmt",
+            NodeKind::FallthroughStmt => "fallthrough_stmt",
             NodeKind::TypeRef => "type_ref",
             NodeKind::NamePattern => "name_pattern",
             NodeKind::WildcardPattern => "wildcard_pattern",
