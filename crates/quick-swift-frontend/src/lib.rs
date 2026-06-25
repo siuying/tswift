@@ -393,8 +393,12 @@ impl<'a> Node<'a> {
     /// The declaration modifier bitmask (`ASTNode.modifiers`).
     pub fn modifiers(&self) -> u32 {
         #[cfg(feature = "rust-backend")]
-        if self.rust.is_some() {
-            return 0;
+        if let Some(id) = self.rust {
+            return self
+                .analysis
+                .rust
+                .as_ref()
+                .map_or(0, |rust| rust.modifiers(id));
         }
 
         // SAFETY: `modifiers` is a plain integer field on a live node.
@@ -404,8 +408,12 @@ impl<'a> Node<'a> {
     /// The argument label of a call argument (`arg_label_tok`), if present.
     pub fn arg_label(&self) -> Option<String> {
         #[cfg(feature = "rust-backend")]
-        if self.rust.is_some() {
-            return None;
+        if let Some(id) = self.rust {
+            return self
+                .analysis
+                .rust
+                .as_ref()
+                .and_then(|rust| rust.arg_label(id));
         }
 
         // SAFETY: `arg_label_tok` is a plain integer field; 0 means none.
@@ -1045,6 +1053,99 @@ mod tests {
         assert_eq!(
             a.root().dump(),
             "SourceFile L1\n  ExprStmt L1\n    CallExpr L1 :Void\n      IdentExpr \"print\" L1\n      IntegerLiteral \"42\" L1 :Int\n"
+        );
+    }
+
+    /// The Rust backend lowers a nominal declaration into the runtime-facing
+    /// shape: name as text, inherited types as `Conformance` (with a `TypeIdent`
+    /// child), and the members wrapped in a `Block`. This is the contract
+    /// `quick-swift-core::register_struct` walks (#51).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_struct_codable_shape() {
+        let a = Analysis::analyze_rust(
+            "struct User: Codable {\n    let name: String\n    var age: Int\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+        assert_eq!(
+            a.root().dump(),
+            "SourceFile L1\n  \
+               StructDecl \"User\" L1\n    \
+                 Conformance \"Codable\" L1\n      \
+                   TypeIdent \"Codable\" L1\n    \
+                 Block \"{\" L1\n      \
+                   LetDecl \"name\" L2 :String\n        \
+                     TypeIdent \"String\" L2\n      \
+                   VarDecl \"age\" L3 :Int\n        \
+                     TypeIdent \"Int\" L3\n"
+        );
+    }
+
+    /// Enums lower to `EnumDecl` with their cases inside a `Block`, and the
+    /// `record_conformances`/`register_enum` raw-type clause becomes a
+    /// `Conformance` (#51).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_enum_shape() {
+        let a = Analysis::analyze_rust(
+            "enum Suit: Int {\n    case hearts\n    case spades\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+        let dump = a.root().dump();
+        assert!(dump.contains("EnumDecl \"Suit\""), "{dump}");
+        assert!(dump.contains("Conformance \"Int\""), "{dump}");
+        assert!(dump.contains("Block \"{\""), "{dump}");
+        assert!(dump.contains("EnumCaseDecl \"hearts\""), "{dump}");
+        assert!(dump.contains("EnumCaseDecl \"spades\""), "{dump}");
+    }
+
+    /// Protocol members lower inside a `Block`, and a `mutating` requirement
+    /// keeps its modifier through the frontend's stable bit contract (#51/#52).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_protocol_shape_and_modifiers() {
+        let a = Analysis::analyze_rust(
+            "protocol Shape {\n    func area() -> Int\n}\n\
+             struct Box: Shape {\n    static let sides = 4\n    func area() -> Int { return 1 }\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+        let root = a.root();
+        let proto = root
+            .children()
+            .find(|c| c.kind() == NodeKind::ProtocolDecl)
+            .expect("protocol decl");
+        assert_eq!(proto.text().as_deref(), Some("Shape"));
+        let body = proto
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .expect("protocol body block");
+        assert!(body
+            .children()
+            .any(|c| c.kind() == NodeKind::FuncDecl && c.text().as_deref() == Some("area")));
+
+        // `static let sides` keeps the static modifier bit.
+        let strukt = root
+            .children()
+            .find(|c| c.kind() == NodeKind::StructDecl)
+            .unwrap();
+        let block = strukt
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let sides = block
+            .children()
+            .find(|c| c.decl_name().as_deref() == Some("sides"))
+            .expect("static let sides");
+        assert!(
+            sides.modifier_names().contains(&"static"),
+            "{:?}",
+            sides.modifier_names()
         );
     }
 

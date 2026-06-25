@@ -47,6 +47,16 @@ struct Parser<'a> {
     no_trailing_closure: bool,
 }
 
+/// Declaration modifiers and attributes collected ahead of a declaration by
+/// [`Parser::collect_decl_meta`] and applied by [`Parser::attach_decl_meta`].
+#[derive(Default)]
+struct DeclMeta {
+    /// Modifier keywords in source order (`static`, `mutating`, `weak`, \u2026).
+    modifiers: Vec<String>,
+    /// Attributes as `(name_without_at, line, col)`.
+    attributes: Vec<(String, u32, u32)>,
+}
+
 impl<'a> Parser<'a> {
     fn peek(&self) -> Token<'a> {
         self.tokens[self.pos]
@@ -95,6 +105,10 @@ impl<'a> Parser<'a> {
 
     fn parse_source_file(&mut self) -> Result<(), ParseError> {
         while !self.at_eof() {
+            self.skip_semicolons();
+            if self.at_eof() {
+                break;
+            }
             let stmt = self.parse_statement()?;
             let root = self.ast.root();
             self.ast.append_child(root, stmt);
@@ -112,9 +126,16 @@ impl<'a> Parser<'a> {
             self.bump(); // ':'
             return self.parse_labeled(label.text);
         }
-        // Skip declaration modifiers (`static`, `public`, `final`, …) that
-        // precede a declaration keyword.
-        self.skip_modifiers();
+        // Collect declaration modifiers (`static`, `public`, `final`, …) and
+        // attributes (`@main`, `@propertyWrapper`, …) that precede a
+        // declaration keyword, then attach them to the parsed declaration.
+        let meta = self.collect_decl_meta();
+        let node = self.parse_statement_body()?;
+        self.attach_decl_meta(node, meta);
+        Ok(node)
+    }
+
+    fn parse_statement_body(&mut self) -> Result<NodeId, ParseError> {
         // Compiler directives as statements (`#if`, `#warning`, `#error`).
         if self.peek().kind == TokenKind::Directive {
             return self.parse_directive_stmt();
@@ -232,7 +253,11 @@ impl<'a> Parser<'a> {
     fn parse_block(&mut self) -> Result<NodeId, ParseError> {
         let open = self.expect(TokenKind::LBrace)?;
         let block = self.ast.add(NodeKind::Block, None, open.line, open.col);
-        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+        loop {
+            self.skip_semicolons();
+            if self.peek().kind == TokenKind::RBrace || self.at_eof() {
+                break;
+            }
             let stmt = self.parse_statement()?;
             self.ast.append_child(block, stmt);
         }
@@ -552,20 +577,21 @@ impl<'a> Parser<'a> {
         Ok(self.ast.add(kind, label, kw.line, kw.col))
     }
 
-    /// Consume any run of leading declaration modifiers that precede a
-    /// declaration keyword (so they are accepted but not yet modelled).
-    fn skip_modifiers(&mut self) {
+    /// Collect any run of leading declaration modifiers (`static`, `public`,
+    /// `final`, …) and attributes (`@main`, `@propertyWrapper`, …) that precede
+    /// a declaration keyword, consuming them and returning them so the parsed
+    /// declaration can be annotated via [`attach_decl_meta`].
+    fn collect_decl_meta(&mut self) -> DeclMeta {
+        // First confirm the run actually precedes a declaration (mirrors the
+        // old `skip_modifiers` guard), so a bare `weak`/`@x` used elsewhere is
+        // not mistaken for a modifier run.
         let mut i = self.pos;
         loop {
             let t = self.tokens[i];
-            if t.kind == TokenKind::Attribute {
+            if t.kind == TokenKind::Attribute || is_modifier_word(t.text) {
                 i += 1;
-                if self.tokens[i].kind == TokenKind::LParen {
-                    i = self.scan_balanced_parens(i);
-                }
-            } else if is_modifier_word(t.text) {
-                i += 1;
-                // Argumented modifier such as `private(set)`.
+                // Argumented attribute/modifier such as `@available(...)` or
+                // `private(set)`.
                 if self.tokens[i].kind == TokenKind::LParen {
                     i = self.scan_balanced_parens(i);
                 }
@@ -573,13 +599,57 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        // Only consume the run when it actually precedes a declaration.
-        if i > self.pos
-            && (is_decl_keyword(self.tokens[i].text) || self.tokens[i].kind == TokenKind::Attribute)
+        let mut meta = DeclMeta::default();
+        if i == self.pos
+            || !(is_decl_keyword(self.tokens[i].text)
+                || self.tokens[i].kind == TokenKind::Attribute)
         {
-            while self.pos < i {
+            return meta;
+        }
+        while self.pos < i {
+            let t = self.peek();
+            if t.kind == TokenKind::Attribute {
+                let name = t.text.trim_start_matches('@').to_string();
+                meta.attributes.push((name, t.line, t.col));
                 self.bump();
+                if self.peek().kind == TokenKind::LParen {
+                    self.skip_balanced_parens();
+                }
+            } else {
+                meta.modifiers.push(t.text.to_string());
+                self.bump();
+                if self.peek().kind == TokenKind::LParen {
+                    self.skip_balanced_parens();
+                }
             }
+        }
+        meta
+    }
+
+    /// Attach collected modifiers and attribute child nodes to a parsed
+    /// declaration. A no-op when `meta` is empty (the common statement case).
+    fn attach_decl_meta(&mut self, node: NodeId, meta: DeclMeta) {
+        for m in &meta.modifiers {
+            self.ast.add_modifier(node, m);
+        }
+        for (name, line, col) in meta.attributes {
+            let attr = self.ast.add(NodeKind::Attribute, Some(&name), line, col);
+            self.ast.append_child(node, attr);
+        }
+    }
+
+    /// Consume a balanced `( ... )` run starting at the current `(`.
+    fn skip_balanced_parens(&mut self) {
+        let end = self.scan_balanced_parens(self.pos);
+        while self.pos < end {
+            self.bump();
+        }
+    }
+
+    /// Skip any run of statement-separating semicolons.
+    fn skip_semicolons(&mut self) {
+        while self.peek().kind == TokenKind::Semicolon {
+            self.bump();
         }
     }
 
@@ -913,7 +983,11 @@ impl<'a> Parser<'a> {
         self.try_closure_signature();
         let saved = self.no_trailing_closure;
         self.no_trailing_closure = false;
-        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+        loop {
+            self.skip_semicolons();
+            if self.peek().kind == TokenKind::RBrace || self.at_eof() {
+                break;
+            }
             let stmt = self.parse_statement()?;
             self.ast.append_child(node, stmt);
         }
@@ -1020,7 +1094,11 @@ impl<'a> Parser<'a> {
             self.skip_where_clause();
         }
         self.expect(TokenKind::LBrace)?;
-        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+        loop {
+            self.skip_semicolons();
+            if self.peek().kind == TokenKind::RBrace || self.at_eof() {
+                break;
+            }
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
@@ -1110,7 +1188,11 @@ impl<'a> Parser<'a> {
             self.skip_where_clause();
         }
         self.expect(TokenKind::LBrace)?;
-        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+        loop {
+            self.skip_semicolons();
+            if self.peek().kind == TokenKind::RBrace || self.at_eof() {
+                break;
+            }
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
@@ -1228,7 +1310,11 @@ impl<'a> Parser<'a> {
                 .ast
                 .add(NodeKind::Accessor, Some("get"), open.line, open.col);
             let block = self.ast.add(NodeKind::Block, None, open.line, open.col);
-            while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+            loop {
+                self.skip_semicolons();
+                if self.peek().kind == TokenKind::RBrace || self.at_eof() {
+                    break;
+                }
                 let stmt = self.parse_statement()?;
                 self.ast.append_child(block, stmt);
             }
@@ -1607,7 +1693,23 @@ impl<'a> Parser<'a> {
                     self.no_trailing_closure = false;
                     if self.peek().kind != TokenKind::RParen {
                         loop {
+                            // Argument label `name:` (an identifier or keyword
+                            // followed by `:`, distinct from the `?:` ternary).
+                            let label = if matches!(
+                                self.peek().kind,
+                                TokenKind::Identifier | TokenKind::Keyword
+                            ) && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                            {
+                                let name = self.bump().text;
+                                self.bump(); // ':'
+                                Some(name)
+                            } else {
+                                None
+                            };
                             let arg = self.parse_expr(0)?;
+                            if let Some(label) = label {
+                                self.ast.set_arg_label(arg, label);
+                            }
                             self.ast.append_child(call, arg);
                             if self.peek().kind == TokenKind::Comma {
                                 self.bump();
@@ -2533,5 +2635,78 @@ mod tests {
         let active: Vec<_> = dir.children().collect();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].children().nth(1).unwrap().text(), Some("2"));
+    }
+
+    // --- Tier 2 nominal: semicolons, modifiers, attributes, arg labels ---
+
+    #[test]
+    fn semicolons_separate_statements_and_members() {
+        // Semicolons are accepted as statement separators at top level, inside
+        // blocks, and inside a type body.
+        let ast = ast_of("let a = 1; let b = 2;\nstruct P { var x: Int; var y: Int }");
+        let top: Vec<_> = ast.node(ast.root()).children().collect();
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0].kind(), NodeKind::LetDecl);
+        assert_eq!(top[1].kind(), NodeKind::LetDecl);
+        let strukt = top[2];
+        assert_eq!(strukt.kind(), NodeKind::StructDecl);
+        let members: Vec<_> = strukt
+            .children()
+            .filter(|c| c.kind() == NodeKind::VarDecl)
+            .collect();
+        assert_eq!(members.len(), 2);
+    }
+
+    #[test]
+    fn enum_cases_separated_by_semicolons() {
+        let ast = ast_of("enum E { case a; case b }");
+        let e = first_stmt(&ast);
+        assert_eq!(e.kind(), NodeKind::EnumDecl);
+        let cases: Vec<_> = e
+            .children()
+            .filter(|c| c.kind() == NodeKind::EnumCaseDecl)
+            .collect();
+        assert_eq!(cases.len(), 2);
+    }
+
+    #[test]
+    fn modifiers_are_recorded_on_declarations() {
+        let ast = ast_of("struct S {\n  static let n = 1\n  mutating func go() {}\n}");
+        let s = first_stmt(&ast);
+        let members: Vec<_> = s.children().collect();
+        let n = members
+            .iter()
+            .find(|c| c.kind() == NodeKind::LetDecl)
+            .unwrap();
+        assert_eq!(n.modifiers(), &["static".to_string()]);
+        let go = members
+            .iter()
+            .find(|c| c.kind() == NodeKind::FuncDecl)
+            .unwrap();
+        assert_eq!(go.modifiers(), &["mutating".to_string()]);
+    }
+
+    #[test]
+    fn attributes_become_child_nodes() {
+        let ast = ast_of("@main\nstruct App { }");
+        let app = first_stmt(&ast);
+        assert_eq!(app.kind(), NodeKind::StructDecl);
+        let attr = app
+            .children()
+            .find(|c| c.kind() == NodeKind::Attribute)
+            .expect("@main attribute child");
+        // The leading `@` is stripped, matching the runtime-facing payload.
+        assert_eq!(attr.text(), Some("main"));
+    }
+
+    #[test]
+    fn call_argument_labels_are_recorded() {
+        let ast = ast_of("f(x: 1, 2, y: 3)");
+        let call = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        let args: Vec<_> = call.children().skip(1).collect();
+        assert_eq!(args[0].arg_label(), Some("x"));
+        assert_eq!(args[1].arg_label(), None);
+        assert_eq!(args[2].arg_label(), Some("y"));
     }
 }
