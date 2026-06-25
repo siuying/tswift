@@ -122,8 +122,9 @@ Mirrors MiniJS §3–§6 / QuickJS §4–§8, specialised for Swift's **typed** 
 ## Notes
 
 - Decoupling suspension from throughput directly de-risks #12 (Concurrency),
-  which was `Blocked by #11`. **This decoupling has now been actioned:**
-  **ADR-0003** adopts stackful coroutines as the suspension primitive,
-  independently of this VM go/no-go, so #12 is no longer blocked by #11. See
+  which was `Blocked by #11`. **ADR-0003** records the recommended decoupling:
+  stackful coroutines as the suspension primitive, independent of this VM
+  go/no-go. It is `Proposed` pending a de-risking spike, after which #12 no
+  longer depends on #11. See
   `docs/research/2026-06-25-suspendable-frames-implementation-options.md` for the
   full menu of alternatives considered.

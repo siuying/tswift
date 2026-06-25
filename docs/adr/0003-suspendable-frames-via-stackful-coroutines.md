@@ -1,6 +1,6 @@
 # ADR-0003: Suspendable frames via stackful coroutines
 
-- **Status:** Accepted
+- **Status:** Proposed — **awaiting de-risking spike** (see Acceptance below)
 - **Date:** 2026-06-25
 - **Context slice:** Concurrency (issue #12); unblocks it from issue #11
 - **Supersedes for suspension:** the implicit assumption in #12 that suspension
@@ -26,7 +26,11 @@ engine. The companion research note
 (`docs/research/2026-06-25-suspendable-frames-implementation-options.md`)
 enumerates five alternatives and compares them.
 
-## Decision
+## Decision (proposed)
+
+This ADR records the **recommended direction**; ratification is gated on the
+de-risking spike described under *Acceptance*, since no stackful-coroutine code
+has run in this repository yet.
 
 **Implement the suspension primitive with stackful coroutines** (Option 1): run
 each Swift `Task` on its **own native stack** via a stack-switching library
@@ -72,11 +76,24 @@ Suspension ≠ scheduling.
   path to **Option 2** (selective CPS / state-machine lowering of async bodies),
   per the research note. The register VM (#11) stays an independent decision.
 
+## Acceptance (what moves this to `Accepted`)
+
+This recommendation stays `Proposed` until a spike demonstrates the primitive on
+this codebase. The spike — separate from #12's full executor — must show:
+
+- a trivial Swift `await` round-trips through the **unchanged** tree-walker by
+  suspending and resuming across a scheduler boundary;
+- the borrow situation holds in practice: no `&mut self` / `&mut dyn Write` / env
+  borrow is observed by Rust as held *across* the suspension point;
+- `catch_unwind`/panic propagation and the target platforms behave as the
+  chosen crate (`corosensei`) documents.
+
+Until then, the menu of alternatives in
+`docs/research/2026-06-25-suspendable-frames-implementation-options.md` remains
+open as the fallback record.
+
 ## Notes
 
 - The `unsafe` confinement principle from ADR-0001 is preserved: stack-switching
   `unsafe` lives behind the coroutine crate's safe API, not in
   `quick-swift-core`.
-- Acceptance for the *primitive* (separate from #12's full executor): a trivial
-  Swift `await` round-trips through the unchanged tree-walker by suspending and
-  resuming across a scheduler boundary — a good first de-risking spike.

@@ -5,13 +5,15 @@
 //! does not check their results. This test is the correctness guard: if a
 //! language change alters a benchmark program's behaviour, the baseline is no
 //! longer measuring what we think — and this test fails loudly.
+//!
+//! Corpus discovery is shared with the benchmark via `benches/support/corpus.rs`
+//! so the two can never enumerate different sets of programs.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-fn programs_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/programs")
-}
+#[path = "../benches/support/corpus.rs"]
+mod corpus;
 
 fn run_cli(swift_path: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_quick-swift"))
@@ -30,40 +32,22 @@ fn run_cli(swift_path: &Path) -> String {
 
 #[test]
 fn bench_corpus_runs_and_matches_expected() {
-    let dir = programs_dir();
-    let mut pairs: Vec<(PathBuf, PathBuf)> = std::fs::read_dir(&dir)
-        .expect("benches/programs is readable")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("swift"))
-        .map(|p| {
-            let expected = p.with_extension("expected");
-            assert!(
-                expected.exists(),
-                "bench program {} has no .expected sibling",
-                p.display()
-            );
-            (p, expected)
-        })
-        .collect();
-    pairs.sort();
-
-    assert!(
-        !pairs.is_empty(),
-        "no bench programs found in {}",
-        dir.display()
-    );
+    let programs = corpus::discover();
 
     let mut failures = Vec::new();
-    for (swift_path, expected_path) in &pairs {
-        let expected = std::fs::read_to_string(expected_path).expect("read .expected");
-        let actual = run_cli(swift_path);
+    for program in &programs {
+        let expected_path = program.expected_path();
+        assert!(
+            expected_path.exists(),
+            "bench program {} has no .expected sibling",
+            program.source_path.display()
+        );
+        let expected = std::fs::read_to_string(&expected_path).expect("read .expected");
+        let actual = run_cli(&program.source_path);
         if actual != expected {
             failures.push(format!(
                 "── {} ──\n  expected: {:?}\n  actual:   {:?}",
-                swift_path.file_name().unwrap().to_string_lossy(),
-                expected,
-                actual
+                program.name, expected, actual
             ));
         }
     }
