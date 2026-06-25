@@ -2756,16 +2756,11 @@ impl<'w> Interpreter<'w> {
                 root: ITER.into(),
                 path: Vec::new(),
             };
-            let next = match self.call_struct_method(
-                current,
-                &iter_ty,
-                "next",
-                Vec::new(),
-                Some(place),
-            ) {
-                Ok(v) => v,
-                Err(e) => break Err(e),
-            };
+            let next =
+                match self.call_struct_method(current, &iter_ty, "next", Vec::new(), Some(place)) {
+                    Ok(v) => v,
+                    Err(e) => break Err(e),
+                };
             // `next()` returns `Element?`: `nil` ends the sequence.
             if matches!(next, SwiftValue::Nil) {
                 break Ok(SwiftValue::Void);
@@ -3539,9 +3534,7 @@ impl<'w> Interpreter<'w> {
         let base_value = self.eval(&base)?;
 
         // `group.addTask { }` / `group.cancelAll()` and `task.cancel()`.
-        if let Some(result) =
-            self.try_concurrency_method(&base_value, &method, arg_nodes)?
-        {
+        if let Some(result) = self.try_concurrency_method(&base_value, &method, arg_nodes)? {
             return Ok(result);
         }
 

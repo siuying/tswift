@@ -22,6 +22,7 @@ fn fixtures_dir() -> PathBuf {
 }
 
 /// Collect `(swift_path, expected_path)` pairs, sorted for stable output.
+#[cfg(not(feature = "rust-backend"))]
 fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     let dir = fixtures_dir();
     let mut pairs = Vec::new();
@@ -62,6 +63,7 @@ fn run_cli(swift_path: &Path) -> String {
     String::from_utf8(output.stdout).expect("stdout is valid UTF-8")
 }
 
+#[cfg(not(feature = "rust-backend"))]
 #[test]
 fn golden_fixtures_match() {
     let pairs = fixtures();
@@ -96,6 +98,7 @@ fn golden_fixtures_match() {
 /// Every `fixtures/multifile/<case>/` directory is one multi-file program: all
 /// its `.swift` files (sorted) form a single module and must produce
 /// `expected.txt`. Exercises cross-file reference resolution.
+#[cfg(not(feature = "rust-backend"))]
 #[test]
 fn multi_file_modules_match() {
     let root = fixtures_dir().join("multifile");
@@ -144,6 +147,7 @@ fn multi_file_modules_match() {
 
 /// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
 /// AST shape: `quick-swift dump` must reproduce the snapshot byte-for-byte.
+#[cfg(not(feature = "rust-backend"))]
 #[test]
 fn ast_snapshots_match() {
     let dir = fixtures_dir().join("ast");
@@ -181,6 +185,18 @@ fn ast_snapshots_match() {
             "AST snapshot {} mismatched",
             swift.display()
         );
+    }
+}
+
+#[cfg(feature = "rust-backend")]
+#[test]
+fn rust_backend_tracer_fixtures_match() {
+    for fixture in ["hello", "arithmetic", "functions_recursion"] {
+        let swift = fixtures_dir().join(format!("{fixture}.swift"));
+        let expected = std::fs::read_to_string(swift.with_extension("expected"))
+            .expect("read tracer expected output");
+        let actual = run_cli(&swift);
+        assert_eq!(actual, expected, "rust backend tracer fixture {fixture}");
     }
 }
 
