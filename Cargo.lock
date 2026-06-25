@@ -387,6 +387,10 @@ name = "quick-swift-frontend"
 version = "0.0.0"
 dependencies = [
  "msf-sys",
+ "swift-ast",
+ "swift-lexer",
+ "swift-parser",
+ "swift-sema",
 ]
 
 [[package]]
