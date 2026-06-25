@@ -164,6 +164,41 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// For an `AST_PARAM` node, its external argument label (`None` for `_`),
+    /// internal binding name, and whether it is variadic (`T...`).
+    pub fn param_info(&self) -> ParamInfo {
+        // SAFETY: reading the plain `tok_idx`/`modifiers` integer fields.
+        let first_tok = unsafe { (*self.ptr).tok_idx };
+        let modifiers = unsafe { (*self.ptr).modifiers };
+        let first = self.analysis.token_text_at(first_tok).unwrap_or_default();
+        let second = self
+            .analysis
+            .token_text_at(first_tok + 1)
+            .unwrap_or_default();
+        // `extName intName: Type` vs single `name: Type`.
+        let (label, name) = if second == ":" || second.is_empty() {
+            let label = if first == "_" {
+                None
+            } else {
+                Some(first.clone())
+            };
+            (label, first)
+        } else {
+            let label = if first == "_" {
+                None
+            } else {
+                Some(first.clone())
+            };
+            (label, second)
+        };
+        const MOD_VARIADIC: u32 = 1 << 28;
+        ParamInfo {
+            label,
+            name,
+            variadic: modifiers & MOD_VARIADIC != 0,
+        }
+    }
+
     /// The resolved type name of this node (e.g. `Int`, `UInt8`, `Double`,
     /// `[String]`, `Int?`), as produced by msf's `type_to_string`. `None` if
     /// the node has no resolved type.
@@ -301,6 +336,17 @@ impl<'a> Iterator for Children<'a> {
             analysis: self.analysis,
         })
     }
+}
+
+/// Decoded shape of a function parameter (`AST_PARAM`).
+#[derive(Debug, Clone)]
+pub struct ParamInfo {
+    /// External argument label used at call sites (`None` when written `_`).
+    pub label: Option<String>,
+    /// Internal name the parameter binds to inside the body.
+    pub name: String,
+    /// Whether the parameter is variadic (`T...`).
+    pub variadic: bool,
 }
 
 /// One analysis diagnostic (syntax or semantic error).
