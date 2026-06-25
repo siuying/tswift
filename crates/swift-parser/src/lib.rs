@@ -10,6 +10,8 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
+
 use swift_ast::{Ast, NodeId, NodeKind};
 use swift_lexer::{tokenize, Token, TokenKind};
 
@@ -33,7 +35,9 @@ pub fn parse(source: &str) -> Result<Ast, ParseError> {
         pos: 0,
         ast: Ast::new(),
         no_trailing_closure: false,
+        op_precedence: HashMap::new(),
     };
+    p.collect_operator_precedence();
     p.parse_source_file()?;
     Ok(p.ast)
 }
@@ -45,6 +49,19 @@ struct Parser<'a> {
     /// When set, a `{` after an expression is a control-flow body, not a
     /// trailing closure (true while parsing conditions, iterables, subjects).
     no_trailing_closure: bool,
+    /// User-declared infix operators → `(precedence, right_associative)`, built
+    /// from `operator`/`precedencegroup` declarations in a pre-pass so the Pratt
+    /// parser nests custom operators by their real precedence group.
+    op_precedence: HashMap<String, (u8, bool)>,
+}
+
+/// A `precedencegroup` declaration as scanned before parsing: its relation to
+/// another group and its associativity. Resolved to a numeric precedence by
+/// [`resolve_group_precedence`].
+struct RawPrecedenceGroup {
+    higher_than: Option<String>,
+    lower_than: Option<String>,
+    right_associative: bool,
 }
 
 /// Declaration modifiers and attributes collected ahead of a declaration by
@@ -103,17 +120,138 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Pre-scan the token stream for `operator` and `precedencegroup`
+    /// declarations and record each infix operator's resolved precedence, so the
+    /// expression parser nests user-defined operators correctly (a file-scope
+    /// concern: operators may be used before their declaration appears).
+    fn collect_operator_precedence(&mut self) {
+        let mut groups: HashMap<String, RawPrecedenceGroup> = HashMap::new();
+        let mut operators: Vec<(String, Option<String>)> = Vec::new();
+        let mut i = 0;
+        while i < self.tokens.len() {
+            let t = self.tokens[i];
+            if t.text == "precedencegroup" && t.kind == TokenKind::Identifier {
+                i = self.scan_precedence_group(i, &mut groups);
+                continue;
+            }
+            if t.text == "operator" && t.kind == TokenKind::Identifier {
+                if let Some((op, group, next)) = self.scan_operator_decl(i) {
+                    operators.push((op, group));
+                    i = next;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+
+        let mut resolved: HashMap<String, (u8, bool)> = HashMap::new();
+        for (op, group) in operators {
+            let bp = match group {
+                Some(g) => resolve_group_precedence(&g, &groups, &mut resolved),
+                None => (DEFAULT_BP, false), // operators without a group use DefaultPrecedence
+            };
+            self.op_precedence.insert(op, bp);
+        }
+    }
+
+    /// Scan a `precedencegroup Name { … }` starting at `i` (the keyword); record
+    /// the group and return the index just past its closing brace.
+    fn scan_precedence_group(
+        &self,
+        i: usize,
+        groups: &mut HashMap<String, RawPrecedenceGroup>,
+    ) -> usize {
+        let name = match self.tokens.get(i + 1) {
+            Some(t) if t.kind == TokenKind::Identifier => t.text.to_string(),
+            _ => return i + 1,
+        };
+        let mut j = i + 2;
+        while j < self.tokens.len() && self.tokens[j].kind != TokenKind::LBrace {
+            j += 1;
+        }
+        let mut group = RawPrecedenceGroup {
+            higher_than: None,
+            lower_than: None,
+            right_associative: false,
+        };
+        j += 1; // past `{`
+        while j < self.tokens.len() && self.tokens[j].kind != TokenKind::RBrace {
+            let attr = self.tokens[j].text;
+            let value = self.tokens.get(j + 2).map(|t| t.text);
+            match attr {
+                "higherThan" => group.higher_than = value.map(str::to_string),
+                "lowerThan" => group.lower_than = value.map(str::to_string),
+                "associativity" => group.right_associative = value == Some("right"),
+                _ => {}
+            }
+            j += 1;
+        }
+        groups.insert(name, group);
+        j
+    }
+
+    /// Scan a `[infix|prefix|postfix] operator <op> [: Group]` at the `operator`
+    /// keyword index `i`. Returns `(operator, group, next_index)` for infix
+    /// operators (the only fixity that carries precedence), else `None`.
+    fn scan_operator_decl(&self, i: usize) -> Option<(String, Option<String>, usize)> {
+        let fixity = if i > 0 { self.tokens[i - 1].text } else { "" };
+        let mut k = i + 1;
+        let mut op = String::new();
+        while k < self.tokens.len()
+            && self.tokens[k].kind == TokenKind::Oper
+            && !self.tokens[k].leading_newline
+        {
+            op.push_str(self.tokens[k].text);
+            k += 1;
+        }
+        if op.is_empty() || matches!(fixity, "prefix" | "postfix") {
+            return None;
+        }
+        let group = if self.tokens.get(k).map(|t| t.kind) == Some(TokenKind::Colon) {
+            self.tokens.get(k + 1).map(|t| t.text.to_string())
+        } else {
+            None
+        };
+        Some((op, group, k))
+    }
+
+    /// `(left_bp, right_bp)` for an infix operator: a user-declared operator's
+    /// resolved group precedence if known, else the built-in table.
+    fn binding_power(&self, op: &str) -> Option<(u8, u8)> {
+        if let Some(&(p, right_assoc)) = self.op_precedence.get(op) {
+            return Some(if right_assoc { (p, p) } else { (p, p + 1) });
+        }
+        builtin_binding_power(op)
+    }
+
     fn parse_source_file(&mut self) -> Result<(), ParseError> {
         while !self.at_eof() {
             self.skip_semicolons();
             if self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement()?;
+            let stmt = self.parse_statement_checked()?;
             let root = self.ast.root();
             self.ast.append_child(root, stmt);
         }
         Ok(())
+    }
+
+    /// Parse one statement and require it to be terminated by a statement
+    /// separator (a newline or `;`), enforcing Swift's automatic semicolon rule
+    /// so `let x = 1 let y = 2` on one line is rejected.
+    fn parse_statement_checked(&mut self) -> Result<NodeId, ParseError> {
+        let stmt = self.parse_statement()?;
+        let t = self.peek();
+        let separated = matches!(
+            t.kind,
+            TokenKind::RBrace | TokenKind::Eof | TokenKind::Semicolon
+        ) || t.leading_newline
+            || t.kind == TokenKind::Directive;
+        if !separated {
+            return self.error("consecutive statements on a line must be separated by ';'");
+        }
+        Ok(stmt)
     }
 
     fn parse_statement(&mut self) -> Result<NodeId, ParseError> {
@@ -157,6 +295,7 @@ impl<'a> Parser<'a> {
         }
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
+                "import" => return self.parse_import(),
                 "do" => return self.parse_do(),
                 "throw" => return self.parse_throw(),
                 "defer" => return self.parse_defer(),
@@ -262,7 +401,7 @@ impl<'a> Parser<'a> {
             if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement()?;
+            let stmt = self.parse_statement_checked()?;
             self.ast.append_child(block, stmt);
         }
         self.expect(TokenKind::RBrace)?;
@@ -585,7 +724,7 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
-            let stmt = self.parse_statement()?;
+            let stmt = self.parse_statement_checked()?;
             self.ast.append_child(body, stmt);
         }
         self.ast.append_child(clause, body);
@@ -739,7 +878,14 @@ impl<'a> Parser<'a> {
         let mut i = self.pos;
         loop {
             let t = self.tokens[i];
-            if t.kind == TokenKind::Attribute || is_modifier_word(t.text) {
+            // `class` is a modifier (`class func`) only before another token; a
+            // following identifier means it is the `class Name` declaration keyword.
+            let is_mod = if t.text == "class" {
+                self.tokens[i + 1].kind != TokenKind::Identifier
+            } else {
+                is_modifier_word(t.text)
+            };
+            if t.kind == TokenKind::Attribute || is_mod {
                 i += 1;
                 // Argumented attribute/modifier such as `@available(...)` or
                 // `private(set)`.
@@ -868,6 +1014,31 @@ impl<'a> Parser<'a> {
         Ok(node)
     }
 
+    /// `import [kind] Module[.submodule...]`.
+    fn parse_import(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        // Optional import kind specifier (`import func Foo.bar`).
+        if self.peek().kind == TokenKind::Keyword
+            && is_import_kind(self.peek().text)
+            && self.tokens[self.pos + 1].kind == TokenKind::Identifier
+        {
+            self.bump();
+        }
+        let mut path = String::new();
+        while self.peek().kind == TokenKind::Identifier {
+            path.push_str(self.bump().text);
+            if self.peek().kind == TokenKind::Dot {
+                self.bump();
+                path.push('.');
+            } else {
+                break;
+            }
+        }
+        Ok(self
+            .ast
+            .add(NodeKind::ImportDecl, Some(&path), kw.line, kw.col))
+    }
+
     /// `throw expr`.
     fn parse_throw(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
@@ -929,7 +1100,7 @@ impl<'a> Parser<'a> {
             if active && !taken {
                 taken = true;
                 while !self.at_directive_boundary() {
-                    let stmt = self.parse_statement()?;
+                    let stmt = self.parse_statement_checked()?;
                     self.ast.append_child(node, stmt);
                 }
             } else {
@@ -1135,7 +1306,7 @@ impl<'a> Parser<'a> {
             if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement()?;
+            let stmt = self.parse_statement_checked()?;
             self.ast.append_child(node, stmt);
         }
         self.no_trailing_closure = saved;
@@ -1256,6 +1427,8 @@ impl<'a> Parser<'a> {
         loop {
             let cond = if self.at_keyword("let") || self.at_keyword("var") {
                 self.parse_binding()?
+            } else if self.at_keyword("case") {
+                self.parse_case_condition()?
             } else {
                 self.parse_expr(0)?
             };
@@ -1267,6 +1440,24 @@ impl<'a> Parser<'a> {
             break;
         }
         Ok(())
+    }
+
+    /// A `case <pattern> = <expr>` condition (`if case let x? = optional`).
+    /// Lowered like an optional binding: the bound pattern plus the matched
+    /// expression become a `LetDecl`, so a `case let x?` binds `x` just as
+    /// `if let x` would.
+    fn parse_case_condition(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump(); // `case`
+        let pattern = self.parse_case_pattern(false)?;
+        if !self.at_oper("=") {
+            return self.error("expected '=' after a 'case' condition pattern");
+        }
+        self.bump();
+        let expr = self.parse_expr_no_trailing(0)?;
+        let decl = self.ast.add(NodeKind::LetDecl, None, kw.line, kw.col);
+        self.ast.append_child(decl, pattern);
+        self.ast.append_child(decl, expr);
+        Ok(decl)
     }
 
     /// `struct`/`enum Name [: Conformances] { members }`.
@@ -1302,7 +1493,7 @@ impl<'a> Parser<'a> {
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
-                let member = self.parse_statement()?;
+                let member = self.parse_statement_checked()?;
                 self.ast.append_child(node, member);
             }
         }
@@ -1403,7 +1594,7 @@ impl<'a> Parser<'a> {
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
-                let member = self.parse_statement()?;
+                let member = self.parse_statement_checked()?;
                 self.ast.append_child(node, member);
             }
         }
@@ -1527,7 +1718,7 @@ impl<'a> Parser<'a> {
                 if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                     break;
                 }
-                let stmt = self.parse_statement()?;
+                let stmt = self.parse_statement_checked()?;
                 self.ast.append_child(block, stmt);
             }
             self.expect(TokenKind::RBrace)?;
@@ -1583,6 +1774,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_text(&mut self) -> Result<String, ParseError> {
+        // Type attributes `@escaping`, `@autoclosure`, `@Sendable`, … prefix a
+        // type. A following `(` belongs to the type (e.g. `@escaping () -> Void`),
+        // not the attribute, so it is left for the type grammar to consume.
+        while self.peek().kind == TokenKind::Attribute {
+            self.bump();
+        }
         // Existential / opaque prefixes: `any P`, `some P`, `inout T`.
         if (self.at_keyword("any") || self.at_keyword("some") || self.at_keyword("inout"))
             && self.tokens[self.pos + 1].kind != TokenKind::Eof
@@ -1610,7 +1807,17 @@ impl<'a> Parser<'a> {
                 let mut parts = Vec::new();
                 if self.peek().kind != TokenKind::RParen {
                     loop {
-                        parts.push(self.parse_type_text()?);
+                        // Optional tuple-element label `name: Type`.
+                        if self.peek().kind == TokenKind::Identifier
+                            && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                        {
+                            let label = self.bump().text;
+                            self.bump(); // ':'
+                            let ty = self.parse_type_text()?;
+                            parts.push(format!("{label}: {ty}"));
+                        } else {
+                            parts.push(self.parse_type_text()?);
+                        }
                         if self.peek().kind == TokenKind::Comma {
                             self.bump();
                             continue;
@@ -1701,7 +1908,7 @@ impl<'a> Parser<'a> {
             if op.kind != TokenKind::Oper || is_assignment(op.text) {
                 break;
             }
-            let (lbp, rbp) = match binding_power(op.text) {
+            let (lbp, rbp) = match self.binding_power(op.text) {
                 Some(bp) => bp,
                 None => break,
             };
@@ -1723,6 +1930,29 @@ impl<'a> Parser<'a> {
     /// A prefix unary operator, else a primary with trailing call/member suffixes.
     fn parse_prefix(&mut self) -> Result<NodeId, ParseError> {
         let t = self.peek();
+        // A bare operator used as a value — an operator function reference such
+        // as the `+` in `reduce(0, +)` or the `>` in `sorted(by: >)`.
+        if t.kind == TokenKind::Oper
+            && matches!(
+                self.tokens[self.pos + 1].kind,
+                TokenKind::RParen | TokenKind::Comma
+            )
+        {
+            self.bump();
+            return Ok(self
+                .ast
+                .add(NodeKind::IdentExpr, Some(t.text), t.line, t.col));
+        }
+        // One-sided range prefix `..<n` / `...n` (`PartialRangeUpTo`/`Through`).
+        if t.kind == TokenKind::Oper && matches!(t.text, "..<" | "...") {
+            self.bump();
+            let operand = self.parse_prefix()?;
+            let node = self
+                .ast
+                .add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
+        }
         // `try` / `try?` / `try!` — an error-propagation prefix.
         if t.kind == TokenKind::Keyword && t.text == "try" {
             self.bump();
@@ -1825,11 +2055,19 @@ impl<'a> Parser<'a> {
             TokenKind::LBrace => return self.parse_closure(),
             TokenKind::LParen => return self.parse_paren_or_tuple(),
             TokenKind::LBracket => return self.parse_array_or_dict(),
-            // Directive expression `#file`, `#line`, `#function`, `#column`.
+            // Directive expression `#file`, `#line`, `#function`, `#column`, or
+            // an availability check `#available(...)` / `#unavailable(...)` whose
+            // argument list is not an ordinary expression, so it is consumed
+            // verbatim rather than parsed as call arguments.
             TokenKind::Directive => {
                 self.bump();
-                self.ast
-                    .add(NodeKind::CompilerDirective, Some(t.text), t.line, t.col)
+                let node = self
+                    .ast
+                    .add(NodeKind::CompilerDirective, Some(t.text), t.line, t.col);
+                if self.peek().kind == TokenKind::LParen {
+                    self.skip_balanced_parens();
+                }
+                node
             }
             // Implicit member expression `.case` (no base).
             TokenKind::Dot => {
@@ -2027,7 +2265,22 @@ impl<'a> Parser<'a> {
                     self.no_trailing_closure = false;
                     if self.peek().kind != TokenKind::RBracket {
                         loop {
+                            // Optional subscript argument label `name:` (`m[tag: x]`).
+                            let label = if matches!(
+                                self.peek().kind,
+                                TokenKind::Identifier | TokenKind::Keyword
+                            ) && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                            {
+                                let name = self.bump().text;
+                                self.bump(); // ':'
+                                Some(name)
+                            } else {
+                                None
+                            };
                             let idx = self.parse_expr(0)?;
+                            if let Some(label) = label {
+                                self.ast.set_arg_label(idx, label);
+                            }
                             self.ast.append_child(sub, idx);
                             if self.peek().kind == TokenKind::Comma {
                                 self.bump();
@@ -2073,11 +2326,15 @@ const TERNARY_BP: u8 = 6;
 /// Precedence of `is`/`as` casts (Swift `CastingPrecedence`, /10).
 const CAST_BP: u8 = 13;
 
-/// Returns `(left_bp, right_bp)` for an infix operator, encoding precedence and
+/// Swift's `DefaultPrecedence`, used for operators declared without a group.
+const DEFAULT_BP: u8 = 14;
+
+/// `(left_bp, right_bp)` for a built-in infix operator, encoding precedence and
 /// associativity (`right_bp < left_bp` ⇒ right-associative). `None` for tokens
 /// that are not infix operators. Values mirror Swift's standard precedence
-/// groups (divided by 10).
-fn binding_power(op: &str) -> Option<(u8, u8)> {
+/// groups (divided by 10). User-declared operators are resolved separately by
+/// [`Parser::binding_power`] before this fallback is consulted.
+fn builtin_binding_power(op: &str) -> Option<(u8, u8)> {
     let p = match op {
         "<<" | ">>" | "&<<" | "&>>" => 16,
         "*" | "/" | "%" | "&" | "&*" => 15,
@@ -2087,11 +2344,66 @@ fn binding_power(op: &str) -> Option<(u8, u8)> {
         "==" | "!=" | "<" | ">" | "<=" | ">=" | "===" | "!==" => 9,
         "&&" => 8,
         "||" => 7,
-        // A user-defined (custom) operator: parse it as a left-associative
-        // infix at the default precedence so the runtime can dispatch it.
-        _ => 14,
+        // An undeclared custom operator: parse it as a left-associative infix at
+        // the default precedence so the runtime can still dispatch it.
+        _ => DEFAULT_BP,
     };
     Some((p, p + 1))
+}
+
+/// Numeric precedence and associativity of a built-in precedence group, mirroring
+/// the Swift standard library's group ordering (divided by 10).
+fn builtin_group_precedence(name: &str) -> Option<(u8, bool)> {
+    Some(match name {
+        "BitwiseShiftPrecedence" => (16, false),
+        "MultiplicationPrecedence" => (15, false),
+        "AdditionPrecedence" => (14, false),
+        "RangeFormationPrecedence" => (13, false),
+        "CastingPrecedence" => (13, false),
+        "NilCoalescingPrecedence" => (12, true),
+        "ComparisonPrecedence" => (9, false),
+        "LogicalConjunctionPrecedence" => (8, false),
+        "LogicalDisjunctionPrecedence" => (7, false),
+        "DefaultPrecedence" => (DEFAULT_BP, false),
+        "TernaryPrecedence" => (6, true),
+        "AssignmentPrecedence" => (5, true),
+        _ => return None,
+    })
+}
+
+/// Resolve a (possibly custom) precedence group to `(precedence, right_assoc)`,
+/// following `higherThan`/`lowerThan` relations to a built-in anchor. Memoised,
+/// and self-referential cycles fall back to `DefaultPrecedence`.
+fn resolve_group_precedence(
+    name: &str,
+    groups: &HashMap<String, RawPrecedenceGroup>,
+    memo: &mut HashMap<String, (u8, bool)>,
+) -> (u8, bool) {
+    if let Some(builtin) = builtin_group_precedence(name) {
+        return builtin;
+    }
+    if let Some(&cached) = memo.get(name) {
+        return cached;
+    }
+    // Provisional entry guards against cyclic `higherThan`/`lowerThan` chains.
+    memo.insert(name.to_string(), (DEFAULT_BP, false));
+    let resolved = match groups.get(name) {
+        Some(group) => {
+            let right = group.right_associative;
+            if let Some(higher) = &group.higher_than {
+                let (p, _) = resolve_group_precedence(higher, groups, memo);
+                (p.saturating_add(1), right)
+            } else if let Some(lower) = &group.lower_than {
+                let (p, _) = resolve_group_precedence(lower, groups, memo);
+                (p.saturating_sub(1), right)
+            } else {
+                (DEFAULT_BP, right)
+            }
+        }
+        None => (DEFAULT_BP, false),
+    };
+    memo.insert(name.to_string(), resolved);
+    resolved
 }
 
 /// Declaration modifiers consumed (and currently discarded) before a declaration.
@@ -2117,6 +2429,12 @@ fn is_modifier_word(w: &str) -> bool {
             | "unowned"
             | "indirect"
             | "dynamic"
+            // Operator fixity words form a modifier run before `func` (`prefix
+            // func -`); a bare `prefix operator …` is handled separately and is
+            // not treated as a modifier because `operator` is not a decl keyword.
+            | "prefix"
+            | "postfix"
+            | "infix"
             // `async` only forms a leading modifier run before `let`/`var`
             // (an `async let` binding); the post-params effect is handled
             // separately by `skip_effects`.
@@ -2148,6 +2466,14 @@ fn is_decl_keyword(w: &str) -> bool {
 /// Accessor introducers inside a property/subscript body.
 fn is_accessor_kw(w: &str) -> bool {
     matches!(w, "get" | "set" | "willSet" | "didSet")
+}
+
+/// Declaration kinds that may follow `import` to import a single symbol.
+fn is_import_kind(w: &str) -> bool {
+    matches!(
+        w,
+        "typealias" | "struct" | "class" | "enum" | "protocol" | "let" | "var" | "func"
+    )
 }
 
 /// Whether `kw` is a statement that may carry a leading `label:`.
@@ -3213,5 +3539,112 @@ mod tests {
         assert_eq!(args[0].arg_label(), Some("x"));
         assert_eq!(args[1].arg_label(), None);
         assert_eq!(args[2].arg_label(), Some("y"));
+    }
+
+    #[test]
+    fn consecutive_statements_on_one_line_are_rejected() {
+        let err = parse("let x = 1 let y = 2").unwrap_err();
+        assert!(err.message.contains("separated by ';'"), "{}", err.message);
+        // A newline or `;` between statements is accepted.
+        assert!(parse("let x = 1\nlet y = 2").is_ok());
+        assert!(parse("let x = 1; let y = 2").is_ok());
+    }
+
+    #[test]
+    fn custom_operator_uses_its_precedence_group() {
+        // `**` (ExponentPrecedence, higher than `*`) binds tighter than `*`,
+        // so `2 * 3 ** 2` parses as `2 * (3 ** 2)`.
+        let src = "precedencegroup ExpPrec { higherThan: MultiplicationPrecedence }\n\
+                   infix operator ** : ExpPrec\n\
+                   let r = 2 * 3 ** 2";
+        let ast = ast_of(src);
+        let decl = ast.node(ast.root()).children().last().unwrap();
+        let top = decl.children().last().unwrap();
+        assert_eq!(top.text(), Some("*"));
+        assert_eq!(top.children().nth(1).unwrap().text(), Some("**"));
+    }
+
+    #[test]
+    fn one_sided_range_prefix_parses() {
+        let ast = ast_of("let r = ..<5");
+        let expr = first_stmt(&ast).children().last().unwrap();
+        assert_eq!(expr.kind(), NodeKind::PrefixExpr);
+        assert_eq!(expr.text(), Some("..<"));
+    }
+
+    #[test]
+    fn bare_operator_is_an_argument_reference() {
+        let ast = ast_of("xs.reduce(0, +)");
+        let call = first_stmt(&ast).children().next().unwrap();
+        let last = call.children().last().unwrap();
+        assert_eq!(last.kind(), NodeKind::IdentExpr);
+        assert_eq!(last.text(), Some("+"));
+    }
+
+    #[test]
+    fn tuple_return_type_keeps_element_labels() {
+        let ast = ast_of("func f() -> (min: Int, max: Int) { (0, 0) }");
+        let ret = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .unwrap();
+        assert_eq!(ret.text(), Some("(min: Int, max: Int)"));
+    }
+
+    #[test]
+    fn subscript_argument_label_is_recorded() {
+        let ast = ast_of(r#"Lookup[tag: "x"]"#);
+        let sub = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(sub.kind(), NodeKind::SubscriptExpr);
+        assert_eq!(sub.children().nth(1).unwrap().arg_label(), Some("tag"));
+    }
+
+    #[test]
+    fn if_case_optional_binding_lowers_to_a_let() {
+        let ast = ast_of("if case let v? = maybe { }");
+        let if_stmt = first_stmt(&ast);
+        let cond = if_stmt.children().next().unwrap();
+        assert_eq!(cond.kind(), NodeKind::LetDecl);
+        assert_eq!(cond.children().next().unwrap().text(), Some("v"));
+    }
+
+    #[test]
+    fn import_declaration_records_module_path() {
+        let ast = ast_of("import Foundation");
+        let decl = first_stmt(&ast);
+        assert_eq!(decl.kind(), NodeKind::ImportDecl);
+        assert_eq!(decl.text(), Some("Foundation"));
+    }
+
+    #[test]
+    fn open_class_is_a_class_declaration() {
+        let ast = ast_of("open class Service { }");
+        let decl = first_stmt(&ast);
+        assert_eq!(decl.kind(), NodeKind::ClassDecl);
+        assert_eq!(decl.text(), Some("Service"));
+        assert_eq!(decl.modifiers(), &["open".to_string()]);
+    }
+
+    #[test]
+    fn static_prefix_func_collects_both_modifiers() {
+        let ast = ast_of("struct V { static prefix func - (x: V) -> V { x } }");
+        let func = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::FuncDecl)
+            .unwrap();
+        assert_eq!(func.text(), Some("-"));
+        assert!(func.modifiers().iter().any(|m| m == "static"));
+        assert!(func.modifiers().iter().any(|m| m == "prefix"));
+    }
+
+    #[test]
+    fn type_attribute_prefixing_a_function_type() {
+        let ast = ast_of("func run(_ work: @escaping () -> Void) { }");
+        let param = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .unwrap();
+        let ty = param.children().next().unwrap();
+        assert_eq!(ty.text(), Some("() -> Void"));
     }
 }
