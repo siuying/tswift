@@ -14,3 +14,10 @@ path = "src/main.rs"
 quick-swift-frontend.workspace = true
 quick-swift-core.workspace = true
 quick-swift-std.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "tree_walker"
+harness = false
