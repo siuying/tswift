@@ -466,11 +466,12 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_ident_start(c: u8) -> bool {
-    c == b'_' || c.is_ascii_alphabetic() || c >= 0x80
+    // `$` begins closure shorthand args (`$0`) and projected wrapper values (`$x`).
+    c == b'_' || c == b'$' || c.is_ascii_alphabetic() || c >= 0x80
 }
 
 fn is_ident_continue(c: u8) -> bool {
-    c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80
+    c == b'_' || c == b'$' || c.is_ascii_alphanumeric() || c >= 0x80
 }
 
 fn is_dec_or_us(c: u8) -> bool {

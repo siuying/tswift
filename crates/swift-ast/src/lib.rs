@@ -44,6 +44,14 @@ pub enum NodeKind {
     StructDecl,
     /// An `enum` declaration.
     EnumDecl,
+    /// A `class` declaration.
+    ClassDecl,
+    /// A `deinit { }` declaration.
+    DeinitDecl,
+    /// A closure expression `{ [captures] params in body }`.
+    ClosureExpr,
+    /// A type-cast expression `operand is/as/as?/as! Type` (text is the operator).
+    CastExpr,
     /// One `case` of an enum (text is the case name; children are associated
     /// type refs or a raw-value expression).
     EnumCaseDecl,
@@ -120,6 +128,10 @@ impl NodeKind {
             NodeKind::FuncDecl => "func_decl",
             NodeKind::StructDecl => "struct_decl",
             NodeKind::EnumDecl => "enum_decl",
+            NodeKind::ClassDecl => "class_decl",
+            NodeKind::DeinitDecl => "deinit_decl",
+            NodeKind::ClosureExpr => "closure_expr",
+            NodeKind::CastExpr => "cast_expr",
             NodeKind::EnumCaseDecl => "enum_case_decl",
             NodeKind::InitDecl => "init_decl",
             NodeKind::SubscriptDecl => "subscript_decl",

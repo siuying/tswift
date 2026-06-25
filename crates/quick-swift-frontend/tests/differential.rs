@@ -67,6 +67,12 @@ const CLEAN: &[&str] = &[
     "enum Planet: Int { case mercury = 1, venus, earth }",
     "enum Barcode { case upc(Int, Int)\n case qr(String) }",
     "struct Counter { var count = 0\n mutating func bump() { count += 1 } }",
+    // Tier 3 — classes, ARC, casting, closures.
+    "class Animal { let name: String\n init(name: String) { self.name = name } }",
+    "class Counter { var n = 0\n deinit { } }",
+    "let doubled = numbers.map { $0 * 2 }",
+    "let pick = numbers.filter { x in x > 0 }",
+    "let same = a === b",
 ];
 
 /// Snippets the permissive C oracle accepts but the Rust frontend rejects: a
