@@ -158,6 +158,20 @@ pub enum SwiftValue {
     /// assignment shares the `Rc`; a mutation calls [`Rc::make_mut`] to clone
     /// only when the instance is aliased.
     Struct(Rc<StructObj>),
+    /// The absent optional, `nil`. quick-swift models `Optional` with this
+    /// sentinel: a present optional is simply its wrapped value.
+    Nil,
+    /// An enum case value, with any associated values.
+    Enum(Rc<EnumObj>),
+}
+
+/// The storage of an enum case value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumObj {
+    pub type_name: String,
+    pub case: String,
+    /// Associated values (empty for plain cases), with optional labels.
+    pub payload: Vec<SwiftValue>,
 }
 
 /// The storage of a struct instance: its type name and ordered fields.
@@ -210,6 +224,8 @@ impl SwiftValue {
             SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
             SwiftValue::Struct(s) => s.type_name.clone(),
+            SwiftValue::Nil => "Optional".into(),
+            SwiftValue::Enum(e) => e.type_name.clone(),
         }
     }
 }
@@ -260,6 +276,21 @@ impl fmt::Display for SwiftValue {
                     write!(f, "{name}: {value}")?;
                 }
                 write!(f, ")")
+            }
+            SwiftValue::Nil => write!(f, "nil"),
+            SwiftValue::Enum(e) => {
+                write!(f, "{}", e.case)?;
+                if !e.payload.is_empty() {
+                    write!(f, "(")?;
+                    for (i, v) in e.payload.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{v}")?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
             }
         }
     }

@@ -12,11 +12,11 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
-pub use value::{format_double, IntValue, IntWidth, SwiftValue};
+pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 
 /// Register a minimal `print` native for unit tests inside this crate.
 #[cfg(test)]
-pub(crate) fn install_test_print(interp: &mut Interpreter<'_, '_>) {
+pub(crate) fn install_test_print(interp: &mut Interpreter<'_>) {
     use std::io::Write;
     fn print(out: &mut dyn Write, args: &[SwiftValue]) -> SwiftValue {
         let line = args
