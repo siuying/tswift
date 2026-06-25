@@ -24,8 +24,36 @@ pub enum NodeKind {
     IdentExpr,
     /// A binary operator application, `lhs op rhs`.
     BinaryExpr,
+    /// A prefix unary operator application, `op operand` (`-x`, `!flag`, `~bits`).
+    PrefixExpr,
+    /// An assignment `lhs op= rhs` (plain `=` or compound), used as a statement.
+    AssignExpr,
+    /// A ternary conditional `cond ? then : else`.
+    TernaryExpr,
+    /// A tuple literal `(a, b, ...)`.
+    TupleExpr,
+    /// A member or tuple-index access `base.member` / `base.0`.
+    MemberExpr,
+    /// A `let` binding declaration.
+    LetDecl,
+    /// A `var` binding declaration.
+    VarDecl,
+    /// A written type annotation, e.g. the `Int` in `let x: Int`.
+    TypeRef,
+    /// A binding pattern that names a value, e.g. the `x` in `let x = 1`.
+    NamePattern,
+    /// The wildcard binding pattern `_`.
+    WildcardPattern,
+    /// A tuple destructuring pattern, e.g. `(a, b)` in `let (a, b) = pair`.
+    TuplePattern,
     /// An integer literal.
     IntegerLiteral,
+    /// A floating-point literal.
+    FloatLiteral,
+    /// A boolean literal `true` / `false`.
+    BoolLiteral,
+    /// The `nil` literal.
+    NilLiteral,
     /// A string literal.
     StringLiteral,
 }
@@ -39,7 +67,21 @@ impl NodeKind {
             NodeKind::CallExpr => "call_expr",
             NodeKind::IdentExpr => "ident_expr",
             NodeKind::BinaryExpr => "binary_expr",
+            NodeKind::PrefixExpr => "prefix_expr",
+            NodeKind::AssignExpr => "assign_expr",
+            NodeKind::TernaryExpr => "ternary_expr",
+            NodeKind::TupleExpr => "tuple_expr",
+            NodeKind::MemberExpr => "member_expr",
+            NodeKind::LetDecl => "let_decl",
+            NodeKind::VarDecl => "var_decl",
+            NodeKind::TypeRef => "type_ref",
+            NodeKind::NamePattern => "name_pattern",
+            NodeKind::WildcardPattern => "wildcard_pattern",
+            NodeKind::TuplePattern => "tuple_pattern",
             NodeKind::IntegerLiteral => "integer_literal",
+            NodeKind::FloatLiteral => "float_literal",
+            NodeKind::BoolLiteral => "bool_literal",
+            NodeKind::NilLiteral => "nil_literal",
             NodeKind::StringLiteral => "string_literal",
         }
     }
