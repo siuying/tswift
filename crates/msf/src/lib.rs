@@ -90,6 +90,26 @@ impl Analysis {
         unsafe { msf_sys::msf_tokens(self.raw) }
     }
 
+    /// The `TokenType` discriminant of the token at flat index `idx`.
+    fn token_type_at(&self, idx: u32) -> Option<u32> {
+        let tokens = self.tokens();
+        if tokens.is_null() {
+            return None;
+        }
+        // SAFETY: `idx` indexes the result-owned token array.
+        Some(unsafe { (*tokens.add(idx as usize)).type_ })
+    }
+
+    /// Whether the token at flat index `idx` had a newline before it.
+    fn token_has_leading_newline_at(&self, idx: u32) -> bool {
+        let tokens = self.tokens();
+        if tokens.is_null() {
+            return false;
+        }
+        // SAFETY: `idx` indexes the result-owned token array.
+        unsafe { (*tokens.add(idx as usize)).has_leading_newline != 0 }
+    }
+
     /// The source text of the token at flat index `idx`, owned copy.
     fn token_text_at(&self, idx: u32) -> Option<String> {
         let src = self.source();
@@ -145,6 +165,71 @@ impl<'a> Node<'a> {
         // (both first field u32 name_tok); valid for decl nodes.
         let name_tok = unsafe { (*self.ptr).data.var.name_tok };
         self.analysis.token_text_at(name_tok)
+    }
+
+    /// The first token index of this node (`ASTNode.tok_idx`).
+    fn tok_idx(&self) -> u32 {
+        // SAFETY: `tok_idx` is a plain integer field on a live node.
+        unsafe { (*self.ptr).tok_idx }
+    }
+
+    /// For a `break`/`continue` statement, the target loop label that follows
+    /// the keyword (e.g. `break outer`), if any. msf points the node's `tok_idx`
+    /// at the label token itself when present, else at the following token.
+    pub fn jump_label(&self) -> Option<String> {
+        const TOK_IDENTIFIER: u32 = 1;
+        let idx = self.tok_idx();
+        if self.analysis.token_type_at(idx) == Some(TOK_IDENTIFIER)
+            && !self.analysis.token_has_leading_newline_at(idx)
+        {
+            self.analysis.token_text_at(idx)
+        } else {
+            None
+        }
+    }
+
+    /// For a `for`/`while`/`repeat` loop, the statement label written before the
+    /// loop keyword (e.g. `outer: for …`), if any.
+    pub fn loop_label(&self) -> Option<String> {
+        const TOK_IDENTIFIER: u32 = 1;
+        let ti = self.tok_idx();
+        if ti < 3 {
+            return None;
+        }
+        let kw = self.analysis.token_text_at(ti - 1)?;
+        if !matches!(kw.as_str(), "for" | "while" | "repeat") {
+            return None;
+        }
+        if self.analysis.token_text_at(ti - 2).as_deref() != Some(":") {
+            return None;
+        }
+        if self.analysis.token_type_at(ti - 3) == Some(TOK_IDENTIFIER) {
+            self.analysis.token_text_at(ti - 3)
+        } else {
+            None
+        }
+    }
+
+    /// For an `AST_CASE_CLAUSE`, whether it is the `default` clause, and its
+    /// optional `where` guard expression.
+    pub fn case_info(&self) -> CaseInfo<'a> {
+        // SAFETY: the `cas` arm is active for CASE_CLAUSE nodes.
+        let (is_default, has_guard, where_ptr) = unsafe {
+            let c = (*self.ptr).data.cas;
+            (c.is_default != 0, c.has_guard != 0, c.where_expr)
+        };
+        let where_expr = if has_guard && !where_ptr.is_null() {
+            Some(Node {
+                ptr: where_ptr,
+                analysis: self.analysis,
+            })
+        } else {
+            None
+        };
+        CaseInfo {
+            is_default,
+            where_expr,
+        }
     }
 
     /// The declaration modifier bitmask (`ASTNode.modifiers`).
@@ -336,6 +421,15 @@ impl<'a> Iterator for Children<'a> {
             analysis: self.analysis,
         })
     }
+}
+
+/// Decoded shape of a `switch` case clause (`AST_CASE_CLAUSE`).
+#[derive(Clone, Copy)]
+pub struct CaseInfo<'a> {
+    /// `true` for the `default:` clause.
+    pub is_default: bool,
+    /// The `where` guard expression, if the clause has one.
+    pub where_expr: Option<Node<'a>>,
 }
 
 /// Decoded shape of a function parameter (`AST_PARAM`).
