@@ -273,15 +273,23 @@ impl<'a> Parser<'a> {
     /// `TypeRef`, then the body `Block`.
     fn parse_func(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        // The name is an identifier or an operator (`func == `, `func + `).
+        // The name is an identifier or an operator (`func == `, `func + `). A
+        // custom operator may span several adjacent operator tokens (`^^`, `<>`).
         let name_tok = self.peek();
         let name = match name_tok.kind {
-            TokenKind::Identifier | TokenKind::Oper => self.bump().text,
+            TokenKind::Identifier => self.bump().text.to_string(),
+            TokenKind::Oper => {
+                let mut s = self.bump().text.to_string();
+                while self.peek().kind == TokenKind::Oper && !self.peek().leading_newline {
+                    s.push_str(self.bump().text);
+                }
+                s
+            }
             other => return self.error(format!("expected a function name, found {other:?}")),
         };
         let func = self
             .ast
-            .add(NodeKind::FuncDecl, Some(name), kw.line, kw.col);
+            .add(NodeKind::FuncDecl, Some(&name), kw.line, kw.col);
         if self.at_oper("<") {
             self.parse_generic_clause(func);
         }
@@ -407,11 +415,13 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon)?;
         if self.at_keyword("inout") {
             self.bump();
+            self.ast.add_modifier(param, "inout");
         }
         let ty = self.parse_type()?;
         self.ast.append_child(param, ty);
         if self.at_oper("...") {
             self.bump(); // variadic marker
+            self.ast.add_modifier(param, "variadic");
         }
         if self.at_oper("=") {
             self.bump();
@@ -1453,9 +1463,14 @@ impl<'a> Parser<'a> {
                 let acc = self
                     .ast
                     .add(NodeKind::Accessor, Some(kw.text), kw.line, kw.col);
+                // Explicit accessor parameter `set(newValue)` / `willSet(nv)`.
                 if self.peek().kind == TokenKind::LParen {
                     self.bump();
-                    self.expect(TokenKind::Identifier)?;
+                    let pname = self.expect(TokenKind::Identifier)?;
+                    let param =
+                        self.ast
+                            .add(NodeKind::Param, Some(pname.text), pname.line, pname.col);
+                    self.ast.append_child(acc, param);
                     self.expect(TokenKind::RParen)?;
                 }
                 self.skip_effects(); // `get throws`, `get async` in protocols
@@ -1700,6 +1715,14 @@ impl<'a> Parser<'a> {
             self.ast.append_child(node, operand);
             return Ok(node);
         }
+        // `&place` — an inout argument (write-back location at a call site).
+        if t.kind == TokenKind::Oper && t.text == "&" {
+            self.bump();
+            let operand = self.parse_prefix()?;
+            let node = self.ast.add(NodeKind::InoutExpr, Some("&"), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
+        }
         if t.kind == TokenKind::Oper && matches!(t.text, "-" | "+" | "!" | "~") {
             self.bump();
             let operand = self.parse_prefix()?;
@@ -1767,6 +1790,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBrace => return self.parse_closure(),
             TokenKind::LParen => return self.parse_paren_or_tuple(),
+            TokenKind::LBracket => return self.parse_array_or_dict(),
             // Directive expression `#file`, `#line`, `#function`, `#column`.
             TokenKind::Directive => {
                 self.bump();
@@ -1782,6 +1806,64 @@ impl<'a> Parser<'a> {
             }
             other => return self.error(format!("expected an expression, found {other:?}")),
         };
+        Ok(node)
+    }
+
+    /// `[a, b, ...]` array literal or `[k: v, ...]` dictionary literal (`[:]`
+    /// is the empty dictionary). Children are the elements, or alternating
+    /// key/value pairs for a dictionary.
+    fn parse_array_or_dict(&mut self) -> Result<NodeId, ParseError> {
+        let open = self.bump(); // '['
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = false;
+        // Empty dictionary `[:]`.
+        if self.peek().kind == TokenKind::Colon
+            && self.tokens[self.pos + 1].kind == TokenKind::RBracket
+        {
+            self.bump();
+            self.bump();
+            self.no_trailing_closure = saved;
+            return Ok(self
+                .ast
+                .add(NodeKind::DictLiteral, Some("["), open.line, open.col));
+        }
+        // Empty array `[]`.
+        if self.peek().kind == TokenKind::RBracket {
+            self.bump();
+            self.no_trailing_closure = saved;
+            return Ok(self
+                .ast
+                .add(NodeKind::ArrayLiteral, Some("["), open.line, open.col));
+        }
+        let first = self.parse_expr(0)?;
+        let is_dict = self.peek().kind == TokenKind::Colon;
+        let kind = if is_dict {
+            NodeKind::DictLiteral
+        } else {
+            NodeKind::ArrayLiteral
+        };
+        let node = self.ast.add(kind, Some("["), open.line, open.col);
+        self.ast.append_child(node, first);
+        if is_dict {
+            self.bump(); // ':'
+            let v = self.parse_expr(0)?;
+            self.ast.append_child(node, v);
+        }
+        while self.peek().kind == TokenKind::Comma {
+            self.bump();
+            if self.peek().kind == TokenKind::RBracket {
+                break; // trailing comma
+            }
+            let key = self.parse_expr(0)?;
+            self.ast.append_child(node, key);
+            if is_dict {
+                self.expect(TokenKind::Colon)?;
+                let v = self.parse_expr(0)?;
+                self.ast.append_child(node, v);
+            }
+        }
+        self.no_trailing_closure = saved;
+        self.expect(TokenKind::RBracket)?;
         Ok(node)
     }
 
@@ -1844,8 +1926,14 @@ impl<'a> Parser<'a> {
                     self.bump();
                 }
                 // Trailing closure: `expr { ... }` (same line, outside a
-                // control-flow head) attaches a closure argument to a call.
-                TokenKind::LBrace if !self.no_trailing_closure && !self.peek().leading_newline => {
+                // control-flow head) attaches a closure argument to a call. A
+                // `{` introducing accessor keywords (`get`/`set`/`willSet`/
+                // `didSet`) is a property accessor block, not a closure.
+                TokenKind::LBrace
+                    if !self.no_trailing_closure
+                        && !self.peek().leading_newline
+                        && !is_accessor_kw(self.tokens[self.pos + 1].text) =>
+                {
                     let closure = self.parse_closure()?;
                     if self.ast.node(expr).kind() == NodeKind::CallExpr {
                         self.ast.append_child(expr, closure);
@@ -1894,6 +1982,30 @@ impl<'a> Parser<'a> {
                     self.expect(TokenKind::RParen)?;
                     expr = call;
                 }
+                // Subscript access `base[index, ...]` (same line as the base).
+                TokenKind::LBracket if !self.peek().leading_newline => {
+                    let open = self.bump();
+                    let sub = self
+                        .ast
+                        .add(NodeKind::SubscriptExpr, Some("["), open.line, open.col);
+                    self.ast.append_child(sub, expr);
+                    let saved = self.no_trailing_closure;
+                    self.no_trailing_closure = false;
+                    if self.peek().kind != TokenKind::RBracket {
+                        loop {
+                            let idx = self.parse_expr(0)?;
+                            self.ast.append_child(sub, idx);
+                            if self.peek().kind == TokenKind::Comma {
+                                self.bump();
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                    self.no_trailing_closure = saved;
+                    self.expect(TokenKind::RBracket)?;
+                    expr = sub;
+                }
                 TokenKind::Dot => {
                     let dot = self.bump();
                     let name = self.peek();
@@ -1941,7 +2053,9 @@ fn binding_power(op: &str) -> Option<(u8, u8)> {
         "==" | "!=" | "<" | ">" | "<=" | ">=" | "===" | "!==" => 9,
         "&&" => 8,
         "||" => 7,
-        _ => return None,
+        // A user-defined (custom) operator: parse it as a left-associative
+        // infix at the default precedence so the runtime can dispatch it.
+        _ => 14,
     };
     Some((p, p + 1))
 }
@@ -2874,6 +2988,83 @@ mod tests {
             .expect("@main attribute child");
         // The leading `@` is stripped, matching the runtime-facing payload.
         assert_eq!(attr.text(), Some("main"));
+    }
+
+    #[test]
+    fn calls_subscripts_inout_variadic_operators_parse() {
+        // Array literal, subscript expr, inout arg, variadic param, custom op.
+        let ast = ast_of(
+            "let a = [1, 2, 3]\n\
+             let x = a[0]\n\
+             func sum(_ xs: Int...) -> Int { return xs.count }\n\
+             func bump(_ n: inout Int) { n += 1 }\n\
+             bump(&count)\n\
+             func ^^ (l: Int, r: Int) -> Int { return l }\n\
+             let y = 2 ^^ 8",
+        );
+        let top: Vec<_> = ast.node(ast.root()).children().collect();
+        // Array literal initializer.
+        assert_eq!(
+            top[0].children().last().unwrap().kind(),
+            NodeKind::ArrayLiteral
+        );
+        // Subscript expression.
+        assert_eq!(
+            top[1].children().last().unwrap().kind(),
+            NodeKind::SubscriptExpr
+        );
+        // Variadic parameter modifier.
+        let xs = top[2].children().next().unwrap();
+        assert!(xs.modifiers().contains(&"variadic".to_string()));
+        // inout parameter modifier.
+        let n = top[3].children().next().unwrap();
+        assert!(n.modifiers().contains(&"inout".to_string()));
+        // `&count` lowers to an InoutExpr argument.
+        let call = top[4].children().next().unwrap();
+        assert_eq!(call.children().nth(1).unwrap().kind(), NodeKind::InoutExpr);
+        // Custom operator function name spans both `^` tokens.
+        assert_eq!(top[5].text(), Some("^^"));
+        // `2 ^^ 8` parses as a binary expression with the custom operator.
+        let bin = top[6].children().last().unwrap();
+        assert_eq!(bin.kind(), NodeKind::BinaryExpr);
+        assert_eq!(bin.text(), Some("^^"));
+    }
+
+    #[test]
+    fn computed_property_and_observers_parse_accessors() {
+        let ast = ast_of(
+            "struct S {\n\
+             var stored: Int = 0\n\
+             var computed: Int { return stored * 2 }\n\
+             var watched: Int = 0 { willSet { } didSet { } }\n\
+             }",
+        );
+        // In the raw AST the binding name is a NamePattern child of the VarDecl.
+        let binding_name = |v: &swift_ast::Node<'_>| -> Option<String> {
+            v.children()
+                .find(|c| c.kind() == NodeKind::NamePattern)
+                .and_then(|c| c.text())
+                .map(str::to_string)
+        };
+        let members: Vec<_> = first_stmt(&ast).children().collect();
+        let computed = members
+            .iter()
+            .find(|c| binding_name(c).as_deref() == Some("computed"))
+            .unwrap();
+        assert!(computed
+            .children()
+            .any(|c| c.kind() == NodeKind::Accessor && c.text() == Some("get")));
+        let watched = members
+            .iter()
+            .find(|c| binding_name(c).as_deref() == Some("watched"))
+            .unwrap();
+        let accs: Vec<_> = watched
+            .children()
+            .filter(|c| c.kind() == NodeKind::Accessor)
+            .filter_map(|c| c.text())
+            .collect();
+        assert!(accs.contains(&"willSet"));
+        assert!(accs.contains(&"didSet"));
     }
 
     #[test]

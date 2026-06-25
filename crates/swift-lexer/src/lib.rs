@@ -151,6 +151,15 @@ const OPERATORS: &[&str] = &[
     "*", "/", "%", "&", "|", "^", "~", "!", "=",
 ];
 
+/// A "pure" operator byte: one that may form a (possibly custom) operator and
+/// has no special standalone role (unlike `.` ranges or `?` ternary/optional).
+fn is_pure_operator_byte(b: u8) -> bool {
+    matches!(
+        b,
+        b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'=' | b'!' | b'&' | b'|' | b'^' | b'~'
+    )
+}
+
 /// Lex `source` into a token stream terminated by a single [`TokenKind::Eof`].
 ///
 /// Whitespace and comments are consumed and used only to advance the line/column
@@ -422,10 +431,25 @@ impl<'a> Lexer<'a> {
 
     /// Longest operator lexeme matching at the cursor, if any (its byte length).
     fn match_operator(&self) -> Option<usize> {
-        OPERATORS
+        let base = OPERATORS
             .iter()
             .find(|op| self.starts_with(op))
-            .map(|op| op.len())
+            .map(|op| op.len())?;
+        // Custom operators are maximal runs of operator characters (`^^`, `<>`,
+        // `.+.`). When the matched table operator is built only from "pure"
+        // operator characters (no `.`/`?`, which have special meaning), extend
+        // it to consume the rest of a contiguous operator-character run.
+        if self.bytes[self.pos..self.pos + base]
+            .iter()
+            .all(|b| is_pure_operator_byte(*b))
+        {
+            let mut len = base;
+            while self.peek_at(len).is_some_and(is_pure_operator_byte) {
+                len += 1;
+            }
+            return Some(len);
+        }
+        Some(base)
     }
 
     // --- cursor helpers ---

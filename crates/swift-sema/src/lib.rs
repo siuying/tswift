@@ -411,6 +411,11 @@ impl Resolver {
         if op == "??" {
             return rhs.or(lhs);
         }
+        // `Void` here means "could not be inferred" (e.g. a method call whose
+        // return type the skeleton sema does not model), not a real operand
+        // type. Treat it as unknown rather than reporting a false mismatch.
+        let lhs = lhs.filter(|t| *t != Type::Void);
+        let rhs = rhs.filter(|t| *t != Type::Void);
         match (lhs, rhs) {
             (Some(a), Some(b)) if a == b => Some(a),
             (Some(a), Some(b)) => {
