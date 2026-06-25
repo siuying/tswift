@@ -1797,6 +1797,10 @@ fn is_modifier_word(w: &str) -> bool {
             | "unowned"
             | "indirect"
             | "dynamic"
+            // `async` only forms a leading modifier run before `let`/`var`
+            // (an `async let` binding); the post-params effect is handled
+            // separately by `skip_effects`.
+            | "async"
     )
 }
 
@@ -2697,6 +2701,21 @@ mod tests {
             .expect("@main attribute child");
         // The leading `@` is stripped, matching the runtime-facing payload.
         assert_eq!(attr.text(), Some("main"));
+    }
+
+    #[test]
+    fn async_let_records_async_modifier() {
+        let ast = ast_of("func f() {\n  async let a = g()\n  let b = 1\n}");
+        let body = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let lets: Vec<_> = body
+            .children()
+            .filter(|c| c.kind() == NodeKind::LetDecl)
+            .collect();
+        assert_eq!(lets[0].modifiers(), &["async".to_string()]);
+        assert!(lets[1].modifiers().is_empty());
     }
 
     #[test]
