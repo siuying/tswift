@@ -112,6 +112,7 @@ const KEYWORDS: &[&str] = &[
     "extension",
     "init",
     "deinit",
+    "subscript",
     "self",
     "super",
     "nil",

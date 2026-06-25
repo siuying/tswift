@@ -40,6 +40,21 @@ pub enum NodeKind {
     VarDecl,
     /// A function declaration, `func name(params) -> Ret { body }`.
     FuncDecl,
+    /// A `struct` declaration.
+    StructDecl,
+    /// An `enum` declaration.
+    EnumDecl,
+    /// One `case` of an enum (text is the case name; children are associated
+    /// type refs or a raw-value expression).
+    EnumCaseDecl,
+    /// An initializer declaration `init(...) { }`.
+    InitDecl,
+    /// A `subscript(...) -> T { ... }` declaration.
+    SubscriptDecl,
+    /// A property/subscript accessor (`get`/`set`/`willSet`/`didSet`), text is its kind.
+    Accessor,
+    /// A postfix unary expression `operand op` (`x!`).
+    PostfixExpr,
     /// A single function parameter.
     Param,
     /// A braced statement block `{ ... }`.
@@ -103,6 +118,13 @@ impl NodeKind {
             NodeKind::LetDecl => "let_decl",
             NodeKind::VarDecl => "var_decl",
             NodeKind::FuncDecl => "func_decl",
+            NodeKind::StructDecl => "struct_decl",
+            NodeKind::EnumDecl => "enum_decl",
+            NodeKind::EnumCaseDecl => "enum_case_decl",
+            NodeKind::InitDecl => "init_decl",
+            NodeKind::SubscriptDecl => "subscript_decl",
+            NodeKind::Accessor => "accessor",
+            NodeKind::PostfixExpr => "postfix_expr",
             NodeKind::Param => "param",
             NodeKind::Block => "block",
             NodeKind::ReturnStmt => "return_stmt",
