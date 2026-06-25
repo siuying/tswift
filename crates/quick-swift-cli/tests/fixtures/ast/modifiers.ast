@@ -1,0 +1,6 @@
+SourceFile "package" L1
+  StructDecl "Account" L1 :Account [package]
+    Block "{" L1
+      FuncDecl "transfer" L2 [public,static,throws]
+        ThrowsClause "throws" L2
+        Block "{" L2

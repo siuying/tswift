@@ -24,10 +24,12 @@ msf itself also exposes `msf_dump_text` / `msf_dump_json` / `msf_dump_sexpr` in
 
 ## Node kinds
 
-- `NodeKind` is **generated** from `vendor/msf/generated/ast_kinds.h` by
-  `crates/msf/build.rs`. Every msf kind is already a named variant — there is no
-  reason to match `Other(N)` for a known kind. `Other(u32)` only fires for a
-  kind newer than the checked-out submodule.
+- `NodeKind` is **generated** from the `ASTNodeKind` enum in
+  `vendor/msf/include/msf.h` by `crates/msf/build.rs` — the *same* public header
+  `msf-sys` feeds to bindgen, so the enum and the raw `AST_*` constants can never
+  drift apart. Every msf kind is already a named variant — there is no reason to
+  match `Other(N)` for a known kind. `Other(u32)` only fires for a kind newer
+  than the checked-out submodule.
 - `AST_LET_DECL` and `AST_VAR_DECL` are distinct kinds (`LetDecl` / `VarDecl`)
   even though msf's own name string for both is `"var_decl"`.
 - `IdentExpr` is msf's `unresolved_decl_ref_expr`; `MemberExpr` is
@@ -40,10 +42,12 @@ msf itself also exposes `msf_dump_text` / `msf_dump_json` / `msf_dump_sexpr` in
   the written width, read the `TypeIdent` annotation child's text instead. This
   bites every integer-width feature.
 - **`modifiers` is a bitmask, and bits are reused across kinds.** Use
-  `Node::modifier_names()` for the unambiguous global bits. Bit 22 means
-  `weak`-capture on a closure capture but `borrowing` on a parameter and
-  `testable` on an import — always qualify by node kind for the overlapping bits
-  (see the `MOD_*` table in `msf.h` §9).
+  `Node::modifier_set()` — it returns a `ModifierSet` that decodes names
+  **against the node's kind**, so bit 22 reads as `weak` on a closure capture,
+  `borrowing` on a parameter, and `testable` on an import. Any bit it can't name
+  for that kind is preserved in `ModifierSet::unknown_bits()` (and surfaced in
+  dumps as `0xNN`) rather than dropped; the full mask is always
+  `ModifierSet::raw()`. See the `MOD_*` table in `msf.h` §9.
 - **Some keywords are *not* in `modifiers`** and must be recovered from the
   token stream: argument labels, loop/`break` labels, and parameter ownership
   (`inout` shows up as a `TypeInout` child / `InoutExpr`, not a modifier).
