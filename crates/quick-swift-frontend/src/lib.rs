@@ -368,10 +368,15 @@ impl<'a> Node<'a> {
     /// optional `where` guard expression.
     pub fn case_info(&self) -> CaseInfo<'a> {
         #[cfg(feature = "rust-backend")]
-        if self.rust.is_some() {
+        if let Some(id) = self.rust {
+            let rust = self.analysis.rust.as_ref().unwrap();
             return CaseInfo {
-                is_default: false,
-                where_expr: None,
+                is_default: rust.case_is_default(id),
+                where_expr: rust.case_where(id).map(|wid| Node {
+                    ptr: std::ptr::null(),
+                    rust: Some(wid),
+                    analysis: self.analysis,
+                }),
             };
         }
 
@@ -1105,8 +1110,9 @@ mod tests {
         assert!(dump.contains("EnumDecl \"Suit\""), "{dump}");
         assert!(dump.contains("Conformance \"Int\""), "{dump}");
         assert!(dump.contains("Block \"{\""), "{dump}");
-        assert!(dump.contains("EnumCaseDecl \"hearts\""), "{dump}");
-        assert!(dump.contains("EnumCaseDecl \"spades\""), "{dump}");
+        // Cases nest as EnumCaseDecl("case") > EnumElementDecl(name).
+        assert!(dump.contains("EnumElementDecl \"hearts\""), "{dump}");
+        assert!(dump.contains("EnumElementDecl \"spades\""), "{dump}");
     }
 
     /// Protocol members lower inside a `Block`, and a `mutating` requirement
@@ -1214,6 +1220,64 @@ mod tests {
             .collect();
         assert!(lets[0].is_async_let(), "`async let job` should be async");
         assert!(!lets[1].is_async_let(), "plain `let plain` should not be");
+    }
+
+    /// The Rust backend lowers Swift patterns into the runtime-facing shapes
+    /// `quick-swift-core::match_pattern`/`eval_cond_list` walk: enum-case
+    /// patterns (`PatternEnum` with `op_text` = case name), tuple patterns,
+    /// optional bindings (`OptionalBinding`), `where` guards via `case_info`,
+    /// and the nested `EnumCaseDecl > EnumElementDecl` enum shape (#53).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_patterns() {
+        let a = Analysis::analyze_rust(
+            "enum E { case a(Int) }\nlet o: Int? = 1\nif let v = o { }\nswitch x {\ncase .a(let n) where n > 0: break\ncase (let p, _): break\ndefault: break\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        let root = a.root();
+
+        // Enum case lowers to EnumCaseDecl > EnumElementDecl > Param > TypeIdent.
+        let e = root
+            .children()
+            .find(|c| c.kind() == NodeKind::EnumDecl)
+            .unwrap();
+        let block = e.children().find(|c| c.kind() == NodeKind::Block).unwrap();
+        let case = block.children().next().unwrap();
+        assert_eq!(case.kind(), NodeKind::EnumCaseDecl);
+        let element = case.children().next().unwrap();
+        assert_eq!(element.kind(), NodeKind::EnumElementDecl);
+        assert_eq!(element.text().as_deref(), Some("a"));
+
+        // `if let v = o` lowers to an OptionalBinding condition.
+        let if_stmt = root
+            .children()
+            .find(|c| c.kind() == NodeKind::IfStmt)
+            .unwrap();
+        let binding = if_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::OptionalBinding)
+            .expect("optional binding");
+        assert_eq!(binding.text().as_deref(), Some("v"));
+
+        // Switch clauses: enum pattern op_text, tuple pattern, where, default.
+        let sw = root
+            .children()
+            .find(|c| c.kind() == NodeKind::SwitchStmt)
+            .unwrap();
+        let clauses: Vec<_> = sw
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        let enum_pat = clauses[0].children().next().unwrap();
+        assert_eq!(enum_pat.kind(), NodeKind::PatternEnum);
+        assert_eq!(enum_pat.op_text().as_deref(), Some("a"));
+        assert!(clauses[0].case_info().where_expr.is_some());
+        assert_eq!(
+            clauses[1].children().next().unwrap().kind(),
+            NodeKind::PatternTuple
+        );
+        assert!(clauses[2].case_info().is_default);
     }
 
     #[cfg(feature = "rust-backend")]

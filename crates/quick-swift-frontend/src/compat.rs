@@ -23,6 +23,10 @@ struct RuntimeNode {
     ty: Option<String>,
     modifier_bits: u32,
     arg_label: Option<String>,
+    /// For a `CaseClause`, whether it is the `default:` clause.
+    is_default: bool,
+    /// For a `CaseClause`, its `where` guard expression, if any.
+    where_expr: Option<NodeId>,
     children: Vec<NodeId>,
 }
 
@@ -63,6 +67,8 @@ impl RuntimeAst {
                 ty: None,
                 modifier_bits: 0,
                 arg_label: None,
+                is_default: false,
+                where_expr: None,
                 children: Vec::new(),
             }],
             diagnostics: vec![Diagnostic { message, line, col }],
@@ -79,6 +85,8 @@ impl RuntimeAst {
             ty: None,
             modifier_bits: 0,
             arg_label: None,
+            is_default: false,
+            where_expr: None,
             children: Vec::new(),
         });
         id
@@ -96,6 +104,9 @@ impl RuntimeAst {
             }
             K::LetDecl | K::VarDecl => return self.lower_binding(node),
             K::ForStmt => return self.lower_for(node),
+            K::CaseClause => return self.lower_case_clause(node),
+            K::EnumCaseDecl => return self.lower_enum_case(node),
+            K::IfStmt | K::GuardStmt | K::WhileStmt => return self.lower_conditional(node),
             _ => {}
         }
 
@@ -150,6 +161,108 @@ impl RuntimeAst {
         self.set_children(block, members);
         children.push(block);
         self.set_children(id, children);
+        id
+    }
+
+    /// Lower a `switch` case clause into the runtime-facing shape: pattern
+    /// children followed by the body `Block`, with the `where` guard and the
+    /// `default` marker exposed separately through `case_info` (not as a
+    /// pattern child the runtime would try to match).
+    fn lower_case_clause(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let text = node.text().map(ToOwned::to_owned);
+        let is_default = text.as_deref() == Some("default");
+        let id = self.alloc(NodeKind::CaseClause, text, node.line());
+        let mut children: Vec<NodeId> = Vec::new();
+        let mut where_expr: Option<NodeId> = None;
+        for child in node.children() {
+            if child.kind() == K::WhereClause {
+                // The guard's single child is the condition expression.
+                where_expr = child.children().next().map(|c| self.lower_node(c));
+            } else {
+                children.push(self.lower_node(child));
+            }
+        }
+        self.nodes[id.0].is_default = is_default;
+        self.nodes[id.0].where_expr = where_expr;
+        self.set_children(id, children);
+        id
+    }
+
+    /// Lower an enum `case` into the runtime-facing nesting the interpreter's
+    /// `register_enum` walks: `EnumCaseDecl("case") > EnumElementDecl(name)`,
+    /// where associated-value types become `Param > TypeIdent` children and a
+    /// raw value stays as a plain value child.
+    fn lower_enum_case(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let outer = self.alloc(
+            NodeKind::EnumCaseDecl,
+            Some("case".to_string()),
+            node.line(),
+        );
+        let element = self.alloc(
+            NodeKind::EnumElementDecl,
+            node.text().map(ToOwned::to_owned),
+            node.line(),
+        );
+        let mut element_children: Vec<NodeId> = Vec::new();
+        for child in node.children() {
+            if child.kind() == K::TypeRef {
+                // An associated value: wrap its type in a `Param`.
+                let ident = self.lower_node(child); // -> TypeIdent
+                let param = self.alloc(NodeKind::Param, None, child.line());
+                self.set_children(param, vec![ident]);
+                element_children.push(param);
+            } else {
+                // A raw value expression (`case a = 1`).
+                element_children.push(self.lower_node(child));
+            }
+        }
+        self.set_children(element, element_children);
+        self.set_children(outer, vec![element]);
+        outer
+    }
+
+    /// Lower an `if`/`guard`/`while` statement, converting any `let`/`var`
+    /// condition binding into an `OptionalBinding` node (text = name, single
+    /// child = the unwrapped expression) as the runtime's `eval_cond_list`
+    /// expects. Boolean conditions and the body blocks lower normally.
+    fn lower_conditional(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let kind = map_kind(node.kind());
+        let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
+        self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
+        let mut children: Vec<NodeId> = Vec::new();
+        for child in node.children() {
+            match child.kind() {
+                K::LetDecl | K::VarDecl => {
+                    children.push(self.lower_optional_binding(child));
+                }
+                _ => children.push(self.lower_node(child)),
+            }
+        }
+        self.set_children(id, children);
+        id
+    }
+
+    /// Lower a conditional `let name = expr` binding into an `OptionalBinding`.
+    fn lower_optional_binding(&mut self, node: swift_ast::Node<'_>) -> NodeId {
+        use swift_ast::NodeKind as K;
+        let mut name: Option<String> = None;
+        let mut init: Option<NodeId> = None;
+        for child in node.children() {
+            match child.kind() {
+                K::NamePattern if name.is_none() => {
+                    name = child.text().map(ToOwned::to_owned);
+                }
+                K::TypeRef => {}
+                _ => init = Some(self.lower_node(child)),
+            }
+        }
+        let id = self.alloc(NodeKind::OptionalBinding, name, node.line());
+        if let Some(init) = init {
+            self.set_children(id, vec![init]);
+        }
         id
     }
 
@@ -240,6 +353,14 @@ impl RuntimeAst {
 
     pub(crate) fn arg_label(&self, id: NodeId) -> Option<String> {
         self.node(id).arg_label.clone()
+    }
+
+    pub(crate) fn case_is_default(&self, id: NodeId) -> bool {
+        self.node(id).is_default
+    }
+
+    pub(crate) fn case_where(&self, id: NodeId) -> Option<NodeId> {
+        self.node(id).where_expr
     }
 
     pub(crate) fn children(&self, id: NodeId) -> Children {
@@ -358,6 +479,9 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::NamePattern => NodeKind::PatternValueBinding,
         K::WildcardPattern => NodeKind::PatternWildcard,
         K::TuplePattern => NodeKind::PatternTuple,
+        K::EnumCasePattern => NodeKind::PatternEnum,
+        K::RangePattern => NodeKind::PatternRange,
+        K::WhereClause => NodeKind::WhereClause,
         K::IntegerLiteral => NodeKind::IntegerLiteral,
         K::FloatLiteral => NodeKind::FloatLiteral,
         K::BoolLiteral => NodeKind::BoolLiteral,

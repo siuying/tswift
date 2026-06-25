@@ -538,9 +538,11 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.at_keyword("where") {
-                self.bump();
+                let w = self.bump();
                 let cond = self.parse_expr_no_trailing(0)?;
-                self.ast.append_child(clause, cond);
+                let where_node = self.ast.add(NodeKind::WhereClause, None, w.line, w.col);
+                self.ast.append_child(where_node, cond);
+                self.ast.append_child(clause, where_node);
             }
         }
         self.expect(TokenKind::Colon)?;
@@ -559,11 +561,127 @@ impl<'a> Parser<'a> {
 
     /// A `case` item: a `let`/`var` binding pattern or a value-pattern expression.
     fn parse_case_item(&mut self) -> Result<NodeId, ParseError> {
+        self.parse_case_pattern(false)
+    }
+
+    /// Parse one `switch`/`for-case` pattern. `binding` is `true` when an
+    /// enclosing `let`/`var` makes bare identifiers bind values rather than
+    /// match by equality. Produces runtime-facing pattern nodes:
+    /// `NamePattern`, `WildcardPattern`, `TuplePattern`, `EnumCasePattern`,
+    /// `RangePattern`, or a value/expression pattern node.
+    fn parse_case_pattern(&mut self, binding: bool) -> Result<NodeId, ParseError> {
+        // `let`/`var` introduce (or re-enter) a binding context.
         if self.at_keyword("let") || self.at_keyword("var") {
             self.bump();
-            return self.parse_pattern();
+            return self.parse_case_pattern(true);
         }
-        self.parse_expr(0)
+        // Wildcard `_`.
+        if self.peek().kind == TokenKind::Identifier && self.peek().text == "_" {
+            let t = self.bump();
+            return Ok(self.ast.add(NodeKind::WildcardPattern, None, t.line, t.col));
+        }
+        // Enum-case pattern: `.case[(subpatterns)]` or `Type.case[(...)]`.
+        if self.at_enum_case_pattern() {
+            return self.parse_enum_case_pattern(binding);
+        }
+        // Tuple pattern `(p, q, ...)`.
+        if self.peek().kind == TokenKind::LParen {
+            return self.parse_tuple_pattern(binding);
+        }
+        // A bare identifier in a binding context binds the value.
+        if binding && self.peek().kind == TokenKind::Identifier {
+            let t = self.bump();
+            // `name?` optional-binding shorthand binds the unwrapped value.
+            if self.peek().kind == TokenKind::Question {
+                self.bump();
+            }
+            return Ok(self
+                .ast
+                .add(NodeKind::NamePattern, Some(t.text), t.line, t.col));
+        }
+        // Otherwise a value/expression pattern (a literal, range, etc.).
+        let expr = self.parse_expr(0)?;
+        // A range expression used as a pattern matches by containment.
+        if self.ast.node(expr).kind() == NodeKind::BinaryExpr
+            && matches!(self.ast.node(expr).text(), Some("...") | Some("..<"))
+        {
+            self.ast.set_kind(expr, NodeKind::RangePattern);
+        }
+        Ok(expr)
+    }
+
+    /// Whether the cursor begins an enum-case pattern (`.case` or `Type.case`).
+    fn at_enum_case_pattern(&self) -> bool {
+        if self.peek().kind == TokenKind::Dot {
+            return true;
+        }
+        // `Type.case`: an identifier whose next token is a dot.
+        self.peek().kind == TokenKind::Identifier
+            && self.tokens[self.pos + 1].kind == TokenKind::Dot
+    }
+
+    fn parse_enum_case_pattern(&mut self, binding: bool) -> Result<NodeId, ParseError> {
+        let start = self.peek();
+        // Optional `Type` prefix (consumed but not required by the runtime).
+        if self.peek().kind == TokenKind::Identifier {
+            self.bump();
+        }
+        self.expect(TokenKind::Dot)?;
+        // The case name is usually an identifier, but `.some` uses the
+        // contextual keyword `some`, and `.none` is an identifier.
+        let case = match self.peek().kind {
+            TokenKind::Identifier | TokenKind::Keyword => self.bump(),
+            other => return self.error(format!("expected a case name, found {other:?}")),
+        };
+        let node = self.ast.add(
+            NodeKind::EnumCasePattern,
+            Some(case.text),
+            start.line,
+            start.col,
+        );
+        if self.peek().kind == TokenKind::LParen {
+            self.bump();
+            if self.peek().kind != TokenKind::RParen {
+                loop {
+                    // Allow `label: pattern` payload labels (label ignored).
+                    if self.peek().kind == TokenKind::Identifier
+                        && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                    {
+                        self.bump();
+                        self.bump();
+                    }
+                    let sub = self.parse_case_pattern(binding)?;
+                    self.ast.append_child(node, sub);
+                    if self.peek().kind == TokenKind::Comma {
+                        self.bump();
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+        }
+        Ok(node)
+    }
+
+    fn parse_tuple_pattern(&mut self, binding: bool) -> Result<NodeId, ParseError> {
+        let open = self.expect(TokenKind::LParen)?;
+        let node = self
+            .ast
+            .add(NodeKind::TuplePattern, None, open.line, open.col);
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                let sub = self.parse_case_pattern(binding)?;
+                self.ast.append_child(node, sub);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(node)
     }
 
     /// `break`/`continue` with an optional same-line target label.
@@ -1123,6 +1241,13 @@ impl<'a> Parser<'a> {
                 self.bump();
                 if self.peek().kind != TokenKind::RParen {
                     loop {
+                        // Optional associated-value label `name:` before the type.
+                        if self.peek().kind == TokenKind::Identifier
+                            && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                        {
+                            self.bump();
+                            self.bump();
+                        }
                         let ty = self.parse_type()?;
                         self.ast.append_child(case, ty);
                         if self.peek().kind == TokenKind::Comma {
@@ -2701,6 +2826,52 @@ mod tests {
             .expect("@main attribute child");
         // The leading `@` is stripped, matching the runtime-facing payload.
         assert_eq!(attr.text(), Some("main"));
+    }
+
+    #[test]
+    fn switch_case_patterns_lower_to_pattern_nodes() {
+        let ast = ast_of(
+            "switch s {\n\
+             case .circle(let r): break\n\
+             case (let x, 0): break\n\
+             case .none: break\n\
+             case 0...9 where x > 1: break\n\
+             default: break\n\
+             }",
+        );
+        let sw = first_stmt(&ast);
+        let clauses: Vec<_> = sw
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        // .circle(let r) -> EnumCasePattern with a NamePattern child.
+        let enum_pat = clauses[0].children().next().unwrap();
+        assert_eq!(enum_pat.kind(), NodeKind::EnumCasePattern);
+        assert_eq!(enum_pat.text(), Some("circle"));
+        assert_eq!(
+            enum_pat.children().next().unwrap().kind(),
+            NodeKind::NamePattern
+        );
+        // (let x, 0) -> TuplePattern: NamePattern + value pattern.
+        let tuple_pat = clauses[1].children().next().unwrap();
+        assert_eq!(tuple_pat.kind(), NodeKind::TuplePattern);
+        let subs: Vec<_> = tuple_pat.children().map(|c| c.kind()).collect();
+        assert_eq!(subs[0], NodeKind::NamePattern);
+        assert_eq!(subs[1], NodeKind::IntegerLiteral);
+        // .none -> EnumCasePattern with no children.
+        let none_pat = clauses[2].children().next().unwrap();
+        assert_eq!(none_pat.kind(), NodeKind::EnumCasePattern);
+        assert_eq!(none_pat.text(), Some("none"));
+        // 0...9 where x > 1 -> RangePattern + a WhereClause child.
+        assert_eq!(
+            clauses[3].children().next().unwrap().kind(),
+            NodeKind::RangePattern
+        );
+        assert!(clauses[3]
+            .children()
+            .any(|c| c.kind() == NodeKind::WhereClause));
+        // default -> labelled clause with only a body block.
+        assert_eq!(clauses[4].text(), Some("default"));
     }
 
     #[test]
