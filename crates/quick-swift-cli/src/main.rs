@@ -33,13 +33,10 @@ fn main() -> ExitCode {
         }
         Some("dump") => {
             let rest: Vec<String> = args.collect();
-            let json = rest.iter().any(|a| a == "--json");
-            match rest.iter().find(|a| !a.starts_with("--")) {
-                Some(path) => dump(path, json),
-                None => {
-                    eprintln!(
-                        "error: `dump` requires a file path\n\nusage: quick-swift dump [--json] <file.swift>"
-                    );
+            match parse_dump_args(&rest) {
+                Ok(DumpArgs { path, json }) => dump(&path, json),
+                Err(msg) => {
+                    eprintln!("error: {msg}\n\nusage: quick-swift dump [--json] <file.swift>");
                     ExitCode::FAILURE
                 }
             }
@@ -56,6 +53,38 @@ fn main() -> ExitCode {
             );
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Parsed `dump` subcommand arguments: exactly one input path, plus flags.
+struct DumpArgs {
+    path: String,
+    json: bool,
+}
+
+/// Parse `dump` arguments strictly: accept the `--json` flag and exactly one
+/// input path. Reject unknown flags and extra paths with a clear message rather
+/// than silently ignoring them.
+fn parse_dump_args(args: &[String]) -> Result<DumpArgs, String> {
+    let mut json = false;
+    let mut path: Option<String> = None;
+    for arg in args {
+        if let Some(flag) = arg.strip_prefix("--") {
+            match flag {
+                "json" => json = true,
+                other => return Err(format!("unknown flag `--{other}`")),
+            }
+        } else if path.is_none() {
+            path = Some(arg.clone());
+        } else {
+            return Err(format!(
+                "`dump` accepts a single file path, but got an extra argument `{arg}`"
+            ));
+        }
+    }
+    match path {
+        Some(path) => Ok(DumpArgs { path, json }),
+        None => Err("`dump` requires a file path".to_string()),
     }
 }
 
