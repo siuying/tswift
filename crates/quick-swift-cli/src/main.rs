@@ -17,35 +17,45 @@ fn main() -> ExitCode {
     let command = args.next();
 
     match command.as_deref() {
-        Some("run") => match args.next() {
-            Some(path) => run(&path),
-            None => {
+        Some("run") => {
+            let paths: Vec<String> = args.collect();
+            if paths.is_empty() {
                 eprintln!(
-                    "error: `run` requires a file path\n\nusage: quick-swift run <file.swift>"
+                    "error: `run` requires a file path\n\nusage: quick-swift run <file.swift> [more.swift ...]"
                 );
                 ExitCode::FAILURE
+            } else {
+                run(&paths)
             }
-        },
+        }
         Some(other) => {
             eprintln!("error: unknown command `{other}`\n\nusage: quick-swift run <file.swift>");
             ExitCode::FAILURE
         }
         None => {
-            eprintln!("usage: quick-swift run <file.swift>");
+            eprintln!("usage: quick-swift run <file.swift> [more.swift ...]");
             ExitCode::FAILURE
         }
     }
 }
 
-/// Analyze and evaluate the Swift file at `path`.
-fn run(path: &str) -> ExitCode {
-    let source = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("error: cannot read `{path}`: {e}");
-            return ExitCode::FAILURE;
+/// Analyze and evaluate the Swift file(s) at `paths`. Multiple files form one
+/// module: their sources are concatenated so cross-file references resolve.
+fn run(paths: &[String]) -> ExitCode {
+    let mut source = String::new();
+    for path in paths {
+        match std::fs::read_to_string(path) {
+            Ok(s) => {
+                source.push_str(&s);
+                source.push('\n');
+            }
+            Err(e) => {
+                eprintln!("error: cannot read `{path}`: {e}");
+                return ExitCode::FAILURE;
+            }
         }
-    };
+    }
+    let path = paths[0].as_str();
 
     let analysis = match Analysis::analyze(&source, path) {
         Ok(a) => a,
@@ -63,6 +73,7 @@ fn run(path: &str) -> ExitCode {
     let mut handle = stdout.lock();
     let mut interp = Interpreter::new(&mut handle);
     quick_swift_std::install(&mut interp);
+    interp.set_filename(path);
 
     let result = interp.run(analysis);
     let _ = handle.flush();
