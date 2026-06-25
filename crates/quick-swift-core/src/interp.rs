@@ -78,6 +78,8 @@ enum Signal {
     Break(Option<String>),
     /// `continue [label]` — unwinds to the targeted loop.
     Continue(Option<String>),
+    /// `fallthrough` — proceed to the next `switch` case body.
+    Fallthrough,
     /// A thrown Swift error value (error handling milestone).
     Throw(SwiftValue),
     /// A genuine interpreter error (not Swift control flow).
@@ -163,7 +165,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// Evaluate a node, returning its value (or a propagating [`Signal`]).
     fn eval(&mut self, node: &Node<'a>) -> Eval {
         match node.kind() {
-            NodeKind::SourceFile | NodeKind::Block => self.eval_block(node),
+            NodeKind::SourceFile => self.eval_block(node),
+            NodeKind::Block => self.eval_scoped_block(node),
             NodeKind::ExprStmt => self.eval_seq(node),
             NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
             NodeKind::ReturnStmt => {
@@ -173,6 +176,16 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                 };
                 Err(Signal::Return(value))
             }
+            NodeKind::IfStmt => self.eval_if(node),
+            NodeKind::GuardStmt => self.eval_guard(node),
+            NodeKind::WhileStmt => self.eval_while(node),
+            NodeKind::RepeatStmt => self.eval_repeat(node),
+            NodeKind::ForStmt => self.eval_for(node),
+            NodeKind::SwitchStmt => self.eval_switch(node),
+            NodeKind::BreakStmt => Err(Signal::Break(node.jump_label())),
+            NodeKind::ContinueStmt => Err(Signal::Continue(node.jump_label())),
+            NodeKind::FallthroughStmt => Err(Signal::Fallthrough),
+            NodeKind::TupleExpr => self.eval_tuple(node),
             NodeKind::LetDecl => self.eval_decl(node, false),
             NodeKind::VarDecl => self.eval_decl(node, true),
             NodeKind::CallExpr => self.eval_call(node),
@@ -186,15 +199,13 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             NodeKind::IntegerLiteral => Ok(self.eval_int_literal(node)),
             NodeKind::BoolLiteral => Ok(SwiftValue::Bool(node.bool().unwrap_or(false))),
             NodeKind::FloatLiteral => Ok(SwiftValue::Double(node.float().unwrap_or(0.0))),
-            NodeKind::StringLiteral => Ok(SwiftValue::Str(decode_string_literal(
-                &node.text().unwrap_or_default(),
-            ))),
+            NodeKind::StringLiteral => self.eval_string_literal(node),
             other => Err(EvalError::Unsupported(format!("{other:?}")).into()),
         }
     }
 
-    /// A `{ … }` block or source file: hoist function declarations first so
-    /// forward references and mutual recursion resolve, then run statements.
+    /// A source file: hoist function declarations first so forward references
+    /// and mutual recursion resolve, then run statements in the global scope.
     fn eval_block(&mut self, node: &Node<'a>) -> Eval {
         for child in node.children() {
             if child.kind() == NodeKind::FuncDecl {
@@ -202,6 +213,29 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             }
         }
         self.eval_seq(node)
+    }
+
+    /// A `{ … }` block: same as [`eval_block`] but in a fresh nested scope so
+    /// its local bindings do not leak outward.
+    fn eval_scoped_block(&mut self, node: &Node<'a>) -> Eval {
+        self.env.push();
+        for child in node.children() {
+            if child.kind() == NodeKind::FuncDecl {
+                self.declare_func(&child);
+            }
+        }
+        let r = self.eval_seq(node);
+        self.env.pop();
+        r
+    }
+
+    /// A tuple expression `(a, b, …)`.
+    fn eval_tuple(&mut self, node: &Node<'a>) -> Eval {
+        let mut items = Vec::new();
+        for child in node.children() {
+            items.push(self.eval(&child)?);
+        }
+        Ok(SwiftValue::Tuple(items))
     }
 
     /// Evaluate each child in order, yielding the last value.
@@ -261,20 +295,64 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
 
-    /// `let`/`var name [= init]`.
+    /// `let`/`var name [= init]`, including tuple decomposition
+    /// `let (a, b) = pair`.
     fn eval_decl(&mut self, node: &Node<'a>, mutable: bool) -> Eval {
+        let children: Vec<Node<'a>> = node.children().collect();
+
+        // Tuple-pattern binding: `let (a, b) = expr`.
+        if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::PatternTuple) {
+            let init = children.last().filter(|c| is_expr(c)).ok_or_else(|| {
+                EvalError::Unsupported("tuple binding without initializer".into())
+            })?;
+            let value = self.eval(init)?;
+            self.bind_tuple_pattern(pat, &value, mutable)?;
+            return Ok(SwiftValue::Void);
+        }
+
         let name = node
             .decl_name()
             .ok_or_else(|| EvalError::Unsupported("declaration without a name".into()))?;
-        let value = match node.children().last() {
-            Some(init) if is_expr(&init) => {
-                let v = self.eval(&init)?;
+        let value = match children.last() {
+            Some(init) if is_expr(init) => {
+                let v = self.eval(init)?;
                 self.coerce_to_decl_type(node, v)
             }
             _ => SwiftValue::Void,
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
+    }
+
+    /// Bind the names in a tuple pattern to the elements of a tuple value.
+    fn bind_tuple_pattern(
+        &mut self,
+        pattern: &Node<'a>,
+        value: &SwiftValue,
+        mutable: bool,
+    ) -> Result<(), Signal> {
+        let SwiftValue::Tuple(items) = value else {
+            return Err(EvalError::Type(format!(
+                "cannot destructure {} as a tuple",
+                value.type_name()
+            ))
+            .into());
+        };
+        let elems: Vec<Node<'a>> = pattern.children().collect();
+        for (sub, item) in elems.iter().zip(items.iter()) {
+            match sub.kind() {
+                NodeKind::PatternWildcard => {}
+                NodeKind::PatternTuple => self.bind_tuple_pattern(sub, item, mutable)?,
+                _ => {
+                    if let Some(name) = sub.text() {
+                        if name != "_" {
+                            self.env.declare(&name, item.clone(), mutable);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// If the declaration carries an explicit integer type annotation, retag the
@@ -348,6 +426,324 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         let l = self.eval(&lhs)?;
         let r = self.eval(&rhs)?;
         ops::binary(&op, &l, &r).map_err(trap)
+    }
+
+    /// `if cond { … } [else if …] [else { … }]`. Also serves `if` expressions:
+    /// the taken branch's last value is returned.
+    fn eval_if(&mut self, node: &Node<'a>) -> Eval {
+        let kids: Vec<Node<'a>> = node.children().collect();
+        let cond = kids
+            .first()
+            .ok_or_else(|| EvalError::Unsupported("if without condition".into()))?;
+        if self.eval_condition(cond)? {
+            self.eval(&kids[1])
+        } else if kids.len() > 2 {
+            self.eval(&kids[2])
+        } else {
+            Ok(SwiftValue::Void)
+        }
+    }
+
+    /// `guard cond else { … }` — runs the else block (which must transfer
+    /// control) when the condition is false.
+    fn eval_guard(&mut self, node: &Node<'a>) -> Eval {
+        let kids: Vec<Node<'a>> = node.children().collect();
+        let cond = kids
+            .first()
+            .ok_or_else(|| EvalError::Unsupported("guard without condition".into()))?;
+        if self.eval_condition(cond)? {
+            Ok(SwiftValue::Void)
+        } else {
+            let els = kids
+                .last()
+                .ok_or_else(|| EvalError::Unsupported("guard without else".into()))?;
+            self.eval(els)
+        }
+    }
+
+    /// `while cond { … }`.
+    fn eval_while(&mut self, node: &Node<'a>) -> Eval {
+        let kids: Vec<Node<'a>> = node.children().collect();
+        let cond = kids
+            .first()
+            .ok_or_else(|| EvalError::Unsupported("while without condition".into()))?;
+        let body = kids
+            .last()
+            .ok_or_else(|| EvalError::Unsupported("while without body".into()))?;
+        let label = node.loop_label();
+        while self.eval_condition(cond)? {
+            match self.run_loop_body(body, &label)? {
+                LoopFlow::Continue => {}
+                LoopFlow::Break => break,
+            }
+        }
+        Ok(SwiftValue::Void)
+    }
+
+    /// `repeat { … } while cond`.
+    fn eval_repeat(&mut self, node: &Node<'a>) -> Eval {
+        let kids: Vec<Node<'a>> = node.children().collect();
+        let body = kids
+            .first()
+            .ok_or_else(|| EvalError::Unsupported("repeat without body".into()))?;
+        let cond = kids
+            .last()
+            .ok_or_else(|| EvalError::Unsupported("repeat without condition".into()))?;
+        let label = node.loop_label();
+        loop {
+            if let LoopFlow::Break = self.run_loop_body(body, &label)? {
+                break;
+            }
+            if !self.eval_condition(cond)? {
+                break;
+            }
+        }
+        Ok(SwiftValue::Void)
+    }
+
+    /// `for v in seq [where cond] { … }` over an integer range or array.
+    fn eval_for(&mut self, node: &Node<'a>) -> Eval {
+        let var_name = node
+            .text()
+            .ok_or_else(|| EvalError::Unsupported("for-loop without a binding".into()))?;
+        let mut iterable = None;
+        let mut where_clause = None;
+        let mut body = None;
+        for child in node.children() {
+            match child.kind() {
+                NodeKind::Param => {}
+                NodeKind::Block => body = Some(child),
+                _ => {
+                    if iterable.is_none() {
+                        iterable = Some(child);
+                    } else {
+                        where_clause = Some(child);
+                    }
+                }
+            }
+        }
+        let iterable =
+            iterable.ok_or_else(|| EvalError::Unsupported("for-loop without a sequence".into()))?;
+        let body = body.ok_or_else(|| EvalError::Unsupported("for-loop without a body".into()))?;
+        let label = node.loop_label();
+
+        let seq = self.eval(&iterable)?;
+        let items = self.iterate(&seq)?;
+
+        self.env.push();
+        for item in items {
+            self.env.declare(&var_name, item, false);
+            if let Some(w) = where_clause {
+                if !self.eval_condition(&w)? {
+                    continue;
+                }
+            }
+            match self.run_loop_body(&body, &label) {
+                Ok(LoopFlow::Continue) => {}
+                Ok(LoopFlow::Break) => break,
+                Err(s) => {
+                    self.env.pop();
+                    return Err(s);
+                }
+            }
+        }
+        self.env.pop();
+        Ok(SwiftValue::Void)
+    }
+
+    /// Expand a sequence value (range or array) into the values to iterate.
+    fn iterate(&self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        match seq {
+            SwiftValue::Range { lo, hi, inclusive } => {
+                let end = if *inclusive { *hi + 1 } else { *hi };
+                Ok((*lo..end).map(SwiftValue::int).collect())
+            }
+            SwiftValue::Array(items) => Ok(items.as_ref().clone()),
+            SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+            other => {
+                Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
+            }
+        }
+    }
+
+    /// Evaluate a loop body, mapping `break`/`continue` (with optional labels) to
+    /// the corresponding [`LoopFlow`]; other signals propagate.
+    fn run_loop_body(
+        &mut self,
+        body: &Node<'a>,
+        label: &Option<String>,
+    ) -> Result<LoopFlow, Signal> {
+        match self.eval(body) {
+            Ok(_) => Ok(LoopFlow::Continue),
+            Err(Signal::Break(None)) => Ok(LoopFlow::Break),
+            Err(Signal::Break(Some(l))) if Some(&l) == label.as_ref() => Ok(LoopFlow::Break),
+            Err(Signal::Continue(None)) => Ok(LoopFlow::Continue),
+            Err(Signal::Continue(Some(l))) if Some(&l) == label.as_ref() => Ok(LoopFlow::Continue),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// `switch subject { case …: … default: … }`.
+    fn eval_switch(&mut self, node: &Node<'a>) -> Eval {
+        let kids: Vec<Node<'a>> = node.children().collect();
+        let subject_node = kids
+            .first()
+            .ok_or_else(|| EvalError::Unsupported("switch without a subject".into()))?;
+        let subject = self.eval(subject_node)?;
+        let cases: Vec<Node<'a>> = kids[1..]
+            .iter()
+            .copied()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+
+        // Find the first matching case.
+        let mut chosen = None;
+        for (i, case) in cases.iter().enumerate() {
+            if let Some(binds) = self.case_matches(case, &subject)? {
+                chosen = Some((i, binds));
+                break;
+            }
+        }
+
+        let Some((start, mut binds)) = chosen else {
+            return Ok(SwiftValue::Void);
+        };
+        let mut idx = start;
+        loop {
+            let (_, body) = case_parts(&cases[idx]);
+            self.env.push();
+            for (name, value) in &binds {
+                self.env.declare(name, value.clone(), false);
+            }
+            let mut fell_through = false;
+            let mut propagate = None;
+            for stmt in &body {
+                match self.eval(stmt) {
+                    Ok(_) => {}
+                    Err(Signal::Fallthrough) => {
+                        fell_through = true;
+                        break;
+                    }
+                    Err(Signal::Break(None)) => break,
+                    Err(other) => {
+                        propagate = Some(other);
+                        break;
+                    }
+                }
+            }
+            self.env.pop();
+            if let Some(sig) = propagate {
+                return Err(sig);
+            }
+            if fell_through && idx + 1 < cases.len() {
+                idx += 1;
+                binds = Vec::new();
+                continue;
+            }
+            break;
+        }
+        Ok(SwiftValue::Void)
+    }
+
+    /// Whether `case` matches `subject`, returning the names it binds.
+    fn case_matches(
+        &mut self,
+        case: &Node<'a>,
+        subject: &SwiftValue,
+    ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
+        let info = case.case_info();
+        if info.is_default {
+            return Ok(Some(Vec::new()));
+        }
+        let (patterns, _) = case_parts(case);
+        for pattern in patterns {
+            if let Some(binds) = self.match_pattern(&pattern, subject)? {
+                if let Some(guard) = info.where_expr {
+                    self.env.push();
+                    for (name, value) in &binds {
+                        self.env.declare(name, value.clone(), false);
+                    }
+                    let pass = self.eval_condition(&guard);
+                    self.env.pop();
+                    if !pass? {
+                        continue;
+                    }
+                }
+                return Ok(Some(binds));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Try to match a single pattern against `subject`. `Ok(Some(binds))` on a
+    /// match (with any bound names), `Ok(None)` on a non-match.
+    fn match_pattern(
+        &mut self,
+        pattern: &Node<'a>,
+        subject: &SwiftValue,
+    ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
+        match pattern.kind() {
+            NodeKind::PatternWildcard => Ok(Some(Vec::new())),
+            NodeKind::PatternValueBinding => {
+                let name = pattern.text().unwrap_or_default();
+                Ok(Some(vec![(name, subject.clone())]))
+            }
+            NodeKind::PatternRange => {
+                let bounds: Vec<Node<'a>> = pattern.children().collect();
+                if bounds.len() != 2 {
+                    return Ok(None);
+                }
+                let lo = self.eval(&bounds[0])?;
+                let hi = self.eval(&bounds[1])?;
+                let inclusive = pattern.text().as_deref() == Some("...");
+                if let (SwiftValue::Int(s), SwiftValue::Int(a), SwiftValue::Int(b)) =
+                    (subject, &lo, &hi)
+                {
+                    let within = s.raw >= a.raw
+                        && (if inclusive {
+                            s.raw <= b.raw
+                        } else {
+                            s.raw < b.raw
+                        });
+                    return Ok(if within { Some(Vec::new()) } else { None });
+                }
+                Ok(None)
+            }
+            NodeKind::PatternTuple => {
+                let SwiftValue::Tuple(items) = subject else {
+                    return Ok(None);
+                };
+                let subs: Vec<Node<'a>> = pattern.children().collect();
+                if subs.len() != items.len() {
+                    return Ok(None);
+                }
+                let mut all = Vec::new();
+                for (sub, item) in subs.iter().zip(items.iter()) {
+                    match self.match_pattern(sub, item)? {
+                        Some(b) => all.extend(b),
+                        None => return Ok(None),
+                    }
+                }
+                Ok(Some(all))
+            }
+            // An expression pattern: match by equality.
+            _ => {
+                let v = self.eval(pattern)?;
+                Ok(if values_equal(&v, subject) {
+                    Some(Vec::new())
+                } else {
+                    None
+                })
+            }
+        }
+    }
+
+    /// Evaluate a node expected to yield a `Bool`.
+    fn eval_condition(&mut self, node: &Node<'a>) -> Result<bool, Signal> {
+        let v = self.eval(node)?;
+        v.as_bool().ok_or_else(|| {
+            EvalError::Type(format!("condition is not Bool: {}", v.type_name())).into()
+        })
     }
 
     /// A ternary `cond ? a : b`, evaluating only the taken branch.
@@ -462,6 +858,13 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             (SwiftValue::Array(items), "isEmpty") => Ok(SwiftValue::Bool(items.is_empty())),
             (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
+            (SwiftValue::Tuple(items), idx) if idx.parse::<usize>().is_ok() => {
+                let i: usize = idx.parse().unwrap();
+                items
+                    .get(i)
+                    .cloned()
+                    .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
+            }
             _ => Err(
                 EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
             ),
@@ -515,8 +918,97 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         }
     }
 
+    /// A string literal, processing escapes and `\( … )` interpolation.
+    fn eval_string_literal(&mut self, node: &Node<'a>) -> Eval {
+        let raw = node.text().unwrap_or_default();
+        // Raw strings do not interpolate; decode handles delimiters/escapes.
+        if raw.starts_with('#') {
+            return Ok(SwiftValue::Str(decode_string_literal(&raw)));
+        }
+        let (body, multiline) = if let Some(b) = raw
+            .strip_prefix("\"\"\"")
+            .and_then(|s| s.strip_suffix("\"\"\""))
+        {
+            (strip_multiline_indent(b).to_string(), true)
+        } else {
+            let b = raw
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(&raw)
+                .to_string();
+            (b, false)
+        };
+        let _ = multiline;
+
+        let mut out = String::new();
+        let mut chars = body.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' && chars.peek() == Some(&'(') {
+                chars.next(); // consume '('
+                let mut depth = 1;
+                let mut fragment = String::new();
+                for fc in chars.by_ref() {
+                    match fc {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    fragment.push(fc);
+                }
+                let value = self.eval_interpolation(&fragment)?;
+                out.push_str(&value.to_string());
+            } else if c == '\\' {
+                // Re-use the escape decoder for the next escape sequence.
+                let mut esc = String::from("\\");
+                if let Some(&n) = chars.peek() {
+                    esc.push(n);
+                    chars.next();
+                    if n == 'u' && chars.peek() == Some(&'{') {
+                        for h in chars.by_ref() {
+                            esc.push(h);
+                            if h == '}' {
+                                break;
+                            }
+                        }
+                    }
+                }
+                out.push_str(&decode_escapes(&esc));
+            } else {
+                out.push(c);
+            }
+        }
+        Ok(SwiftValue::Str(out))
+    }
+
+    /// Evaluate an interpolated expression fragment against the current scope.
+    /// Runs in a sub-interpreter sharing this environment's scopes by reference.
+    fn eval_interpolation(&mut self, fragment: &str) -> Result<SwiftValue, Signal> {
+        let analysis = Analysis::analyze(fragment, "interpolation")
+            .map_err(|e| EvalError::Type(format!("interpolation parse error: {e}")))?;
+        if !analysis.is_ok() {
+            return Err(EvalError::Type(format!("invalid interpolation `{fragment}`")).into());
+        }
+        let mut sink: Vec<u8> = Vec::new();
+        let mut sub = Interpreter::new(&mut sink);
+        sub.env = self.env.clone();
+        let root = analysis.root();
+        match sub.eval(&root) {
+            Ok(v) => Ok(v),
+            Err(Signal::Error(e)) => Err(e.into()),
+            Err(_) => Err(EvalError::Type("control flow in interpolation".into()).into()),
+        }
+    }
+
     /// Invoke a user function by its table id with (possibly labeled) arguments.
     fn call_function(&mut self, id: usize, args: Vec<(Option<String>, SwiftValue)>) -> Eval {
+        if id >= self.funcs.len() {
+            return Err(EvalError::UnknownFunction("<function value>".into()).into());
+        }
         self.depth += 1;
         if self.depth > MAX_CALL_DEPTH {
             self.depth -= 1;
@@ -621,10 +1113,72 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 }
 
+/// What a loop body asks its loop to do next.
+enum LoopFlow {
+    Continue,
+    Break,
+}
+
 /// Whether a node is an expression (vs. a type annotation or other non-value
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
-    !matches!(node.kind(), NodeKind::TypeIdent)
+    !matches!(node.kind(), NodeKind::TypeIdent | NodeKind::PatternTuple)
+}
+
+/// Whether a node kind is a statement (as opposed to a `switch` pattern).
+fn is_statement_kind(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::ExprStmt
+            | NodeKind::Block
+            | NodeKind::ReturnStmt
+            | NodeKind::IfStmt
+            | NodeKind::GuardStmt
+            | NodeKind::ForStmt
+            | NodeKind::WhileStmt
+            | NodeKind::RepeatStmt
+            | NodeKind::SwitchStmt
+            | NodeKind::BreakStmt
+            | NodeKind::ContinueStmt
+            | NodeKind::FallthroughStmt
+            | NodeKind::VarDecl
+            | NodeKind::LetDecl
+            | NodeKind::FuncDecl
+    )
+}
+
+/// Split a `case` clause into (patterns, body-statements). Patterns are the
+/// leading non-statement children; the body is everything from the first
+/// statement onward.
+fn case_parts<'a>(case: &Node<'a>) -> (Vec<Node<'a>>, Vec<Node<'a>>) {
+    let mut patterns = Vec::new();
+    let mut body = Vec::new();
+    let mut in_body = false;
+    for child in case.children() {
+        if !in_body && is_statement_kind(child.kind()) {
+            in_body = true;
+        }
+        if in_body {
+            body.push(child);
+        } else {
+            patterns.push(child);
+        }
+    }
+    (patterns, body)
+}
+
+/// Structural value equality used by `switch` value patterns.
+fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
+    match (a, b) {
+        (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw == y.raw,
+        (SwiftValue::Double(x), SwiftValue::Double(y)) => x == y,
+        (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x == y,
+        (SwiftValue::Str(x), SwiftValue::Str(y)) => x == y,
+        (SwiftValue::Tuple(x), SwiftValue::Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+        }
+        _ => false,
+    }
 }
 
 /// Decode a Swift string literal's *source text* (including its delimiters) into
@@ -803,6 +1357,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "true\n");
+    }
+
+    #[test]
+    fn control_flow_loops_and_switch() {
+        let out = run(
+            "var total = 0\nfor i in 0..<5 where i % 2 == 0 { total += i }\nswitch total {\ncase 0...3: print(\"small \\(total)\")\ndefault: print(\"big \\(total)\")\n}\n",
+        )
+        .unwrap();
+        assert_eq!(out, "big 6\n");
+    }
+
+    #[test]
+    fn labeled_break_and_continue() {
+        let out = run(
+            "outer: for i in 1...3 {\n  for j in 1...3 {\n    if j == 2 { continue outer }\n    if i == 3 { break outer }\n    print(\"\\(i),\\(j)\")\n  }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(out, "1,1\n2,1\n");
+    }
+
+    #[test]
+    fn switch_tuple_where_and_fallthrough() {
+        let out = run(
+            "func c(_ p: (Int, Int)) -> String {\n  switch p {\n  case (let x, 0): return \"x \\(x)\"\n  case (_, let y) where y > 10: return \"hi \\(y)\"\n  default: return \"other\"\n  }\n}\nprint(c((5, 0)))\nprint(c((1, 20)))\nprint(c((1, 2)))\nswitch 2 { case 2: print(\"two\"); fallthrough\ncase 3: print(\"three\")\ndefault: print(\"x\") }\n",
+        )
+        .unwrap();
+        assert_eq!(out, "x 5\nhi 20\nother\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn tuple_decomposition_and_guard() {
+        let out = run(
+            "let (a, b) = (3, 4)\nprint(a + b)\nfunc f(_ x: Int) -> Int { guard x > 0 else { return -1 }\n return x * 2 }\nprint(f(5), f(-2))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "7\n10 -1\n");
+    }
+
+    #[test]
+    fn string_interpolation_renders_expressions() {
+        let out = run("let n = 6\nprint(\"n*n = \\(n * n)\")\n").unwrap();
+        assert_eq!(out, "n*n = 36\n");
     }
 
     #[test]
