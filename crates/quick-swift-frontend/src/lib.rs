@@ -236,8 +236,16 @@ impl<'a> Node<'a> {
     /// the binding in `for await r in …` sits one token past the `await`.
     pub fn token_text_offset(&self, offset: u32) -> Option<String> {
         #[cfg(feature = "rust-backend")]
-        if self.rust.is_some() {
-            let _ = offset;
+        if let Some(id) = self.rust {
+            // The Rust backend only needs offset 1: the `for await` binding,
+            // which sits one token past the `await` sentinel on the C backend.
+            if offset == 1 {
+                return self
+                    .analysis
+                    .rust
+                    .as_ref()
+                    .and_then(|rust| rust.for_await_binding(id));
+            }
             return None;
         }
 
@@ -1278,6 +1286,57 @@ mod tests {
             NodeKind::PatternTuple
         );
         assert!(clauses[2].case_info().is_default);
+    }
+
+    /// The Rust backend lowers effects, directives, and concurrency wrappers
+    /// into the runtime-facing shapes: `TryExpr` variant markers, spliced `#if`
+    /// branches, `#line` magic-literal text, `AwaitExpr`, and the `for await`
+    /// sentinel with its binding via `token_text_offset(1)` (#54).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_effects_directives_concurrency() {
+        let a = Analysis::analyze_rust(
+            "#if DEBUG\nlet mode = 1\n#endif\nfunc f() {\n    let r = try? g()\n    let l = #line\n    let v = await t.value\n    for await x in s { use(x) }\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        let root = a.root();
+
+        // `#if DEBUG` is spliced inline: `mode` is a direct child of the file.
+        assert!(root
+            .children()
+            .any(|c| c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("mode")));
+
+        let body = root
+            .children()
+            .find(|c| c.kind() == NodeKind::FuncDecl)
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let stmts: Vec<_> = body.children().collect();
+
+        // `try?` lowers to a TryExpr whose op_text is the bare `?` marker.
+        let try_expr = stmts[0].children().last().unwrap();
+        assert_eq!(try_expr.kind(), NodeKind::TryExpr);
+        assert_eq!(try_expr.op_text().as_deref(), Some("?"));
+
+        // `#line` lowers to a MacroExpansion whose text drops the `#`.
+        let line_macro = stmts[1].children().last().unwrap();
+        assert_eq!(line_macro.kind(), NodeKind::MacroExpansion);
+        assert_eq!(line_macro.text().as_deref(), Some("line"));
+
+        // `await t.value` is an AwaitExpr.
+        assert_eq!(
+            stmts[2].children().last().unwrap().kind(),
+            NodeKind::AwaitExpr
+        );
+
+        // `for await x in s` uses the `await` sentinel + binding via offset 1.
+        let for_stmt = stmts[3];
+        assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
+        assert_eq!(for_stmt.text().as_deref(), Some("await"));
+        assert_eq!(for_stmt.token_text_offset(1).as_deref(), Some("x"));
     }
 
     #[cfg(feature = "rust-backend")]
