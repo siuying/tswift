@@ -12,7 +12,8 @@
 //!     are passed to one `run` invocation, exercising cross-file resolution.
 //!   * **AST snapshots** — `fixtures/ast/<name>.swift` with a sibling
 //!     `<name>.ast` holding the expected `quick-swift dump` output. These pin
-//!     down *how msf parses a construct*, so AST-shape changes are caught.
+//!     down *how the Rust frontend parses a construct*, so AST-shape changes are
+//!     caught.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
