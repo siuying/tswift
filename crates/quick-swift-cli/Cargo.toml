@@ -11,6 +11,6 @@ name = "quick-swift"
 path = "src/main.rs"
 
 [dependencies]
-msf.workspace = true
+quick-swift-frontend.workspace = true
 quick-swift-core.workspace = true
 quick-swift-std.workspace = true
