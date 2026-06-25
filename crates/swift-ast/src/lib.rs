@@ -62,6 +62,8 @@ pub enum NodeKind {
     AssociatedTypeDecl,
     /// A `typealias` declaration.
     TypeAliasDecl,
+    /// An `import` declaration (text is the imported module path).
+    ImportDecl,
     /// A generic parameter `T` (optionally constrained).
     GenericParam,
     /// A `deinit { }` declaration.
@@ -193,6 +195,7 @@ impl NodeKind {
             NodeKind::ExtensionDecl => "extension_decl",
             NodeKind::AssociatedTypeDecl => "associatedtype_decl",
             NodeKind::TypeAliasDecl => "typealias_decl",
+            NodeKind::ImportDecl => "import_decl",
             NodeKind::GenericParam => "generic_param",
             NodeKind::DeinitDecl => "deinit_decl",
             NodeKind::DoStmt => "do_stmt",
@@ -268,9 +271,16 @@ impl Type {
     }
 }
 
-/// An index into an [`Ast`]'s node arena.
+/// An index into an [`Ast`]'s node arena. Opaque: only an [`Ast`] can mint or
+/// resolve one, so a `NodeId` always refers to a live node in its arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
+pub struct NodeId(u32);
+
+impl NodeId {
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 /// The stored data for one AST node. Construct via [`Ast::add`].
 #[derive(Debug, Clone)]
@@ -322,7 +332,8 @@ impl Ast {
 
     /// Add a node and return its id. Attach it to a parent with [`Ast::append_child`].
     pub fn add(&mut self, kind: NodeKind, text: Option<&str>, line: u32, col: u32) -> NodeId {
-        let id = NodeId(self.nodes.len() as u32);
+        let index = u32::try_from(self.nodes.len()).expect("AST node count exceeds u32::MAX");
+        let id = NodeId(index);
         self.nodes.push(NodeData {
             kind,
             text: text.map(str::to_string),
@@ -338,31 +349,29 @@ impl Ast {
 
     /// Append `child` to `parent`'s child list (in source order).
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
-        self.nodes[parent.0 as usize].children.push(child);
+        self.nodes[parent.index()].children.push(child);
     }
 
     /// Record a declaration modifier/effect keyword on `id` (in source order).
     pub fn add_modifier(&mut self, id: NodeId, modifier: &str) {
-        self.nodes[id.0 as usize]
-            .modifiers
-            .push(modifier.to_string());
+        self.nodes[id.index()].modifiers.push(modifier.to_string());
     }
 
     /// Record the call-argument label written for `id` (`x` in `f(x: 1)`).
     pub fn set_arg_label(&mut self, id: NodeId, label: &str) {
-        self.nodes[id.0 as usize].arg_label = Some(label.to_string());
+        self.nodes[id.index()].arg_label = Some(label.to_string());
     }
 
     /// Set the resolved [`Type`] of `id` (called by sema).
     pub fn set_type(&mut self, id: NodeId, ty: Type) {
-        self.nodes[id.0 as usize].ty = Some(ty);
+        self.nodes[id.index()].ty = Some(ty);
     }
 
     /// Re-tag the [`NodeKind`] of `id` (used by the parser to reinterpret a
     /// parsed expression as a pattern, e.g. a range expression as a
     /// [`NodeKind::RangePattern`]).
     pub fn set_kind(&mut self, id: NodeId, kind: NodeKind) {
-        self.nodes[id.0 as usize].kind = kind;
+        self.nodes[id.index()].kind = kind;
     }
 
     /// A read cursor over `id`.
@@ -371,7 +380,7 @@ impl Ast {
     }
 
     fn data(&self, id: NodeId) -> &NodeData {
-        &self.nodes[id.0 as usize]
+        &self.nodes[id.index()]
     }
 }
 
