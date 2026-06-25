@@ -13,7 +13,12 @@ use msf::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
-use crate::value::{IntValue, IntWidth, SwiftValue};
+use crate::value::{IntValue, IntWidth, StructObj, SwiftValue};
+
+// Declaration modifier bits used by this milestone (see msf.h §9).
+const MOD_STATIC: u32 = 1 << 5;
+const MOD_MUTATING: u32 = 1 << 8;
+const MOD_LAZY: u32 = 1 << 10;
 
 /// Maximum nested Swift call depth before the interpreter traps, converting
 /// unbounded recursion into a catchable error instead of a native stack
@@ -104,6 +109,7 @@ struct Param<'a> {
     label: Option<String>,
     name: String,
     variadic: bool,
+    inout_: bool,
     default: Option<Node<'a>>,
 }
 
@@ -114,12 +120,59 @@ struct FuncDef<'a> {
     captured: Vec<Scope>,
 }
 
+/// A stored property of a struct.
+struct StoredProp<'a> {
+    name: String,
+    default: Option<Node<'a>>,
+    lazy: bool,
+    will_set: Option<(String, Node<'a>)>,
+    did_set: Option<(String, Node<'a>)>,
+}
+
+/// A computed property of a struct.
+struct ComputedProp<'a> {
+    getter: Option<Node<'a>>,
+    setter: Option<Node<'a>>,
+    setter_param: Option<String>,
+}
+
+/// A method of a struct.
+struct MethodDef<'a> {
+    params: Vec<Param<'a>>,
+    body: Option<Node<'a>>,
+    mutating: bool,
+}
+
+/// A struct type declaration.
+struct StructDef<'a> {
+    stored: Vec<StoredProp<'a>>,
+    computed: std::collections::HashMap<String, ComputedProp<'a>>,
+    methods: std::collections::HashMap<String, MethodDef<'a>>,
+}
+
+/// An assignable storage location: a root variable plus a field path.
+#[derive(Debug, Clone)]
+struct Place {
+    root: String,
+    path: Vec<String>,
+}
+
+/// A single evaluated call argument: its label, value, and (for `inout`) the
+/// caller location to write back to.
+struct CallArg {
+    label: Option<String>,
+    value: SwiftValue,
+    place: Option<Place>,
+}
+
 /// The tree-walking interpreter.
 pub struct Interpreter<'a, 'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
     env: Env,
     funcs: Vec<FuncDef<'a>>,
+    structs: HashMap<String, StructDef<'a>>,
+    statics: HashMap<String, SwiftValue>,
     depth: usize,
 }
 
@@ -131,6 +184,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             natives: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
+            structs: HashMap::new(),
+            statics: HashMap::new(),
             depth: 0,
         }
     }
@@ -169,6 +224,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             NodeKind::Block => self.eval_scoped_block(node),
             NodeKind::ExprStmt => self.eval_seq(node),
             NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
+            NodeKind::StructDecl => Ok(SwiftValue::Void), // hoisted by eval_block
             NodeKind::ReturnStmt => {
                 let value = match node.children().next() {
                     Some(e) => self.eval(&e)?,
@@ -207,11 +263,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// A source file: hoist function declarations first so forward references
     /// and mutual recursion resolve, then run statements in the global scope.
     fn eval_block(&mut self, node: &Node<'a>) -> Eval {
-        for child in node.children() {
-            if child.kind() == NodeKind::FuncDecl {
-                self.declare_func(&child);
-            }
-        }
+        self.hoist(node);
         self.eval_seq(node)
     }
 
@@ -219,14 +271,117 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     /// its local bindings do not leak outward.
     fn eval_scoped_block(&mut self, node: &Node<'a>) -> Eval {
         self.env.push();
-        for child in node.children() {
-            if child.kind() == NodeKind::FuncDecl {
-                self.declare_func(&child);
-            }
-        }
+        self.hoist(node);
         let r = self.eval_seq(node);
         self.env.pop();
         r
+    }
+
+    /// Pre-declare function and struct declarations in `node` so forward
+    /// references resolve.
+    fn hoist(&mut self, node: &Node<'a>) {
+        for child in node.children() {
+            match child.kind() {
+                NodeKind::FuncDecl => self.declare_func(&child),
+                NodeKind::StructDecl => self.register_struct(&child),
+                _ => {}
+            }
+        }
+    }
+
+    /// Register a struct type from its declaration.
+    fn register_struct(&mut self, node: &Node<'a>) {
+        let Some(name) = node.text() else { return };
+        if self.structs.contains_key(&name) {
+            return;
+        }
+        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
+            return;
+        };
+        let mut stored = Vec::new();
+        let mut computed = std::collections::HashMap::new();
+        let mut methods = std::collections::HashMap::new();
+
+        for member in body.children() {
+            match member.kind() {
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        let mods = member.modifiers();
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: mods & MOD_MUTATING != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    let Some(pname) = member.decl_name() else {
+                        continue;
+                    };
+                    let mods = member.modifiers();
+                    let is_static = mods & MOD_STATIC != 0;
+                    let acc = member.var_accessors();
+                    if acc.is_computed {
+                        computed.insert(
+                            pname,
+                            ComputedProp {
+                                getter: acc.getter_body,
+                                setter: acc.setter_body,
+                                setter_param: acc.setter_param,
+                            },
+                        );
+                    } else {
+                        let default = member.children().find(|c| {
+                            !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::AccessorDecl)
+                        });
+                        let will_set = acc.will_set_body.map(|b| {
+                            (
+                                acc.will_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "newValue".into()),
+                                b,
+                            )
+                        });
+                        let did_set = acc.did_set_body.map(|b| {
+                            (
+                                acc.did_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "oldValue".into()),
+                                b,
+                            )
+                        });
+                        if is_static {
+                            // Eagerly evaluate the static's initial value.
+                            if let Some(def) = default {
+                                if let Ok(v) = self.eval(&def) {
+                                    self.statics.insert(format!("{name}.{pname}"), v);
+                                }
+                            }
+                        } else {
+                            stored.push(StoredProp {
+                                name: pname,
+                                default,
+                                lazy: mods & MOD_LAZY != 0,
+                                will_set,
+                                did_set,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.structs.insert(
+            name,
+            StructDef {
+                stored,
+                computed,
+                methods,
+            },
+        );
     }
 
     /// A tuple expression `(a, b, …)`.
@@ -266,25 +421,8 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         if matches!(self.env.get(&name), Some(SwiftValue::Function(_))) {
             return;
         }
-        let mut params = Vec::new();
-        let mut body = None;
-        for child in node.children() {
-            match child.kind() {
-                NodeKind::Param => {
-                    let info = child.param_info();
-                    // The parameter's default value, if any, is a non-type child.
-                    let default = child.children().find(|c| c.kind() != NodeKind::TypeIdent);
-                    params.push(Param {
-                        label: info.label,
-                        name: info.name,
-                        variadic: info.variadic,
-                        default,
-                    });
-                }
-                NodeKind::Block => body = Some(child),
-                _ => {}
-            }
-        }
+        let params = parse_params(node);
+        let body = node.children().find(|c| c.kind() == NodeKind::Block);
         let captured = self.env.capture();
         let id = self.funcs.len();
         self.funcs.push(FuncDef {
@@ -372,14 +510,208 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         value
     }
 
-    /// An identifier reference: look up a binding.
+    /// An identifier reference: look up a binding, falling back to an implicit
+    /// `self.<name>` member when evaluating inside a method.
     fn eval_ident(&mut self, node: &Node<'a>) -> Eval {
         let name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("unnamed identifier".into()))?;
-        self.env
-            .get(&name)
-            .ok_or(EvalError::UnknownVariable(name).into())
+        if let Some(v) = self.env.get(&name) {
+            return Ok(v);
+        }
+        if let Some(v) = self.implicit_self_member(&name)? {
+            return Ok(v);
+        }
+        Err(EvalError::UnknownVariable(name).into())
+    }
+
+    /// If `name` is a stored/computed property of the current `self`, read it.
+    fn implicit_self_member(&mut self, name: &str) -> Result<Option<SwiftValue>, Signal> {
+        let Some(this) = self.env.get("self") else {
+            return Ok(None);
+        };
+        let SwiftValue::Struct(obj) = &this else {
+            return Ok(None);
+        };
+        if obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name) {
+            return Ok(Some(self.read_struct_member(&this, name)?));
+        }
+        Ok(None)
+    }
+
+    /// The default initializer of a lazy stored property, if `name` names one.
+    fn lazy_default(&self, type_name: &str, name: &str) -> Option<Node<'a>> {
+        self.structs.get(type_name).and_then(|d| {
+            d.stored
+                .iter()
+                .find(|p| p.name == name && p.lazy)
+                .and_then(|p| p.default)
+        })
+    }
+
+    /// Whether a struct type declares a stored/computed property or method.
+    fn struct_has_member(&self, type_name: &str, name: &str) -> bool {
+        self.structs.get(type_name).is_some_and(|d| {
+            d.computed.contains_key(name)
+                || d.methods.contains_key(name)
+                || d.stored.iter().any(|p| p.name == name)
+        })
+    }
+
+    /// Read a property off a struct value: a stored field, or a computed
+    /// getter run with `self` bound.
+    fn read_struct_member(&mut self, value: &SwiftValue, name: &str) -> Eval {
+        let SwiftValue::Struct(obj) = value else {
+            return Err(EvalError::Type(format!(
+                "`{name}` is not a member of {}",
+                value.type_name()
+            ))
+            .into());
+        };
+        if let Some(v) = obj.get(name) {
+            return Ok(v.clone());
+        }
+        let getter = self
+            .structs
+            .get(&obj.type_name)
+            .and_then(|d| d.computed.get(name))
+            .and_then(|c| c.getter);
+        if let Some(body) = getter {
+            return self
+                .run_with_self(value.clone(), |me| me.eval(&body))
+                .map(|(v, _)| v);
+        }
+        Err(EvalError::Type(format!("struct {} has no member `{name}`", obj.type_name)).into())
+    }
+
+    /// Build a struct instance from a memberwise initializer call.
+    fn instantiate_struct(
+        &mut self,
+        type_name: &str,
+        args: &[(Option<String>, SwiftValue)],
+    ) -> Eval {
+        let plan: Vec<(String, bool, Option<Node<'a>>)> = self
+            .structs
+            .get(type_name)
+            .map(|d| {
+                d.stored
+                    .iter()
+                    .map(|p| (p.name.clone(), p.lazy, p.default))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+        let mut positional = args.iter().filter(|(l, _)| l.is_none());
+        for (pname, lazy, default) in plan {
+            let labeled = args
+                .iter()
+                .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
+                .map(|(_, v)| v.clone());
+            let value = if let Some(v) = labeled {
+                v
+            } else if let Some((_, v)) = positional.next() {
+                v.clone()
+            } else if lazy {
+                // Lazy properties are materialized on first access, not here.
+                continue;
+            } else if let Some(def) = default {
+                self.eval(&def)?
+            } else {
+                return Err(EvalError::Type(format!(
+                    "missing value for property `{pname}` of {type_name}"
+                ))
+                .into());
+            };
+            fields.push((pname, value));
+        }
+        Ok(SwiftValue::Struct(Rc::new(StructObj {
+            type_name: type_name.to_string(),
+            fields,
+        })))
+    }
+
+    /// Run `body` with `self` bound to `this` in a fresh scope, returning the
+    /// body's value and the (possibly mutated) `self`.
+    fn run_with_self(
+        &mut self,
+        this: SwiftValue,
+        body: impl FnOnce(&mut Self) -> Eval,
+    ) -> Result<(SwiftValue, SwiftValue), Signal> {
+        self.env.push();
+        self.env.declare("self", this, true);
+        let result = body(self);
+        let updated = self.env.get("self").unwrap_or(SwiftValue::Void);
+        self.env.pop();
+        let value = match result {
+            Ok(v) => v,
+            Err(Signal::Return(v)) => v,
+            Err(e) => return Err(e),
+        };
+        Ok((value, updated))
+    }
+
+    /// Set a property on a struct value, honoring computed setters and
+    /// `willSet`/`didSet` observers. Returns the updated struct value.
+    fn set_struct_field(
+        &mut self,
+        value: SwiftValue,
+        name: &str,
+        new_value: SwiftValue,
+    ) -> Result<SwiftValue, Signal> {
+        let type_name = match &value {
+            SwiftValue::Struct(o) => o.type_name.clone(),
+            _ => return Err(EvalError::Type("cannot set a member on a non-struct".into()).into()),
+        };
+
+        let setter = self
+            .structs
+            .get(&type_name)
+            .and_then(|d| d.computed.get(name))
+            .map(|c| (c.setter, c.setter_param.clone()));
+        if let Some((Some(body), param)) = setter {
+            let param = param.unwrap_or_else(|| "newValue".into());
+            let nv = new_value.clone();
+            let (_, updated) = self.run_with_self(value, |me| {
+                me.env.declare(&param, nv, false);
+                me.eval(&body)
+            })?;
+            return Ok(updated);
+        }
+
+        let observers = self.structs.get(&type_name).and_then(|d| {
+            d.stored
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| (p.will_set.clone(), p.did_set.clone()))
+        });
+        let (will_set, did_set) = observers.unwrap_or((None, None));
+        let old_value = match &value {
+            SwiftValue::Struct(o) => o.get(name).cloned(),
+            _ => None,
+        };
+
+        let mut value = value;
+        if let Some((param, body)) = will_set {
+            let nv = new_value.clone();
+            let (_, updated) = self.run_with_self(value, |me| {
+                me.env.declare(&param, nv, false);
+                me.eval(&body)
+            })?;
+            value = updated;
+        }
+        if let SwiftValue::Struct(obj) = &mut value {
+            Rc::make_mut(obj).set(name, new_value);
+        }
+        if let Some((param, body)) = did_set {
+            let old = old_value.unwrap_or(SwiftValue::Void);
+            let (_, updated) = self.run_with_self(value, |me| {
+                me.env.declare(&param, old, false);
+                me.eval(&body)
+            })?;
+            value = updated;
+        }
+        Ok(value)
     }
 
     /// An integer literal, widened to its msf-resolved type when known.
@@ -796,32 +1128,58 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("assignment without value".into()))?;
 
-        if target.kind() != NodeKind::IdentExpr {
-            return Err(EvalError::Unsupported(
-                "assignment target must be a simple variable for now".into(),
-            )
-            .into());
-        }
-        let name = target
-            .text()
-            .ok_or_else(|| EvalError::Unsupported("unnamed assignment target".into()))?;
+        // Resolve the target to an assignable place. A bare identifier that is
+        // not a local binding but is a member of the current `self` becomes
+        // `self.<name>`.
+        let place = match self.resolve_place(&target) {
+            Some(p) if p.path.is_empty() && self.env.get(&p.root).is_none() => {
+                if self.self_has_member(&p.root) {
+                    Place {
+                        root: "self".into(),
+                        path: vec![p.root],
+                    }
+                } else {
+                    p
+                }
+            }
+            Some(p) => p,
+            None => {
+                return Err(EvalError::Unsupported("unsupported assignment target".into()).into())
+            }
+        };
 
         let new_value = if op == "=" {
             self.eval(&rhs)?
         } else {
             let bin_op = op.trim_end_matches('=');
-            let current = self
-                .env
-                .get(&name)
-                .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?;
+            let current = self.read_place(&place)?;
             let r = self.eval(&rhs)?;
             ops::binary(bin_op, &current, &r).map_err(trap)?
         };
 
-        match self.env.assign(&name, new_value) {
-            Ok(()) => Ok(SwiftValue::Void),
-            Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
-            Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n).into()),
+        self.write_place(&place, new_value)?;
+        Ok(SwiftValue::Void)
+    }
+
+    /// Read the current value stored at `place`.
+    fn read_place(&mut self, place: &Place) -> Eval {
+        let mut value = self
+            .env
+            .get(&place.root)
+            .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
+        for field in &place.path {
+            value = self.read_struct_member(&value, field)?;
+        }
+        Ok(value)
+    }
+
+    /// Whether the current `self` (if any) has a stored/computed member `name`.
+    fn self_has_member(&self, name: &str) -> bool {
+        match self.env.get("self") {
+            Some(SwiftValue::Struct(obj)) => {
+                obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name)
+            }
+            _ => false,
         }
     }
 
@@ -848,11 +1206,33 @@ impl<'a, 'w> Interpreter<'a, 'w> {
                             }
                         };
                     }
+                    // Static property of a struct type: `Type.prop`.
+                    if self.structs.contains_key(&type_name) {
+                        if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
+                            return Ok(v.clone());
+                        }
+                    }
                 }
             }
         }
 
         let value = self.eval(&base)?;
+        if let SwiftValue::Struct(obj) = &value {
+            // Lazy stored property: materialize on first access and cache it
+            // back into the storage when the base is an lvalue.
+            if obj.get(&member).is_none() {
+                if let Some(def) = self.lazy_default(&obj.type_name, &member) {
+                    let (computed, _) = self.run_with_self(value.clone(), |me| me.eval(&def))?;
+                    if let Some(place) = self.resolve_place(&base) {
+                        let cached =
+                            self.set_struct_field(value.clone(), &member, computed.clone())?;
+                        self.write_place(&place, cached)?;
+                    }
+                    return Ok(computed);
+                }
+            }
+            return self.read_struct_member(&value, &member);
+        }
         match (&value, member.as_str()) {
             (SwiftValue::Array(items), "count") => Ok(SwiftValue::int(items.len() as i128)),
             (SwiftValue::Array(items), "isEmpty") => Ok(SwiftValue::Bool(items.is_empty())),
@@ -871,51 +1251,183 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         }
     }
 
-    /// Evaluate a call: a user function, a native, or a conversion initializer.
+    /// Evaluate a call: a method, a struct initializer, a user function, a
+    /// native, or a conversion initializer.
     fn eval_call(&mut self, node: &Node<'a>) -> Eval {
-        let mut children = node.children();
+        let children: Vec<Node<'a>> = node.children().collect();
         let callee = children
-            .next()
+            .first()
             .ok_or_else(|| EvalError::Unsupported("call with no callee".into()))?;
+        let arg_nodes = &children[1..];
 
-        // Evaluate arguments, preserving any labels.
-        let mut args: Vec<(Option<String>, SwiftValue)> = Vec::new();
-        for arg in children {
-            let label = arg.arg_label();
-            let value = self.eval(&arg)?;
-            args.push((label, value));
+        // Method call: `base.method(args)`.
+        if callee.kind() == NodeKind::MemberExpr {
+            return self.eval_method_call(callee, arg_nodes);
         }
+
+        let args = self.eval_args(arg_nodes)?;
 
         if callee.kind() == NodeKind::IdentExpr {
             let name = callee
                 .text()
                 .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
 
+            // Struct memberwise initializer.
+            if self.structs.contains_key(&name) {
+                let simple: Vec<(Option<String>, SwiftValue)> = args
+                    .iter()
+                    .map(|a| (a.label.clone(), a.value.clone()))
+                    .collect();
+                return self.instantiate_struct(&name, &simple);
+            }
             // A bound function value (incl. recursion) takes priority.
             if let Some(SwiftValue::Function(id)) = self.env.get(&name) {
                 return self.call_function(id, args);
             }
             // Conversion initializers take exactly one argument.
             if args.len() == 1 {
-                if let Some(v) = self.try_conversion(&name, &args[0].1)? {
+                if let Some(v) = self.try_conversion(&name, &args[0].value)? {
                     return Ok(v);
                 }
             }
             if let Some(native) = self.natives.get(&name).copied() {
-                let plain: Vec<SwiftValue> = args.into_iter().map(|(_, v)| v).collect();
+                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 return Ok(native(self.out, &plain));
             }
             return Err(EvalError::UnknownFunction(name).into());
         }
 
         // Callee is an arbitrary expression — must evaluate to a function value.
-        let value = self.eval(&callee)?;
+        let value = self.eval(callee)?;
         match value {
             SwiftValue::Function(id) => self.call_function(id, args),
             other => {
                 Err(EvalError::Type(format!("`{}` is not callable", other.type_name())).into())
             }
         }
+    }
+
+    /// Evaluate call arguments, resolving `inout` (`&place`) into a write-back
+    /// location.
+    fn eval_args(&mut self, arg_nodes: &[Node<'a>]) -> Result<Vec<CallArg>, Signal> {
+        let mut args = Vec::new();
+        for arg in arg_nodes {
+            let label = arg.arg_label();
+            if arg.kind() == NodeKind::InOutExpr {
+                let inner = arg
+                    .children()
+                    .next()
+                    .ok_or_else(|| EvalError::Unsupported("inout without an lvalue".into()))?;
+                let place = self.resolve_place(&inner);
+                let value = self.eval(&inner)?;
+                args.push(CallArg {
+                    label,
+                    value,
+                    place,
+                });
+            } else {
+                let value = self.eval(arg)?;
+                args.push(CallArg {
+                    label,
+                    value,
+                    place: None,
+                });
+            }
+        }
+        Ok(args)
+    }
+
+    /// `base.method(args)`. Binds `self`; for `mutating` methods, writes the
+    /// updated `self` back to `base`'s storage.
+    fn eval_method_call(&mut self, member: &Node<'a>, arg_nodes: &[Node<'a>]) -> Eval {
+        let method = member
+            .text()
+            .ok_or_else(|| EvalError::Unsupported("method without a name".into()))?;
+        let base = member
+            .children()
+            .next()
+            .ok_or_else(|| EvalError::Unsupported("method without a base".into()))?;
+
+        // Static method: `Type.method(args)`.
+        if base.kind() == NodeKind::IdentExpr {
+            if let Some(tn) = base.text() {
+                if self.env.get(&tn).is_none() && self.structs.contains_key(&tn) {
+                    let args = self.eval_args(arg_nodes)?;
+                    return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
+                }
+            }
+        }
+
+        let base_value = self.eval(&base)?;
+        let args = self.eval_args(arg_nodes)?;
+
+        if let SwiftValue::Struct(obj) = &base_value {
+            let type_name = obj.type_name.clone();
+            if self
+                .structs
+                .get(&type_name)
+                .is_some_and(|d| d.methods.contains_key(&method))
+            {
+                let place = self.resolve_place(&base);
+                return self.call_struct_method(base_value, &type_name, &method, args, place);
+            }
+        }
+
+        // Built-in value methods could go here; none needed yet.
+        Err(
+            EvalError::Unsupported(format!("method .{method}() on {}", base_value.type_name()))
+                .into(),
+        )
+    }
+
+    /// Invoke a struct method with `self` bound and parameters applied.
+    fn call_struct_method(
+        &mut self,
+        this: SwiftValue,
+        type_name: &str,
+        method: &str,
+        args: Vec<CallArg>,
+        base_place: Option<Place>,
+    ) -> Eval {
+        let (params, body, mutating) = {
+            let def = self
+                .structs
+                .get(type_name)
+                .and_then(|d| d.methods.get(method))
+                .ok_or_else(|| {
+                    EvalError::Unsupported(format!("{type_name} has no method `{method}`"))
+                })?;
+            (clone_params(&def.params), def.body, def.mutating)
+        };
+
+        self.env.push();
+        self.env.declare("self", this, true);
+        let inout_binds = self.bind_params(&params, args);
+        let outcome = match inout_binds {
+            Ok(binds) => {
+                let result = match body {
+                    Some(b) => self.eval(&b),
+                    None => Ok(SwiftValue::Void),
+                };
+                self.apply_inout_writebacks(&binds);
+                result
+            }
+            Err(e) => Err(e),
+        };
+        let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
+        self.env.pop();
+
+        let ret = match outcome {
+            Ok(v) => v,
+            Err(Signal::Return(v)) => v,
+            Err(e) => return Err(e),
+        };
+        if mutating {
+            if let Some(place) = base_place {
+                self.write_place(&place, updated_self)?;
+            }
+        }
+        Ok(ret)
     }
 
     /// A string literal, processing escapes and `\( … )` interpolation.
@@ -1005,7 +1517,7 @@ impl<'a, 'w> Interpreter<'a, 'w> {
     }
 
     /// Invoke a user function by its table id with (possibly labeled) arguments.
-    fn call_function(&mut self, id: usize, args: Vec<(Option<String>, SwiftValue)>) -> Eval {
+    fn call_function(&mut self, id: usize, args: Vec<CallArg>) -> Eval {
         if id >= self.funcs.len() {
             return Err(EvalError::UnknownFunction("<function value>".into()).into());
         }
@@ -1018,56 +1530,142 @@ impl<'a, 'w> Interpreter<'a, 'w> {
         }
 
         // Bind parameters in a fresh scope over the function's captured chain.
+        let params = clone_params(&self.funcs[id].params);
+        let body = self.funcs[id].body;
         let captured = self.funcs[id].captured.clone();
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
 
-        let outcome = self.bind_and_run(id, args);
+        let bound = self.bind_params(&params, args);
+        let outcome = match bound {
+            Ok(inout_binds) => {
+                let result = match body {
+                    Some(b) => match self.eval(&b) {
+                        Ok(v) => Ok(v),
+                        Err(Signal::Return(v)) => Ok(v),
+                        Err(other) => Err(other),
+                    },
+                    None => Ok(SwiftValue::Void),
+                };
+                // Capture inout finals before tearing down the call scope.
+                let writes: Vec<(Place, SwiftValue)> = inout_binds
+                    .iter()
+                    .filter_map(|(name, place)| self.env.get(name).map(|v| (place.clone(), v)))
+                    .collect();
+                result.map(|v| (v, writes))
+            }
+            Err(e) => Err(e),
+        };
 
         self.env = saved;
         self.depth -= 1;
-        outcome
+
+        let (value, writes) = outcome?;
+        for (place, val) in writes {
+            self.write_place(&place, val)?;
+        }
+        Ok(value)
     }
 
-    fn bind_and_run(&mut self, id: usize, args: Vec<(Option<String>, SwiftValue)>) -> Eval {
-        // Bind parameters. `params` are looked up by index to avoid borrowing
-        // `self.funcs` across the `self.eval` calls for default values.
-        let param_count = self.funcs[id].params.len();
+    /// Bind `args` to `params` in the current scope, returning the caller
+    /// write-back locations for any `inout` parameters.
+    fn bind_params(
+        &mut self,
+        params: &[Param<'a>],
+        args: Vec<CallArg>,
+    ) -> Result<Vec<(String, Place)>, Signal> {
+        let mut inout_binds = Vec::new();
         let mut ai = 0;
-        for pi in 0..param_count {
-            let (label, name, variadic, default) = {
-                let p = &self.funcs[id].params[pi];
-                (p.label.clone(), p.name.clone(), p.variadic, p.default)
-            };
-            if variadic {
+        for p in params {
+            if p.variadic {
                 let mut pack = Vec::new();
-                while ai < args.len() && args[ai].0.is_none() {
-                    pack.push(args[ai].1.clone());
+                while ai < args.len() && args[ai].label.is_none() {
+                    pack.push(args[ai].value.clone());
                     ai += 1;
                 }
                 self.env
-                    .declare(&name, SwiftValue::Array(Rc::new(pack)), false);
+                    .declare(&p.name, SwiftValue::Array(Rc::new(pack)), false);
             } else if ai < args.len() {
-                let _ = &label;
-                self.env.declare(&name, args[ai].1.clone(), false);
+                let arg = &args[ai];
+                // `inout` params are mutable and write back to the caller.
+                self.env.declare(&p.name, arg.value.clone(), p.inout_);
+                if p.inout_ {
+                    if let Some(place) = arg.place.clone() {
+                        inout_binds.push((p.name.clone(), place));
+                    }
+                }
                 ai += 1;
-            } else if let Some(def) = default {
+            } else if let Some(def) = p.default {
                 let v = self.eval(&def)?;
-                self.env.declare(&name, v, false);
+                self.env.declare(&p.name, v, false);
             } else {
-                return Err(EvalError::Type(format!("missing argument for `{name}`")).into());
+                return Err(EvalError::Type(format!("missing argument for `{}`", p.name)).into());
             }
         }
+        Ok(inout_binds)
+    }
 
-        let body = self.funcs[id].body;
-        match body {
-            Some(b) => match self.eval(&b) {
-                Ok(_) => Ok(SwiftValue::Void),
-                Err(Signal::Return(v)) => Ok(v),
-                Err(other) => Err(other),
-            },
-            None => Ok(SwiftValue::Void),
+    /// Write each captured `inout` parameter's current value back to its caller
+    /// location (used when the call shares the caller's environment).
+    fn apply_inout_writebacks(&mut self, binds: &[(String, Place)]) {
+        for (name, place) in binds {
+            if let Some(v) = self.env.get(name) {
+                let _ = self.write_place(place, v);
+            }
         }
+    }
+
+    /// Resolve an lvalue expression to a [`Place`] (root variable + field path).
+    fn resolve_place(&self, node: &Node<'a>) -> Option<Place> {
+        match node.kind() {
+            NodeKind::IdentExpr => node.text().map(|root| Place {
+                root,
+                path: Vec::new(),
+            }),
+            NodeKind::ParenExpr => node.children().next().and_then(|c| self.resolve_place(&c)),
+            NodeKind::MemberExpr => {
+                let member = node.text()?;
+                let base = node.children().next()?;
+                let mut place = self.resolve_place(&base)?;
+                place.path.push(member);
+                Some(place)
+            }
+            _ => None,
+        }
+    }
+
+    /// Write `value` to the storage named by `place`, applying copy-on-write and
+    /// any property observers at the leaf.
+    fn write_place(&mut self, place: &Place, value: SwiftValue) -> Result<(), Signal> {
+        if place.path.is_empty() {
+            return match self.env.assign(&place.root, value) {
+                Ok(()) => Ok(()),
+                Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
+                Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n).into()),
+            };
+        }
+        let root_val = self
+            .env
+            .get(&place.root)
+            .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
+        let updated = self.set_in(root_val, &place.path, value)?;
+        match self.env.assign(&place.root, updated) {
+            Ok(()) => Ok(()),
+            Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
+            Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n).into()),
+        }
+    }
+
+    /// Recursively set the value at `path` within `container`, honoring
+    /// observers/computed setters at each struct level.
+    fn set_in(&mut self, container: SwiftValue, path: &[String], value: SwiftValue) -> Eval {
+        let (head, rest) = path.split_first().expect("non-empty path");
+        if rest.is_empty() {
+            return self.set_struct_field(container, head, value);
+        }
+        let sub = self.read_struct_member(&container, head)?;
+        let new_sub = self.set_in(sub, rest, value)?;
+        self.set_struct_field(container, head, new_sub)
     }
 
     /// Attempt a numeric/string conversion `Type(value)`. Returns `Ok(None)` if
@@ -1111,6 +1709,42 @@ impl<'a, 'w> Interpreter<'a, 'w> {
             _ => Ok(None),
         }
     }
+}
+
+/// Clone a parameter list (`Node` is `Copy`; only the strings allocate).
+fn clone_params<'a>(params: &[Param<'a>]) -> Vec<Param<'a>> {
+    params
+        .iter()
+        .map(|p| Param {
+            label: p.label.clone(),
+            name: p.name.clone(),
+            variadic: p.variadic,
+            inout_: p.inout_,
+            default: p.default,
+        })
+        .collect()
+}
+
+/// Parse the `AST_PARAM` children of a function/method declaration.
+fn parse_params<'a>(node: &Node<'a>) -> Vec<Param<'a>> {
+    let mut params = Vec::new();
+    for child in node.children() {
+        if child.kind() == NodeKind::Param {
+            let info = child.param_info();
+            // The parameter's default value, if any, is a non-type child.
+            let default = child
+                .children()
+                .find(|c| !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeInout));
+            params.push(Param {
+                label: info.label,
+                name: info.name,
+                variadic: info.variadic,
+                inout_: info.is_inout,
+                default,
+            });
+        }
+    }
+    params
 }
 
 /// What a loop body asks its loop to do next.
@@ -1399,6 +2033,42 @@ mod tests {
     fn string_interpolation_renders_expressions() {
         let out = run("let n = 6\nprint(\"n*n = \\(n * n)\")\n").unwrap();
         assert_eq!(out, "n*n = 36\n");
+    }
+
+    #[test]
+    fn struct_value_copy_semantics() {
+        let out = run(
+            "struct Point { var x: Int; var y: Int\n  mutating func move(dx: Int) { x += dx }\n  var magnitude: Int { x*x + y*y } }\nvar a = Point(x: 1, y: 2)\nvar b = a\nb.move(dx: 10)\nprint(a.x, b.x)\nprint(b.magnitude)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "1 11\n125\n");
+    }
+
+    #[test]
+    fn computed_setter_and_observers() {
+        let out = run(
+            "struct C { var n: Int = 0 { didSet { print(\"set \\(n)\") } }\n  var twice: Int { get { n * 2 } set { n = newValue / 2 } } }\nvar c = C()\nc.n = 3\nprint(c.twice)\nc.twice = 10\nprint(c.n)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "set 3\n6\nset 5\n5\n");
+    }
+
+    #[test]
+    fn inout_writes_back_through_place() {
+        let out = run(
+            "struct B { var v: Int }\nfunc bump(_ x: inout Int) { x += 1 }\nvar n = 10\nbump(&n)\nvar b = B(v: 5)\nbump(&b.v)\nprint(n, b.v)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "11 6\n");
+    }
+
+    #[test]
+    fn static_type_property() {
+        let out = run(
+            "struct M { static let answer = 42\n  var x: Int }\nprint(M.answer)\nlet m = M(x: 1)\nprint(m.x)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "42\n1\n");
     }
 
     #[test]
