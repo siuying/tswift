@@ -15,6 +15,7 @@ pub enum NodeKind {
     VarDecl,
     LetDecl,
     FuncDecl,
+    Param,
     CallExpr,
     /// Identifier reference (msf calls this `unresolved_decl_ref_expr`).
     IdentExpr,
@@ -24,6 +25,7 @@ pub enum NodeKind {
     AssignExpr,
     ParenExpr,
     TupleExpr,
+    TernaryExpr,
     /// A type annotation identifier, e.g. the `Int8` in `let x: Int8`.
     TypeIdent,
     IntegerLiteral,
@@ -46,6 +48,7 @@ impl NodeKind {
             K::AST_VAR_DECL => NodeKind::VarDecl,
             K::AST_LET_DECL => NodeKind::LetDecl,
             K::AST_FUNC_DECL => NodeKind::FuncDecl,
+            K::AST_PARAM => NodeKind::Param,
             K::AST_CALL_EXPR => NodeKind::CallExpr,
             K::AST_IDENT_EXPR => NodeKind::IdentExpr,
             K::AST_MEMBER_EXPR => NodeKind::MemberExpr,
@@ -54,6 +57,7 @@ impl NodeKind {
             K::AST_ASSIGN_EXPR => NodeKind::AssignExpr,
             K::AST_PAREN_EXPR => NodeKind::ParenExpr,
             K::AST_TUPLE_EXPR => NodeKind::TupleExpr,
+            K::AST_TERNARY_EXPR => NodeKind::TernaryExpr,
             K::AST_TYPE_IDENT => NodeKind::TypeIdent,
             K::AST_INTEGER_LITERAL => NodeKind::IntegerLiteral,
             K::AST_FLOAT_LITERAL => NodeKind::FloatLiteral,

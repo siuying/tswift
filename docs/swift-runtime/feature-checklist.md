@@ -61,7 +61,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Type inference for initializers | ✅ | ★ | R0 |
 | [x] | Arithmetic / comparison / logical / bitwise eval | ✅ | ★ | R0 |
 | [x] | Compound assignment `+= -= *= …` | ✅ | ★ | R0 |
-| [ ] | Ternary `a ? b : c` | ✅ | ★ | R1 |
+| [x] | Ternary `a ? b : c` | ✅ | ★ | R1 |
 | [ ] | Tuples + tuple decomposition `let (a,b) = …` | ✅ | ★★ | R1 |
 | [ ] | Parenthesized / wildcard `_` expressions | ✅ | ★ | R1 |
 | [x] | Integer width conversions & `Int(x)` casts | ✅ | ★★ | R1 |
@@ -69,13 +69,13 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 1b. Functions
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Function declarations, params, return | ✅ | ★★ | R0 |
-| [ ] | Argument labels & parameter names | ✅ | ★★ | R1 |
-| [ ] | Default parameter values | ✅ | ★★ | R1 |
-| [ ] | Variadic parameters `T...` | ✅ | ★★ | R1 |
+| [x] | Function declarations, params, return | ✅ | ★★ | R0 |
+| [x] | Argument labels & parameter names | ✅ | ★★ | R1 |
+| [x] | Default parameter values | ✅ | ★★ | R1 |
+| [x] | Variadic parameters `T...` | ✅ | ★★ | R1 |
 | [ ] | `inout` parameters (true lvalue aliasing) | ✅ | ★★★ | R2 |
-| [ ] | Nested functions + capture | ✅ | ★★ | R3 |
-| [ ] | Function types as values / params / returns | ✅ | ★★ | R3 |
+| [x] | Nested functions + capture | ✅ | ★★ | R3 |
+| [x] | Function types as values / params / returns | ✅ | ★★ | R3 |
 | [ ] | Multiple return values via tuples | ✅ | ★ | R1 |
 | [ ] | `@discardableResult` | ✅ | ★ | R1 |
 | [ ] | Functions that never return (`-> Never`) | ✅ | ★★ | R2 |
