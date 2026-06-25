@@ -32,6 +32,12 @@ pub enum NodeKind {
     TernaryExpr,
     /// A tuple literal `(a, b, ...)`.
     TupleExpr,
+    /// An array literal `[a, b, ...]`.
+    ArrayLiteral,
+    /// A dictionary literal `[k: v, ...]` (alternating key/value children).
+    DictLiteral,
+    /// A subscript access `base[index...]`.
+    SubscriptExpr,
     /// A member or tuple-index access `base.member` / `base.0`.
     MemberExpr,
     /// A `let` binding declaration.
@@ -72,6 +78,8 @@ pub enum NodeKind {
     TryExpr,
     /// An `await expr` expression (suspends until the operand's task completes).
     AwaitExpr,
+    /// An `&place` inout argument expression at a call site.
+    InoutExpr,
     /// An `operator` declaration (`infix operator <> : Group`).
     OperatorDecl,
     /// A `precedencegroup` declaration.
@@ -124,6 +132,10 @@ pub enum NodeKind {
     FallthroughStmt,
     /// A written type annotation, e.g. the `Int` in `let x: Int`.
     TypeRef,
+    /// An array type `[Element]` (single child: the element type).
+    TypeArray,
+    /// A dictionary type `[Key: Value]` (children: key type, value type).
+    TypeDict,
     /// A binding pattern that names a value, e.g. the `x` in `let x = 1`.
     NamePattern,
     /// The wildcard binding pattern `_`.
@@ -163,6 +175,9 @@ impl NodeKind {
             NodeKind::AssignExpr => "assign_expr",
             NodeKind::TernaryExpr => "ternary_expr",
             NodeKind::TupleExpr => "tuple_expr",
+            NodeKind::ArrayLiteral => "array_literal",
+            NodeKind::DictLiteral => "dict_literal",
+            NodeKind::SubscriptExpr => "subscript_expr",
             NodeKind::MemberExpr => "member_expr",
             NodeKind::LetDecl => "let_decl",
             NodeKind::VarDecl => "var_decl",
@@ -183,6 +198,7 @@ impl NodeKind {
             NodeKind::DeferStmt => "defer_stmt",
             NodeKind::TryExpr => "try_expr",
             NodeKind::AwaitExpr => "await_expr",
+            NodeKind::InoutExpr => "inout_expr",
             NodeKind::OperatorDecl => "operator_decl",
             NodeKind::PrecedenceGroupDecl => "precedencegroup_decl",
             NodeKind::CompilerDirective => "compiler_directive",
@@ -208,6 +224,8 @@ impl NodeKind {
             NodeKind::ContinueStmt => "continue_stmt",
             NodeKind::FallthroughStmt => "fallthrough_stmt",
             NodeKind::TypeRef => "type_ref",
+            NodeKind::TypeArray => "type_array",
+            NodeKind::TypeDict => "type_dict",
             NodeKind::NamePattern => "name_pattern",
             NodeKind::WildcardPattern => "wildcard_pattern",
             NodeKind::TuplePattern => "tuple_pattern",

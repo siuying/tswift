@@ -493,7 +493,9 @@ impl<'a> Node<'a> {
     pub fn var_accessors(&self) -> VarAccessors<'a> {
         #[cfg(feature = "rust-backend")]
         if self.rust.is_some() {
-            return VarAccessors {
+            // Read the lowered `AccessorDecl` children (text = get/set/willSet/
+            // didSet), each carrying an optional `Param` name and a `Block` body.
+            let mut acc = VarAccessors {
                 is_computed: false,
                 has_setter: false,
                 getter_body: None,
@@ -504,6 +506,37 @@ impl<'a> Node<'a> {
                 will_set_param: None,
                 did_set_param: None,
             };
+            for child in self.children() {
+                if child.kind() != NodeKind::AccessorDecl {
+                    continue;
+                }
+                let body = child.children().find(|c| c.kind() == NodeKind::Block);
+                let param = child
+                    .children()
+                    .find(|c| c.kind() == NodeKind::Param)
+                    .and_then(|p| p.text());
+                match child.text().as_deref() {
+                    Some("get") => {
+                        acc.is_computed = true;
+                        acc.getter_body = body;
+                    }
+                    Some("set") => {
+                        acc.has_setter = true;
+                        acc.setter_body = body;
+                        acc.setter_param = param;
+                    }
+                    Some("willSet") => {
+                        acc.will_set_body = body;
+                        acc.will_set_param = param;
+                    }
+                    Some("didSet") => {
+                        acc.did_set_body = body;
+                        acc.did_set_param = param;
+                    }
+                    _ => {}
+                }
+            }
+            return acc;
         }
 
         // SAFETY: the `var` arm is active for VAR_DECL/LET_DECL nodes.
@@ -1337,6 +1370,74 @@ mod tests {
         assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
         assert_eq!(for_stmt.text().as_deref(), Some("await"));
         assert_eq!(for_stmt.token_text_offset(1).as_deref(), Some("x"));
+    }
+
+    /// The Rust backend lowers calls, accessors, subscripts, and custom
+    /// operators into the runtime-facing contract: argument labels, inout
+    /// arguments, variadic `param_info`, computed/observer `var_accessors`, and
+    /// subscript declarations (#55).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_calls_accessors_subscripts() {
+        let a = Analysis::analyze_rust(
+            "struct Box {\n    var items: [Int]\n    var first: Int { return items[0] }\n    var n: Int = 0 { didSet { } }\n    subscript(i: Int) -> Int { return items[i] }\n    mutating func add(_ xs: Int..., at j: Int) { }\n}\nfn(label: 1, &place)\n",
+            "main.swift",
+        )
+        .unwrap();
+        let root = a.root();
+
+        let body = root
+            .children()
+            .find(|c| c.kind() == NodeKind::StructDecl)
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+
+        // Computed property exposes a getter through var_accessors.
+        let first = body
+            .children()
+            .find(|c| c.decl_name().as_deref() == Some("first"))
+            .unwrap();
+        assert!(first.var_accessors().is_computed);
+
+        // Observer property exposes a didSet body.
+        let n = body
+            .children()
+            .find(|c| c.decl_name().as_deref() == Some("n"))
+            .unwrap();
+        assert!(n.var_accessors().did_set_body.is_some());
+
+        // Subscript declaration is present with a getter.
+        let sub = body
+            .children()
+            .find(|c| c.kind() == NodeKind::SubscriptDecl)
+            .unwrap();
+        assert!(sub.var_accessors().getter_body.is_some());
+
+        // Variadic parameter is reported through param_info.
+        let add = body
+            .children()
+            .find(|c| c.kind() == NodeKind::FuncDecl && c.text().as_deref() == Some("add"))
+            .unwrap();
+        let variadic = add
+            .children()
+            .filter(|c| c.kind() == NodeKind::Param)
+            .any(|p| p.param_info().variadic);
+        assert!(variadic, "variadic param not reported");
+
+        // Call argument labels and inout arguments.
+        let call = root
+            .children()
+            .find(|c| c.kind() == NodeKind::ExprStmt)
+            .unwrap()
+            .children()
+            .next()
+            .unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        let args: Vec<_> = call.children().skip(1).collect();
+        assert_eq!(args[0].arg_label().as_deref(), Some("label"));
+        assert_eq!(args[1].kind(), NodeKind::InoutExpr);
     }
 
     #[cfg(feature = "rust-backend")]
