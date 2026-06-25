@@ -9,7 +9,7 @@ use std::io::Write;
 use quick_swift_core::{Interpreter, SwiftValue};
 
 /// Register every standard-library native into `interp`.
-pub fn install(interp: &mut Interpreter<'_, '_>) {
+pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_native("print", print);
 }
 

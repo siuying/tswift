@@ -108,12 +108,12 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Memberwise initializers (synthesized) | ✅ | ★★ | R2 |
 | [x] | Methods on structs | ✅ | ★★ | R2 |
 | [x] | `mutating` methods (inout self) | ✅ | ★★★ | R2 |
-| [ ] | `enum` with simple cases | ✅ | ★★ | R2 |
-| [ ] | Enum **associated values** | ✅ | ★★★ | R2 |
-| [ ] | Enum **raw values** + `RawRepresentable` | ✅ | ★★ | R2 |
-| [ ] | `indirect` enums (recursive) | ⚠️ | ★★★ | R3 |
-| [ ] | Enum methods / computed props | ✅ | ★★ | R2 |
-| [ ] | `CaseIterable` synthesis | ✅ | ★★ | R4 |
+| [x] | `enum` with simple cases | ✅ | ★★ | R2 |
+| [x] | Enum **associated values** | ✅ | ★★★ | R2 |
+| [x] | Enum **raw values** + `RawRepresentable` | ✅ | ★★ | R2 |
+| [x] | `indirect` enums (recursive) | ⚠️ | ★★★ | R3 |
+| [x] | Enum methods / computed props | ✅ | ★★ | R2 |
+| [x] | `CaseIterable` synthesis | ✅ | ★★ | R4 |
 | [ ] | Nested types | ✅ | ★★ | R2 |
 
 ### 2b. Properties
@@ -132,21 +132,21 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 ### 2c. Optionals
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Optional type `T?` | ✅ | ★★ | R2 |
-| [ ] | `if let` / `guard let` binding | ✅ | ★★ | R2 |
-| [ ] | Shorthand `if let x` (Swift 5.7) | ✅ | ★ | R2 |
-| [ ] | Forced unwrap `!` (trap on nil) | ✅ | ★ | R2 |
-| [ ] | Optional chaining `?.` | ✅ | ★★★ | R2 |
-| [ ] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [ ] | Implicitly unwrapped optionals `T!` | ✅ | ★★ | R2 |
-| [ ] | `Optional` pattern `case let x?` | ✅ | ★★ | R2 |
+| [x] | Optional type `T?` | ✅ | ★★ | R2 |
+| [x] | `if let` / `guard let` binding | ✅ | ★★ | R2 |
+| [x] | Shorthand `if let x` (Swift 5.7) | ✅ | ★ | R2 |
+| [x] | Forced unwrap `!` (trap on nil) | ✅ | ★ | R2 |
+| [x] | Optional chaining `?.` | ✅ | ★★★ | R2 |
+| [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
+| [~] | Implicitly unwrapped optionals `T!` | ✅ | ★★ | R2 |
+| [x] | `Optional` pattern `case let x?` | ✅ | ★★ | R2 |
 
 ### 2d. Subscripts
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Instance subscripts | ✅ | ★★ | R3 |
+| [x] | Instance subscripts | ✅ | ★★ | R3 |
 | [ ] | Type subscripts (`static subscript`) | ✅ | ★★ | R3 |
-| [ ] | Subscript overloads / multi-param | ✅ | ★★ | R3 |
+| [~] | Subscript overloads / multi-param | ✅ | ★★ | R3 |
 
 ---
 
