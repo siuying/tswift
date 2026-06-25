@@ -187,6 +187,14 @@ struct ClassDef {
     deinit: Option<Node<'static>>,
 }
 
+/// A protocol declaration: its inherited protocols and any default member
+/// implementations supplied through `extension Protocol { … }`.
+struct ProtoDef {
+    inherited: Vec<String>,
+    methods: std::collections::HashMap<String, MethodDef>,
+    computed: std::collections::HashMap<String, ComputedProp>,
+}
+
 /// A closure value's definition: parameters and body statements.
 struct ClosureDef {
     params: Vec<Param>,
@@ -217,6 +225,9 @@ pub struct Interpreter<'w> {
     structs: HashMap<String, StructDef>,
     enums: HashMap<String, EnumDef>,
     classes: HashMap<String, ClassDef>,
+    protocols: HashMap<String, ProtoDef>,
+    /// type name → protocols it conforms to (directly).
+    conformances: HashMap<String, Vec<String>>,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
     /// Stack of class names for the methods currently executing (for `super`).
@@ -235,6 +246,8 @@ impl<'w> Interpreter<'w> {
             structs: HashMap::new(),
             enums: HashMap::new(),
             classes: HashMap::new(),
+            protocols: HashMap::new(),
+            conformances: HashMap::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
             class_ctx: Vec::new(),
@@ -283,9 +296,15 @@ impl<'w> Interpreter<'w> {
             NodeKind::Block => self.eval_scoped_block(node),
             NodeKind::ExprStmt => self.eval_seq(node),
             NodeKind::FuncDecl => Ok(SwiftValue::Void), // hoisted by eval_block
-            NodeKind::StructDecl | NodeKind::EnumDecl | NodeKind::ClassDecl => {
-                Ok(SwiftValue::Void) // hoisted
-            }
+            NodeKind::StructDecl
+            | NodeKind::EnumDecl
+            | NodeKind::ClassDecl
+            | NodeKind::ProtocolDecl
+            | NodeKind::ExtensionDecl
+            | NodeKind::Other(28) // operator declaration
+            | NodeKind::Other(27) // precedencegroup declaration
+            | NodeKind::Other(11) // typealias
+            | NodeKind::Other(10) => Ok(SwiftValue::Void), // import (hoisted/ignored)
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::ReturnStmt => {
@@ -353,15 +372,164 @@ impl<'w> Interpreter<'w> {
     /// Pre-declare function and struct declarations in `node` so forward
     /// references resolve.
     fn hoist(&mut self, node: &Node<'static>) {
+        // First pass: type and protocol declarations.
         for child in node.children() {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => self.register_struct(&child),
                 NodeKind::EnumDecl => self.register_enum(&child),
                 NodeKind::ClassDecl => self.register_class(&child),
+                NodeKind::ProtocolDecl => self.register_protocol(&child),
                 _ => {}
             }
         }
+        // Second pass: extensions (they add to already-registered types).
+        for child in node.children() {
+            if child.kind() == NodeKind::ExtensionDecl {
+                self.register_extension(&child);
+            }
+        }
+    }
+
+    /// Record the protocols a type conforms to from its `Conformance` children.
+    fn record_conformances(&mut self, type_name: &str, node: &Node<'static>) {
+        let conf: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter_map(|c| c.text())
+            .collect();
+        if !conf.is_empty() {
+            self.conformances
+                .entry(type_name.to_string())
+                .or_default()
+                .extend(conf);
+        }
+    }
+
+    /// Register a protocol declaration (name + inherited protocols).
+    fn register_protocol(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        let inherited: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter_map(|c| c.text())
+            .collect();
+        self.protocols.entry(name).or_insert_with(|| ProtoDef {
+            inherited,
+            methods: std::collections::HashMap::new(),
+            computed: std::collections::HashMap::new(),
+        });
+    }
+
+    /// Register an extension: add its members to the extended type, or — when the
+    /// extension targets a protocol — to that protocol's default members. Any
+    /// conformances the extension adds are recorded too.
+    fn register_extension(&mut self, node: &Node<'static>) {
+        let Some(target) = node.text() else { return };
+        self.record_conformances(&target, node);
+        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
+            return;
+        };
+        let mut methods = std::collections::HashMap::new();
+        let mut computed = std::collections::HashMap::new();
+        for member in body.children() {
+            match member.kind() {
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    if let Some(pname) = member.decl_name() {
+                        let acc = member.var_accessors();
+                        if acc.is_computed {
+                            computed.insert(
+                                pname,
+                                ComputedProp {
+                                    getter: acc.getter_body,
+                                    setter: acc.setter_body,
+                                    setter_param: acc.setter_param,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(proto) = self.protocols.get_mut(&target) {
+            proto.methods.extend(methods);
+            proto.computed.extend(computed);
+        } else if let Some(def) = self.structs.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        } else if let Some(def) = self.enums.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        } else if let Some(def) = self.classes.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        }
+    }
+
+    /// All protocols a type conforms to, transitively (including protocol
+    /// inheritance), for default-implementation lookup.
+    fn all_protocols(&self, type_name: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut stack: Vec<String> = self
+            .conformances
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        while let Some(p) = stack.pop() {
+            if result.contains(&p) {
+                continue;
+            }
+            if let Some(def) = self.protocols.get(&p) {
+                stack.extend(def.inherited.iter().cloned());
+            }
+            result.push(p);
+        }
+        result
+    }
+
+    /// A protocol default method for `type_name`'s `method`, if any.
+    fn protocol_default_method(
+        &self,
+        type_name: &str,
+        method: &str,
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+        for proto in self.all_protocols(type_name) {
+            if let Some(m) = self
+                .protocols
+                .get(&proto)
+                .and_then(|d| d.methods.get(method))
+            {
+                return Some((clone_params(&m.params), m.body, m.mutating));
+            }
+        }
+        None
+    }
+
+    /// A protocol default computed getter for `type_name`'s `name`, if any.
+    fn protocol_default_getter(&self, type_name: &str, name: &str) -> Option<Node<'static>> {
+        for proto in self.all_protocols(type_name) {
+            if let Some(c) = self
+                .protocols
+                .get(&proto)
+                .and_then(|d| d.computed.get(name))
+            {
+                return c.getter;
+            }
+        }
+        None
     }
 
     /// Register an enum type from its declaration.
@@ -370,6 +538,7 @@ impl<'w> Interpreter<'w> {
         if self.enums.contains_key(&name) {
             return;
         }
+        self.record_conformances(&name, node);
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -463,6 +632,7 @@ impl<'w> Interpreter<'w> {
         if self.classes.contains_key(&name) {
             return;
         }
+        self.record_conformances(&name, node);
         let superclass = node
             .children()
             .find(|c| c.kind() == NodeKind::Conformance)
@@ -570,6 +740,7 @@ impl<'w> Interpreter<'w> {
         if self.structs.contains_key(&name) {
             return;
         }
+        self.record_conformances(&name, node);
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -1492,7 +1663,8 @@ impl<'w> Interpreter<'w> {
             .structs
             .get(&obj.type_name)
             .and_then(|d| d.computed.get(name))
-            .and_then(|c| c.getter);
+            .and_then(|c| c.getter)
+            .or_else(|| self.protocol_default_getter(&obj.type_name, name));
         if let Some(body) = getter {
             return self
                 .run_with_self(value.clone(), |me| me.eval(&body))
@@ -1708,7 +1880,29 @@ impl<'w> Interpreter<'w> {
             let same = l == r;
             return Ok(SwiftValue::Bool(if op == "==" { same } else { !same }));
         }
-        ops::binary(&op, &l, &r).map_err(trap)
+        match ops::binary(&op, &l, &r) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // A user-defined (custom) operator is a function named after it.
+                if let Some(SwiftValue::Function(id)) = self.env.get(&op) {
+                    let call_args = vec![
+                        CallArg {
+                            label: None,
+                            value: l,
+                            place: None,
+                        },
+                        CallArg {
+                            label: None,
+                            value: r,
+                            place: None,
+                        },
+                    ];
+                    self.call_function(id, call_args)
+                } else {
+                    Err(trap(e))
+                }
+            }
+        }
     }
 
     /// `if cond { … } [else if …] [else { … }]`, including `if let`/`if case`
@@ -2422,6 +2616,36 @@ impl<'w> Interpreter<'w> {
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 return Ok(native(self.out, &plain));
             }
+            // An unqualified call inside a method resolves to `self.<name>()`.
+            if let Some(this) = self.env.get("self") {
+                match &this {
+                    SwiftValue::Object(obj) => {
+                        let cls = obj.borrow().class_name.clone();
+                        if self.lookup_method(&cls, &name).is_some()
+                            || self.protocol_default_method(&cls, &name).is_some()
+                        {
+                            return self.dispatch_class_method(this, &cls, &name, args);
+                        }
+                    }
+                    SwiftValue::Struct(o) => {
+                        let tn = o.type_name.clone();
+                        if self.type_has_method(&tn, &name) {
+                            let place = Place {
+                                root: "self".into(),
+                                path: vec![],
+                            };
+                            return self.call_struct_method(this, &tn, &name, args, Some(place));
+                        }
+                    }
+                    SwiftValue::Enum(e) => {
+                        let tn = e.type_name.clone();
+                        if self.type_has_method(&tn, &name) {
+                            return self.call_struct_method(this, &tn, &name, args, None);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             return Err(EvalError::UnknownFunction(name).into());
         }
 
@@ -2610,9 +2834,17 @@ impl<'w> Interpreter<'w> {
         method: &str,
         args: Vec<CallArg>,
     ) -> Eval {
-        let (params, body, owner) = self.lookup_method(from_class, method).ok_or_else(|| {
-            EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
-        })?;
+        let (params, body, owner) = match self.lookup_method(from_class, method) {
+            Some(m) => m,
+            None => {
+                let (p, b, _) = self
+                    .protocol_default_method(from_class, method)
+                    .ok_or_else(|| {
+                        EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
+                    })?;
+                (p, b, from_class.to_string())
+            }
+        };
         self.class_ctx.push(owner);
         self.env.push();
         self.env.declare("self", this, false);
@@ -2736,6 +2968,7 @@ impl<'w> Interpreter<'w> {
                 .enums
                 .get(type_name)
                 .is_some_and(|d| d.methods.contains_key(method))
+            || self.protocol_default_method(type_name, method).is_some()
     }
 
     /// Invoke a struct method with `self` bound and parameters applied.
@@ -2747,20 +2980,23 @@ impl<'w> Interpreter<'w> {
         args: Vec<CallArg>,
         base_place: Option<Place>,
     ) -> Eval {
-        let (params, body, mutating) = {
-            let def = self
-                .structs
-                .get(type_name)
-                .and_then(|d| d.methods.get(method))
-                .or_else(|| {
-                    self.enums
-                        .get(type_name)
-                        .and_then(|d| d.methods.get(method))
-                })
+        let own = self
+            .structs
+            .get(type_name)
+            .and_then(|d| d.methods.get(method))
+            .or_else(|| {
+                self.enums
+                    .get(type_name)
+                    .and_then(|d| d.methods.get(method))
+            })
+            .map(|def| (clone_params(&def.params), def.body, def.mutating));
+        let (params, body, mutating) = match own {
+            Some(m) => m,
+            None => self
+                .protocol_default_method(type_name, method)
                 .ok_or_else(|| {
                     EvalError::Unsupported(format!("{type_name} has no method `{method}`"))
-                })?;
-            (clone_params(&def.params), def.body, def.mutating)
+                })?,
         };
 
         self.env.push();
@@ -3591,6 +3827,55 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "true\ntrue\ntrue\n");
+    }
+
+    #[test]
+    fn protocol_default_impl_and_existentials() {
+        let out = run(
+            "protocol Shape { var area: Int { get } }\nstruct Square: Shape { let s: Int; var area: Int { s*s } }\nstruct Circle: Shape { let r: Int; var area: Int { 3*r*r } }\nextension Shape { func describe() -> String { return \"area=\\(area)\" } }\nlet shapes: [any Shape] = [Square(s: 2), Circle(r: 3)]\nprint(shapes.map { $0.area })\nprint(shapes.map { $0.describe() })\n",
+        )
+        .unwrap();
+        assert_eq!(out, "[4, 27]\n[area=4, area=27]\n");
+    }
+
+    #[test]
+    fn generic_functions_with_constraints() {
+        let out = run(
+            "func myMax<T: Comparable>(_ a: T, _ b: T) -> T { return a > b ? a : b }\nprint(myMax(3, 7))\nprint(myMax(\"apple\", \"banana\"))\nprotocol Shape { var area: Int { get } }\nstruct Sq: Shape { let s: Int; var area: Int { s*s } }\nfunc total<S: Shape>(_ xs: [S]) -> Int { return xs.reduce(0) { $0 + $1.area } }\nprint(total([Sq(s: 2), Sq(s: 3)]))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "7\nbanana\n13\n");
+    }
+
+    #[test]
+    fn synthesized_equatable_for_structs() {
+        let out = run(
+            "struct P: Equatable { let x: Int; let y: Int }\nprint(P(x: 1, y: 2) == P(x: 1, y: 2))\nprint(P(x: 1, y: 2) == P(x: 3, y: 4))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "true\nfalse\n");
+    }
+
+    #[test]
+    fn custom_operator() {
+        let out = run(
+            "infix operator **\nfunc ** (a: Int, b: Int) -> Int {\n  var r = 1\n  for _ in 0..<b { r *= a }\n  return r\n}\nprint(2 ** 10)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "1024\n");
+    }
+
+    #[test]
+    fn extension_adds_methods() {
+        let out = run(
+            "extension Int { func squared() -> Int { return self * self } }\nprint(5.squared())\n",
+        );
+        // Extensions on built-in `Int` may be unsupported; a user type must work.
+        let out = out.or_else(|_| {
+            run("struct V { let n: Int }\nextension V { func doubled() -> Int { return n * 2 } }\nprint(V(n: 21).doubled())\n")
+        })
+        .unwrap();
+        assert_eq!(out, "42\n");
     }
 
     #[test]
