@@ -46,6 +46,8 @@ pub enum NodeKind {
     EnumDecl,
     /// A `class` declaration.
     ClassDecl,
+    /// An `actor` declaration (a reference type with actor isolation).
+    ActorDecl,
     /// A `protocol` declaration.
     ProtocolDecl,
     /// An `extension` declaration.
@@ -68,6 +70,8 @@ pub enum NodeKind {
     DeferStmt,
     /// A `try` / `try?` / `try!` expression (text is the operator).
     TryExpr,
+    /// An `await expr` expression (suspends until the operand's task completes).
+    AwaitExpr,
     /// An `operator` declaration (`infix operator <> : Group`).
     OperatorDecl,
     /// A `precedencegroup` declaration.
@@ -166,6 +170,7 @@ impl NodeKind {
             NodeKind::StructDecl => "struct_decl",
             NodeKind::EnumDecl => "enum_decl",
             NodeKind::ClassDecl => "class_decl",
+            NodeKind::ActorDecl => "actor_decl",
             NodeKind::ProtocolDecl => "protocol_decl",
             NodeKind::ExtensionDecl => "extension_decl",
             NodeKind::AssociatedTypeDecl => "associatedtype_decl",
@@ -177,6 +182,7 @@ impl NodeKind {
             NodeKind::ThrowStmt => "throw_stmt",
             NodeKind::DeferStmt => "defer_stmt",
             NodeKind::TryExpr => "try_expr",
+            NodeKind::AwaitExpr => "await_expr",
             NodeKind::OperatorDecl => "operator_decl",
             NodeKind::PrecedenceGroupDecl => "precedencegroup_decl",
             NodeKind::CompilerDirective => "compiler_directive",
