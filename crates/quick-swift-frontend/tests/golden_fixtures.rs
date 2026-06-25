@@ -6,8 +6,11 @@
 //! - `// expected-no-diagnostics` — the file must analyze with zero diagnostics.
 //! - `// expected-error{{substring}}` — the line it is on must produce a
 //!   diagnostic whose (case-insensitive) message contains `substring`.
-//! - `// oracle-gap: <reason>` — valid Swift the current C backend cannot handle;
-//!   skipped here, since this harness runs against that backend.
+//! - `// oracle-gap: <reason>` — valid Swift a differential C-oracle backend
+//!   cannot handle; skipped only by that backend's harness, never here.
+//!
+//! Every positive fixture is validated against the pure-Rust frontend; there is
+//! no escape hatch that masks frontend coverage gaps.
 //!
 //! See `tests/swift-fixtures/README.md` for the directive language.
 
@@ -31,11 +34,10 @@ enum Expectation {
 
 /// Parse the directive expectation out of a fixture's source text.
 fn parse_expectation(source: &str) -> Expectation {
-    // `oracle-gap`: valid Swift the old C backend could not handle.
-    // `rust-gap`: advanced Tier 0-10 spec syntax the pure-Rust frontend does
-    // not yet model (tracked under #37); skipped here so the runtime-facing
-    // cutover gate stays green without weakening the runtime fixtures.
-    if source.contains("// oracle-gap:") || source.contains("// rust-gap:") {
+    // `oracle-gap`: valid Swift only a differential C-oracle backend cannot
+    // handle. This pure-Rust harness validates every positive fixture, so the
+    // gap is recorded but never used to skip a frontend check here.
+    if source.contains("// oracle-gap:") {
         return Expectation::OracleGap;
     }
     let mut errors = Vec::new();

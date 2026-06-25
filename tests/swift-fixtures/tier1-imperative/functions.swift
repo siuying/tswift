@@ -1,4 +1,3 @@
-// rust-gap: advanced Tier 0-10 spec syntax not yet modelled by the pure-Rust frontend (tracked in #37)
 // expected-no-diagnostics
 // Tier 1b — labels, defaults, variadics, inout, nesting/capture, function values,
 // Never, @discardableResult, tuple returns.
