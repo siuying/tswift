@@ -251,8 +251,14 @@ impl<'a> Node<'a> {
     /// implicit child task whose value is produced concurrently).
     pub fn is_async_let(&self) -> bool {
         #[cfg(feature = "rust-backend")]
-        if self.rust.is_some() {
-            return false;
+        if let Some(id) = self.rust {
+            // The Rust backend records `async let` as the async modifier bit.
+            const MOD_ASYNC: u32 = 1 << 13;
+            return self
+                .analysis
+                .rust
+                .as_ref()
+                .is_some_and(|rust| rust.modifiers(id) & MOD_ASYNC != 0);
         }
 
         // SAFETY: the `var` arm is active for VAR_DECL/LET_DECL nodes; reading
@@ -1147,6 +1153,67 @@ mod tests {
             "{:?}",
             sides.modifier_names()
         );
+    }
+
+    /// The Rust backend exposes modifiers, attributes, ownership, and async-let
+    /// metadata through the existing helpers, using the frontend's own modifier
+    /// bit contract rather than any C enum values (#52).
+    #[cfg(feature = "rust-backend")]
+    #[test]
+    fn rust_backend_lowers_modifiers_attributes_and_flags() {
+        let a = Analysis::analyze_rust(
+            "@main\nstruct App {\n    @State var count = 0\n    static let shared = 1\n    lazy var cache = 2\n    weak var owner = 3\n    func main() {\n        async let job = run()\n        let plain = 1\n    }\n}\n",
+            "main.swift",
+        )
+        .unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+        let app = a
+            .root()
+            .children()
+            .find(|c| c.kind() == NodeKind::StructDecl)
+            .unwrap();
+
+        // `@main` is an Attribute child of the struct.
+        assert!(app
+            .children()
+            .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main")));
+
+        let body = app
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let member = |name: &str| {
+            body.children()
+                .find(|c| c.decl_name().as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("member {name}"))
+        };
+
+        // Property-wrapper attribute is a child of the wrapped property.
+        let count = member("count");
+        assert!(count
+            .children()
+            .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("State")));
+
+        assert!(member("shared").modifier_names().contains(&"static"));
+        assert!(member("cache").modifier_names().contains(&"lazy"));
+
+        // Ownership: `weak` is observable through `modifier_names`.
+        assert!(member("owner").modifier_names().contains(&"weak"));
+
+        // `async let job` is flagged; plain `let` is not.
+        let func_body = body
+            .children()
+            .find(|c| c.kind() == NodeKind::FuncDecl)
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let lets: Vec<_> = func_body
+            .children()
+            .filter(|c| c.kind() == NodeKind::LetDecl)
+            .collect();
+        assert!(lets[0].is_async_let(), "`async let job` should be async");
+        assert!(!lets[1].is_async_let(), "plain `let plain` should not be");
     }
 
     #[cfg(feature = "rust-backend")]
