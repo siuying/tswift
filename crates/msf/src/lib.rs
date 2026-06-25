@@ -89,6 +89,26 @@ impl Analysis {
         // SAFETY: `self.raw` is live; the token array is owned by it.
         unsafe { msf_sys::msf_tokens(self.raw) }
     }
+
+    /// The source text of the token at flat index `idx`, owned copy.
+    fn token_text_at(&self, idx: u32) -> Option<String> {
+        let src = self.source();
+        let tokens = self.tokens();
+        if src.is_null() || tokens.is_null() {
+            return None;
+        }
+        // SAFETY: `idx` indexes the result-owned token array; `token_text`
+        // returns a thread-local NUL-terminated string we copy immediately.
+        unsafe {
+            let tok = tokens.add(idx as usize);
+            let c = msf_sys::token_text(src, tok);
+            if c.is_null() {
+                None
+            } else {
+                Some(cstr_to_string(c))
+            }
+        }
+    }
 }
 
 impl Drop for Analysis {
@@ -106,6 +126,82 @@ impl Drop for Analysis {
 pub struct Node<'a> {
     ptr: *const msf_sys::ASTNode,
     analysis: &'a Analysis,
+}
+
+impl<'a> Node<'a> {
+    /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`, the operator's
+    /// source text via its `op_tok`. For other nodes, `None`.
+    pub fn op_text(&self) -> Option<String> {
+        // SAFETY: reading the `binary.op_tok` arm. msf populates this arm for
+        // BINARY/ASSIGN/CAST nodes; for others the token index may be stale, so
+        // callers should only use this on those kinds.
+        let op_tok = unsafe { (*self.ptr).data.binary.op_tok };
+        self.analysis.token_text_at(op_tok)
+    }
+
+    /// For a declaration node (var/let/func/param), its name via `name_tok`.
+    pub fn decl_name(&self) -> Option<String> {
+        // SAFETY: the `var.name_tok`/`func.name_tok` arms overlap in layout
+        // (both first field u32 name_tok); valid for decl nodes.
+        let name_tok = unsafe { (*self.ptr).data.var.name_tok };
+        self.analysis.token_text_at(name_tok)
+    }
+
+    /// The declaration modifier bitmask (`ASTNode.modifiers`).
+    pub fn modifiers(&self) -> u32 {
+        // SAFETY: `modifiers` is a plain integer field on a live node.
+        unsafe { (*self.ptr).modifiers }
+    }
+
+    /// The argument label of a call argument (`arg_label_tok`), if present.
+    pub fn arg_label(&self) -> Option<String> {
+        // SAFETY: `arg_label_tok` is a plain integer field; 0 means none.
+        let tok = unsafe { (*self.ptr).arg_label_tok };
+        if tok == 0 {
+            None
+        } else {
+            self.analysis.token_text_at(tok)
+        }
+    }
+
+    /// The resolved type name of this node (e.g. `Int`, `UInt8`, `Double`,
+    /// `[String]`, `Int?`), as produced by msf's `type_to_string`. `None` if
+    /// the node has no resolved type.
+    pub fn type_name(&self) -> Option<String> {
+        // SAFETY: `type_` is a result-owned `TypeInfo*` or NULL.
+        let ty = unsafe { (*self.ptr).type_ };
+        if ty.is_null() {
+            return None;
+        }
+        let mut buf = [0i8; 128];
+        // SAFETY: `ty` is non-null and result-owned; `buf` is a valid writable
+        // buffer of `len` bytes; `type_to_string` NUL-terminates within it.
+        unsafe {
+            let p = msf_sys::type_to_string(ty, buf.as_mut_ptr(), buf.len());
+            if p.is_null() {
+                None
+            } else {
+                Some(cstr_to_string(p))
+            }
+        }
+    }
+
+    /// A recursive debug dump of this subtree (kind + token text), for tests.
+    pub fn dump(&self) -> String {
+        let mut out = String::new();
+        self.dump_into(&mut out, 0);
+        out
+    }
+
+    fn dump_into(&self, out: &mut String, depth: usize) {
+        use std::fmt::Write as _;
+        let indent = "  ".repeat(depth);
+        let text = self.text().unwrap_or_default();
+        let _ = writeln!(out, "{indent}{:?} {:?}", self.kind(), text);
+        for child in self.children() {
+            child.dump_into(out, depth + 1);
+        }
+    }
 }
 
 impl<'a> Node<'a> {
