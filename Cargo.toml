@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/swift-lexer",
-    "crates/swift-ast",
-    "crates/swift-parser",
-    "crates/swift-sema",
-    "crates/quick-swift-frontend",
-    "crates/quick-swift-core",
-    "crates/quick-swift-std",
-    "crates/quick-swift-cli",
+    "crates/qswift-lexer",
+    "crates/qswift-ast",
+    "crates/qswift-parser",
+    "crates/qswift-sema",
+    "crates/qswift-frontend",
+    "crates/qswift-core",
+    "crates/qswift-std",
+    "crates/qswift-cli",
 ]
 
 [workspace.package]
@@ -18,6 +18,6 @@ license = "MIT"
 repository = "https://github.com/siuying/quick-swift"
 
 [workspace.dependencies]
-quick-swift-frontend = { path = "crates/quick-swift-frontend" }
-quick-swift-core = { path = "crates/quick-swift-core" }
-quick-swift-std = { path = "crates/quick-swift-std" }
+qswift-frontend = { path = "crates/qswift-frontend" }
+qswift-core = { path = "crates/qswift-core" }
+qswift-std = { path = "crates/qswift-std" }

@@ -1,0 +1,10 @@
+[package]
+name = "qswift-std"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "qswift standard library: native Rust implementations of Swift builtins."
+
+[dependencies]
+qswift-core.workspace = true
