@@ -69,6 +69,29 @@ impl Env {
         self.scopes.pop();
     }
 
+    /// Leave the innermost scope and, if it was not captured elsewhere, return
+    /// the values it held (so the caller can run `deinit` for released objects).
+    pub fn pop_owned(&mut self) -> Vec<SwiftValue> {
+        match self.scopes.pop() {
+            Some(scope) => match Rc::try_unwrap(scope) {
+                Ok(cell) => cell.into_inner().into_values().map(|b| b.value).collect(),
+                Err(_) => Vec::new(),
+            },
+            None => Vec::new(),
+        }
+    }
+
+    /// Take and replace the global scope's owned values, for end-of-program
+    /// `deinit`. Leaves a fresh empty global scope behind.
+    pub fn drain_global(&mut self) -> Vec<SwiftValue> {
+        if let Some(first) = self.scopes.first_mut() {
+            let taken = std::mem::take(&mut *first.borrow_mut());
+            taken.into_values().map(|b| b.value).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Declare a new binding in the innermost scope (shadowing any outer one).
     pub fn declare(&mut self, name: &str, value: SwiftValue, mutable: bool) {
         self.scopes
