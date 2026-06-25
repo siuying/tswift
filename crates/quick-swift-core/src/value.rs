@@ -171,6 +171,14 @@ pub enum SwiftValue {
     Weak(Weak<RefCell<ClassObj>>),
     /// A closure value: an index into the interpreter's closure table.
     Closure(usize),
+    /// A structured-concurrency task handle: an index into the interpreter's
+    /// task table. Produced by `async let`, `Task { }`, and `group.addTask`;
+    /// `await`-ing it drives the task to completion and yields its result.
+    Task(usize),
+    /// A `withTaskGroup` child-task group: an index into the interpreter's
+    /// group table. `addTask` appends children; `for await` drains their
+    /// results.
+    TaskGroup(usize),
 }
 
 /// The storage of a class instance.
@@ -258,6 +266,8 @@ impl SwiftValue {
             SwiftValue::Object(o) => o.borrow().class_name.clone(),
             SwiftValue::Weak(_) => "Optional".into(),
             SwiftValue::Closure(_) => "closure".into(),
+            SwiftValue::Task(_) => "Task".into(),
+            SwiftValue::TaskGroup(_) => "TaskGroup".into(),
         }
     }
 }
@@ -349,6 +359,8 @@ impl fmt::Display for SwiftValue {
                 None => write!(f, "nil"),
             },
             SwiftValue::Closure(_) => write!(f, "(Function)"),
+            SwiftValue::Task(_) => write!(f, "Task"),
+            SwiftValue::TaskGroup(_) => write!(f, "TaskGroup"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;
                 if !e.payload.is_empty() {
