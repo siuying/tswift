@@ -2,11 +2,10 @@
 
 A lightweight **Swift runtime** written in Rust.
 
-`quick-swift` runs Swift source code without a Swift toolchain, LLVM, or codegen.
-It parses Swift with [`msf`](https://github.com/toprakdeviren/msf) — a single-header
-C frontend that does lexing → parsing → 3-pass semantic analysis and emits a fully
-typed AST — then implements **all runtime behaviour** (language semantics *and* the
-standard library) in safe Rust on top of that AST.
+`quick-swift` runs Swift source code without a Swift toolchain, LLVM, codegen, or
+any C dependency. It parses Swift with a **pure-Rust frontend** (`swift-lexer` →
+`swift-parser` → `swift-sema`) and implements **all runtime behaviour** (language
+semantics *and* the standard library) in safe Rust on top of that AST.
 
 ```sh
 echo 'print("hello, swift")' > hello.swift
@@ -19,15 +18,16 @@ cargo run -p quick-swift-cli -- run hello.swift   # => hello, swift
 
 A tree-walking interpreter for Swift. The split of responsibilities is deliberate:
 
-- **msf (C library)** owns the *frontend*: lexing, parsing, and a 3-pass typechecker.
-  We treat it as a black box that produces a typed AST. We do **not** write a Swift
-  parser or typechecker.
+- **pure-Rust frontend** owns lexing, parsing, and semantic analysis: `swift-lexer`
+  → `swift-ast` → `swift-parser` → `swift-sema`. Results are lowered through
+  `quick-swift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
+  `Node` / `NodeKind`). No C, no LLVM, no `unsafe`.
 - **quick-swift (Rust)** owns the *runtime*:
   - **(a) Language features** — the evaluator/semantics: values, control flow, types,
-    generics, ARC, closures, errors, …
+    generics, ARC, closures, errors, concurrency, …
   - **(b) Standard library** — the *behaviour* of `Int` / `String` / `Array` /
-    `Dictionary` / `Optional` / protocols / etc. msf gives us type *shapes*; Rust
-    supplies the behaviour.
+    `Dictionary` / `Optional` / protocols / etc. The frontend gives us type
+    *shapes*; Rust supplies the behaviour.
 
 ### Why Rust?
 
@@ -43,14 +43,14 @@ hard memory semantics become native Rust idioms rather than features we re-imple
 | Overflow trap `+` / wrapping `&+` | `checked_add` (trap) / `wrapping_add` |
 | UTF-8 `String` backing (Swift 5+) | Rust `String` |
 
-We get memory safety for free in the evaluator and confine `unsafe` to the thin FFI
-layer that walks msf's AST.
+We get memory safety for free in the evaluator and there is no `unsafe` code anywhere
+in the stack (`quick-swift-frontend` is `#![forbid(unsafe_code)]`).
 
-> **Status:** actively developed, well past the initial skeleton. Tiers 0–5 of the
-> Swift feature surface (literals, control flow, value/reference types, ARC, protocols,
-> generics, error handling, `Codable`, …) are substantially implemented and covered by
-> 47+ golden fixtures. Concurrency (Tier 7) and macros (Tier 8) and a bytecode VM for
-> speed (Tier 6) are future work. See
+> **Status:** actively developed. Tiers 0–7 of the Swift feature surface (literals,
+> control flow, value/reference types, ARC, protocols, generics, error handling,
+> `Codable`, async/await, actors, task groups) are substantially implemented and
+> covered by 53+ golden fixtures. Macros (Tier 8) and a bytecode VM for speed
+> (Tier 6) are future work. See
 > [`docs/swift-runtime/feature-checklist.md`](docs/swift-runtime/feature-checklist.md)
 > for the per-feature status.
 
@@ -62,35 +62,48 @@ layer that walks msf's AST.
  Swift source
      │
      ▼
-┌──────────────┐   FFI    ┌───────────────────────────────────────────┐
-│ msf (C lib)  │ ───────▶ │ Rust runtime (quick-swift)                │
-│ lex→parse→   │  raw     │  msf-sys → msf (safe) → core → std → cli    │
-│ sema (typed  │  ptrs    │  language features + standard library      │
-│ AST)         │          │  ARC=Rc · CoW=make_mut · safe evaluation    │
-└──────────────┘          └───────────────────────────────────────────┘
+┌────────────────────────────────┐
+│ pure-Rust frontend             │
+│  swift-lexer                   │
+│    → swift-ast                 │
+│    → swift-parser              │
+│    → swift-sema                │
+│    → quick-swift-frontend      │
+│      (compat lowerer → AST)    │
+└────────────────┬───────────────┘
+                 │ Analysis / Node / NodeKind
+                 ▼
+┌────────────────────────────────┐
+│ Rust runtime (quick-swift)     │
+│  core → std → cli              │
+│  language features +           │
+│  standard library              │
+│  ARC=Rc · CoW=make_mut         │
+└────────────────────────────────┘
 ```
 
 1. The CLI reads one or more `.swift` files (multiple files are concatenated into one
    module so cross-file references resolve).
-2. `Analysis::analyze` calls into msf over FFI to produce a typed AST.
+2. `Analysis::analyze` runs the pure-Rust pipeline to produce a typed AST.
 3. The interpreter walks the AST node-by-node (`eval(node, env) -> Completion`),
-   resolving identifiers through its own lexical scope chain (msf leaves identifiers
-   unresolved), evaluating expressions into `SwiftValue`s, and streaming `print` output
-   to stdout.
+   resolving identifiers through its own lexical scope chain, evaluating expressions
+   into `SwiftValue`s, and streaming `print` output to stdout.
 
 ### Workspace layout
 
 | Crate | Role | `unsafe`? |
 |---|---|---|
-| [`crates/msf-sys`](crates/msf-sys) | Raw FFI to msf (`build.rs`: `cc` compiles msf + `stub.c`, `bindgen` generates bindings) | yes (generated) |
-| [`crates/msf`](crates/msf) | Safe wrapper: `Analysis`, `Node`, `NodeKind` — owns the AST lifetime via `Drop` | confined here |
+| [`crates/swift-lexer`](crates/swift-lexer) | Tokenizer for Swift source | no |
+| [`crates/swift-ast`](crates/swift-ast) | AST node definitions | no |
+| [`crates/swift-parser`](crates/swift-parser) | Recursive-descent parser | no |
+| [`crates/swift-sema`](crates/swift-sema) | Semantic analysis / type resolution | no |
+| [`crates/quick-swift-frontend`](crates/quick-swift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime | no (`#![forbid(unsafe_code)]`) |
 | [`crates/quick-swift-core`](crates/quick-swift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam | no |
 | [`crates/quick-swift-std`](crates/quick-swift-std) | Native standard library builtins (e.g. `print`) | no |
 | [`crates/quick-swift-cli`](crates/quick-swift-cli) | The `quick-swift` binary | no |
 
-The key FFI invariant — *the AST lives exactly as long as its `Analysis`* — is enforced
-by the borrow checker: `Node<'a>` borrows its `Analysis`, so nodes can never outlive the
-arena that owns them. Everything above `msf-sys` is safe Rust. See
+The `Analysis` → `Node<'a>` lifetime invariant — *nodes can never outlive the arena
+that owns them* — is enforced by the borrow checker. See
 [`docs/adr/0001-ffi-strategy-and-crate-architecture.md`](docs/adr/0001-ffi-strategy-and-crate-architecture.md)
 and the [implementation plan](docs/plan/swift-runtime-implementation-plan.md) for the
 full architecture and rationale.
@@ -102,17 +115,14 @@ full architecture and rationale.
 ### Prerequisites
 
 - **Rust** (stable, edition 2021) — install via [rustup](https://rustup.rs).
-- **A C compiler** — to compile msf (Clang on macOS, GCC/Clang on Linux).
-- **`libclang`** — `bindgen` needs it at build time.
-  - macOS: preinstalled with the Xcode Command Line Tools (`xcode-select --install`).
-  - Debian/Ubuntu: `apt-get install libclang-dev`.
+
+No C compiler, no `libclang`, no submodules required.
 
 ### Build
 
 ```sh
 git clone https://github.com/siuying/quick-swift
 cd quick-swift
-git submodule update --init     # fetch vendor/msf
 cargo build
 ```
 
@@ -150,7 +160,7 @@ Where a `swiftc` toolchain is available, fixtures are validated against real Swi
 output as the ground truth.
 
 Per-crate Rust unit tests additionally cover ARC counts (`Rc::strong_count`), CoW
-uniqueness, value-copy semantics, pattern matching, and the FFI accessors.
+uniqueness, value-copy semantics, pattern matching, and the AST accessors.
 
 ---
 
@@ -161,7 +171,7 @@ uniqueness, value-copy semantics, pattern matching, and the FFI accessors.
 - [`docs/swift-runtime/feature-checklist.md`](docs/swift-runtime/feature-checklist.md)
   — the full Swift 6.3 feature surface with per-feature frontend/runtime/phase status.
 - [`docs/adr/`](docs/adr) — architectural decision records.
-- [`docs/research/`](docs/research) — background research on msf and VM design.
+- [`docs/research/`](docs/research) — background research on the frontend and VM design.
 
 ---
 
