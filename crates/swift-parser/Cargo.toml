@@ -1,0 +1,11 @@
+[package]
+name = "swift-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Recursive-descent + Pratt Swift parser for the quick-swift frontend pipeline."
+
+[dependencies]
+swift-lexer = { path = "../swift-lexer" }
+swift-ast = { path = "../swift-ast" }
