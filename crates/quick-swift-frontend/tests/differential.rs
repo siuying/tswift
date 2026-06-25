@@ -50,6 +50,16 @@ const CLEAN: &[&str] = &[
     "let pick = 1 < 2 ? 10 : 20",
     "print(\"hi\")",
     "let a = 10\nlet b = a + 5",
+    // Tier 1b/1c — functions and control flow.
+    "func add(_ a: Int, _ b: Int) -> Int { return a + b }",
+    "func greet(name: String) -> String { return name }",
+    "func noop() { }",
+    "if 1 < 2 { print(\"yes\") } else { print(\"no\") }",
+    "var n = 3\nwhile n > 0 { n -= 1 }",
+    "repeat { print(\"x\") } while false",
+    "for i in 0 ..< 5 { print(i) }",
+    "func g(_ x: Int) -> Int { guard x > 0 else { return 0 }\n return x }",
+    "func classify(_ x: Int) -> Int { switch x { case 0: return 0\n default: return 1 } }",
 ];
 
 /// Snippets the permissive C oracle accepts but the Rust frontend rejects: a
