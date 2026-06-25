@@ -368,7 +368,52 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// A recursive debug dump of this subtree (kind + token text), for tests.
+    /// Decode this node's `modifiers` bitmask into a list of flag names.
+    ///
+    /// Best-effort and **context-dependent**: msf reuses some bits across
+    /// unrelated node kinds (e.g. bit 22 is `weak`-capture on a closure capture
+    /// but `borrowing` on a parameter). This decodes the unambiguous global
+    /// bits — access control, `static`/`final`/`override`, `mutating`, `lazy`,
+    /// `weak`/`unowned`, `throws`, `variadic`, etc. — which is what an AST dump
+    /// wants. For precise per-kind semantics, read the raw [`Node::modifiers`].
+    pub fn modifier_names(&self) -> Vec<&'static str> {
+        let m = self.modifiers();
+        const FLAGS: &[(u32, &str)] = &[
+            (1 << 0, "public"),
+            (1 << 1, "private"),
+            (1 << 2, "internal"),
+            (1 << 3, "fileprivate"),
+            (1 << 4, "open"),
+            (1 << 5, "static"),
+            (1 << 6, "final"),
+            (1 << 7, "override"),
+            (1 << 8, "mutating"),
+            (1 << 9, "nonmutating"),
+            (1 << 10, "lazy"),
+            (1 << 11, "weak"),
+            (1 << 12, "unowned"),
+            (1 << 13, "async"),
+            (1 << 14, "throws"),
+            (1 << 15, "rethrows"),
+            (1 << 16, "indirect"),
+            (1 << 17, "required"),
+            (1 << 18, "convenience"),
+            (1 << 19, "dynamic"),
+            (1 << 26, "escaping"),
+            (1 << 27, "autoclosure"),
+            (1 << 28, "variadic"),
+            (1 << 29, "failable"),
+        ];
+        FLAGS
+            .iter()
+            .filter(|(bit, _)| m & bit != 0)
+            .map(|(_, name)| *name)
+            .collect()
+    }
+
+    /// A recursive, human-readable dump of this subtree: kind, token text, line,
+    /// resolved type, and decoded modifiers. This is the AST-inspection format
+    /// behind `quick-swift dump`.
     pub fn dump(&self) -> String {
         let mut out = String::new();
         self.dump_into(&mut out, 0);
@@ -378,12 +423,96 @@ impl<'a> Node<'a> {
     fn dump_into(&self, out: &mut String, depth: usize) {
         use std::fmt::Write as _;
         let indent = "  ".repeat(depth);
-        let text = self.text().unwrap_or_default();
-        let _ = writeln!(out, "{indent}{:?} {:?}", self.kind(), text);
+        let kind = self.kind();
+        let raw = match kind {
+            NodeKind::Other(n) => format!("Other({n})"),
+            k => format!("{k:?}"),
+        };
+        let _ = write!(out, "{indent}{raw}");
+        if let Some(text) = self.text() {
+            if !text.is_empty() {
+                let _ = write!(out, " {text:?}");
+            }
+        }
+        let line = self.line();
+        if line > 0 {
+            let _ = write!(out, " L{line}");
+        }
+        if let Some(ty) = self.type_name() {
+            let _ = write!(out, " :{ty}");
+        }
+        let mods = self.modifier_names();
+        if !mods.is_empty() {
+            let _ = write!(out, " [{}]", mods.join(","));
+        }
+        let _ = writeln!(out);
         for child in self.children() {
             child.dump_into(out, depth + 1);
         }
     }
+
+    /// A structured JSON dump of this subtree (kind, text, line, type,
+    /// modifiers, children), for tooling that wants to consume the AST shape.
+    pub fn dump_json(&self) -> String {
+        let mut out = String::new();
+        self.dump_json_into(&mut out);
+        out
+    }
+
+    fn dump_json_into(&self, out: &mut String) {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{{\"kind\":\"{}\"", self.kind().name());
+        if let NodeKind::Other(n) = self.kind() {
+            let _ = write!(out, ",\"raw\":{n}");
+        }
+        if let Some(text) = self.text() {
+            if !text.is_empty() {
+                let _ = write!(out, ",\"text\":{}", json_string(&text));
+            }
+        }
+        let line = self.line();
+        if line > 0 {
+            let _ = write!(out, ",\"line\":{line}");
+        }
+        if let Some(ty) = self.type_name() {
+            let _ = write!(out, ",\"type\":{}", json_string(&ty));
+        }
+        let mods = self.modifier_names();
+        if !mods.is_empty() {
+            let parts: Vec<String> = mods.iter().map(|m| json_string(m)).collect();
+            let _ = write!(out, ",\"modifiers\":[{}]", parts.join(","));
+        }
+        let mut children = self.children().peekable();
+        if children.peek().is_some() {
+            out.push_str(",\"children\":[");
+            for (i, child) in children.enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                child.dump_json_into(out);
+            }
+            out.push(']');
+        }
+        out.push('}');
+    }
+}
+
+/// Minimal JSON string escaping for [`Node::dump_json`].
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 impl<'a> Node<'a> {
@@ -598,6 +727,53 @@ mod tests {
         let arg = kids.next().expect("argument");
         assert_eq!(arg.kind(), NodeKind::IntegerLiteral);
         assert_eq!(arg.int(), Some(42));
+    }
+
+    /// Generated `NodeKind` names every msf kind, so constructs that used to be
+    /// `Other(N)` now have proper variants and `name()` strings.
+    #[test]
+    fn generated_kinds_are_named() {
+        let a = Analysis::analyze(
+            "@main struct App { static func main() throws {} }\n",
+            "m.swift",
+        )
+        .unwrap();
+        let root = a.root();
+        let app = root.children().next().expect("struct");
+        assert_eq!(app.kind(), NodeKind::StructDecl);
+        // `@main` is an Attribute node (was `Other(16)` before codegen).
+        let attr = app
+            .children()
+            .find(|c| c.kind() == NodeKind::Attribute)
+            .expect("@main attribute");
+        assert_eq!(attr.text().as_deref(), Some("main"));
+        assert_eq!(NodeKind::StructDecl.name(), "struct_decl");
+    }
+
+    /// `modifier_names` decodes the bitmask, and `dump` reports kind/line/type/
+    /// modifiers — the AST-inspection surface behind `quick-swift dump`.
+    #[test]
+    fn dump_reports_modifiers_and_types() {
+        let a = Analysis::analyze("struct S { static func f() throws {} }\n", "m.swift").unwrap();
+        let func = a
+            .root()
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::FuncDecl)
+            .expect("func decl");
+        let mods = func.modifier_names();
+        assert!(mods.contains(&"static"), "mods: {mods:?}");
+        assert!(mods.contains(&"throws"), "mods: {mods:?}");
+
+        let dump = a.root().dump();
+        assert!(dump.contains("FuncDecl"), "{dump}");
+        assert!(dump.contains("[static,throws]"), "{dump}");
+        assert!(dump.contains("L1"), "{dump}");
     }
 
     /// A syntax error surfaces as a diagnostic, not a crash.

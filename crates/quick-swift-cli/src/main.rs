@@ -1,10 +1,13 @@
 //! `quick-swift` — the command-line entry point.
 //!
 //! Usage:
-//!   quick-swift run <file.swift>
+//!   quick-swift run <file.swift> [more.swift ...]
+//!   quick-swift dump [--json] <file.swift>
 //!
-//! Reads a Swift source file, analyzes it with msf, and evaluates it through the
-//! quick-swift runtime, streaming program output to stdout.
+//! `run` analyzes a Swift source file with msf and evaluates it through the
+//! quick-swift runtime, streaming program output to stdout. `dump` prints the
+//! typed AST (kind, text, line, resolved type, modifiers) for inspecting how msf
+//! parses a construct — the fast path when adding a language feature.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -28,15 +31,61 @@ fn main() -> ExitCode {
                 run(&paths)
             }
         }
+        Some("dump") => {
+            let rest: Vec<String> = args.collect();
+            let json = rest.iter().any(|a| a == "--json");
+            match rest.iter().find(|a| !a.starts_with("--")) {
+                Some(path) => dump(path, json),
+                None => {
+                    eprintln!(
+                        "error: `dump` requires a file path\n\nusage: quick-swift dump [--json] <file.swift>"
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Some(other) => {
-            eprintln!("error: unknown command `{other}`\n\nusage: quick-swift run <file.swift>");
+            eprintln!(
+                "error: unknown command `{other}`\n\nusage: quick-swift run <file.swift> | quick-swift dump [--json] <file.swift>"
+            );
             ExitCode::FAILURE
         }
         None => {
-            eprintln!("usage: quick-swift run <file.swift> [more.swift ...]");
+            eprintln!(
+                "usage: quick-swift run <file.swift> [more.swift ...]\n       quick-swift dump [--json] <file.swift>"
+            );
             ExitCode::FAILURE
         }
     }
+}
+
+/// Analyze `path` and print its typed AST. Diagnostics (errors/warnings) go to
+/// stderr so the tree itself stays clean on stdout.
+fn dump(path: &str, json: bool) -> ExitCode {
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read `{path}`: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let analysis = match Analysis::analyze(&source, path) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for diag in analysis.diagnostics() {
+        eprintln!("{}:{}: {}", diag.line, diag.col, diag.message);
+    }
+    let root = analysis.root();
+    if json {
+        println!("{}", root.dump_json());
+    } else {
+        print!("{}", root.dump());
+    }
+    ExitCode::SUCCESS
 }
 
 /// Analyze and evaluate the Swift file(s) at `paths`. Multiple files form one
