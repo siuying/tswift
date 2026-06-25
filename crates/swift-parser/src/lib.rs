@@ -576,11 +576,15 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::Colon)?;
         let body = self.ast.add(NodeKind::Block, None, kw.line, kw.col);
-        while !self.at_keyword("case")
-            && !self.at_keyword("default")
-            && self.peek().kind != TokenKind::RBrace
-            && !self.at_eof()
-        {
+        loop {
+            self.skip_semicolons();
+            if self.at_keyword("case")
+                || self.at_keyword("default")
+                || self.peek().kind == TokenKind::RBrace
+                || self.at_eof()
+            {
+                break;
+            }
             let stmt = self.parse_statement()?;
             self.ast.append_child(body, stmt);
         }
@@ -1121,7 +1125,7 @@ impl<'a> Parser<'a> {
             .ast
             .add(NodeKind::ClosureExpr, None, open.line, open.col);
         if self.peek().kind == TokenKind::LBracket {
-            self.skip_bracketed(); // capture list `[weak self]`
+            self.parse_capture_list(node)?;
         }
         self.try_closure_signature(node);
         let saved = self.no_trailing_closure;
@@ -1137,6 +1141,56 @@ impl<'a> Parser<'a> {
         self.no_trailing_closure = saved;
         self.expect(TokenKind::RBrace)?;
         Ok(node)
+    }
+
+    /// A closure capture list `[weak self, base = 100, x]`, appending a
+    /// `ClosureCapture` child per entry (text = name, optional child = its
+    /// initializer expression). Ownership keywords (`weak`/`unowned`) are
+    /// recorded as modifiers.
+    fn parse_capture_list(&mut self, closure: NodeId) -> Result<(), ParseError> {
+        self.expect(TokenKind::LBracket)?;
+        if self.peek().kind == TokenKind::RBracket {
+            self.bump();
+            return Ok(());
+        }
+        loop {
+            let mut ownership = None;
+            if matches!(self.peek().text, "weak" | "unowned")
+                && self.peek().kind == TokenKind::Keyword
+            {
+                ownership = Some(self.bump().text);
+                // `unowned(unsafe)` / `unowned(safe)`.
+                if self.peek().kind == TokenKind::LParen {
+                    self.skip_balanced_parens();
+                }
+            }
+            let name = match self.peek().kind {
+                TokenKind::Identifier | TokenKind::Keyword => self.bump(),
+                other => return self.error(format!("expected a capture name, found {other:?}")),
+            };
+            let cap = self.ast.add(
+                NodeKind::ClosureCapture,
+                Some(name.text),
+                name.line,
+                name.col,
+            );
+            if let Some(kw) = ownership {
+                self.ast.add_modifier(cap, kw);
+            }
+            if self.at_oper("=") {
+                self.bump();
+                let init = self.parse_expr(0)?;
+                self.ast.append_child(cap, init);
+            }
+            self.ast.append_child(closure, cap);
+            if self.peek().kind == TokenKind::Comma {
+                self.bump();
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBracket)?;
+        Ok(())
     }
 
     /// Tentatively consume a closure signature ending in `in`; restore the
@@ -1184,26 +1238,6 @@ impl<'a> Parser<'a> {
                 TokenKind::RParen => in_type = false,
                 TokenKind::Colon => in_type = true,
                 TokenKind::Oper => in_type = true, // `->`
-                _ => {}
-            }
-            self.bump();
-        }
-    }
-
-    /// Consume a balanced `[ ... ]` group (e.g. a closure capture list).
-    fn skip_bracketed(&mut self) {
-        let mut depth = 0;
-        loop {
-            match self.peek().kind {
-                TokenKind::LBracket => depth += 1,
-                TokenKind::RBracket => {
-                    depth -= 1;
-                    if depth == 0 {
-                        self.bump();
-                        return;
-                    }
-                }
-                TokenKind::Eof => return,
                 _ => {}
             }
             self.bump();
@@ -2125,7 +2159,20 @@ fn is_labelable(kw: &str) -> bool {
 fn is_assignment(op: &str) -> bool {
     matches!(
         op,
-        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^="
+        "=" | "+="
+            | "-="
+            | "*="
+            | "/="
+            | "%="
+            | "&="
+            | "|="
+            | "^="
+            | "<<="
+            | ">>="
+            // Overflow-wrapping compound assignments.
+            | "&+="
+            | "&-="
+            | "&*="
     )
 }
 

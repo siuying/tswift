@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/msf-sys",
     "crates/swift-lexer",
     "crates/swift-ast",
     "crates/swift-parser",
@@ -19,7 +18,6 @@ license = "MIT"
 repository = "https://github.com/siuying/quick-swift"
 
 [workspace.dependencies]
-msf-sys = { path = "crates/msf-sys" }
 quick-swift-frontend = { path = "crates/quick-swift-frontend" }
 quick-swift-core = { path = "crates/quick-swift-core" }
 quick-swift-std = { path = "crates/quick-swift-std" }
