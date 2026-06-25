@@ -150,6 +150,10 @@ impl<'a> Parser<'a> {
             {
                 return self.parse_operator_or_precedence();
             }
+            // `actor Name { … }` (a contextual keyword, not a reserved word).
+            if w == "actor" && self.tokens[self.pos + 1].kind == TokenKind::Identifier {
+                return self.parse_nominal(NodeKind::ActorDecl);
+            }
         }
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
@@ -313,7 +317,10 @@ impl<'a> Parser<'a> {
 
     /// Consume effect markers (`async`/`throws`/`rethrows`, incl. typed throws).
     fn skip_effects(&mut self) {
-        if self.at_keyword("async") {
+        // `async` is a contextual keyword (lexed as an identifier).
+        if self.at_keyword("async")
+            || (self.peek().kind == TokenKind::Identifier && self.peek().text == "async")
+        {
             self.bump();
         }
         if self.at_keyword("throws") || self.at_keyword("rethrows") {
@@ -487,7 +494,19 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::ForStmt, label, kw.line, kw.col);
-        let pattern = self.parse_pattern()?;
+        // `for await x in seq` — asynchronous iteration (await is contextual).
+        let is_await = self.peek().kind == TokenKind::Identifier && self.peek().text == "await";
+        if is_await {
+            self.bump();
+            self.ast.add_modifier(node, "async");
+        }
+        // `for case <pattern> in seq` — pattern-matching iteration.
+        let pattern = if self.at_keyword("case") {
+            self.bump();
+            self.parse_case_pattern(false)?
+        } else {
+            self.parse_pattern()?
+        };
         self.ast.append_child(node, pattern);
         if !self.at_keyword("in") {
             return self.error("expected 'in' in a for-loop");
@@ -815,11 +834,7 @@ impl<'a> Parser<'a> {
                 let saved = self.no_trailing_closure;
                 self.no_trailing_closure = true;
                 loop {
-                    let pat = if self.at_keyword("let") || self.at_keyword("var") {
-                        self.parse_binding()?
-                    } else {
-                        self.parse_expr(0)?
-                    };
+                    let pat = self.parse_case_pattern(false)?;
                     self.ast.append_child(clause, pat);
                     if self.peek().kind == TokenKind::Comma {
                         self.bump();
@@ -1098,7 +1113,7 @@ impl<'a> Parser<'a> {
         if self.peek().kind == TokenKind::LBracket {
             self.skip_bracketed(); // capture list `[weak self]`
         }
-        self.try_closure_signature();
+        self.try_closure_signature(node);
         let saved = self.no_trailing_closure;
         self.no_trailing_closure = false;
         loop {
@@ -1116,12 +1131,21 @@ impl<'a> Parser<'a> {
 
     /// Tentatively consume a closure signature ending in `in`; restore the
     /// cursor and return `false` if the upcoming tokens are not a signature.
-    fn try_closure_signature(&mut self) -> bool {
+    fn try_closure_signature(&mut self, node: NodeId) -> bool {
         let save = self.pos;
+        // Identifiers in name position become the closure's `Param` children;
+        // tokens after `:` (a type) or `->` (the return type) are skipped.
+        let mut names: Vec<(&'a str, u32, u32)> = Vec::new();
+        let mut expect_name = true;
+        let mut in_type = false;
         loop {
             let t = self.peek();
             if t.kind == TokenKind::Keyword && t.text == "in" {
                 self.bump();
+                for (name, line, col) in names {
+                    let p = self.ast.add(NodeKind::Param, Some(name), line, col);
+                    self.ast.append_child(node, p);
+                }
                 return true;
             }
             let signature_like = matches!(
@@ -1133,12 +1157,26 @@ impl<'a> Parser<'a> {
                     | TokenKind::RParen
             ) || (t.kind == TokenKind::Oper && t.text == "->")
                 || (t.kind == TokenKind::Keyword && t.text == "inout");
-            if signature_like {
-                self.bump();
-            } else {
+            if !signature_like {
                 self.pos = save;
                 return false;
             }
+            match t.kind {
+                TokenKind::Identifier if expect_name && !in_type && t.text != "_" => {
+                    names.push((t.text, t.line, t.col));
+                    expect_name = false;
+                }
+                TokenKind::Comma => {
+                    expect_name = true;
+                    in_type = false;
+                }
+                TokenKind::LParen => expect_name = true,
+                TokenKind::RParen => in_type = false,
+                TokenKind::Colon => in_type = true,
+                TokenKind::Oper => in_type = true, // `->`
+                _ => {}
+            }
+            self.bump();
         }
     }
 
@@ -1639,19 +1677,28 @@ impl<'a> Parser<'a> {
         // `try` / `try?` / `try!` — an error-propagation prefix.
         if t.kind == TokenKind::Keyword && t.text == "try" {
             self.bump();
-            let mut op = String::from("try");
-            if self.peek().kind == TokenKind::Question || self.at_oper("!") {
-                op.push_str(self.bump().text);
-            }
+            // The runtime-facing payload is the variant marker alone: `?` for
+            // `try?`, `!` for `try!`, and `try` for the transparent form.
+            let op = if self.peek().kind == TokenKind::Question || self.at_oper("!") {
+                self.bump().text.to_string()
+            } else {
+                String::from("try")
+            };
             let operand = self.parse_prefix()?;
             let node = self.ast.add(NodeKind::TryExpr, Some(&op), t.line, t.col);
             self.ast.append_child(node, operand);
             return Ok(node);
         }
-        // `await` simply propagates its operand at the frontend level.
+        // `await expr` — suspends until the operand's task completes. Wrapped
+        // in an `AwaitExpr` so the runtime can resolve task/async-let values.
         if t.kind == TokenKind::Identifier && t.text == "await" && !self.is_value_ident_context() {
             self.bump();
-            return self.parse_prefix();
+            let operand = self.parse_prefix()?;
+            let node = self
+                .ast
+                .add(NodeKind::AwaitExpr, Some("await"), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
         }
         if t.kind == TokenKind::Oper && matches!(t.text, "-" | "+" | "!" | "~") {
             self.bump();
@@ -2705,7 +2752,8 @@ mod tests {
         let ast = ast_of("let v = try? parse()");
         let init = first_stmt(&ast).children().nth(1).unwrap();
         assert_eq!(init.kind(), NodeKind::TryExpr);
-        assert_eq!(init.text(), Some("try?"));
+        // The runtime-facing payload is the bare variant marker (`?`), not `try?`.
+        assert_eq!(init.text(), Some("?"));
     }
 
     #[test]
@@ -2826,6 +2874,35 @@ mod tests {
             .expect("@main attribute child");
         // The leading `@` is stripped, matching the runtime-facing payload.
         assert_eq!(attr.text(), Some("main"));
+    }
+
+    #[test]
+    fn concurrency_syntax_parses() {
+        // `actor` decl, `async` effect, `await` expr, `async let`, `for await`.
+        let ast = ast_of(
+            "actor Counter { var n = 0 }\n\
+             func run() async {\n\
+             async let a = fetch()\n\
+             let v = await a\n\
+             for await x in stream { use(x) }\n\
+             }",
+        );
+        let top: Vec<_> = ast.node(ast.root()).children().collect();
+        assert_eq!(top[0].kind(), NodeKind::ActorDecl);
+        let body = top[1]
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let stmts: Vec<_> = body.children().collect();
+        // `async let a` carries the async modifier.
+        assert_eq!(stmts[0].modifiers(), &["async".to_string()]);
+        // `await a` is an AwaitExpr wrapping its operand.
+        let v_init = stmts[1].children().last().unwrap();
+        assert_eq!(v_init.kind(), NodeKind::AwaitExpr);
+        // `for await x` carries the async modifier and binds `x`.
+        let for_stmt = stmts[2];
+        assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
+        assert_eq!(for_stmt.modifiers(), &["async".to_string()]);
     }
 
     #[test]

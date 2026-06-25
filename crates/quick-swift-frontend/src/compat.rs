@@ -27,6 +27,9 @@ struct RuntimeNode {
     is_default: bool,
     /// For a `CaseClause`, its `where` guard expression, if any.
     where_expr: Option<NodeId>,
+    /// For a `for await` loop, the real loop binding (the node's text is the
+    /// `await` sentinel the runtime keys on; `token_text_offset(1)` returns it).
+    for_await_binding: Option<String>,
     children: Vec<NodeId>,
 }
 
@@ -69,6 +72,7 @@ impl RuntimeAst {
                 arg_label: None,
                 is_default: false,
                 where_expr: None,
+                for_await_binding: None,
                 children: Vec::new(),
             }],
             diagnostics: vec![Diagnostic { message, line, col }],
@@ -87,6 +91,7 @@ impl RuntimeAst {
             arg_label: None,
             is_default: false,
             where_expr: None,
+            for_await_binding: None,
             children: Vec::new(),
         });
         id
@@ -99,9 +104,12 @@ impl RuntimeAst {
     fn lower_node(&mut self, node: swift_ast::Node<'_>) -> NodeId {
         use swift_ast::NodeKind as K;
         match node.kind() {
-            K::StructDecl | K::EnumDecl | K::ClassDecl | K::ProtocolDecl | K::ExtensionDecl => {
-                return self.lower_nominal(node)
-            }
+            K::StructDecl
+            | K::EnumDecl
+            | K::ClassDecl
+            | K::ActorDecl
+            | K::ProtocolDecl
+            | K::ExtensionDecl => return self.lower_nominal(node),
             K::LetDecl | K::VarDecl => return self.lower_binding(node),
             K::ForStmt => return self.lower_for(node),
             K::CaseClause => return self.lower_case_clause(node),
@@ -111,17 +119,43 @@ impl RuntimeAst {
         }
 
         let kind = map_kind(node.kind());
-        let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
+        // Source-location / message directives (`#line`, `#file`, `#warning`,
+        // …) carry their name without the leading `#`, matching the runtime's
+        // `eval_macro` keys.
+        let text = match node.kind() {
+            swift_ast::NodeKind::CompilerDirective => {
+                node.text().map(|t| t.trim_start_matches('#').to_string())
+            }
+            _ => node.text().map(ToOwned::to_owned),
+        };
+        let id = self.alloc(kind, text, node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
         self.nodes[id.0].arg_label = node.arg_label().map(ToOwned::to_owned);
 
-        let children: Vec<NodeId> = node
-            .children()
-            .map(|child| self.lower_node(child))
-            .collect();
+        let children = self.lower_child_list(node.children());
         self.set_children(id, children);
         id
+    }
+
+    /// Lower a child sequence, splicing resolved `#if` conditional-compilation
+    /// directives inline (as msf does) so their active-branch statements land in
+    /// the enclosing scope instead of behind a wrapper node the runtime would
+    /// skip.
+    fn lower_child_list<'b>(
+        &mut self,
+        children: impl Iterator<Item = swift_ast::Node<'b>>,
+    ) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        for child in children {
+            if child.kind() == swift_ast::NodeKind::CompilerDirective && child.text() == Some("#if")
+            {
+                out.extend(self.lower_child_list(child.children()));
+            } else {
+                out.push(self.lower_node(child));
+            }
+        }
+        out
     }
 
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
@@ -273,6 +307,11 @@ impl RuntimeAst {
     fn lower_for(&mut self, node: swift_ast::Node<'_>) -> NodeId {
         use swift_ast::NodeKind as K;
         let id = self.alloc(NodeKind::ForStmt, None, node.line());
+        // `for await` is recorded as the async modifier by the parser; the
+        // runtime detects it via the `await` sentinel text (ADR-0005), reading
+        // the real binding through `token_text_offset(1)`.
+        const MOD_ASYNC: u32 = 1 << 13;
+        let is_await = modifier_bits(node.modifiers()) & MOD_ASYNC != 0;
         let mut binding: Option<String> = None;
         let mut children: Vec<NodeId> = Vec::new();
         for child in node.children() {
@@ -286,7 +325,12 @@ impl RuntimeAst {
                 _ => children.push(self.lower_node(child)),
             }
         }
-        self.nodes[id.0].text = binding;
+        if is_await {
+            self.nodes[id.0].for_await_binding = binding;
+            self.nodes[id.0].text = Some("await".to_string());
+        } else {
+            self.nodes[id.0].text = binding;
+        }
         self.set_children(id, children);
         id
     }
@@ -361,6 +405,10 @@ impl RuntimeAst {
 
     pub(crate) fn case_where(&self, id: NodeId) -> Option<NodeId> {
         self.node(id).where_expr
+    }
+
+    pub(crate) fn for_await_binding(&self, id: NodeId) -> Option<String> {
+        self.node(id).for_await_binding.clone()
     }
 
     pub(crate) fn children(&self, id: NodeId) -> Children {
@@ -440,6 +488,7 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::StructDecl => NodeKind::StructDecl,
         K::EnumDecl => NodeKind::EnumDecl,
         K::ClassDecl => NodeKind::ClassDecl,
+        K::ActorDecl => NodeKind::ActorDecl,
         K::ProtocolDecl => NodeKind::ProtocolDecl,
         K::ExtensionDecl => NodeKind::ExtensionDecl,
         K::AssociatedTypeDecl => NodeKind::ProtocolReq,
@@ -451,6 +500,7 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::ThrowStmt => NodeKind::ThrowStmt,
         K::DeferStmt => NodeKind::DeferStmt,
         K::TryExpr => NodeKind::TryExpr,
+        K::AwaitExpr => NodeKind::AwaitExpr,
         K::OperatorDecl => NodeKind::OperatorDecl,
         K::PrecedenceGroupDecl => NodeKind::PrecedenceGroupDecl,
         K::CompilerDirective => NodeKind::MacroExpansion,

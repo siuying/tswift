@@ -209,6 +209,17 @@ fn rust_backend_tracer_fixtures_match() {
         "indirect_enum",
         "enum_raw_caseiterable",
         "control_flow",
+        // #54 — effects, directives, concurrency on the Rust backend.
+        "errors",
+        "try_variants",
+        "defer_order",
+        "conditional_compilation",
+        "concurrency_tasks",
+        "concurrency_async_await",
+        "concurrency_async_let",
+        "concurrency_actors",
+        "concurrency_task_group",
+        "concurrency_async_sequence",
     ] {
         let swift = fixtures_dir().join(format!("{fixture}.swift"));
         let expected = std::fs::read_to_string(swift.with_extension("expected"))
