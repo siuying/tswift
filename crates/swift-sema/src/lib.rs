@@ -27,6 +27,7 @@ pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
         scopes: vec![HashMap::new()],
         types: Vec::new(),
         diags: Vec::new(),
+        in_type_body: false,
     };
     let root = ast.root();
     r.prebind_func_decls(ast, root);
@@ -39,12 +40,24 @@ pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
     r.diags
 }
 
+/// One resolved name binding: its (optionally known) type and whether it may be
+/// reassigned (`var`/`inout`/parameter) or is a `let` constant.
+#[derive(Clone, Copy)]
+struct Binding {
+    ty: Option<Type>,
+    mutable: bool,
+}
+
 struct Resolver {
     /// A lexical scope stack; the last entry is the innermost scope.
-    scopes: Vec<HashMap<String, Type>>,
+    scopes: Vec<HashMap<String, Binding>>,
     /// Pending `(node, type)` annotations, applied after the walk.
     types: Vec<(NodeId, Type)>,
     diags: Vec<Diagnostic>,
+    /// True while binding the direct members of a nominal type. Stored `let`
+    /// properties are bound as mutable here: assigning to them is legal inside
+    /// the type's initializer, so the local-`let` constant check must not fire.
+    in_type_body: bool,
 }
 
 impl Resolver {
@@ -59,7 +72,7 @@ impl Resolver {
                 .and_then(|c| ast.node(c).text().and_then(parse_type_name))
                 .unwrap_or(Type::Void);
             if let Some(name) = ast.node(child).text() {
-                self.bind(name, ret);
+                self.bind(name, Some(ret), false);
             }
         }
     }
@@ -72,11 +85,19 @@ impl Resolver {
         self.scopes.pop();
     }
 
-    fn bind(&mut self, name: &str, ty: Type) {
-        self.scopes.last_mut().unwrap().insert(name.to_string(), ty);
+    fn bind(&mut self, name: &str, ty: Option<Type>, mutable: bool) {
+        let mutable = mutable || self.in_type_body;
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), Binding { ty, mutable });
     }
 
     fn lookup(&self, name: &str) -> Option<Type> {
+        self.lookup_binding(name).and_then(|b| b.ty)
+    }
+
+    fn lookup_binding(&self, name: &str) -> Option<Binding> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
     }
 
@@ -88,12 +109,32 @@ impl Resolver {
             NodeKind::StructDecl
             | NodeKind::EnumDecl
             | NodeKind::ClassDecl
-            | NodeKind::ProtocolDecl
-            | NodeKind::ExtensionDecl => {
+            | NodeKind::ProtocolDecl => {
                 self.push_scope();
+                let saved = self.in_type_body;
+                self.in_type_body = true;
                 for &member in &kids {
                     self.resolve_statement(ast, member);
                 }
+                self.in_type_body = saved;
+                self.pop_scope();
+            }
+            NodeKind::ExtensionDecl => {
+                self.push_scope();
+                let saved = self.in_type_body;
+                self.in_type_body = true;
+                for &member in &kids {
+                    if is_stored_property(ast, member) {
+                        let n = ast.node(member);
+                        self.diags.push(Diagnostic {
+                            message: "extensions must not contain stored properties".to_string(),
+                            line: n.line(),
+                            col: n.col(),
+                        });
+                    }
+                    self.resolve_statement(ast, member);
+                }
+                self.in_type_body = saved;
                 self.pop_scope();
             }
             // Type-level declarations carry no value bindings to resolve.
@@ -126,10 +167,14 @@ impl Resolver {
             }
             NodeKind::Block => {
                 self.push_scope();
+                // A block opens a local scope where `let` constants are checked.
+                let saved = self.in_type_body;
+                self.in_type_body = false;
                 self.prebind_func_decls(ast, stmt);
                 for &s in &kids {
                     self.resolve_statement(ast, s);
                 }
+                self.in_type_body = saved;
                 self.pop_scope();
             }
             // `if`/`guard`/`while`: conditions (expressions or `let` bindings),
@@ -247,9 +292,11 @@ impl Resolver {
             .find(|c| ast.node(**c).kind() == NodeKind::TypeRef)
             .and_then(|c| ast.node(*c).text())
             .and_then(parse_type_name);
-        if let (Some(name), Some(ty)) = (ast.node(param).text(), ty) {
-            self.bind(name, ty);
-            self.types.push((param, ty));
+        if let Some(name) = ast.node(param).text() {
+            self.bind(name, ty, true);
+            if let Some(ty) = ty {
+                self.types.push((param, ty));
+            }
         }
         // Resolve a default-value expression, if any.
         for &c in &kids {
@@ -277,7 +324,9 @@ impl Resolver {
         let init_ty = init.and_then(|e| self.infer(ast, e));
 
         let bound_ty = match (annotation, init_ty) {
-            (Some(a), Some(b)) if a != b => {
+            // `Void` from an initializer means "type not modelled" (e.g. a method
+            // call the skeleton sema cannot resolve), not a real mismatch.
+            (Some(a), Some(b)) if a != b && b != Type::Void => {
                 let n = ast.node(decl);
                 self.diags.push(Diagnostic {
                     message: format!(
@@ -296,9 +345,12 @@ impl Resolver {
 
         if let Some(ty) = bound_ty {
             self.types.push((decl, ty));
-            if ast.node(pattern).kind() == NodeKind::NamePattern {
-                if let Some(name) = ast.node(pattern).text() {
-                    self.bind(name, ty);
+        }
+        if ast.node(pattern).kind() == NodeKind::NamePattern {
+            if let Some(name) = ast.node(pattern).text() {
+                let mutable = ast.node(decl).kind() == NodeKind::VarDecl;
+                self.bind(name, bound_ty, mutable);
+                if let Some(ty) = bound_ty {
                     self.types.push((pattern, ty));
                 }
             }
@@ -350,6 +402,9 @@ impl Resolver {
                 None
             }
             NodeKind::AssignExpr => {
+                if let Some(&lhs) = children.first() {
+                    self.check_assignable(ast, lhs);
+                }
                 for c in &children {
                     self.infer(ast, *c);
                 }
@@ -357,9 +412,12 @@ impl Resolver {
             }
             NodeKind::ClosureExpr => {
                 self.push_scope();
+                let saved = self.in_type_body;
+                self.in_type_body = false;
                 for c in &children {
                     self.resolve_statement(ast, *c);
                 }
+                self.in_type_body = saved;
                 self.pop_scope();
                 None
             }
@@ -395,6 +453,25 @@ impl Resolver {
             self.types.push((id, t));
         }
         ty
+    }
+
+    /// Diagnose assignment to a `let` constant when the assignment target is a
+    /// bare name bound by `let`.
+    fn check_assignable(&mut self, ast: &Ast, lhs: NodeId) {
+        let node = ast.node(lhs);
+        if node.kind() != NodeKind::IdentExpr {
+            return;
+        }
+        let Some(name) = node.text() else { return };
+        if let Some(binding) = self.lookup_binding(name) {
+            if !binding.mutable {
+                self.diags.push(Diagnostic {
+                    message: format!("cannot assign to value: '{name}' is a 'let' constant"),
+                    line: node.line(),
+                    col: node.col(),
+                });
+            }
+        }
     }
 
     fn infer_binary(&mut self, ast: &Ast, node: &Node<'_>, children: &[NodeId]) -> Option<Type> {
@@ -437,6 +514,24 @@ impl Resolver {
 
 fn child_ids(ast: &Ast, id: NodeId) -> Vec<NodeId> {
     ast.node(id).children().map(|c| c.id()).collect()
+}
+
+/// Whether `member` is an instance stored property — a `let`/`var` with neither
+/// a `static`/`class` modifier nor an accessor block (which would make it
+/// computed). Such properties are illegal inside an extension.
+fn is_stored_property(ast: &Ast, member: NodeId) -> bool {
+    let node = ast.node(member);
+    if !matches!(node.kind(), NodeKind::VarDecl | NodeKind::LetDecl) {
+        return false;
+    }
+    if node
+        .modifiers()
+        .iter()
+        .any(|m| m == "static" || m == "class")
+    {
+        return false;
+    }
+    !node.children().any(|c| c.kind() == NodeKind::Accessor)
 }
 
 /// Map a written annotation to a modelled scalar type, else `None`.
@@ -689,6 +784,53 @@ mod tests {
         // The active branch's binding must register in the enclosing scope.
         let src = "#if DEBUG\n let level = 1\n #else\n let level = 0\n #endif\n\
                    let next = level + 1";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn assigning_to_a_let_constant_is_diagnosed() {
+        let (_ast, diags) = resolved("let limit = 10\nlimit = 20");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("'let' constant"), "{diags:?}");
+        assert_eq!(diags[0].line, 2);
+    }
+
+    #[test]
+    fn assigning_to_a_var_is_allowed() {
+        let (_ast, diags) = resolved("var total = 0\ntotal = 5");
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn initializer_may_assign_to_a_let_stored_property() {
+        // A `let` property is assignable inside the type's initializer; the
+        // local-constant check must not fire on it.
+        let src = "struct R {\n\
+                   let id: Int\n\
+                   init(_ i: Int) { id = i }\n\
+                   }";
+        let (_ast, diags) = resolved(src);
+        assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    #[test]
+    fn extension_stored_property_is_diagnosed() {
+        let src = "struct A { var x: Int }\n\
+                   extension A { var pending: Int = 0 }";
+        let (_ast, diags) = resolved(src);
+        assert!(
+            diags.iter().any(|d| d
+                .message
+                .contains("extensions must not contain stored properties")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn extension_computed_property_is_allowed() {
+        let src = "struct A { var x: Int }\n\
+                   extension A { var doubled: Int { x } }";
         let (_ast, diags) = resolved(src);
         assert!(diags.is_empty(), "{diags:?}");
     }
