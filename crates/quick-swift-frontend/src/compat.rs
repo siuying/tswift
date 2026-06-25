@@ -444,15 +444,19 @@ impl RuntimeAst {
     }
 
     pub(crate) fn param_info(&self, id: NodeId) -> ParamInfo {
+        const MOD_VARIADIC: u32 = 1 << 28;
+        const MOD_INOUT: u32 = 1 << 30;
+        let bits = self.node(id).modifier_bits;
         ParamInfo {
             label: None,
             name: self.text(id).unwrap_or_default(),
-            variadic: false,
-            is_inout: self
-                .node(id)
-                .children
-                .iter()
-                .any(|&child| self.kind(child) == NodeKind::TypeInout),
+            variadic: bits & MOD_VARIADIC != 0,
+            is_inout: bits & MOD_INOUT != 0
+                || self
+                    .node(id)
+                    .children
+                    .iter()
+                    .any(|&child| self.kind(child) == NodeKind::TypeInout),
         }
     }
 
@@ -481,6 +485,9 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::AssignExpr => NodeKind::AssignExpr,
         K::TernaryExpr => NodeKind::TernaryExpr,
         K::TupleExpr => NodeKind::TupleExpr,
+        K::ArrayLiteral => NodeKind::ArrayLiteral,
+        K::DictLiteral => NodeKind::DictLiteral,
+        K::SubscriptExpr => NodeKind::SubscriptExpr,
         K::MemberExpr => NodeKind::MemberExpr,
         K::LetDecl => NodeKind::LetDecl,
         K::VarDecl => NodeKind::VarDecl,
@@ -501,6 +508,7 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::DeferStmt => NodeKind::DeferStmt,
         K::TryExpr => NodeKind::TryExpr,
         K::AwaitExpr => NodeKind::AwaitExpr,
+        K::InoutExpr => NodeKind::InoutExpr,
         K::OperatorDecl => NodeKind::OperatorDecl,
         K::PrecedenceGroupDecl => NodeKind::PrecedenceGroupDecl,
         K::CompilerDirective => NodeKind::MacroExpansion,
@@ -526,6 +534,8 @@ fn map_kind(kind: swift_ast::NodeKind) -> NodeKind {
         K::ContinueStmt => NodeKind::ContinueStmt,
         K::FallthroughStmt => NodeKind::FallthroughStmt,
         K::TypeRef => NodeKind::TypeIdent,
+        K::TypeArray => NodeKind::TypeArray,
+        K::TypeDict => NodeKind::TypeDict,
         K::NamePattern => NodeKind::PatternValueBinding,
         K::WildcardPattern => NodeKind::PatternWildcard,
         K::TuplePattern => NodeKind::PatternTuple,
@@ -568,6 +578,11 @@ fn modifier_bits(modifiers: &[String]) -> u32 {
             "required" => 1 << 17,
             "convenience" => 1 << 18,
             "dynamic" => 1 << 19,
+            // Parameter flags: `T...` variadic and `inout`. The runtime reads
+            // variadic via the same 1<<28 bit; inout uses a frontend-internal
+            // bit surfaced through `param_info`.
+            "variadic" => 1 << 28,
+            "inout" => 1 << 30,
             _ => 0,
         };
     }

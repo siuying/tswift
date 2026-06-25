@@ -220,6 +220,18 @@ fn rust_backend_tracer_fixtures_match() {
         "concurrency_actors",
         "concurrency_task_group",
         "concurrency_async_sequence",
+        // #55 — calls, accessors, subscripts, custom operators on the Rust backend.
+        "func_labels_defaults",
+        "func_variadic",
+        "struct_inout",
+        "struct_observers",
+        "struct_value",
+        "subscripts",
+        "custom_operator",
+        "super_init",
+        "protocols",
+        "generics",
+        "classes_inheritance",
     ] {
         let swift = fixtures_dir().join(format!("{fixture}.swift"));
         let expected = std::fs::read_to_string(swift.with_extension("expected"))
