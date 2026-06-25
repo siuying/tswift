@@ -8,8 +8,9 @@
 //!
 //! Coverage today spans **Tier 0** lexical structure: integer literals in every
 //! radix (with `_` separators), floating-point literals (decimal and hex), the
-//! full operator set, string literals (with escapes), line/block/nested
-//! comments, and unicode identifiers. Keywords are lexed as [`TokenKind::Keyword`].
+//! full operator set, string literals (single-line, multiline `"""`, and raw
+//! `#"…"#`, with escapes), line/block/nested comments, and unicode identifiers.
+//! Keywords are lexed as [`TokenKind::Keyword`].
 
 #![forbid(unsafe_code)]
 
@@ -289,6 +290,8 @@ impl<'a> Lexer<'a> {
             b':' => self.single(TokenKind::Colon),
             b';' => self.single(TokenKind::Semicolon),
             b'"' => return self.string(start, line, col),
+            // `#"…"#` / `#"""…"""#` raw string literals (any number of hashes).
+            b'#' if self.is_raw_string_start() => return self.string(start, line, col),
             // `@name` attribute and `#name` compiler directive lex as one token.
             b'@' | b'#' => {
                 self.advance_byte();
@@ -401,25 +404,54 @@ impl<'a> Lexer<'a> {
         self.take_while(is_dec_or_us);
     }
 
-    /// Lex a double-quoted string literal; `start`/`line`/`col` mark the opening quote.
+    /// Whether the cursor begins a raw string literal: one or more `#` followed
+    /// by a `"`, e.g. `#"…"#` or `##"…"##`.
+    fn is_raw_string_start(&self) -> bool {
+        let hashes = self.leading_hashes();
+        hashes > 0 && self.peek_at(hashes) == Some(b'"')
+    }
+
+    /// Number of consecutive `#` at the cursor.
+    fn leading_hashes(&self) -> usize {
+        let mut n = 0;
+        while self.peek_at(n) == Some(b'#') {
+            n += 1;
+        }
+        n
+    }
+
+    /// Lex a string literal of any flavour — single-line, multiline (`"""`), and
+    /// raw (`#"…"#`) — possibly combined. `start`/`line`/`col` mark the opening
+    /// delimiter. The token text spans the full literal including its delimiters;
+    /// escape processing and `\(…)` interpolation are decoded downstream.
     fn string(&mut self, start: usize, line: u32, col: u32) -> Result<Token<'a>, LexError> {
-        self.advance_byte(); // opening quote
-        while let Some(c) = self.peek() {
-            match c {
-                b'"' => {
-                    self.advance_byte();
+        let hashes = self.leading_hashes();
+        self.take(hashes); // `#`* raw-string delimiter
+        let multiline = self.starts_with("\"\"\"");
+        let quotes = if multiline { 3 } else { 1 };
+        self.take(quotes); // opening quote(s)
+        loop {
+            match self.peek() {
+                None => break,
+                Some(b'"') if self.at_closing_delimiter(quotes, hashes) => {
+                    self.take(quotes + hashes);
                     return Ok(self.make(TokenKind::StringLiteral, start, line, col));
                 }
-                b'\\' => {
-                    // Consume the backslash and the escaped char together so an
-                    // escaped quote does not terminate the literal.
-                    self.advance_byte();
+                // `\(…)` interpolation: skip the whole balanced group so inner
+                // quotes and `)` do not prematurely terminate the literal.
+                Some(b'\\') if self.at_interpolation(hashes) => {
+                    self.consume_interpolation(hashes, line, col)?;
+                }
+                // In a raw string `\` is literal; elsewhere it escapes the next
+                // character (so an escaped quote does not terminate the literal).
+                Some(b'\\') if hashes == 0 => {
+                    self.advance_char();
                     if self.peek().is_some() {
-                        self.advance_byte();
+                        self.advance_char();
                     }
                 }
-                b'\n' => break,
-                _ => self.advance_byte(),
+                Some(b'\n') if !multiline => break,
+                _ => self.advance_char(),
             }
         }
         Err(LexError {
@@ -427,6 +459,90 @@ impl<'a> Lexer<'a> {
             line,
             col,
         })
+    }
+
+    /// Whether the cursor begins a `\(…)` interpolation — a `\`, the literal's
+    /// `#` delimiter count, then `(`. Raw strings interpolate via `\#(…)`.
+    fn at_interpolation(&self, hashes: usize) -> bool {
+        self.peek() == Some(b'\\')
+            && (0..hashes).all(|i| self.peek_at(1 + i) == Some(b'#'))
+            && self.peek_at(1 + hashes) == Some(b'(')
+    }
+
+    /// Consume a `\(…)` interpolation, skipping the balanced parenthesised group
+    /// and any nested string literals inside it.
+    fn consume_interpolation(
+        &mut self,
+        hashes: usize,
+        line: u32,
+        col: u32,
+    ) -> Result<(), LexError> {
+        self.take(1 + hashes + 1); // `\` + `#`* + `(`
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.peek() {
+                None => {
+                    return Err(LexError {
+                        message: "unterminated string interpolation".to_string(),
+                        line,
+                        col,
+                    })
+                }
+                Some(b'(') => {
+                    depth += 1;
+                    self.advance_char();
+                }
+                Some(b')') => {
+                    depth -= 1;
+                    self.advance_char();
+                }
+                Some(b'"') => self.skip_nested_string(),
+                _ => self.advance_char(),
+            }
+        }
+        Ok(())
+    }
+
+    /// Skip a simple nested string literal appearing inside an interpolation, so
+    /// its contents are not mistaken for the enclosing literal's delimiters.
+    fn skip_nested_string(&mut self) {
+        self.advance_char(); // opening quote
+        while let Some(c) = self.peek() {
+            match c {
+                b'"' => {
+                    self.advance_char();
+                    return;
+                }
+                b'\\' => {
+                    self.advance_char();
+                    if self.peek().is_some() {
+                        self.advance_char();
+                    }
+                }
+                b'\n' => return,
+                _ => self.advance_char(),
+            }
+        }
+    }
+
+    /// Whether the cursor is at the literal's closing delimiter: `quotes` quote
+    /// characters followed by exactly `hashes` `#`.
+    fn at_closing_delimiter(&self, quotes: usize, hashes: usize) -> bool {
+        (0..quotes).all(|i| self.peek_at(i) == Some(b'"'))
+            && (0..hashes).all(|i| self.peek_at(quotes + i) == Some(b'#'))
+            && self.peek_at(quotes + hashes) != Some(b'#')
+    }
+
+    /// Advance one byte, tracking line breaks so multiline strings keep accurate
+    /// positions (unlike [`Lexer::advance_byte`], which only tracks columns).
+    fn advance_char(&mut self) {
+        if self.peek() == Some(b'\n') {
+            self.pos += 1;
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.advance_byte();
+        }
     }
 
     /// Longest operator lexeme matching at the cursor, if any (its byte length).
@@ -715,6 +831,41 @@ mod tests {
             lex(r#""a\"b""#),
             vec![(TokenKind::StringLiteral, r#""a\"b""#)]
         );
+    }
+
+    #[test]
+    fn multiline_string_spans_newlines() {
+        let src = "\"\"\"\n  a\n  b\n  \"\"\"";
+        assert_eq!(lex(src), vec![(TokenKind::StringLiteral, src)]);
+        // The token after a multiline literal keeps an accurate line number.
+        let toks = tokenize("let s = \"\"\"\nx\n\"\"\"\nlet y = 1").unwrap();
+        let y = toks.iter().find(|t| t.text == "y").unwrap();
+        assert_eq!(y.line, 4);
+    }
+
+    #[test]
+    fn raw_string_ignores_escapes_and_inner_quotes() {
+        assert_eq!(
+            lex(r##"#"a "b" \n c"#"##),
+            vec![(TokenKind::StringLiteral, r##"#"a "b" \n c"#"##)]
+        );
+        // A lone `"#` that is not the delimiter does not terminate a `##"…"##`.
+        assert_eq!(
+            lex(r###"##"x"# y"##"###),
+            vec![(TokenKind::StringLiteral, r###"##"x"# y"##"###)]
+        );
+    }
+
+    #[test]
+    fn raw_multiline_string() {
+        let src = "#\"\"\"\n line \\n stays raw\n \"\"\"#";
+        assert_eq!(lex(src), vec![(TokenKind::StringLiteral, src)]);
+    }
+
+    #[test]
+    fn interpolation_with_inner_quotes_stays_one_token() {
+        let src = r#""value = \("inner")""#;
+        assert_eq!(lex(src), vec![(TokenKind::StringLiteral, src)]);
     }
 
     #[test]
