@@ -32,6 +32,7 @@ pub fn parse(source: &str) -> Result<Ast, ParseError> {
         tokens,
         pos: 0,
         ast: Ast::new(),
+        no_trailing_closure: false,
     };
     p.parse_source_file()?;
     Ok(p.ast)
@@ -41,6 +42,9 @@ struct Parser<'a> {
     tokens: Vec<Token<'a>>,
     pos: usize,
     ast: Ast,
+    /// When set, a `{` after an expression is a control-flow body, not a
+    /// trailing closure (true while parsing conditions, iterables, subjects).
+    no_trailing_closure: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -124,6 +128,8 @@ impl<'a> Parser<'a> {
                 "func" => return self.parse_func(),
                 "struct" => return self.parse_nominal(NodeKind::StructDecl),
                 "enum" => return self.parse_nominal(NodeKind::EnumDecl),
+                "class" => return self.parse_nominal(NodeKind::ClassDecl),
+                "deinit" => return self.parse_deinit(),
                 "init" => return self.parse_init(),
                 "subscript" => return self.parse_subscript(),
                 "return" => return self.parse_return(),
@@ -355,11 +361,11 @@ impl<'a> Parser<'a> {
             return self.error("expected 'in' in a for-loop");
         }
         self.bump();
-        let iterable = self.parse_expr(0)?;
+        let iterable = self.parse_expr_no_trailing(0)?;
         self.ast.append_child(node, iterable);
         if self.at_keyword("where") {
             self.bump();
-            let cond = self.parse_expr(0)?;
+            let cond = self.parse_expr_no_trailing(0)?;
             self.ast.append_child(node, cond);
         }
         let body = self.parse_block()?;
@@ -371,7 +377,7 @@ impl<'a> Parser<'a> {
     fn parse_switch(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::SwitchStmt, label, kw.line, kw.col);
-        let subject = self.parse_expr(0)?;
+        let subject = self.parse_expr_no_trailing(0)?;
         self.ast.append_child(node, subject);
         self.expect(TokenKind::LBrace)?;
         while self.at_keyword("case") || self.at_keyword("default") {
@@ -401,7 +407,7 @@ impl<'a> Parser<'a> {
             }
             if self.at_keyword("where") {
                 self.bump();
-                let cond = self.parse_expr(0)?;
+                let cond = self.parse_expr_no_trailing(0)?;
                 self.ast.append_child(clause, cond);
             }
         }
@@ -455,7 +461,94 @@ impl<'a> Parser<'a> {
 
     /// One or more comma-separated conditions for `if`/`guard`/`while`. A
     /// condition is either an optional binding (`let x = e`) or an expression.
+    /// `deinit { }`.
+    fn parse_deinit(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let node = self.ast.add(NodeKind::DeinitDecl, None, kw.line, kw.col);
+        let body = self.parse_block()?;
+        self.ast.append_child(node, body);
+        Ok(node)
+    }
+
+    /// A closure `{ [captures] params in body }`. Capture lists and signatures
+    /// are accepted (and skipped); the body statements become the children.
+    fn parse_closure(&mut self) -> Result<NodeId, ParseError> {
+        let open = self.bump(); // '{'
+        let node = self
+            .ast
+            .add(NodeKind::ClosureExpr, None, open.line, open.col);
+        if self.peek().kind == TokenKind::LBracket {
+            self.skip_bracketed(); // capture list `[weak self]`
+        }
+        self.try_closure_signature();
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = false;
+        while self.peek().kind != TokenKind::RBrace && !self.at_eof() {
+            let stmt = self.parse_statement()?;
+            self.ast.append_child(node, stmt);
+        }
+        self.no_trailing_closure = saved;
+        self.expect(TokenKind::RBrace)?;
+        Ok(node)
+    }
+
+    /// Tentatively consume a closure signature ending in `in`; restore the
+    /// cursor and return `false` if the upcoming tokens are not a signature.
+    fn try_closure_signature(&mut self) -> bool {
+        let save = self.pos;
+        loop {
+            let t = self.peek();
+            if t.kind == TokenKind::Keyword && t.text == "in" {
+                self.bump();
+                return true;
+            }
+            let signature_like = matches!(
+                t.kind,
+                TokenKind::Identifier
+                    | TokenKind::Comma
+                    | TokenKind::Colon
+                    | TokenKind::LParen
+                    | TokenKind::RParen
+            ) || (t.kind == TokenKind::Oper && t.text == "->")
+                || (t.kind == TokenKind::Keyword && t.text == "inout");
+            if signature_like {
+                self.bump();
+            } else {
+                self.pos = save;
+                return false;
+            }
+        }
+    }
+
+    /// Consume a balanced `[ ... ]` group (e.g. a closure capture list).
+    fn skip_bracketed(&mut self) {
+        let mut depth = 0;
+        loop {
+            match self.peek().kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.bump();
+                        return;
+                    }
+                }
+                TokenKind::Eof => return,
+                _ => {}
+            }
+            self.bump();
+        }
+    }
+
     fn parse_conditions(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = true;
+        let result = self.parse_conditions_inner(parent);
+        self.no_trailing_closure = saved;
+        result
+    }
+
+    fn parse_conditions_inner(&mut self, parent: NodeId) -> Result<(), ParseError> {
         loop {
             let cond = if self.at_keyword("let") || self.at_keyword("var") {
                 self.parse_binding()?
@@ -740,6 +833,24 @@ impl<'a> Parser<'a> {
                 lhs = tern;
                 continue;
             }
+            // Type cast `expr is/as/as?/as! Type`, at casting precedence.
+            if self.peek().kind == TokenKind::Keyword
+                && matches!(self.peek().text, "is" | "as")
+                && CAST_BP >= min_bp
+            {
+                let kw = self.bump();
+                let mut op = kw.text.to_string();
+                if kw.text == "as" && (self.peek().kind == TokenKind::Question || self.at_oper("!"))
+                {
+                    op.push_str(self.bump().text);
+                }
+                let ty = self.parse_type()?;
+                let cast = self.ast.add(NodeKind::CastExpr, Some(&op), kw.line, kw.col);
+                self.ast.append_child(cast, lhs);
+                self.ast.append_child(cast, ty);
+                lhs = cast;
+                continue;
+            }
             let op = self.peek();
             if op.kind != TokenKind::Oper || is_assignment(op.text) {
                 break;
@@ -807,11 +918,17 @@ impl<'a> Parser<'a> {
                 self.bump();
                 self.ast.add(NodeKind::NilLiteral, None, t.line, t.col)
             }
+            TokenKind::Keyword if t.text == "self" || t.text == "super" => {
+                self.bump();
+                self.ast
+                    .add(NodeKind::IdentExpr, Some(t.text), t.line, t.col)
+            }
             TokenKind::Identifier => {
                 self.bump();
                 self.ast
                     .add(NodeKind::IdentExpr, Some(t.text), t.line, t.col)
             }
+            TokenKind::LBrace => return self.parse_closure(),
             TokenKind::LParen => return self.parse_paren_or_tuple(),
             // Implicit member expression `.case` (no base).
             TokenKind::Dot => {
@@ -826,8 +943,27 @@ impl<'a> Parser<'a> {
     }
 
     /// `( expr )` collapses to the inner expr; `( a, b, ... )` is a tuple.
+    /// Like [`Parser::parse_expr`] but suppressing trailing-closure parsing,
+    /// used for control-flow iterables/subjects where a `{` starts the body.
+    fn parse_expr_no_trailing(&mut self, min_bp: u8) -> Result<NodeId, ParseError> {
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = true;
+        let r = self.parse_expr(min_bp);
+        self.no_trailing_closure = saved;
+        r
+    }
+
     fn parse_paren_or_tuple(&mut self) -> Result<NodeId, ParseError> {
         let open = self.bump(); // '('
+                                // Inside parentheses, trailing closures are allowed again.
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = false;
+        let result = self.parse_paren_or_tuple_inner(open);
+        self.no_trailing_closure = saved;
+        result
+    }
+
+    fn parse_paren_or_tuple_inner(&mut self, open: Token<'a>) -> Result<NodeId, ParseError> {
         let first = self.parse_expr(0)?;
         if self.peek().kind != TokenKind::Comma {
             self.expect(TokenKind::RParen)?;
@@ -864,10 +1000,26 @@ impl<'a> Parser<'a> {
                 TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
                     self.bump();
                 }
+                // Trailing closure: `expr { ... }` (same line, outside a
+                // control-flow head) attaches a closure argument to a call.
+                TokenKind::LBrace if !self.no_trailing_closure && !self.peek().leading_newline => {
+                    let closure = self.parse_closure()?;
+                    if self.ast.node(expr).kind() == NodeKind::CallExpr {
+                        self.ast.append_child(expr, closure);
+                    } else {
+                        let line = self.ast.node(closure).line();
+                        let call = self.ast.add(NodeKind::CallExpr, None, line, 1);
+                        self.ast.append_child(call, expr);
+                        self.ast.append_child(call, closure);
+                        expr = call;
+                    }
+                }
                 TokenKind::LParen => {
                     let open = self.bump();
                     let call = self.ast.add(NodeKind::CallExpr, None, open.line, open.col);
                     self.ast.append_child(call, expr);
+                    let saved = self.no_trailing_closure;
+                    self.no_trailing_closure = false;
                     if self.peek().kind != TokenKind::RParen {
                         loop {
                             let arg = self.parse_expr(0)?;
@@ -879,13 +1031,18 @@ impl<'a> Parser<'a> {
                             break;
                         }
                     }
+                    self.no_trailing_closure = saved;
                     self.expect(TokenKind::RParen)?;
                     expr = call;
                 }
                 TokenKind::Dot => {
                     let dot = self.bump();
                     let name = self.peek();
-                    if !matches!(name.kind, TokenKind::Identifier | TokenKind::IntLiteral) {
+                    // Allow keyword members like `.init`, `.self`, `.Type`.
+                    if !matches!(
+                        name.kind,
+                        TokenKind::Identifier | TokenKind::IntLiteral | TokenKind::Keyword
+                    ) {
                         return self.error(format!(
                             "expected a member name or tuple index after '.', found {:?}",
                             name.kind
@@ -907,6 +1064,9 @@ impl<'a> Parser<'a> {
 
 /// Precedence of the ternary conditional (Swift `TernaryPrecedence`, /10).
 const TERNARY_BP: u8 = 10;
+
+/// Precedence of `is`/`as` casts (Swift `CastingPrecedence`, /10).
+const CAST_BP: u8 = 13;
 
 /// Returns `(left_bp, right_bp)` for an infix operator, encoding precedence and
 /// associativity (`right_bp < left_bp` ⇒ right-associative). `None` for tokens
@@ -1481,5 +1641,111 @@ mod tests {
     fn modifiers_before_declarations_are_accepted() {
         let ast = ast_of("static let shared = 1");
         assert_eq!(first_stmt(&ast).kind(), NodeKind::LetDecl);
+    }
+
+    // --- Tier 3: classes, ARC & closures ---
+
+    #[test]
+    fn class_with_superclass_and_members() {
+        let src = "class Dog: Animal {\n\
+                   override func sound() -> String { return \"woof\" }\n\
+                   deinit { }\n\
+                   }";
+        let ast = ast_of(src);
+        let c = first_stmt(&ast);
+        assert_eq!(c.kind(), NodeKind::ClassDecl);
+        assert_eq!(c.text(), Some("Dog"));
+        // First child is the `: Animal` superclass type ref.
+        assert_eq!(c.children().next().unwrap().kind(), NodeKind::TypeRef);
+        let kinds: Vec<_> = c
+            .children()
+            .map(|m| m.kind())
+            .filter(|k| *k != NodeKind::TypeRef)
+            .collect();
+        assert_eq!(kinds, vec![NodeKind::FuncDecl, NodeKind::DeinitDecl]);
+    }
+
+    #[test]
+    fn cast_expressions() {
+        let ast = ast_of("let a = shape as? Circle");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::CastExpr);
+        assert_eq!(init.text(), Some("as?"));
+        assert_eq!(
+            first_stmt(&ast_of("let b = x is Int"))
+                .children()
+                .nth(1)
+                .unwrap()
+                .text(),
+            Some("is")
+        );
+        assert_eq!(
+            first_stmt(&ast_of("let c = x as! String"))
+                .children()
+                .nth(1)
+                .unwrap()
+                .text(),
+            Some("as!")
+        );
+    }
+
+    #[test]
+    fn closure_shorthand_and_signature() {
+        // Shorthand `$0`.
+        let ast = ast_of("let f = { $0 * 2 }");
+        assert_eq!(
+            first_stmt(&ast).children().nth(1).unwrap().kind(),
+            NodeKind::ClosureExpr
+        );
+        // Explicit `x in` signature.
+        let ast = ast_of("let g = { x in x + 1 }");
+        let clo = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(clo.kind(), NodeKind::ClosureExpr);
+        // Body statement present after the signature.
+        assert!(clo.children().count() >= 1);
+    }
+
+    #[test]
+    fn trailing_closure_becomes_a_call() {
+        let ast = ast_of("let doubled = numbers.map { $0 * 2 }");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::CallExpr);
+        // The closure is the trailing argument.
+        assert_eq!(
+            init.children().last().unwrap().kind(),
+            NodeKind::ClosureExpr
+        );
+    }
+
+    #[test]
+    fn capture_list_is_accepted() {
+        let ast = ast_of("let h = { [weak self] in self }");
+        assert_eq!(
+            first_stmt(&ast).children().nth(1).unwrap().kind(),
+            NodeKind::ClosureExpr
+        );
+    }
+
+    #[test]
+    fn for_body_brace_is_not_a_trailing_closure() {
+        // Regression: the loop body `{ }` must not be parsed as a trailing
+        // closure on the iterable `items`.
+        let ast = ast_of("for x in items { print(x) }");
+        let f = first_stmt(&ast);
+        assert_eq!(f.kind(), NodeKind::ForStmt);
+        assert_eq!(f.children().last().unwrap().kind(), NodeKind::Block);
+    }
+
+    #[test]
+    fn super_and_self_are_expressions() {
+        let ast = ast_of("let s = self");
+        assert_eq!(
+            first_stmt(&ast).children().nth(1).unwrap().text(),
+            Some("self")
+        );
+        let ast = ast_of("func f() { super.init() }");
+        let body = first_stmt(&ast).children().last().unwrap();
+        let call = body.children().next().unwrap().children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
     }
 }
