@@ -1,0 +1,190 @@
+name: Release
+
+# Build platform binaries whenever a GitHub Release is published, and attach
+# the resulting archives to that release. Can also be run manually against an
+# existing tag via the Actions tab.
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and upload assets for (e.g. v0.1.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  # The binary produced by crates/quick-swift-cli.
+  BIN_NAME: quick-swift
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+
+    steps:
+      - name: Checkout (with msf submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # On workflow_dispatch, build the explicitly requested tag.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      # bindgen needs libclang. It ships with the Xcode toolchain on the macOS
+      # runners, but must be installed explicitly on Linux and Windows.
+      - name: Install libclang (Linux, for bindgen)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y llvm-dev libclang-dev clang
+
+      - name: Install LLVM (Windows, for bindgen/libclang)
+        if: runner.os == 'Windows'
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18"
+          # Exposes LIBCLANG_PATH so bindgen can find libclang.
+          env: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --locked -p quick-swift-cli --target ${{ matrix.target }}
+
+      - name: Package archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Resolve the version/name from the tag being released.
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          stage="${BIN_NAME}-${tag}-${{ matrix.target }}"
+          mkdir -p "dist/${stage}"
+
+          bin="${BIN_NAME}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            bin="${BIN_NAME}.exe"
+          fi
+          cp "target/${{ matrix.target }}/release/${bin}" "dist/${stage}/"
+
+          # Include docs in the archive if present.
+          [[ -f README.md ]] && cp README.md "dist/${stage}/" || true
+
+          cd dist
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            asset="${stage}.zip"
+            7z a "${asset}" "${stage}" >/dev/null
+          else
+            asset="${stage}.tar.gz"
+            tar -czf "${asset}" "${stage}"
+          fi
+          echo "asset=dist/${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload archive to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ steps.package.outputs.asset }}
+
+  # WebAssembly is built separately: the vendored msf C sources and bindgen must
+  # be cross-compiled against the WASI sysroot, which needs the WASI SDK clang
+  # toolchain rather than the host compiler. Target is wasm32-wasip1 (WASI),
+  # which provides the libc the C frontend relies on.
+  build-wasm:
+    name: wasm32-wasip1
+    runs-on: ubuntu-latest
+    env:
+      WASI_SDK_VERSION: "24"
+      TARGET: wasm32-wasip1
+    steps:
+      - name: Checkout (with msf submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install host libclang (for bindgen itself)
+        run: sudo apt-get update && sudo apt-get install -y llvm-dev libclang-dev clang
+
+      - name: Install WASI SDK
+        run: |
+          set -euo pipefail
+          ver="${WASI_SDK_VERSION}"
+          url="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${ver}/wasi-sdk-${ver}.0-x86_64-linux.tar.gz"
+          curl -fsSL "$url" -o wasi-sdk.tar.gz
+          mkdir -p "$HOME/wasi-sdk"
+          tar -xzf wasi-sdk.tar.gz -C "$HOME/wasi-sdk" --strip-components=1
+          echo "WASI_SDK_PATH=$HOME/wasi-sdk" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: wasm-${{ env.TARGET }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release wasm
+        run: |
+          set -euo pipefail
+          sysroot="$WASI_SDK_PATH/share/wasi-sysroot"
+          # Point the cc crate at the WASI SDK clang when compiling msf's C.
+          export CC_wasm32_wasip1="$WASI_SDK_PATH/bin/clang"
+          export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
+          # Give bindgen's libclang the WASI sysroot/target so headers resolve.
+          export BINDGEN_EXTRA_CLANG_ARGS="--target=wasm32-wasi --sysroot=$sysroot"
+          cargo build --release --locked -p quick-swift-cli --target wasm32-wasip1
+
+      - name: Package archive
+        id: package
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          stage="${BIN_NAME}-${tag}-${TARGET}"
+          mkdir -p "dist/${stage}"
+          cp "target/${TARGET}/release/${BIN_NAME}.wasm" "dist/${stage}/"
+          [[ -f README.md ]] && cp README.md "dist/${stage}/" || true
+          tar -czf "dist/${stage}.tar.gz" -C dist "${stage}"
+          echo "asset=dist/${stage}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload archive to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ steps.package.outputs.asset }}
