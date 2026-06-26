@@ -189,15 +189,18 @@ fn is_superset(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>)
 }
 
 fn is_strict_subset(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    // Strict = subset AND not equal. The argument is an arbitrary sequence and
+    // may contain duplicates, so compare by membership rather than length:
+    // strictness means the argument set has an element the receiver lacks.
     let (a, b) = (elements(&recv)?, other_elements(&args)?);
     let subset = a.iter().all(|x| b.contains(x));
-    Ok(bool_outcome(subset && a.len() < b.len(), recv))
+    Ok(bool_outcome(subset && b.iter().any(|x| !a.contains(x)), recv))
 }
 
 fn is_strict_superset(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let (a, b) = (elements(&recv)?, other_elements(&args)?);
     let superset = b.iter().all(|x| a.contains(x));
-    Ok(bool_outcome(superset && a.len() > b.len(), recv))
+    Ok(bool_outcome(superset && a.iter().any(|x| !b.contains(x)), recv))
 }
 
 fn is_disjoint(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
@@ -251,6 +254,11 @@ mod tests {
         set(xs.iter().map(|&x| SwiftValue::int(x)).collect())
     }
 
+    /// An array argument, preserving duplicates (unlike `s`, which dedupes).
+    fn arr(xs: &[i128]) -> SwiftValue {
+        SwiftValue::Array(Rc::new(xs.iter().map(|&x| SwiftValue::int(x)).collect()))
+    }
+
     fn sorted_ints(v: SwiftValue) -> Vec<i128> {
         let mut out: Vec<i128> = match v {
             SwiftValue::Set(items) => items
@@ -301,5 +309,19 @@ mod tests {
         let fu = form_union(&mut m, s(&[1]), vec![s(&[2])]).unwrap();
         assert_eq!(fu.result, SwiftValue::Void);
         assert_eq!(sorted_ints(fu.receiver), vec![1, 2]);
+    }
+
+    #[test]
+    fn strict_predicates_ignore_duplicate_arguments() {
+        let mut m = M;
+        // {1,2,3,4} is a strict superset of the sequence [1,1,2,2] (set {1,2}).
+        let sup = is_strict_superset(&mut m, s(&[1, 2, 3, 4]), vec![arr(&[1, 1, 2, 2])]).unwrap();
+        assert_eq!(sup.result, SwiftValue::Bool(true));
+        // Equal sets are never strict supersets, even with duplicates present.
+        let eq = is_strict_superset(&mut m, s(&[1, 2]), vec![arr(&[1, 1, 2, 2])]).unwrap();
+        assert_eq!(eq.result, SwiftValue::Bool(false));
+        // {1,2,3} is NOT a strict subset of [1,1,2,2,3,3] (set {1,2,3}); they're equal.
+        let sub = is_strict_subset(&mut m, s(&[1, 2, 3]), vec![arr(&[1, 1, 2, 2, 3, 3])]).unwrap();
+        assert_eq!(sub.result, SwiftValue::Bool(false));
     }
 }
