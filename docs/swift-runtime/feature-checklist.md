@@ -96,10 +96,10 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | `if` / `else` / `else if` | ✅ | ★ | R0 |
 | [x] | `if` as expression (Swift 5.9) | ✅ | ★★ | R2 |
-| [~] | `guard` / `guard let` | ✅ | ★★ | R2 |
+| [x] | `guard` / `guard let` | ✅ | ★★ | R2 |
 | [x] | `while` / `repeat-while` | ✅ | ★ | R1 |
 | [x] | `for-in` over ranges/arrays/sequences | ✅ | ★★ | R1 |
-| [~] | `for case` / `for ... where` | ✅ | ★★ | R2 |
+| [x] | `for case` / `for ... where` | ✅ | ★★ | R2 |
 | [x] | `switch` + cases + `default` | ✅ | ★★★ | R1 |
 | [x] | `switch` value/range/tuple patterns | ✅ | ★★★ | R2 |
 | [x] | `where` clauses in cases (`cas.where_expr`) | ✅ | ★★ | R2 |

@@ -17,3 +17,5 @@ See docs/swift-runtime/blocked-features.md
 | 5 | done | @unknown default | keep | parser accepts attribute before default |
 | 6 | done | Metatypes T.self + type(of:) | keep | new SwiftValue::Metatype |
 | 7 | ebe0ac1 | `@autoclosure` parameters | keep | parser records attr; thunk-wraps deferred args (free fns + methods) |
+| 8 | 86f8a4c | `for case` / `case let x?` refutable patterns | keep | for-loop matches patterns; `x?`→`.some` so switch/for/if filter nil |
+| 9 | c3ce916 | multi-binding & while-let conditions | keep | single-binding cond parser; eval_while uses eval_cond_list |
