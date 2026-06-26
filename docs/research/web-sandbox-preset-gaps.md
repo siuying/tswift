@@ -21,8 +21,8 @@ land it (0 = trivial preset-text fix, 10 = deep cross-cutting work).
 | Collections | ✅ **fixed** | ~~`I` `Array.sort()`, `L` dict element `.key`/`.value`~~ | 3 |
 | Switch Patterns | ✅ **fixed** | ~~`B` one-sided range patterns~~ | 3 |
 | Protocols | ❌ | ~~`B` one-sided range patterns~~ (fixed); **new:** protocol default-method dispatch on a conforming struct | — |
-| Closures & HOF | ❌ | `C` operator function references | 4 |
-| Error Handling | ❌ | `F` `Character.isLetter/isNumber`, `G` `if case` binding | 4 |
+| Closures & HOF | ✅ **fixed** | ~~`C` operator function references~~ | 4 |
+| Error Handling | ✅ **fixed** | ~~`F` `Character.isLetter/isNumber`, `G` `if case` binding~~ | 4 |
 | Structs | ❌ | ~~`D` multi-name binding~~ (fixed), `A` Int→Double coercion | 8 |
 | Enums | ❌ | `A` Int→Double coercion | 8 |
 | Optionals | ❌ | `H` array `as [T?]` cast, `A` coercion | 8 |
@@ -63,6 +63,35 @@ to `tests/swift-fixtures/tier10-stdlib/{s4-array,s6-dictionary}.swift`.
 > protocol's default method defined in an extension is not dispatched for a
 > conforming **struct** (`method .grade() on Student`). That is beyond the
 > `< 4` scope, so the preset stays `supported: false`.
+
+### Landed (gap = 4)
+
+Both gap-`4` presets are fixed and verified end-to-end (golden + `qswift-cli`
+fixtures, full `cargo test` green, `wasm_smoke` runs both re-enabled presets).
+
+- **`C` operator function references** — a bare operator in value position
+  (`reduce(0, +)`, `sorted(by: >)`) now resolves to a synthesized operator
+  closure. `ClosureDef` became an enum (`User` / `Operator(op)`) in
+  `crates/qswift-core/src/interp.rs`; `eval_ident` returns a `Closure` for an
+  operator token (`is_operator_name`) and `call_closure` applies the operator
+  via `ops::binary`/`ops::unary`, so the stdlib HOFs call it like any closure.
+  Unblocked **Closures & HOF**.
+- **`F` Character predicates** — `isLetter`/`isNumber`/`isWhitespace`/
+  `isUppercase`/`isLowercase`/`isNewline`/`isWholeNumber`/`isHexDigit`/`isASCII`
+  registered as properties on the (single-grapheme) `String`/`Character`
+  receiver in `crates/qswift-std/src/string.rs`, classifying the leading
+  Unicode scalar via `char` methods (no new deps, offline-safe).
+- **`G` `if case` / `guard case` binding** — a refutable `case` pattern in a
+  condition now lowers to a new `CaseCondition` runtime node
+  (`crates/qswift-frontend/src/{kind,compat}.rs`) instead of an
+  `OptionalBinding`; `eval_cond_list` evaluates the subject, runs the existing
+  `match_pattern`, and binds payloads on success. Together `F`+`G` unblocked
+  **Error Handling**.
+
+Proof fixtures:
+`crates/qswift-cli/tests/fixtures/{operator_references,character_predicates,if_case_binding}.{swift,expected}`,
+plus additions to `tests/swift-fixtures/tier3-reference-arc/closures.swift` and
+`tests/swift-fixtures/tier5-errors-modules/error_handling.swift`.
 
 ---
 
@@ -131,7 +160,7 @@ parser/AST work. (Captured historically as `structs_multi_binding_gap.swift`.)
 
 ---
 
-### C. Closures & HOF — operator function references — `4/10`
+### C. Closures & HOF — operator function references — `4/10` — ✅ FIXED
 `numbers.reduce(0, +)` → `unknown variable: +`. Passing a bare operator as a
 function value isn't resolved. The closure form `reduce(0) { $0 + $1 }` works.
 
@@ -142,7 +171,7 @@ semantics, so the thunks can delegate there).
 
 ---
 
-### F + G. Error Handling — Character predicates and `if case` binding — `4/10`
+### F + G. Error Handling — Character predicates and `if case` binding — `4/10` — ✅ FIXED
 Two gaps:
 
 - **`F` `Character.isLetter` / `.isNumber`** (and friends). A `Character` is
