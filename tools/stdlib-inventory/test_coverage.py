@@ -36,6 +36,37 @@ class CoreMemberTests(unittest.TestCase):
             self.assertTrue(coverage.is_core_member(op), op)
 
 
+class OutOfScopeMemberTests(unittest.TestCase):
+    def test_reflection_hooks_are_out_of_scope(self):
+        for name in ("customMirror", "customPlaygroundQuickLook"):
+            self.assertTrue(coverage.is_out_of_scope(name), name)
+
+    def test_unsafe_and_pointer_members_are_out_of_scope(self):
+        for name in (
+            "withUnsafeBufferPointer", "withUnsafeBytes", "withUnsafePointer",
+            "withContiguousStorageIfAvailable", "span", "mutableSpan", "utf8Span",
+            "bitPattern", "unsafeBitCast", "unsafeDowncast", "withCString",
+            "withUTF8", "withMutableCharacters", "getVaList", "withVaList",
+            "withExtendedLifetime", "extendLifetime",
+        ):
+            self.assertTrue(coverage.is_out_of_scope(name), name)
+
+    def test_in_scope_members_are_not_out_of_scope(self):
+        # Index model, views, bit-pattern accessors, and ordinary methods stay
+        # in scope (visible as `missing`), never out-of-scope.
+        for name in (
+            "map", "append", "startIndex", "endIndex", "index", "distance",
+            "unicodeScalars", "utf8", "utf16", "exponentBitPattern",
+            "significandBitPattern", "pi", "description",
+        ):
+            self.assertFalse(coverage.is_out_of_scope(name), name)
+
+    def test_out_of_scope_members_are_not_core(self):
+        # core and out-of-scope are disjoint classifications.
+        for name in ("customMirror", "withUnsafeBytes", "span"):
+            self.assertFalse(coverage.is_core_member(name), name)
+
+
 class MemberKeyTests(unittest.TestCase):
     def test_operator_free_functions_parse_as_their_token(self):
         # `func ??` must key as `??`, not bleed into the following `<T>` -> `<`.
@@ -53,7 +84,13 @@ class MemberKeyTests(unittest.TestCase):
 class ClassifyTests(unittest.TestCase):
     def _report(self):
         # Array conforms to Sequence, so a `Sequence.map` entry covers Array.map.
-        types_inv = {"Array": {"+", "subscript", "init", "append", "map", "reduce"}}
+        # `withUnsafeBytes` is out-of-scope; everything else is core/registry.
+        types_inv = {
+            "Array": {
+                "+", "subscript", "init", "append", "map", "reduce",
+                "withUnsafeBytes",
+            }
+        }
         reg = ({"print"}, {"Array": {"append"}}, {"map"})  # free, by_type, seq
         ex = (set(), {"Array": set()}, {"map"})
         return coverage.compute_report(
@@ -63,6 +100,27 @@ class ClassifyTests(unittest.TestCase):
             ex=ex,
             report_types=["Array"],
         )
+
+    def test_out_of_scope_member_gets_its_own_bucket(self):
+        arr = self._report()["types"]["Array"]
+        # withUnsafeBytes is neither core, missing, impl, nor verif.
+        self.assertEqual(arr["oos"], 1)
+        self.assertEqual(arr["missing"], 1)  # only reduce
+
+    def test_buckets_partition_total_with_oos(self):
+        arr = self._report()["types"]["Array"]
+        self.assertEqual(
+            arr["core"] + arr["oos"] + arr["missing"] + arr["impl"] + arr["verif"],
+            arr["total"],
+        )
+        self.assertEqual(arr["total"], 7)
+
+    def test_denominator_excludes_out_of_scope(self):
+        overall = self._report()["overall"]
+        # in-scope total = total(7) - oos(1) = 6.
+        # covered = (core 3 + impl 1 + verif 1) / 6
+        self.assertAlmostEqual(overall["pct_covered"], 100 * 5 / 6, places=3)
+        self.assertAlmostEqual(overall["pct_verified"], 100 * 1 / 6, places=3)
 
     def test_core_members_not_counted_missing(self):
         arr = self._report()["types"]["Array"]
@@ -80,21 +138,6 @@ class ClassifyTests(unittest.TestCase):
         arr = self._report()["types"]["Array"]
         # map flows through the exercised Sequence entry -> verified.
         self.assertEqual(arr["verif"], 1)
-
-    def test_buckets_partition_total(self):
-        arr = self._report()["types"]["Array"]
-        self.assertEqual(
-            arr["core"] + arr["missing"] + arr["impl"] + arr["verif"],
-            arr["total"],
-        )
-        self.assertEqual(arr["total"], 6)
-
-    def test_overall_percentages(self):
-        overall = self._report()["overall"]
-        # covered = (core + impl + verif) / total = (3 + 1 + 1) / 6
-        self.assertAlmostEqual(overall["pct_covered"], 100 * 5 / 6, places=3)
-        # verified = verif / total = 1 / 6
-        self.assertAlmostEqual(overall["pct_verified"], 100 * 1 / 6, places=3)
 
     def test_free_function_operators_are_core_not_missing(self):
         # `==`/`??` are operator free functions: core-eval, never registry-missing.

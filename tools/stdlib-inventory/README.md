@@ -34,17 +34,25 @@ Keys are semantic, not receiver-dispatch: `print` (free function),
 ## 3. Coverage report — `coverage.py`
 
 A pure join over three semantic key sets — inventory (`stdlib-inventory.md`),
-registered, and exercised — assigning each inventory member one of three states,
+registered, and exercised — assigning each inventory member one of five states,
 type-scoped (no global token matching):
 
-- **missing** — not in the registry,
+- **core** — operator/`subscript`/`init`, evaluated by interpreter core,
+- **out-of-scope** — past the scope ceiling (unsafe/pointer/memory + reflection
+  hooks); excluded from the denominator so the percentage reflects the real
+  target (see `docs/plan/stdlib-support.md` §7.2),
+- **missing** — in scope but not in the registry,
 - **implemented** — registered but not exercised by a passing fixture,
 - **verified** — registered *and* exercised by a passing fixture.
+
+The five buckets partition every member: `core + out-of-scope + missing +
+implemented + verified == total`.
 
 ```sh
 cargo test -p qswift-cli --test golden stdlib_coverage_inputs  # refresh inputs
 python3 tools/stdlib-inventory/coverage.py
 ```
 
-Prints per-type implemented/verified/total counts, a free-function line, and an
-overall percentage across the targeted types plus free functions.
+Prints per-type core/oos/missing/implemented/verified/total counts, a
+free-function line, and `%covered`/`%verified` over the in-scope total
+(out-of-scope excluded).
