@@ -759,7 +759,10 @@ impl<'a> Parser<'a> {
         let subject = self.parse_expr_no_trailing(0)?;
         self.ast.append_child(node, subject);
         self.expect(TokenKind::LBrace)?;
-        while self.at_keyword("case") || self.at_keyword("default") {
+        while self.at_keyword("case")
+            || self.at_keyword("default")
+            || self.peek().kind == TokenKind::Attribute
+        {
             let clause = self.parse_case_clause()?;
             self.ast.append_child(node, clause);
         }
@@ -770,6 +773,11 @@ impl<'a> Parser<'a> {
     /// One `case items [where cond]:` or `default:` clause. Children: the case
     /// items, an optional where-expr, then a `Block` of the clause body (last).
     fn parse_case_clause(&mut self) -> Result<NodeId, ParseError> {
+        // `@unknown default:` — accept (and discard) the `@unknown` attribute
+        // that may precede a `default` clause in an exhaustive switch.
+        while self.peek().kind == TokenKind::Attribute {
+            self.bump();
+        }
         let kw = self.bump();
         let is_default = kw.text == "default";
         let label = if is_default { Some("default") } else { None };
@@ -800,6 +808,9 @@ impl<'a> Parser<'a> {
                 || self.at_keyword("default")
                 || self.peek().kind == TokenKind::RBrace
                 || self.at_eof()
+                // An `@unknown` attribute begins the next clause (`@unknown
+                // default:`), not a statement in this clause's body.
+                || self.peek().kind == TokenKind::Attribute
             {
                 break;
             }

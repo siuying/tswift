@@ -44,4 +44,13 @@ func step(_ x: Int) -> String {
     }
 }
 
-let _ = (describe(5), quadrant((0, 3)), findSum(3), step(1))
+enum Status { case ok, warn, fail }
+
+func classify(_ s: Status) -> String {
+    switch s {
+    case .ok: return "ok"
+    @unknown default: return "other"
+    }
+}
+
+let _ = (describe(5), quadrant((0, 3)), findSum(3), step(1), classify(.warn))

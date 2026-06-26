@@ -105,7 +105,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `where` clauses in cases (`cas.where_expr`) | ✅ | ★★ | R2 |
 | [x] | `fallthrough` | ✅ | ★★ | R1 |
 | [x] | `break` / `continue` + labeled statements | ✅ | ★★ | R1 |
-| [ ] | `switch` exhaustiveness / `@unknown default` | ✅ | ★★ | R4 |
+| [~] | `switch` exhaustiveness / `@unknown default` | ✅ | ★★ | R4 |
 
 ---
 
