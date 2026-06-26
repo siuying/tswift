@@ -3,11 +3,16 @@
 **Goal**: implement all features from docs/swift-runtime/feature-checklist.md
 **Signal**: `cargo test --workspace` → all green + per-feature fixtures
 
+## Blocked (needs human input)
+See docs/swift-runtime/blocked-features.md
+
 ## Iterations
 
 | # | commit | feature | status | notes |
 | - | ------ | ------- | ------ | ----- |
 | 1 | done | Failable initializers `init?`/`init!` | keep | return nil → Optional.none in struct & class init |
-
-## Blocked (needs human input)
-See docs/swift-runtime/blocked-features.md
+| 2 | done | Nested types + implicit-self mutating writes | keep | register nested decls by simple name; resolve_place implicit self |
+| 3 | done | Tuple returns / @discardableResult / Never | keep | already worked; fixtures added |
+| 4 | done | Type subscripts (static subscript) | keep | struct+class static_subscript |
+| 5 | done | @unknown default | keep | parser accepts attribute before default |
+| 6 | done | Metatypes T.self + type(of:) | keep | new SwiftValue::Metatype |
