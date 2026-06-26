@@ -2489,14 +2489,23 @@ impl<'w> Interpreter<'w> {
                     return Err(trap("string view subscript needs a String.Index".into()));
                 };
                 let byte = *utf8;
-                if byte > base.len() || !base.is_char_boundary(byte) {
-                    return Err(trap("String index is out of bounds".into()));
-                }
-                let prefix = &base[..byte];
+                // For utf8 every byte (including continuation bytes) is a valid
+                // element; the scalar/utf16 views only land on scalar
+                // boundaries, where slicing the prefix is well-defined.
                 let elem_idx = match kind {
                     StrViewKind::Utf8 => byte,
-                    StrViewKind::Utf16 => prefix.encode_utf16().count() + *transcoded as usize,
-                    StrViewKind::UnicodeScalars => prefix.chars().count(),
+                    StrViewKind::Utf16 | StrViewKind::UnicodeScalars => {
+                        if byte > base.len() || !base.is_char_boundary(byte) {
+                            return Err(trap("String index is out of bounds".into()));
+                        }
+                        let prefix = &base[..byte];
+                        match kind {
+                            StrViewKind::Utf16 => {
+                                prefix.encode_utf16().count() + *transcoded as usize
+                            }
+                            _ => prefix.chars().count(),
+                        }
+                    }
                 };
                 kind.elements(base)
                     .into_iter()
@@ -4212,6 +4221,18 @@ impl<'w> Interpreter<'w> {
         }
 
         let args = self.eval_args(arg_nodes)?;
+
+        // Encoding-view index navigation (`s.utf8.index(after:)`, `distance`).
+        // Views are not `BuiltinReceiver`s, so their methods are served here.
+        if let SwiftValue::StringView { base, kind } = &base_value {
+            if let Some(result) =
+                self.eval_string_view_method(base.clone(), *kind, &method, &args)?
+            {
+                self.exercised.insert(format!("{}.{method}", kind.type_name()));
+                return Ok(result);
+            }
+        }
+
         let type_name = match &base_value {
             SwiftValue::Struct(o) => Some(o.type_name.clone()),
             SwiftValue::Enum(e) => Some(e.type_name.clone()),
@@ -4228,6 +4249,95 @@ impl<'w> Interpreter<'w> {
             EvalError::Unsupported(format!("method .{method}() on {}", base_value.type_name()))
                 .into(),
         )
+    }
+
+    /// Serve `index(after:)`/`index(before:)`/`index(_:offsetBy:[limitedBy:])`
+    /// and `distance(from:to:)` on an encoding view, navigating the view's
+    /// shared `String.Index` space (ADR-0006). Returns `None` for any other
+    /// method so the caller can fall through to its normal error path.
+    fn eval_string_view_method(
+        &mut self,
+        base: std::rc::Rc<String>,
+        kind: StrViewKind,
+        method: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let positions = kind.positions(&base);
+        let ordinal = |v: &SwiftValue| -> Result<usize, Signal> {
+            match v {
+                SwiftValue::StringIndex { utf8, transcoded } => positions
+                    .iter()
+                    .position(|&p| p == (*utf8, *transcoded))
+                    .ok_or_else(|| trap("String index is not valid for this view".into())),
+                other => Err(EvalError::Type(format!(
+                    "expected a String.Index, got {}",
+                    other.type_name()
+                ))
+                .into()),
+            }
+        };
+        let make = |ord: usize| -> SwiftValue {
+            let (utf8, transcoded) = positions[ord];
+            SwiftValue::StringIndex { utf8, transcoded }
+        };
+
+        match method {
+            "distance" => {
+                let from = ordinal(&args[0].value)? as i128;
+                let to = ordinal(&args[1].value)? as i128;
+                Ok(Some(SwiftValue::int(to - from)))
+            }
+            "index" => {
+                let first_label = args.first().and_then(|a| a.label.as_deref());
+                let base_ord = ordinal(&args[0].value)?;
+                match first_label {
+                    Some("before") => {
+                        if base_ord == 0 {
+                            return Err(trap("String index is out of bounds".into()));
+                        }
+                        Ok(Some(make(base_ord - 1)))
+                    }
+                    // `index(_:offsetBy:[limitedBy:])` — the index is unlabeled
+                    // and an `offsetBy:` amount follows.
+                    _ if args.len() >= 2
+                        && args.get(1).and_then(|a| a.label.as_deref()) == Some("offsetBy") =>
+                    {
+                        let n = match &args[1].value {
+                            SwiftValue::Int(i) => i.raw,
+                            other => {
+                                return Err(EvalError::Type(format!(
+                                    "expected an integer offset, got {}",
+                                    other.type_name()
+                                ))
+                                .into())
+                            }
+                        };
+                        let limit = match args.get(2) {
+                            Some(a) => Some(ordinal(&a.value)? as i128),
+                            None => None,
+                        };
+                        let target = base_ord as i128 + n;
+                        if let Some(lim) = limit {
+                            if (n >= 0 && target > lim) || (n < 0 && target < lim) {
+                                return Ok(Some(SwiftValue::Nil));
+                            }
+                        }
+                        if target < 0 || target as usize >= positions.len() {
+                            return Err(trap("String index is out of bounds".into()));
+                        }
+                        Ok(Some(make(target as usize)))
+                    }
+                    // `index(after:)` — a lone index argument.
+                    _ => {
+                        if base_ord + 1 >= positions.len() {
+                            return Err(trap("String index is out of bounds".into()));
+                        }
+                        Ok(Some(make(base_ord + 1)))
+                    }
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Run the initializer declared at or above `start_class` for `this`.
