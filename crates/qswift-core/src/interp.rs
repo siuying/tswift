@@ -3264,17 +3264,20 @@ impl<'w> Interpreter<'w> {
 
     /// `for v in seq [where cond] { … }` over an integer range or array.
     fn eval_for(&mut self, node: &Node<'static>) -> Eval {
-        let mut var_name = node
-            .text()
-            .ok_or_else(|| EvalError::Unsupported("for-loop without a binding".into()))?;
+        let mut var_name = node.text();
         // `for await r in seq`: msf anchors the node on the `await` keyword, so
         // the binding name is the next token (ADR-0005).
-        let is_for_await = var_name == "await";
+        let is_for_await = var_name.as_deref() == Some("await");
         if is_for_await {
-            var_name = node
-                .token_text_offset(1)
-                .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?;
+            var_name = Some(
+                node.token_text_offset(1)
+                    .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?,
+            );
         }
+        // `for case <pattern> in seq`: a refutable pattern child filters and
+        // destructures each element (the simple binding lowered into the node's
+        // text instead). The pattern is the first pattern-kind child.
+        let mut pattern = None;
         let mut iterable = None;
         let mut where_clause = None;
         let mut body = None;
@@ -3282,6 +3285,9 @@ impl<'w> Interpreter<'w> {
             match child.kind() {
                 NodeKind::Param => {}
                 NodeKind::Block => body = Some(child),
+                k if is_pattern_node(k) && pattern.is_none() && iterable.is_none() => {
+                    pattern = Some(child);
+                }
                 _ => {
                     if iterable.is_none() {
                         iterable = Some(child);
@@ -3290,6 +3296,9 @@ impl<'w> Interpreter<'w> {
                     }
                 }
             }
+        }
+        if var_name.is_none() && pattern.is_none() {
+            return Err(EvalError::Unsupported("for-loop without a binding".into()).into());
         }
         let iterable =
             iterable.ok_or_else(|| EvalError::Unsupported("for-loop without a sequence".into()))?;
@@ -3302,7 +3311,8 @@ impl<'w> Interpreter<'w> {
         let items = match &seq {
             SwiftValue::TaskGroup(gid) => self.drain_group_results(*gid)?,
             _ if is_for_await && !is_builtin_iterable(&seq) => {
-                return self.run_async_sequence(&seq, &var_name, where_clause, &body, &label);
+                let name = var_name.as_deref().unwrap_or("_");
+                return self.run_async_sequence(&seq, name, where_clause, &body, &label);
             }
             _ => self.iterate(&seq)?,
         };
@@ -3312,7 +3322,22 @@ impl<'w> Interpreter<'w> {
             // captures *this* iteration's binding (Swift's per-iteration `let`),
             // not a single shared, mutated slot.
             self.env.push();
-            self.env.declare(&var_name, item, false);
+            // A `for case` pattern that fails to match skips the element.
+            if let Some(pat) = pattern {
+                match self.match_pattern(&pat, &item)? {
+                    Some(binds) => {
+                        for (name, value) in binds {
+                            self.env.declare(&name, value, false);
+                        }
+                    }
+                    None => {
+                        self.env.pop();
+                        continue;
+                    }
+                }
+            } else if let Some(name) = &var_name {
+                self.env.declare(name, item, false);
+            }
             if let Some(w) = where_clause {
                 match self.eval_condition(&w) {
                     Ok(true) => {}
@@ -5347,6 +5372,19 @@ fn autoclosure_flags(params: &[Param], args: &[Node<'static>]) -> Vec<bool> {
         }
     }
     flags
+}
+
+/// Whether a node kind is a refutable/binding pattern (as appears in a
+/// `for case <pattern> in …` loop or a `switch` case).
+fn is_pattern_node(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::PatternEnum
+            | NodeKind::PatternTuple
+            | NodeKind::PatternRange
+            | NodeKind::PatternWildcard
+            | NodeKind::PatternValueBinding
+    )
 }
 
 /// What a loop body asks its loop to do next.

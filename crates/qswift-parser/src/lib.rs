@@ -863,13 +863,21 @@ impl<'a> Parser<'a> {
         // A bare identifier in a binding context binds the value.
         if binding && self.peek().kind == TokenKind::Identifier {
             let t = self.bump();
-            // `name?` optional-binding shorthand binds the unwrapped value.
+            let name = self
+                .ast
+                .add(NodeKind::NamePattern, Some(t.text), t.line, t.col);
+            // `name?` is the optional-pattern shorthand: it matches only a
+            // non-`nil` value and binds the unwrapped payload, so it lowers to
+            // a refutable `.some(name)` enum-case pattern.
             if self.peek().kind == TokenKind::Question {
                 self.bump();
+                let some = self
+                    .ast
+                    .add(NodeKind::EnumCasePattern, Some("some"), t.line, t.col);
+                self.ast.append_child(some, name);
+                return Ok(some);
             }
-            return Ok(self
-                .ast
-                .add(NodeKind::NamePattern, Some(t.text), t.line, t.col));
+            return Ok(name);
         }
         // One-sided range patterns with a leading range operator:
         // `case ..<n:` (PartialRangeUpTo) and `case ...n:` (PartialRangeThrough).
@@ -1596,6 +1604,10 @@ impl<'a> Parser<'a> {
     fn parse_case_condition(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump(); // `case`
         let pattern = self.parse_case_pattern(false)?;
+        // `if case let v? = e` keeps the optional-binding shape (`if let v = e`):
+        // unwrap the `.some(v)` shorthand back to its inner name pattern so the
+        // condition lowers to a plain `let v` rather than a refutable match.
+        let pattern = self.unwrap_some_name_pattern(pattern);
         if !self.at_oper("=") {
             return self.error("expected '=' after a 'case' condition pattern");
         }
@@ -1605,6 +1617,22 @@ impl<'a> Parser<'a> {
         self.ast.append_child(decl, pattern);
         self.ast.append_child(decl, expr);
         Ok(decl)
+    }
+
+    /// Unwrap a `.some(name)` optional shorthand (`EnumCasePattern "some"` over
+    /// a single `NamePattern`) back to that inner name pattern; any other
+    /// pattern is returned unchanged.
+    fn unwrap_some_name_pattern(&self, id: NodeId) -> NodeId {
+        let node = self.ast.node(id);
+        if node.kind() == NodeKind::EnumCasePattern && node.text() == Some("some") {
+            let mut kids = node.children();
+            if let Some(child) = kids.next() {
+                if kids.next().is_none() && child.kind() == NodeKind::NamePattern {
+                    return child.id();
+                }
+            }
+        }
+        id
     }
 
     /// `struct`/`enum Name [: Conformances] { members }`.
@@ -3914,6 +3942,30 @@ mod tests {
         let sub = first_stmt(&ast).children().next().unwrap();
         assert_eq!(sub.kind(), NodeKind::SubscriptExpr);
         assert_eq!(sub.children().nth(1).unwrap().arg_label(), Some("tag"));
+    }
+
+    #[test]
+    fn switch_optional_shorthand_is_a_some_pattern() {
+        let ast = ast_of("switch v { case let x?: print(x); default: break }");
+        let case = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::CaseClause)
+            .unwrap();
+        let pat = case.children().next().unwrap();
+        assert_eq!(pat.kind(), NodeKind::EnumCasePattern);
+        assert_eq!(pat.text(), Some("some"));
+        assert_eq!(pat.children().next().unwrap().text(), Some("x"));
+    }
+
+    #[test]
+    fn for_case_optional_shorthand_is_a_some_pattern() {
+        let ast = ast_of("for case let x? in xs { print(x) }");
+        let pat = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::EnumCasePattern)
+            .unwrap();
+        assert_eq!(pat.text(), Some("some"));
+        assert_eq!(pat.children().next().unwrap().text(), Some("x"));
     }
 
     #[test]
