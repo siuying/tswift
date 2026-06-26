@@ -397,8 +397,8 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Bool` | ★ | R0 |
 | [ ] | `String` (UTF-8, NFC, views) + `Character` | ★★★★ | R1 |
 | [ ] | `Substring` | ★★★ | R2 |
-| [ ] | `Optional<Wrapped>` | ★★ | R2 |
-| [ ] | `Range`/`ClosedRange`/`Stride` | ★★ | R1 |
+| [x] | `Optional<Wrapped>` | ★★ | R2 |
+| [x] | `Range`/`ClosedRange`/`Stride` | ★★ | R1 |
 | [ ] | Tuples | ★★ | R1 |
 
 ### 10b. Collections (value semantics + CoW)

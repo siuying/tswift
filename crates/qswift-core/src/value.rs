@@ -283,6 +283,10 @@ impl PartialEq for SwiftValue {
             (Str(a), Str(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
             (Array(a), Array(b)) => a == b,
+            (
+                Range { lo: l1, hi: h1, inclusive: i1 },
+                Range { lo: l2, hi: h2, inclusive: i2 },
+            ) => l1 == l2 && h1 == h2 && i1 == i2,
             (Function(a), Function(b)) => a == b,
             (Closure(a), Closure(b)) => a == b,
             (Struct(a), Struct(b)) => a == b,
