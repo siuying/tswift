@@ -1276,6 +1276,19 @@ impl<'w> Interpreter<'w> {
     /// initializer's width to match it. (msf collapses fixed-width ints to
     /// `Int`, so the `TYPE_IDENT` node is the only reliable source.)
     fn coerce_to_decl_type(&self, node: &Node<'static>, value: SwiftValue) -> SwiftValue {
+        // A `Set<…>`-annotated array literal becomes a deduplicated set.
+        if let SwiftValue::Array(items) = &value {
+            for child in node.children() {
+                if child.kind() == NodeKind::TypeIdent
+                    && child.text().as_deref().is_some_and(|t| t.starts_with("Set<") || t == "Set")
+                {
+                    return SwiftValue::Set(StdRc::new(dedup_preserving_order(
+                        items.as_ref().clone(),
+                    )));
+                }
+            }
+            return value;
+        }
         let SwiftValue::Int(i) = &value else {
             return value;
         };
@@ -2966,6 +2979,7 @@ impl<'w> Interpreter<'w> {
                 .iter()
                 .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
                 .collect()),
+            SwiftValue::Set(items) => Ok(items.as_ref().clone()),
             SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
@@ -4367,6 +4381,9 @@ impl<'w> Interpreter<'w> {
             }),
             // `Array(seq)` materializes any builtin sequence into an array.
             "Array" => Ok(materialize_sequence(value).map(|v| SwiftValue::Array(StdRc::new(v)))),
+            // `Set(seq)` deduplicates a materialized sequence into a set.
+            "Set" => Ok(materialize_sequence(value)
+                .map(|v| SwiftValue::Set(StdRc::new(dedup_preserving_order(v))))),
             _ => Ok(None),
         }
     }
@@ -4389,6 +4406,7 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
                 .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
                 .collect(),
         ),
+        SwiftValue::Set(items) => Some(items.as_ref().clone()),
         _ => None,
     }
 }
@@ -4472,8 +4490,23 @@ fn is_expr(node: &Node) -> bool {
 fn is_builtin_iterable(value: &SwiftValue) -> bool {
     matches!(
         value,
-        SwiftValue::Range { .. } | SwiftValue::Array(_) | SwiftValue::Str(_) | SwiftValue::Dict(_)
+        SwiftValue::Range { .. }
+            | SwiftValue::Array(_)
+            | SwiftValue::Str(_)
+            | SwiftValue::Dict(_)
+            | SwiftValue::Set(_)
     )
+}
+
+/// Deduplicate elements preserving first-seen order (set construction).
+fn dedup_preserving_order(items: Vec<SwiftValue>) -> Vec<SwiftValue> {
+    let mut out: Vec<SwiftValue> = Vec::with_capacity(items.len());
+    for it in items {
+        if !out.contains(&it) {
+            out.push(it);
+        }
+    }
+    out
 }
 
 /// Whether a node is a value expression (not a type annotation, accessor, or
