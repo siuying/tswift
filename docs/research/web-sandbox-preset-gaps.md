@@ -14,20 +14,21 @@ land it (0 = trivial preset-text fix, 10 = deep cross-cutting work).
 | Preset | Runs? | Blocking gap(s) | Gap |
 |--------|-------|-----------------|-----|
 | Hello World | ✅ | — | — |
-| Fibonacci | ✅ (reworked) | underlying: tuple-destructuring assignment `K` | 5 |
+| Fibonacci | ✅ | ~~tuple-destructuring assignment `K`~~ (fixed; preset restored to the tuple-swap form) | 5 |
 | Classes | ✅ | — | — |
 | Strings | ✅ | — | — |
 | Generics | ✅ **fixed** | ~~`J` preset escaping bug~~ | 0 |
 | Collections | ✅ **fixed** | ~~`I` `Array.sort()`, `L` dict element `.key`/`.value`~~ | 3 |
 | Switch Patterns | ✅ **fixed** | ~~`B` one-sided range patterns~~ | 3 |
-| Protocols | ❌ | ~~`B` one-sided range patterns~~ (fixed); **new:** protocol default-method dispatch on a conforming struct | — |
+| Protocols | ✅ **fixed** | ~~`B` one-sided range patterns~~; ~~`P` protocol default-method dispatch via a composition typealias~~ | 4 |
 | Closures & HOF | ✅ **fixed** | ~~`C` operator function references~~ | 4 |
 | Error Handling | ✅ **fixed** | ~~`F` `Character.isLetter/isNumber`, `G` `if case` binding~~ | 4 |
-| Structs | ❌ | ~~`D` multi-name binding~~ (fixed), `A` Int→Double coercion | 8 |
-| Enums | ❌ | `A` Int→Double coercion | 8 |
-| Optionals | ❌ | `H` array `as [T?]` cast, `A` coercion | 8 |
+| Structs | ✅ **fixed** | ~~`D` multi-name binding~~, ~~`A` Int→Double coercion~~ | 8 |
+| Enums | ✅ **fixed** | ~~`A` Int→Double coercion~~ | 8 |
+| Optionals | ✅ **fixed** | ~~`H` array `as [T?]` cast~~, ~~`A` coercion~~ | 8 |
 
-Fastest wins (lowest gap): **Generics (0)** → Collections / Switch / Protocols (3).
+**All 13 presets now run.** Every documented gap is closed; the `wasm_smoke`
+suite executes all presets through the compiled wasm artifact.
 
 ### Landed (gap < 4)
 
@@ -59,10 +60,10 @@ Proof fixtures:
 `tests/swift-fixtures/tier2-value-types/multi_name_binding.swift`, and additions
 to `tests/swift-fixtures/tier10-stdlib/{s4-array,s6-dictionary}.swift`.
 
-> **Note on Protocols:** removing gap `B` revealed a second, larger gap — a
-> protocol's default method defined in an extension is not dispatched for a
-> conforming **struct** (`method .grade() on Student`). That is beyond the
-> `< 4` scope, so the preset stays `supported: false`.
+> **Note on Protocols:** removing gap `B` revealed a second gap (`P`): a
+> protocol's default method was not dispatched for a struct conforming via a
+> **protocol-composition typealias**. Fixed under gap `P` below; the Protocols
+> preset now runs.
 
 ### Landed (gap = 4)
 
@@ -192,11 +193,20 @@ Two gaps:
 
 ---
 
-### K. Fibonacci (underlying) — tuple-destructuring assignment — `5/10`
+### K. Fibonacci (underlying) — tuple-destructuring assignment — `5/10` — ✅ FIXED
 `(a, b) = (b, a + b)` (and `var (a, b) = (0, 1)`) →
 `consecutive statements on a line must be separated by ';'`. The preset was
 reworked to the validated iterative form, so it *runs today*, but the language
 gap remains.
+
+> **Landed.** Root cause was the parser gluing a newline-separated `(` into a
+> postfix call (`1\n(a, b)` → `1(a, b)`); a call argument list now must begin on
+> the callee's line (`qswift-parser`). The runtime then handles a `TupleExpr`
+> assignment target: it evaluates the whole RHS first (so swaps are correct) and
+> writes each element back through its lvalue (`assign_destructured` in
+> `qswift-core/src/interp.rs`), supporting nested tuples and `_` discards. The
+> preset's iterative variant was restored to the idiomatic
+> `(a, b) = (b, a + b)` form.
 
 **Path:** parser must accept a tuple expression as an assignment lvalue; sema
 must check arity/types element-wise; runtime must evaluate the RHS tuple fully
@@ -205,10 +215,16 @@ lvalue. Three layers, but bounded.
 
 ---
 
-### H. Optionals (part 1) — array cast to optional element `as [T?]` — `5/10`
+### H. Optionals (part 1) — array cast to optional element `as [T?]` — `5/10` — ✅ FIXED
 `[Contact?]` via `… as [Contact?] + [nil]` →
 `could not cast value to [Contact?]`. Casting `[T]` to `[T?]` (covariant
 element wrap) isn't handled by the runtime cast.
+
+> **Landed.** `value_is_type` now recognises array target types: every element
+> must match the element type, and an optional element (`[T?]`) also accepts
+> `nil`. Because the runtime models an optional value as the bare value (or
+> `Nil`), no per-element wrapping is needed — the array passes through unchanged
+> (`qswift-core/src/interp.rs`, helper `array_element_type`).
 
 **Path:** in the runtime `as`/cast logic (`qswift-core/src/interp.rs` +
 `value.rs`), recognize array casts where the target element is the optional of
@@ -217,7 +233,7 @@ chaining, `??`, `compactMap`, `try?` already work.
 
 ---
 
-### A. Structs/Enums/Optionals (core) — integer-literal → Double coercion — `8/10`
+### A. Structs/Enums/Optionals (core) — integer-literal → Double coercion — `8/10` — ✅ FIXED
 The single highest-impact gap. Swift implicitly converts integer literals to
 `Double` when the context demands it; the runtime keeps them `Int` and then
 fails on mixed arithmetic. Repros:
@@ -243,6 +259,38 @@ High effort because it touches the type-inference contract end-to-end, not a
 single intrinsic. Worth doing first conceptually — it unblocks the most
 realistic programs — but it is the largest change.
 
+> **Landed (pragmatic two-layer rule).** Rather than full contextual literal
+> typing, the runtime coerces an integer at the typed boundaries and promotes
+> mixed arithmetic:
+>
+> 1. **Sema** (`qswift-sema`) treats `Int → Double` as coercible, so an
+>    annotated binding (`let r: Double = 5`) and mixed arithmetic (`d / 4`) no
+>    longer diagnose; mixed binary ops infer `Double`.
+> 2. **Runtime ops** (`qswift-core/src/ops.rs`) promote the integer side of a
+>    mixed `Int`/`Double` binary op to `Double`.
+> 3. **Runtime coercion** (`coerce_numeric`) converts an integer literal to
+>    `Double`/`Float` at annotated `let`/`var` bindings, struct memberwise
+>    fields (`StoredProp.ty`), enum associated values
+>    (`EnumCaseDef.payload_types`), and function parameters (`Param.ty`).
+>
+> Pure integer code is unaffected (integer `/` and `%` keep integer semantics).
+> This is a documented fidelity tradeoff: the runtime promotes any mixed
+> `Int`/`Double` arithmetic, whereas Swift only coerces integer *literals*.
+
+---
+
+### P. Protocols — default-method dispatch via a composition typealias — `4/10` — ✅ FIXED
+Uncovered after fixing `B`: a struct conforming through a protocol-composition
+typealias (`typealias NamedAndScored = Named & Scorable`; `struct Student:
+NamedAndScored`) failed with `method .grade() on Student`, because the runtime
+recorded conformance to the *alias* name and never expanded it to its component
+protocols, so the default `grade()` from `Scorable` was not found.
+
+> **Landed.** The interpreter now registers protocol-composition typealiases
+> (`register_typealias` → `protocol_aliases`) and `all_protocols` expands an
+> alias to its components during default-implementation lookup
+> (`qswift-core/src/interp.rs`).
+
 ---
 
 ## Recommended order
@@ -259,3 +307,9 @@ realistic programs — but it is the largest change.
 Every fix should land with a golden fixture under `tests/swift-fixtures/` and,
 once green, the corresponding preset's `supported: false` flag removed in
 `prototype/web-sandbox/src/pages/index.astro`.
+
+## Status: complete
+
+All gaps `A`–`P` are closed and every preset's `supported: false` flag has been
+removed. The `wasm_smoke` suite runs all 13 presets through the compiled wasm
+artifact; the golden corpus and `qswift-cli` run fixtures cover each fix.
