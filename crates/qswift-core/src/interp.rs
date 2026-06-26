@@ -163,6 +163,8 @@ struct StructDef {
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
     subscript: Option<MethodDef>,
+    /// A `static subscript`, addressed as `Type[index]`.
+    static_subscript: Option<MethodDef>,
     /// A custom initializer, if the struct declares one (else memberwise).
     init: Option<MethodDef>,
     /// Stored property name → its `@propertyWrapper` type, when wrapped.
@@ -203,6 +205,8 @@ struct ClassDef {
     methods: std::collections::HashMap<String, MethodDef>,
     init: Option<MethodDef>,
     deinit: Option<Node<'static>>,
+    /// A `static subscript`, addressed as `Type[index]`.
+    static_subscript: Option<MethodDef>,
 }
 
 /// A protocol declaration: its inherited protocols and any default member
@@ -1117,6 +1121,7 @@ impl<'w> Interpreter<'w> {
         let mut methods = std::collections::HashMap::new();
         let mut init = None;
         let mut deinit = None;
+        let mut static_subscript = None;
 
         for member in body.children() {
             match member.kind() {
@@ -1124,6 +1129,17 @@ impl<'w> Interpreter<'w> {
                     init = Some(MethodDef {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        mutating: false,
+                    });
+                }
+                NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
+                    let acc = member.var_accessors();
+                    let sbody = acc
+                        .getter_body
+                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                    static_subscript = Some(MethodDef {
+                        params: parse_params(&member),
+                        body: sbody,
                         mutating: false,
                     });
                 }
@@ -1202,6 +1218,7 @@ impl<'w> Interpreter<'w> {
                 methods,
                 init,
                 deinit,
+                static_subscript,
             },
         );
     }
@@ -1228,6 +1245,7 @@ impl<'w> Interpreter<'w> {
         let mut methods = std::collections::HashMap::new();
         let mut wrappers = std::collections::HashMap::new();
         let mut subscript = None;
+        let mut static_subscript = None;
         let mut init = None;
 
         for member in body.children() {
@@ -1244,11 +1262,16 @@ impl<'w> Interpreter<'w> {
                     let body = acc
                         .getter_body
                         .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
-                    subscript = Some(MethodDef {
+                    let def = MethodDef {
                         params: parse_params(&member),
                         body,
                         mutating: false,
-                    });
+                    };
+                    if member.modifiers() & MOD_STATIC != 0 {
+                        static_subscript = Some(def);
+                    } else {
+                        subscript = Some(def);
+                    }
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
@@ -1333,6 +1356,7 @@ impl<'w> Interpreter<'w> {
                 computed,
                 methods,
                 subscript,
+                static_subscript,
                 init,
                 wrappers,
             },
@@ -2450,6 +2474,25 @@ impl<'w> Interpreter<'w> {
         let base = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
+        // `Type[index]`: a `static subscript` addressed through the type name.
+        if base.kind() == NodeKind::IdentExpr {
+            if let Some(type_name) = base.text() {
+                let has_static = self
+                    .structs
+                    .get(&type_name)
+                    .is_some_and(|d| d.static_subscript.is_some())
+                    || self
+                        .classes
+                        .get(&type_name)
+                        .is_some_and(|d| d.static_subscript.is_some());
+                if self.env.get(&type_name).is_none() && has_static {
+                    let indices: Vec<SwiftValue> = kids
+                        .map(|n| self.eval(&n))
+                        .collect::<Result<_, _>>()?;
+                    return self.read_static_subscript(&type_name, &indices);
+                }
+            }
+        }
         let base_value = self.eval(&base)?;
         let index_nodes: Vec<Node<'static>> = kids.collect();
         let indices: Vec<SwiftValue> = index_nodes
@@ -2457,6 +2500,47 @@ impl<'w> Interpreter<'w> {
             .map(|n| self.eval(n))
             .collect::<Result<_, _>>()?;
         self.read_subscript(&base_value, &indices)
+    }
+
+    /// Evaluate a `static subscript` declared on `type_name`, addressed as
+    /// `Type[index]`. No `self` is bound; only the index parameters are.
+    fn read_static_subscript(&mut self, type_name: &str, indices: &[SwiftValue]) -> Eval {
+        let (params, body) = {
+            let m = self
+                .structs
+                .get(type_name)
+                .and_then(|d| d.static_subscript.as_ref())
+                .or_else(|| {
+                    self.classes
+                        .get(type_name)
+                        .and_then(|d| d.static_subscript.as_ref())
+                })
+                .expect("static subscript exists");
+            (clone_params(&m.params), m.body)
+        };
+        let args: Vec<CallArg> = indices
+            .iter()
+            .map(|v| CallArg {
+                label: None,
+                value: v.clone(),
+                place: None,
+            })
+            .collect();
+        self.env.push();
+        let bound = self.bind_params(&params, args);
+        let result = match bound {
+            Ok(_) => match body {
+                Some(b) => self.eval(&b),
+                None => Ok(SwiftValue::Void),
+            },
+            Err(e) => Err(e),
+        };
+        self.env.pop();
+        match result {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(e) => Err(e),
+        }
     }
 
     /// Assign `base[index] = value` (compound ops supported) for an array held
