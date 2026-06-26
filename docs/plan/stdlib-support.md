@@ -83,7 +83,7 @@ the higher-order algorithms (`map`/`filter`/`reduce`/`sorted`/`contains`/
 directly — so they must be written **once**, not per concrete type. That rules out
 a purely flat registry and motivates two layers:
 
-1. **Intrinsic registry** — `HashMap<(BuiltinReceiver, &str), NativeMethodFn>`
+1. **Intrinsic registry** — `HashMap<(BuiltinReceiver, &str), MethodEntry>`
    for *type-specific* members: `Array.append`/`insert`/`removeAll`/`count`,
    `Dictionary.keys`/`values`/`updateValue`, `String.uppercased`/`hasPrefix`,
    `Int.isMultiple`/`signum`, `Set.union`/`intersection`, etc. `BuiltinReceiver`
@@ -114,6 +114,48 @@ not shadow the builtin — a documented limitation.
 This is itself a deep-module exercise (see the `codebase-design` skill): one
 narrow registration seam, behaviour hidden behind it.
 
+#### Capability surface (`StdContext`) — resolved
+
+`std` intrinsics that need to call closures, recurse into `eval`, throw, or write
+output cannot use today's pure `fn(&mut dyn Write, &[SwiftValue]) -> SwiftValue`.
+They receive a **narrow capability trait**, not the whole `Interpreter`:
+
+```rust
+// defined in qswift-core; implemented for Interpreter.
+pub trait StdContext {
+    fn call_closure(&mut self, id: ClosureId, args: Vec<SwiftValue>) -> Eval;
+    fn throw(&mut self, error: SwiftValue) -> Signal;
+    fn out(&mut self) -> &mut dyn std::io::Write;
+    // widen only as a concrete S-slice needs it.
+}
+```
+
+- *Rejected: full `&mut Interpreter` handle* — leaks core internals into `std` and
+  couples the crates; the trait keeps `std` decoupled and unit-testable against a
+  mock.
+- *Rejected: split closure-taking methods back into core* — re-fragments the
+  stdlib, the very thing this refactor removes.
+
+#### Mutating intrinsics (`append`/`insert`/`removeLast`) — resolved
+
+Mutating methods take the receiver **by value** and return the updated receiver
+alongside the call result; the dispatcher resolves the lvalue `Place` first and
+writes the new receiver back — exactly mirroring `call_struct_method`'s existing
+write-back:
+
+```rust
+// non-mutating: -> Eval (just the result)
+// mutating:     -> Result<(SwiftValue /*result*/, SwiftValue /*new recv*/), Signal>
+struct MethodEntry { mutating: bool, /* fn ptr */ }
+```
+
+- *Rejected: `&mut SwiftValue` receiver* — the receiver lives in `env`, and
+  `StdContext` already borrows `&mut Interpreter`, so `&mut recv` + `&mut ctx`
+  would alias. By-value avoids the borrow conflict and gets copy-on-write for free
+  via `Rc::make_mut` on the returned value.
+- The `mutating: bool` flag on `MethodEntry` tells the dispatcher when to resolve
+  the `Place` and write back.
+
 ### 4.2 Coverage tracking (from both registry and fixtures)
 
 `tools/stdlib-inventory/coverage.py` cross-references the generated inventory
@@ -124,9 +166,10 @@ against **two** signals and assigns each member a state:
 - **verified** — in the registry **and** exercised by a passing fixture
   (behavioural coverage).
 
-The registry signal is read from a generated manifest the registry emits at build
-/ test time (so the tool needs no Rust parsing); the fixture signal is read from
-the `tier10-stdlib` fixtures + the `golden_fixtures` results. Output is a
+The registry signal comes from a `qswift_std::registered_keys() -> Vec<String>`
+accessor dumped to a file by a tiny `#[test]`/bin (authoritative — reads the live
+registry, so it cannot drift from source; no Rust parsing needed). The fixture
+signal is read from the **executing** CLI golden fixtures (see §4.4). Output is a
 coverage report (per-type %, overall %) that feeds Tier 10 checkbox updates —
 turning "stdlib is unbounded" into a tracked number with a verified subset.
 
@@ -196,19 +239,34 @@ against real `swiftc` 6.3.2.
 
 ### 4.4 Definition of done per member
 
-Matches the overall plan §7: the member is dispatched from `qswift-std`, has ≥1
-golden fixture in `tests/swift-fixtures/tier10-stdlib/`, the `golden_fixtures`
-test passes, output matches real `swiftc` 6.3.2 where applicable, and the Tier 10
-checklist + coverage report are updated. Any intentional compatibility gap (float
-formatting, regex subset, Foundation exclusions) is documented per §3.3.
+Two fixture systems exist and both apply:
+
+- **Behaviour** — an executing CLI golden fixture
+  `crates/qswift-cli/tests/fixtures/<name>.swift` + `<name>.expected`, run through
+  the tree-walker by `crates/qswift-cli/tests/golden.rs` and diffed on stdout.
+  This is the only harness that verifies runtime behaviour and is the primary
+  bar for stdlib work.
+- **Parse/typecheck** — a `tests/swift-fixtures/*.swift` frontend fixture
+  (`// expected-no-diagnostics`) validated by `qswift-frontend`'s
+  `golden_fixtures` test, per AGENTS.md “every feature has a golden fixture”.
+  (Note: the `tier10-stdlib` fixtures there are frontend-only and do **not**
+  prove behaviour — e.g. `append` parses there but is not yet implemented.)
+
+A member is done when: dispatched from `qswift-std`, covered by a CLI `.expected`
+fixture **and** a frontend fixture, both tests pass, output matches real `swiftc`
+6.3.2 where applicable, and the Tier 10 checklist + coverage report are updated.
+Any intentional compatibility gap (float formatting, regex subset, Foundation
+exclusions) is documented per §3.3.
 
 ## 5. Deliverables
 
 - [x] `tools/stdlib-inventory/extract.py` + generated `stdlib-inventory.md`
 - [ ] `.swift-version` pinned to 6.3.2 (committed)
-- [ ] Two-layer dispatch seam in `qswift-std` (intrinsic registry + algorithm layer)
+- [ ] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
+      (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
 - [ ] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
-- [ ] `tools/stdlib-inventory/coverage.py` + three-state coverage report
+- [ ] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
+      three-state report (CLI `.expected` signal for `verified`)
 - [ ] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
       checklist/coverage updates
 
@@ -221,5 +279,13 @@ formatting, regex subset, Foundation exclusions) is documented per §3.3.
   (§4.1).
 - **Scope ceiling** → Foundation **out** of MVP; an explicit ordered list S1–S10
   (§4.3); regex literals deferred to their checklist phase.
-- **Coverage signal** → **both** registry (implemented) and fixtures (verified),
-  three-state report (§4.2).
+- **Coverage signal** → **both** registry (`registered_keys()`) and CLI `.expected`
+  fixtures (verified), three-state report (§4.2).
+- **Capability surface** → narrow `StdContext` trait, not a full `Interpreter`
+  handle (§4.1).
+- **Mutating intrinsics** → by-value receiver + return updated receiver, dispatcher
+  writes back via `Place` (avoids the `&mut recv`/`&mut ctx` borrow conflict; CoW
+  via `Rc::make_mut`) (§4.1).
+- **Fixture target** → executing CLI `.expected` fixtures for behaviour + a
+  frontend fixture for parse; the `tier10-stdlib` frontend fixtures alone do not
+  prove behaviour (§4.4).
