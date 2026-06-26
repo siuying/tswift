@@ -405,7 +405,7 @@ biggest sustained effort. Scope deliberately.*
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
 | [x] | `Array<Element>` + CoW | ★★★★ | R1 |
-| [ ] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
+| [x] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
 | [ ] | `Set<Element>` + CoW | ★★★ | R2 |
 | [ ] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
 | [ ] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
