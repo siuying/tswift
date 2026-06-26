@@ -12,9 +12,11 @@
 //! A `Character` is modelled as a single-grapheme `String`; `Substring` shares
 //! the flattened string representation (it is a `String` value here).
 
+use std::rc::Rc;
+
 use qswift_core::{
-    BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult,
-    SwiftValue,
+    graphemes, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, StrViewKind, SwiftValue,
 };
 
 /// Register the `String` intrinsics of this slice.
@@ -37,79 +39,276 @@ pub fn install(interp: &mut Interpreter<'_>) {
     pure("suffix", suffix);
     pure("split", split);
     pure("reversed", reversed);
+    // Index navigation (ADR-0006).
+    pure("index", string_index);
+    pure("distance", distance);
 
     interp.register_intrinsic(s, "append", MethodEntry { mutating: true, func: append });
+
+    // Index model (ADR-0006).
+    interp.register_property(s, "startIndex", start_index);
+    interp.register_property(s, "endIndex", end_index);
+    // `index(before:)` is disambiguated from `index(after:)` by the interpreter
+    // (labels are stripped at the seam) and recorded under the `String.index`
+    // coverage key.
+    interp.register_intrinsic_as(
+        s,
+        "index(before:)",
+        "String.index",
+        MethodEntry { mutating: false, func: index_before },
+    );
+
+    // `Unicode.Scalar.value` (a scalar is modelled as a one-scalar string).
+    interp.register_property(s, "value", scalar_value);
+
+    // Encoding views.
+    interp.register_property(s, "unicodeScalars", unicode_scalars);
+    interp.register_property(s, "utf8", utf8_view);
+    interp.register_property(s, "utf16", utf16_view);
+
+    // Index-based mutation.
+    interp.register_intrinsic(s, "insert", MethodEntry { mutating: true, func: insert });
+    interp.register_intrinsic(s, "remove", MethodEntry { mutating: true, func: remove });
+    interp.register_intrinsic(
+        s,
+        "removeSubrange",
+        MethodEntry { mutating: true, func: remove_subrange },
+    );
+    interp.register_intrinsic(
+        s,
+        "replaceSubrange",
+        MethodEntry { mutating: true, func: replace_subrange },
+    );
 }
 
-/// Segment a string into extended grapheme clusters (pragmatic UAX #29 subset).
-pub fn graphemes(s: &str) -> Vec<String> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let start = i;
-        i += 1;
-        loop {
-            if i >= chars.len() {
-                break;
+// ---- index model -----------------------------------------------------------
+
+/// Byte offsets of every grapheme-cluster boundary, including `0` and `len`.
+fn boundaries(s: &str) -> Vec<usize> {
+    let mut offs = vec![0usize];
+    let mut acc = 0;
+    for g in graphemes(s) {
+        acc += g.len();
+        offs.push(acc);
+    }
+    offs
+}
+
+fn index_value(utf8: usize) -> SwiftValue {
+    SwiftValue::StringIndex { utf8, transcoded: 0 }
+}
+
+fn as_index(v: &SwiftValue) -> Result<usize, StdError> {
+    match v {
+        SwiftValue::StringIndex { utf8, .. } => Ok(*utf8),
+        other => Err(type_err(format!(
+            "expected a String.Index, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn as_int(v: &SwiftValue) -> Result<i128, StdError> {
+    match v {
+        SwiftValue::Int(i) => Ok(i.raw),
+        other => Err(type_err(format!("expected an integer, got {}", other.type_name()))),
+    }
+}
+
+fn start_index(recv: SwiftValue) -> StdResult {
+    let _ = str_of(&recv)?;
+    Ok(index_value(0))
+}
+
+fn end_index(recv: SwiftValue) -> StdResult {
+    Ok(index_value(str_of(&recv)?.len()))
+}
+
+/// `s.index(after:)` / `s.index(before:)` / `s.index(_:offsetBy:[limitedBy:])`,
+/// all dispatched on the `index` method name by argument labels/arity.
+fn string_index(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let s = str_of(&recv)?;
+    let offs = boundaries(&s);
+    let pos_of = |byte: usize| offs.iter().position(|&o| o == byte);
+
+    // The first argument distinguishes the overloads: `after:`/`before:` take a
+    // single index; `index(_:offsetBy:)` takes (index, n[, limit]).
+    let first = args.first().ok_or_else(|| arg_err("index"))?;
+    let base = as_index(first)?;
+    let base_pos = pos_of(base).ok_or_else(|| trap_err("String index is not aligned"))?;
+
+    match args.len() {
+        // index(after:) when called positionally is also length 1; Swift spells
+        // before/after via labels, but the runtime passes values positionally,
+        // so a lone index means `after`. `before` arrives as a negative offset
+        // through index(_:offsetBy:) in practice; we also accept index(before:)
+        // by a sentinel handled in the 1-arg branch is ambiguous, so callers use
+        // index(after:)/index(_:offsetBy:).
+        1 => {
+            let next = base_pos + 1;
+            offs.get(next)
+                .copied()
+                .map(|b| ok(index_value(b), recv.clone()))
+                .unwrap_or_else(|| Err(trap_err("String index is out of bounds")))
+        }
+        _ => {
+            let n = as_int(&args[1])?;
+            let target = base_pos as i128 + n;
+            let limit = args.get(2).map(as_index).transpose()?;
+            if target < 0 || target as usize >= offs.len() {
+                // Out of range: respect `limitedBy` (return nil) or trap.
+                if limit.is_some() {
+                    return ok(SwiftValue::Nil, recv);
+                }
+                return Err(trap_err("String index is out of bounds"));
             }
-            let prev = chars[i - 1];
-            let cur = chars[i];
-            // CRLF stays together.
-            if prev == '\r' && cur == '\n' {
-                i += 1;
-                continue;
-            }
-            // Extend (combining marks / variation selectors) and ZWJ join.
-            if is_extend(cur) || cur == ZWJ {
-                i += 1;
-                continue;
-            }
-            // A ZWJ glues whatever follows (emoji sequences).
-            if prev == ZWJ {
-                i += 1;
-                continue;
-            }
-            // Pair regional indicators (flags): join only when the run from the
-            // cluster start is currently odd in length.
-            if is_regional(prev) && is_regional(cur) {
-                let run = chars[start..i].iter().rev().take_while(|c| is_regional(**c)).count();
-                if run % 2 == 1 {
-                    i += 1;
-                    continue;
+            let result = offs[target as usize];
+            if let Some(lim) = limit {
+                // Overshooting the limit yields nil (Swift `limitedBy`).
+                if (n >= 0 && result > lim) || (n < 0 && result < lim) {
+                    return ok(SwiftValue::Nil, recv);
                 }
             }
-            break;
+            ok(index_value(result), recv)
         }
-        out.push(chars[start..i].iter().collect());
     }
-    out
 }
 
-const ZWJ: char = '\u{200D}';
-
-fn is_regional(c: char) -> bool {
-    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+/// `s.index(before:)` — the index one grapheme cluster earlier; traps at
+/// `startIndex`.
+fn index_before(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let s = str_of(&recv)?;
+    let offs = boundaries(&s);
+    let base = as_index(args.first().ok_or_else(|| arg_err("index(before:)"))?)?;
+    let pos = offs
+        .iter()
+        .position(|&o| o == base)
+        .ok_or_else(|| trap_err("String index is not aligned"))?;
+    if pos == 0 {
+        return Err(trap_err("String index is out of bounds"));
+    }
+    val(index_value(offs[pos - 1]), recv)
 }
 
-/// Combining marks and variation selectors that extend a grapheme cluster.
-fn is_extend(c: char) -> bool {
-    matches!(c as u32,
-        0x0300..=0x036F   // combining diacritical marks
-        | 0x0483..=0x0489
-        | 0x0591..=0x05BD
-        | 0x0610..=0x061A
-        | 0x064B..=0x065F
-        | 0x0670
-        | 0x06D6..=0x06DC
-        | 0x0E31 | 0x0E34..=0x0E3A
-        | 0x1AB0..=0x1AFF // combining diacritical marks extended
-        | 0x1DC0..=0x1DFF // combining diacritical marks supplement
-        | 0x20D0..=0x20FF // combining diacritical marks for symbols
-        | 0xFE00..=0xFE0F // variation selectors
-        | 0xFE20..=0xFE2F // combining half marks
-        | 0xE0100..=0xE01EF // variation selectors supplement
-    )
+/// `s.distance(from:to:)` — grapheme-cluster count between two indices.
+fn distance(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let s = str_of(&recv)?;
+    let offs = boundaries(&s);
+    let from = as_index(args.first().ok_or_else(|| arg_err("distance"))?)?;
+    let to = as_index(args.get(1).ok_or_else(|| arg_err("distance"))?)?;
+    let pos = |byte: usize| offs.iter().position(|&o| o == byte);
+    let a = pos(from).ok_or_else(|| trap_err("String index is not aligned"))? as i128;
+    let b = pos(to).ok_or_else(|| trap_err("String index is not aligned"))? as i128;
+    ok(SwiftValue::int(b - a), recv)
+}
+
+// ---- encoding views --------------------------------------------------------
+
+/// `Unicode.Scalar.value` — the code point of a single-scalar value (`UInt32`).
+fn scalar_value(recv: SwiftValue) -> StdResult {
+    let s = str_of(&recv)?;
+    let cp = s.chars().next().map(|c| c as u32).unwrap_or(0);
+    Ok(SwiftValue::Int(qswift_core::IntValue::new(
+        cp as i128,
+        qswift_core::IntWidth::U32,
+    )))
+}
+
+fn unicode_scalars(recv: SwiftValue) -> StdResult {
+    view(recv, StrViewKind::UnicodeScalars)
+}
+fn utf8_view(recv: SwiftValue) -> StdResult {
+    view(recv, StrViewKind::Utf8)
+}
+fn utf16_view(recv: SwiftValue) -> StdResult {
+    view(recv, StrViewKind::Utf16)
+}
+fn view(recv: SwiftValue, kind: StrViewKind) -> StdResult {
+    Ok(SwiftValue::StringView {
+        base: Rc::new(str_of(&recv)?),
+        kind,
+    })
+}
+
+// ---- index-based mutation --------------------------------------------------
+
+fn arg_char(args: &[SwiftValue], who: &str) -> Result<String, StdError> {
+    match args.first() {
+        Some(SwiftValue::Str(s)) => Ok(s.clone()),
+        _ => Err(arg_err(who)),
+    }
+}
+
+/// `s.insert(_:at:)` — insert a Character at an index.
+fn insert(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut s = str_of(&recv)?;
+    let ch = arg_char(&args, "insert(_:at:)")?;
+    let at = as_index(args.get(1).ok_or_else(|| arg_err("insert(_:at:)"))?)?;
+    if at > s.len() || !s.is_char_boundary(at) {
+        return Err(trap_err("String index is out of bounds"));
+    }
+    s.insert_str(at, &ch);
+    ok(SwiftValue::Void, SwiftValue::Str(s))
+}
+
+/// `s.remove(at:)` — remove and return the grapheme at an index.
+fn remove(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut s = str_of(&recv)?;
+    let at = as_index(args.first().ok_or_else(|| arg_err("remove(at:)"))?)?;
+    if at >= s.len() || !s.is_char_boundary(at) {
+        return Err(trap_err("String index is out of bounds"));
+    }
+    let g = graphemes(&s[at..])
+        .into_iter()
+        .next()
+        .ok_or_else(|| trap_err("String index is out of bounds"))?;
+    let removed = s.drain(at..at + g.len()).collect::<String>();
+    ok(SwiftValue::Str(removed), SwiftValue::Str(s))
+}
+
+fn range_bounds(v: &SwiftValue, who: &str) -> Result<(usize, usize), StdError> {
+    match v {
+        SwiftValue::Range { lo, hi, .. } => Ok((*lo as usize, *hi as usize)),
+        _ => Err(arg_err(who)),
+    }
+}
+
+/// `s.removeSubrange(_:)` — remove the bytes in an index range.
+fn remove_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut s = str_of(&recv)?;
+    let (lo, hi) = range_bounds(args.first().ok_or_else(|| arg_err("removeSubrange"))?, "removeSubrange")?;
+    if lo > hi || hi > s.len() || !s.is_char_boundary(lo) || !s.is_char_boundary(hi) {
+        return Err(trap_err("String range is out of bounds"));
+    }
+    s.replace_range(lo..hi, "");
+    ok(SwiftValue::Void, SwiftValue::Str(s))
+}
+
+/// `s.replaceSubrange(_:with:)` — replace an index range with a string.
+fn replace_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut s = str_of(&recv)?;
+    let (lo, hi) = range_bounds(args.first().ok_or_else(|| arg_err("replaceSubrange"))?, "replaceSubrange")?;
+    let with = match args.get(1) {
+        Some(SwiftValue::Str(w)) => w.clone(),
+        _ => return Err(arg_err("replaceSubrange(_:with:)")),
+    };
+    if lo > hi || hi > s.len() || !s.is_char_boundary(lo) || !s.is_char_boundary(hi) {
+        return Err(trap_err("String range is out of bounds"));
+    }
+    s.replace_range(lo..hi, &with);
+    ok(SwiftValue::Void, SwiftValue::Str(s))
+}
+
+fn ok(result: SwiftValue, receiver: SwiftValue) -> Outcomes {
+    Ok(Outcome { result, receiver })
+}
+
+fn trap_err(msg: &str) -> StdError {
+    StdError::Error(EvalError::Trap(msg.to_string()))
+}
+
+fn arg_err(who: &str) -> StdError {
+    StdError::Error(EvalError::Type(format!("{who}: missing or wrong argument")))
 }
 
 fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
@@ -315,5 +514,80 @@ mod tests {
             SwiftValue::Array(parts) => assert_eq!(parts.len(), 3),
             _ => panic!("split should yield an array"),
         }
+    }
+
+    fn idx(utf8: usize) -> SwiftValue {
+        SwiftValue::StringIndex { utf8, transcoded: 0 }
+    }
+
+    #[test]
+    fn boundaries_are_grapheme_aligned() {
+        // "café" = c|a|f|é(2 bytes) -> offsets 0,1,2,3,5.
+        assert_eq!(boundaries("café"), vec![0, 1, 2, 3, 5]);
+        assert_eq!(boundaries(""), vec![0]);
+    }
+
+    #[test]
+    fn index_navigation_and_distance() {
+        let mut m = M;
+        // index(after: startIndex) of "café" -> offset 1.
+        assert_eq!(
+            string_index(&mut m, s("café"), vec![idx(0)]).unwrap().result,
+            idx(1)
+        );
+        // index(_:offsetBy:) crossing the 2-byte 'é'.
+        assert_eq!(
+            string_index(&mut m, s("café"), vec![idx(3), SwiftValue::int(1)])
+                .unwrap()
+                .result,
+            idx(5)
+        );
+        // limitedBy past the end -> nil.
+        assert_eq!(
+            string_index(
+                &mut m,
+                s("ab"),
+                vec![idx(0), SwiftValue::int(9), idx(2)]
+            )
+            .unwrap()
+            .result,
+            SwiftValue::Nil
+        );
+        // index(before:) at endIndex.
+        assert_eq!(
+            index_before(&mut m, s("café"), vec![idx(5)]).unwrap().result,
+            idx(3)
+        );
+        // distance over grapheme clusters.
+        assert_eq!(
+            distance(&mut m, s("café"), vec![idx(0), idx(5)]).unwrap().result,
+            SwiftValue::int(4)
+        );
+    }
+
+    #[test]
+    fn mutation_at_index() {
+        let mut m = M;
+        // insert at startIndex.
+        assert_eq!(
+            insert(&mut m, s("bc"), vec![s("a"), idx(0)]).unwrap().receiver,
+            s("abc")
+        );
+        // remove(at:) returns the removed grapheme and the shortened string.
+        let out = remove(&mut m, s("café"), vec![idx(3)]).unwrap();
+        assert_eq!(out.result, s("é"));
+        assert_eq!(out.receiver, s("caf"));
+        // replaceSubrange over byte offsets 0..1.
+        let r = SwiftValue::Range {
+            lo: 0,
+            hi: 1,
+            inclusive: false,
+        };
+        assert_eq!(
+            replace_subrange(&mut m, s("abc"), vec![r, s("**")])
+                .unwrap()
+                .receiver,
+            s("**bc")
+        );
     }
 }
