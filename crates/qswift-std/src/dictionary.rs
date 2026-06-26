@@ -145,7 +145,10 @@ fn filter(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> 
     let id = closure(&args).ok_or_else(|| type_err("filter expects a closure".into()))?;
     let mut out: Pairs = Vec::new();
     for (k, v) in pairs(recv.clone())?.iter() {
-        let element = SwiftValue::Tuple(vec![k.clone(), v.clone()]);
+        let element = SwiftValue::tuple_labeled(
+            vec![k.clone(), v.clone()],
+            vec![Some("key".to_string()), Some("value".to_string())],
+        );
         if matches!(ctx.call_closure(id, vec![element])?, SwiftValue::Bool(true)) {
             out.push((k.clone(), v.clone()));
         }
@@ -219,7 +222,7 @@ mod tests {
                 1 => SwiftValue::int(n(&args[0]) * 10),
                 // Predicate over a `(key, value)` element tuple: value >= 2.
                 2 => match args.first() {
-                    Some(SwiftValue::Tuple(t)) => SwiftValue::Bool(n(&t[1]) >= 2),
+                    Some(SwiftValue::Tuple(t, _)) => SwiftValue::Bool(n(&t[1]) >= 2),
                     _ => SwiftValue::Bool(false),
                 },
                 _ => SwiftValue::Nil,

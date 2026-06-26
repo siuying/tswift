@@ -84,10 +84,13 @@ fn int_quotient_and_remainder(
     if d.raw == 0 {
         return Err(StdError::Error(EvalError::Trap("division by zero".into())));
     }
-    let tuple = SwiftValue::Tuple(vec![
-        SwiftValue::Int(IntValue::new(i.raw / d.raw, i.width)),
-        SwiftValue::Int(IntValue::new(i.raw % d.raw, i.width)),
-    ]);
+    let tuple = SwiftValue::tuple_labeled(
+        vec![
+            SwiftValue::Int(IntValue::new(i.raw / d.raw, i.width)),
+            SwiftValue::Int(IntValue::new(i.raw % d.raw, i.width)),
+        ],
+        vec![Some("quotient".to_string()), Some("remainder".to_string())],
+    );
     ok(tuple, recv)
 }
 
@@ -210,7 +213,7 @@ mod tests {
             .result;
         assert_eq!(
             qr,
-            SwiftValue::Tuple(vec![SwiftValue::int(3), SwiftValue::int(2)])
+            SwiftValue::tuple(vec![SwiftValue::int(3), SwiftValue::int(2)])
         );
     }
 

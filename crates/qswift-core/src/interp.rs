@@ -1247,6 +1247,7 @@ impl<'w> Interpreter<'w> {
         let mut subscript = None;
         let mut static_subscript = None;
         let mut init = None;
+        let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
         for member in body.children() {
             match member.kind() {
@@ -1328,11 +1329,11 @@ impl<'w> Interpreter<'w> {
                             )
                         });
                         if is_static {
-                            // Eagerly evaluate the static's initial value.
+                            // Defer evaluation until after the type is
+                            // registered so a static like `static let red =
+                            // Color(...)` can reference its own type.
                             if let Some(def) = default {
-                                if let Ok(v) = self.eval(&def) {
-                                    self.statics.insert(format!("{name}.{pname}"), v);
-                                }
+                                static_inits.push((pname.clone(), def));
                             }
                         } else {
                             stored.push(StoredProp {
@@ -1350,7 +1351,7 @@ impl<'w> Interpreter<'w> {
             }
         }
         self.structs.insert(
-            name,
+            name.clone(),
             StructDef {
                 stored,
                 computed,
@@ -1361,15 +1362,24 @@ impl<'w> Interpreter<'w> {
                 wrappers,
             },
         );
+        // Now that the struct is registered, evaluate its static initializers
+        // (which may construct instances of the type itself).
+        for (pname, def) in static_inits {
+            if let Ok(v) = self.eval(&def) {
+                self.statics.insert(format!("{name}.{pname}"), v);
+            }
+        }
     }
 
     /// A tuple expression `(a, b, …)`.
     fn eval_tuple(&mut self, node: &Node<'static>) -> Eval {
         let mut items = Vec::new();
+        let mut labels = Vec::new();
         for child in node.children() {
+            labels.push(child.arg_label());
             items.push(self.eval(&child)?);
         }
-        Ok(SwiftValue::Tuple(items))
+        Ok(SwiftValue::Tuple(items, labels))
     }
 
     /// Evaluate each child in order, yielding the last value.
@@ -1459,7 +1469,7 @@ impl<'w> Interpreter<'w> {
         value: &SwiftValue,
         mutable: bool,
     ) -> Result<(), Signal> {
-        let SwiftValue::Tuple(items) = value else {
+        let SwiftValue::Tuple(items, _) = value else {
             return Err(EvalError::Type(format!(
                 "cannot destructure {} as a tuple",
                 value.type_name()
@@ -1673,6 +1683,32 @@ impl<'w> Interpreter<'w> {
             }
         }
         found
+    }
+
+    /// Resolve an implicit-member `.name` to a static property. Prefers the
+    /// member node's inferred contextual type; otherwise accepts a unique
+    /// registered static whose member name matches.
+    fn resolve_implicit_static(&self, node: &Node<'static>, name: &str) -> Option<SwiftValue> {
+        // Contextual type, if the frontend resolved one.
+        if let Some(ty) = node.type_name() {
+            for type_name in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if let Some(v) = self.statics.get(&format!("{type_name}.{name}")) {
+                    return Some(v.clone());
+                }
+            }
+        }
+        // Otherwise, a unique `Type.name` static across all registered types.
+        let suffix = format!(".{name}");
+        let mut found: Option<&SwiftValue> = None;
+        for (key, value) in &self.statics {
+            if key.ends_with(&suffix) {
+                if found.is_some() {
+                    return None; // ambiguous
+                }
+                found = Some(value);
+            }
+        }
+        found.cloned()
     }
 
     /// Whether `name` is a case of enum `type_name`.
@@ -3397,10 +3433,10 @@ impl<'w> Interpreter<'w> {
                 Ok((*lo..end).map(SwiftValue::int).collect())
             }
             SwiftValue::Array(items) => Ok(items.as_ref().clone()),
-            // Iterating a dictionary yields `(key, value)` tuples.
+            // Iterating a dictionary yields `(key:, value:)` tuples.
             SwiftValue::Dict(pairs) => Ok(pairs
                 .iter()
-                .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
+                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
                 .collect()),
             SwiftValue::Set(items) => Ok(items.as_ref().clone()),
             SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
@@ -3613,7 +3649,7 @@ impl<'w> Interpreter<'w> {
                 Ok(Some(all))
             }
             NodeKind::PatternTuple => {
-                let SwiftValue::Tuple(items) = subject else {
+                let SwiftValue::Tuple(items, _) = subject else {
                     return Ok(None);
                 };
                 let subs: Vec<Node<'static>> = pattern.children().collect();
@@ -3831,6 +3867,12 @@ impl<'w> Interpreter<'w> {
             if let Some(tn) = self.resolve_member_enum(node, &member) {
                 return Ok(self.make_enum_case(&tn, &member, Vec::new())?.unwrap());
             }
+            // Implicit member of a static property: `.red` where the contextual
+            // type declares `static let red`. Resolve via the node's inferred
+            // type, else a unique static whose member name matches.
+            if let Some(v) = self.resolve_implicit_static(node, &member) {
+                return Ok(v);
+            }
             return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
         };
 
@@ -3923,18 +3965,25 @@ impl<'w> Interpreter<'w> {
             // Array `count`/`isEmpty` are served by the property registry (S4).
             (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
-            (SwiftValue::Tuple(items), idx) if idx.parse::<usize>().is_ok() => {
+            (SwiftValue::Tuple(items, _), idx) if idx.parse::<usize>().is_ok() => {
                 let i: usize = idx.parse().unwrap();
                 items
                     .get(i)
                     .cloned()
                     .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
             }
+            // Named tuple element access (`r.min` on `(min: 1, max: 9)`).
+            (SwiftValue::Tuple(items, labels), name)
+                if SwiftValue::tuple_label_index(labels, name).is_some() =>
+            {
+                let i = SwiftValue::tuple_label_index(labels, name).unwrap();
+                Ok(items[i].clone())
+            }
             // Dictionary iteration yields a `(key:, value:)` element tuple;
             // resolve its labelled members to the positional slots. Sema only
             // admits these labels on the dictionary element tuple shape.
-            (SwiftValue::Tuple(items), "key") if items.len() == 2 => Ok(items[0].clone()),
-            (SwiftValue::Tuple(items), "value") if items.len() == 2 => Ok(items[1].clone()),
+            (SwiftValue::Tuple(items, _), "key") if items.len() == 2 => Ok(items[0].clone()),
+            (SwiftValue::Tuple(items, _), "value") if items.len() == 2 => Ok(items[1].clone()),
             _ => Err(
                 EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
             ),
@@ -4777,7 +4826,7 @@ impl<'w> Interpreter<'w> {
         targets: &[Node<'static>],
         value: SwiftValue,
     ) -> Result<(), Signal> {
-        let SwiftValue::Tuple(items) = value else {
+        let SwiftValue::Tuple(items, _) = value else {
             return Err(EvalError::Type(
                 "tuple-destructuring assignment expects a tuple value".into(),
             )
@@ -4916,7 +4965,7 @@ impl<'w> Interpreter<'w> {
                 .ok_or_else(|| EvalError::Type("uniqueKeysWithValues expects a sequence".into()))?;
             let mut pairs: Vec<(SwiftValue, SwiftValue)> = Vec::new();
             for el in elements {
-                if let SwiftValue::Tuple(t) = el {
+                if let SwiftValue::Tuple(t, _) = el {
                     if t.len() == 2 {
                         pairs.push((t[0].clone(), t[1].clone()));
                         continue;
@@ -5051,12 +5100,21 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
         SwiftValue::Dict(pairs) => Some(
             pairs
                 .iter()
-                .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
+                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
                 .collect(),
         ),
         SwiftValue::Set(items) => Some(items.as_ref().clone()),
         _ => None,
     }
+}
+
+/// A dictionary element `(key:, value:)` tuple, carrying the Swift labels so
+/// both `element.key`/`element.value` access and printing behave like Swift.
+fn dict_element_tuple(key: SwiftValue, value: SwiftValue) -> SwiftValue {
+    SwiftValue::tuple_labeled(
+        vec![key, value],
+        vec![Some("key".to_string()), Some("value".to_string())],
+    )
 }
 
 /// The capability surface the standard-library seam sees: a narrow window onto
@@ -5300,7 +5358,7 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
         (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x == y,
         (SwiftValue::Str(x), SwiftValue::Str(y)) => x == y,
         (SwiftValue::Nil, SwiftValue::Nil) => true,
-        (SwiftValue::Tuple(x), SwiftValue::Tuple(y)) => {
+        (SwiftValue::Tuple(x, _), SwiftValue::Tuple(y, _)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
         }
         (SwiftValue::Enum(x), SwiftValue::Enum(y)) => {
@@ -5500,6 +5558,27 @@ mod tests {
     fn tuple_destructuring_assignment_swaps() {
         let out = run("var a = 1\nvar b = 2\n(a, b) = (b, a + b)\nprint(a, b)\n").unwrap();
         assert_eq!(out, "2 3\n");
+    }
+
+    #[test]
+    fn named_tuple_element_access() {
+        let out = run("let p = (min: 1, max: 9)\nprint(p.min, p.max, p.0, p.1)\n").unwrap();
+        assert_eq!(out, "1 9 1 9\n");
+    }
+
+    #[test]
+    fn named_tuple_from_function_return_label() {
+        let out = run(
+            "func f() -> (lo: Int, hi: Int) { return (lo: 2, hi: 8) }\nlet r = f()\nprint(r.lo, r.hi)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "2 8\n");
+    }
+
+    #[test]
+    fn named_tuple_prints_labels() {
+        let out = run("print((x: 10, y: 20))\n").unwrap();
+        assert_eq!(out, "(x: 10, y: 20)\n");
     }
 
     #[test]

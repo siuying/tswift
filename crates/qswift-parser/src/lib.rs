@@ -2299,23 +2299,50 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_paren_or_tuple_inner(&mut self, open: Token<'a>) -> Result<NodeId, ParseError> {
-        let first = self.parse_expr(0)?;
+        let (first_label, first) = self.parse_tuple_element()?;
+        // `( expr )` collapses to the inner expression. A single labeled element
+        // `(min: 1)` is not a one-tuple in Swift either — the label is dropped.
         if self.peek().kind != TokenKind::Comma {
             self.expect(TokenKind::RParen)?;
             return Ok(first);
         }
         let tuple = self.ast.add(NodeKind::TupleExpr, None, open.line, open.col);
+        if let Some(label) = first_label {
+            self.ast.set_arg_label(first, label);
+        }
         self.ast.append_child(tuple, first);
         while self.peek().kind == TokenKind::Comma {
             self.bump();
             if self.peek().kind == TokenKind::RParen {
                 break;
             }
-            let next = self.parse_expr(0)?;
+            let (label, next) = self.parse_tuple_element()?;
+            if let Some(label) = label {
+                self.ast.set_arg_label(next, label);
+            }
             self.ast.append_child(tuple, next);
         }
         self.expect(TokenKind::RParen)?;
         Ok(tuple)
+    }
+
+    /// A tuple-literal element: an optional `name:` label followed by an
+    /// expression. The label uses the same `identifier :` shape as a call
+    /// argument label, distinct from the `?:` ternary.
+    fn parse_tuple_element(&mut self) -> Result<(Option<&'a str>, NodeId), ParseError> {
+        let label = if matches!(
+            self.peek().kind,
+            TokenKind::Identifier | TokenKind::Keyword
+        ) && self.tokens[self.pos + 1].kind == TokenKind::Colon
+        {
+            let name = self.bump().text;
+            self.bump(); // ':'
+            Some(name)
+        } else {
+            None
+        };
+        let expr = self.parse_expr(0)?;
+        Ok((label, expr))
     }
 
     /// Trailing call `(...)` and member/tuple-index `.x` / `.0` suffixes.
@@ -2778,6 +2805,23 @@ mod tests {
         assert_eq!(names, vec![Some("a"), Some("b")]);
         let init = decl.children().nth(1).unwrap();
         assert_eq!(init.kind(), NodeKind::TupleExpr);
+    }
+
+    #[test]
+    fn labeled_tuple_literal_keeps_element_labels() {
+        let ast = ast_of("let p = (min: 1, max: 9)");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::TupleExpr);
+        let labels: Vec<_> = init.children().map(|c| c.arg_label()).collect();
+        assert_eq!(labels, vec![Some("min"), Some("max")]);
+    }
+
+    #[test]
+    fn single_labeled_paren_collapses_to_inner_expr() {
+        // `(min: 1)` is not a one-element tuple in Swift; the label is dropped.
+        let ast = ast_of("let x = (min: 1)");
+        let init = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(init.kind(), NodeKind::IntegerLiteral);
     }
 
     #[test]

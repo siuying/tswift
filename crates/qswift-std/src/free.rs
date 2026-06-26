@@ -149,7 +149,7 @@ fn zip(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let pairs = xs
         .into_iter()
         .zip(ys)
-        .map(|(x, y)| SwiftValue::Tuple(vec![x, y]))
+        .map(|(x, y)| SwiftValue::tuple(vec![x, y]))
         .collect();
     Ok(SwiftValue::Array(Rc::new(pairs)))
 }
@@ -417,8 +417,16 @@ fn debug_format(v: &SwiftValue) -> String {
             let inner = items.iter().map(debug_format).collect::<Vec<_>>().join(", ");
             format!("[{inner}]")
         }
-        SwiftValue::Tuple(items) => {
-            let inner = items.iter().map(debug_format).collect::<Vec<_>>().join(", ");
+        SwiftValue::Tuple(items, labels) => {
+            let inner = items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| match labels.get(i) {
+                    Some(Some(label)) => format!("{label}: {}", debug_format(v)),
+                    _ => debug_format(v),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("({inner})")
         }
         other => other.to_string(),

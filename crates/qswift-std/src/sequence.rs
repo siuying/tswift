@@ -254,7 +254,12 @@ fn enumerated(_c: &mut dyn StdContext, items: Vec<SwiftValue>, _a: Vec<Arg>) -> 
     let out = items
         .into_iter()
         .enumerate()
-        .map(|(i, v)| SwiftValue::Tuple(vec![SwiftValue::int(i as i128), v]))
+        .map(|(i, v)| {
+            SwiftValue::tuple_labeled(
+                vec![SwiftValue::int(i as i128), v],
+                vec![Some("offset".to_string()), Some("element".to_string())],
+            )
+        })
         .collect();
     Ok(array(out))
 }

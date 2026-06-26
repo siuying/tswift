@@ -101,7 +101,13 @@ fn insert(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
     if !present {
         items.push(el.clone());
     }
-    let result = SwiftValue::Tuple(vec![SwiftValue::Bool(!present), el]);
+    let result = SwiftValue::tuple_labeled(
+        vec![SwiftValue::Bool(!present), el],
+        vec![
+            Some("inserted".to_string()),
+            Some("memberAfterInsert".to_string()),
+        ],
+    );
     Ok(Outcome { result, receiver: SwiftValue::Set(Rc::new(items)) })
 }
 
@@ -274,7 +280,7 @@ mod tests {
         // re-inserting reports inserted = false.
         let again = insert(&mut m, s(&[1, 2]), vec![SwiftValue::int(2)]).unwrap();
         match again.result {
-            SwiftValue::Tuple(t) => assert_eq!(t[0], SwiftValue::Bool(false)),
+            SwiftValue::Tuple(t, _) => assert_eq!(t[0], SwiftValue::Bool(false)),
             _ => panic!(),
         }
         let removed = remove(&mut m, s(&[1, 2]), vec![SwiftValue::int(2)]).unwrap();

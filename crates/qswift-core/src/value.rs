@@ -144,8 +144,10 @@ pub enum SwiftValue {
     Int(IntValue),
     Double(f64),
     Str(String),
-    /// A tuple `(a, b, ...)`.
-    Tuple(Vec<SwiftValue>),
+    /// A tuple `(a, b, ...)`. The second vector holds an optional label per
+    /// element (`(min: 1, max: 9)` → `[Some("min"), Some("max")]`); labels are
+    /// type-level metadata that does not participate in equality.
+    Tuple(Vec<SwiftValue>, Vec<Option<String>>),
     /// An array `[a, b, ...]` (used today for variadic parameter packs).
     Array(Rc<Vec<SwiftValue>>),
     /// A dictionary `[k: v, ...]`. Stored as insertion-ordered key/value pairs
@@ -255,6 +257,25 @@ impl SwiftValue {
         SwiftValue::Int(IntValue::int(raw))
     }
 
+    /// Construct an unlabeled tuple.
+    pub fn tuple(items: Vec<SwiftValue>) -> SwiftValue {
+        let labels = vec![None; items.len()];
+        SwiftValue::Tuple(items, labels)
+    }
+
+    /// Construct a tuple with an explicit label per element.
+    pub fn tuple_labeled(items: Vec<SwiftValue>, labels: Vec<Option<String>>) -> SwiftValue {
+        debug_assert_eq!(items.len(), labels.len());
+        SwiftValue::Tuple(items, labels)
+    }
+
+    /// The index of a tuple element by label, if the tuple carries that label.
+    pub fn tuple_label_index(labels: &[Option<String>], name: &str) -> Option<usize> {
+        labels
+            .iter()
+            .position(|l| l.as_deref() == Some(name))
+    }
+
     /// Interpret the value as a boolean (only `Bool` qualifies).
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -271,7 +292,7 @@ impl SwiftValue {
             SwiftValue::Int(i) => i.width.type_name().into(),
             SwiftValue::Double(_) => "Double".into(),
             SwiftValue::Str(_) => "String".into(),
-            SwiftValue::Tuple(_) => "tuple".into(),
+            SwiftValue::Tuple(..) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
             SwiftValue::Dict(_) => "Dictionary".into(),
             SwiftValue::Set(_) => "Set".into(),
@@ -300,7 +321,8 @@ impl PartialEq for SwiftValue {
             (Int(a), Int(b)) => a == b,
             (Double(a), Double(b)) => a == b,
             (Str(a), Str(b)) => a == b,
-            (Tuple(a), Tuple(b)) => a == b,
+            // Tuple labels are type metadata, not value: compare elements only.
+            (Tuple(a, _), Tuple(b, _)) => a == b,
             (Array(a), Array(b)) => a == b,
             // Dictionaries are equal as unordered key/value sets.
             (Dict(a), Dict(b)) => {
@@ -345,11 +367,14 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Int(i) => write!(f, "{}", i.raw),
             SwiftValue::Double(d) => write!(f, "{}", format_double(*d)),
             SwiftValue::Str(s) => write!(f, "{s}"),
-            SwiftValue::Tuple(items) => {
+            SwiftValue::Tuple(items, labels) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
+                    }
+                    if let Some(Some(label)) = labels.get(i) {
+                        write!(f, "{label}: ")?;
                     }
                     write!(f, "{item}")?;
                 }

@@ -87,7 +87,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `inout` parameters (true lvalue aliasing) | ✅ | ★★★ | R2 |
 | [x] | Nested functions + capture | ✅ | ★★ | R3 |
 | [x] | Function types as values / params / returns | ✅ | ★★ | R3 |
-| [x] | Multiple return values via tuples (positional; named element access is a documented gap) | ✅ | ★ | R1 |
+| [x] | Multiple return values via tuples (positional and named element access) | ✅ | ★ | R1 |
 | [x] | `@discardableResult` | ✅ | ★ | R1 |
 | [x] | Functions that never return (`-> Never`) | ✅ | ★★ | R2 |
 

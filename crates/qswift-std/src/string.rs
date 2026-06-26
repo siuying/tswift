@@ -412,7 +412,7 @@ fn match_tuple(caps: &Captures, chars: &[char]) -> SwiftValue {
             None => SwiftValue::Nil,
         })
         .collect();
-    SwiftValue::Tuple(parts)
+    SwiftValue::tuple(parts)
 }
 
 /// Wrap an optional capture as a Swift `Optional`: the match tuple, or `nil`.
@@ -572,7 +572,7 @@ mod tests {
             .result;
         assert_eq!(
             out,
-            SwiftValue::Tuple(vec![s("order-42"), s("order"), s("42")])
+            SwiftValue::tuple(vec![s("order-42"), s("order"), s("42")])
         );
     }
 
@@ -592,7 +592,7 @@ mod tests {
             whole_match(&mut m, s("abc"), vec![re(r"[a-z]+")])
                 .unwrap()
                 .result,
-            SwiftValue::Tuple(_)
+            SwiftValue::Tuple(..)
         ));
         assert_eq!(
             whole_match(&mut m, s("abc1"), vec![re(r"[a-z]+")])
@@ -613,7 +613,7 @@ mod tests {
                 let firsts: Vec<SwiftValue> = items
                     .iter()
                     .map(|t| match t {
-                        SwiftValue::Tuple(v) => v[0].clone(),
+                        SwiftValue::Tuple(v, _) => v[0].clone(),
                         _ => panic!("match should be a tuple"),
                     })
                     .collect();

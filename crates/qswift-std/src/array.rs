@@ -417,7 +417,7 @@ fn stable_hash(value: &SwiftValue) -> u64 {
         SwiftValue::Int(i) => mix(0x20, i.raw as u64),
         SwiftValue::Double(d) => mix(0x30, d.to_bits()),
         SwiftValue::Str(s) => s.bytes().fold(0x40, |h, b| mix(h, b as u64)),
-        SwiftValue::Tuple(items) => items.iter().fold(0x50, |h, v| mix(h, stable_hash(v))),
+        SwiftValue::Tuple(items, _) => items.iter().fold(0x50, |h, v| mix(h, stable_hash(v))),
         SwiftValue::Array(items) => items.iter().fold(0x60, |h, v| mix(h, stable_hash(v))),
         SwiftValue::Dict(pairs) => pairs.iter().fold(0x70, |h, (k, v)| {
             mix(mix(h, stable_hash(k)), stable_hash(v))
