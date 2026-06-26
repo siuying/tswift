@@ -3380,8 +3380,7 @@ impl<'w> Interpreter<'w> {
             }
         }
         match (&value, member.as_str()) {
-            (SwiftValue::Array(items), "count") => Ok(SwiftValue::int(items.len() as i128)),
-            (SwiftValue::Array(items), "isEmpty") => Ok(SwiftValue::Bool(items.is_empty())),
+            // Array `count`/`isEmpty` are served by the property registry (S4).
             (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
             (SwiftValue::Tuple(items), idx) if idx.parse::<usize>().is_ok() => {
@@ -3479,6 +3478,24 @@ impl<'w> Interpreter<'w> {
                     SwiftValue::Object(rc) => SwiftValue::Bool(Rc::strong_count(rc) == 2),
                     _ => SwiftValue::Bool(false),
                 });
+            }
+
+            // `Array(repeating:count:)` — build an array of repeated elements.
+            if name == "Array" && self.env.get("Array").is_none() {
+                let repeating = args
+                    .iter()
+                    .find(|a| a.label.as_deref() == Some("repeating"))
+                    .map(|a| a.value.clone());
+                let count = args
+                    .iter()
+                    .find(|a| a.label.as_deref() == Some("count"))
+                    .and_then(|a| match &a.value {
+                        SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+                        _ => None,
+                    });
+                if let (Some(elem), Some(n)) = (repeating, count) {
+                    return Ok(SwiftValue::Array(Rc::new(vec![elem; n])));
+                }
             }
 
             // Conversion initializers take exactly one argument.
