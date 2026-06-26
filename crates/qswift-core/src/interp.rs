@@ -804,6 +804,37 @@ impl<'w> Interpreter<'w> {
         None
     }
 
+    /// Render a value honouring `CustomStringConvertible.description` when the
+    /// value's type provides one; otherwise fall back to the plain rendering.
+    fn render_description(&mut self, value: &SwiftValue) -> String {
+        let described = match value {
+            SwiftValue::Struct(o) => self
+                .structs
+                .get(&o.type_name)
+                .is_some_and(|d| d.computed.contains_key("description"))
+                .then(|| self.read_struct_member(value, "description").ok())
+                .flatten(),
+            SwiftValue::Object(o) => {
+                let cn = o.borrow().class_name.clone();
+                self.class_computed_getter(&cn, "description")
+                    .is_some()
+                    .then(|| self.read_object_member(value, "description").ok())
+                    .flatten()
+            }
+            SwiftValue::Enum(e) => self
+                .enums
+                .get(&e.type_name)
+                .is_some_and(|d| d.computed.contains_key("description"))
+                .then(|| self.read_enum_computed(value, "description").ok().flatten())
+                .flatten(),
+            _ => None,
+        };
+        match described {
+            Some(SwiftValue::Str(s)) => s,
+            _ => value.to_string(),
+        }
+    }
+
     /// A protocol default computed getter for `type_name`'s `name`, if any.
     fn protocol_default_getter(&self, type_name: &str, name: &str) -> Option<Node<'static>> {
         for proto in self.all_protocols(type_name) {
@@ -2659,6 +2690,17 @@ impl<'w> Interpreter<'w> {
         match ops::binary(&op, &l, &r) {
             Ok(v) => Ok(v),
             Err(e) => {
+                // A static operator method (`Comparable`'s `<`, etc.) declared on
+                // the operand's type: `static func < (a:T, b:T) -> Bool`.
+                if let Some(tn) = self.value_type_name(&l) {
+                    if self.type_has_method(&tn, &op) {
+                        let args = vec![
+                            CallArg { label: None, value: l.clone(), place: None },
+                            CallArg { label: None, value: r.clone(), place: None },
+                        ];
+                        return self.call_struct_method(SwiftValue::Void, &tn, &op, args, None);
+                    }
+                }
                 // A user-defined (custom) operator is a function named after it.
                 if let Some(SwiftValue::Function(id)) = self.env.get(&op) {
                     let call_args = vec![
@@ -3522,6 +3564,29 @@ impl<'w> Interpreter<'w> {
                     fields: vec![],
                 })));
             }
+            // `EnumType(rawValue:)` — failable lookup of the case with that raw
+            // value, returning the case or `nil` (RawRepresentable synthesis).
+            if self.enums.contains_key(&name) {
+                if let Some(raw) = args
+                    .iter()
+                    .find(|a| a.label.as_deref() == Some("rawValue"))
+                    .map(|a| a.value.clone())
+                {
+                    let case = self.enums[&name]
+                        .cases
+                        .iter()
+                        .find(|c| c.raw.as_ref() == Some(&raw))
+                        .map(|c| c.name.clone());
+                    return Ok(match case {
+                        Some(name_) => SwiftValue::Enum(Rc::new(EnumObj {
+                            type_name: name.clone(),
+                            case: name_,
+                            payload: Vec::new(),
+                        })),
+                        None => SwiftValue::Nil,
+                    });
+                }
+            }
             // Class initializer.
             if self.classes.contains_key(&name) {
                 return self.instantiate_class(&name, args);
@@ -4070,7 +4135,7 @@ impl<'w> Interpreter<'w> {
                     fragment.push(fc);
                 }
                 let value = self.eval_interpolation(&fragment)?;
-                out.push_str(&value.to_string());
+                out.push_str(&self.render_description(&value));
             } else if c == '\\' {
                 // Re-use the escape decoder for the next escape sequence.
                 let mut esc = String::from("\\");
@@ -4426,6 +4491,31 @@ impl StdContext for Interpreter<'_> {
 
     fn out(&mut self) -> &mut dyn Write {
         self.out
+    }
+
+    fn display(&mut self, value: &SwiftValue) -> String {
+        self.render_description(value)
+    }
+
+    fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
+        // Scalars use the natural order; struct/enum/class operands consult a
+        // static `<` operator method on their type.
+        if let Some(less) = crate::stdlib::scalar_less_than(a, b) {
+            return Some(less);
+        }
+        let tn = self.value_type_name(a)?;
+        if self.type_has_method(&tn, "<") {
+            let args = vec![
+                CallArg { label: None, value: a.clone(), place: None },
+                CallArg { label: None, value: b.clone(), place: None },
+            ];
+            if let Ok(SwiftValue::Bool(b)) =
+                self.call_struct_method(SwiftValue::Void, &tn, "<", args, None)
+            {
+                return Some(b);
+            }
+        }
+        None
     }
 }
 

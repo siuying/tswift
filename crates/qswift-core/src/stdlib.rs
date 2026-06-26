@@ -53,6 +53,36 @@ pub trait StdContext {
     fn throw(&self, error: SwiftValue) -> StdError {
         StdError::Throw(error)
     }
+
+    /// Render a value as `print`/string-interpolation would, honouring a
+    /// user-defined `CustomStringConvertible.description` when present. The
+    /// default ignores `description` and uses the plain value rendering; the
+    /// interpreter overrides it.
+    fn display(&mut self, value: &SwiftValue) -> String {
+        value.to_string()
+    }
+
+    /// Whether `a < b` under `Comparable`. The default handles only the scalar
+    /// values; the interpreter overrides it to also consult a type's static
+    /// `<` operator. `None` means the values are not comparable.
+    fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
+        scalar_less_than(a, b)
+    }
+}
+
+/// The natural `<` over comparable scalar values (the default `Comparable`).
+pub fn scalar_less_than(a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
+    use std::cmp::Ordering;
+    let ord = match (a, b) {
+        (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw.cmp(&y.raw),
+        (SwiftValue::Double(x), SwiftValue::Double(y)) => x.partial_cmp(y)?,
+        (SwiftValue::Int(x), SwiftValue::Double(y)) => (x.raw as f64).partial_cmp(y)?,
+        (SwiftValue::Double(x), SwiftValue::Int(y)) => x.partial_cmp(&(y.raw as f64))?,
+        (SwiftValue::Str(x), SwiftValue::Str(y)) => x.cmp(y),
+        (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x.cmp(y),
+        _ => return None,
+    };
+    Some(ord == Ordering::Less)
 }
 
 /// The builtin receiver an intrinsic is registered against.

@@ -200,7 +200,12 @@ fn sorted(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> S
             return Err(e);
         }
     } else {
-        out.sort_by(|a, b| natural_cmp(a, b).unwrap_or(Ordering::Equal));
+        // Natural order via Comparable (scalars and types with a static `<`).
+        merge_sort_by(&mut out, &mut |a, b| match ctx.value_less_than(a, b) {
+            Some(true) => Ordering::Less,
+            Some(false) => Ordering::Greater,
+            None => Ordering::Equal,
+        });
     }
     Ok(array(out))
 }
@@ -227,7 +232,7 @@ fn extreme(
     for it in iter {
         let less = match by {
             Some(id) => truthy(ctx.call_closure(id, vec![it.clone(), best.clone()])?),
-            None => natural_cmp(&it, &best) == Some(Ordering::Less),
+            None => ctx.value_less_than(&it, &best).unwrap_or(false),
         };
         // `less` means it < best; pick it for min when less, for max when !less.
         let take = if want == Ordering::Less { less } else { !less && it != best };
@@ -438,7 +443,8 @@ fn seq_of(v: SwiftValue) -> Option<Vec<SwiftValue>> {
     }
 }
 
-/// Natural ordering over comparable scalar values.
+/// Natural ordering over comparable scalar values (used in tests).
+#[cfg(test)]
 fn natural_cmp(a: &SwiftValue, b: &SwiftValue) -> Option<Ordering> {
     match (a, b) {
         (SwiftValue::Int(x), SwiftValue::Int(y)) => Some(x.raw.cmp(&y.raw)),
