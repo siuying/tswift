@@ -16,8 +16,8 @@ mod value;
 pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
 pub use stdlib::{
-    Arg, BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome, StdContext, StdError,
-    StdResult,
+    Arg, BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome, PropertyFn, StdContext,
+    StdError, StdResult,
 };
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 

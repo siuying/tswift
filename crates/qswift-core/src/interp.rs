@@ -13,7 +13,9 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
-use crate::stdlib::{Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, StdContext, StdError};
+use crate::stdlib::{
+    Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StdContext, StdError,
+};
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
 
@@ -229,6 +231,8 @@ pub struct Interpreter<'w> {
     free_fns: HashMap<String, FreeFn>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
+    /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
+    properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -287,6 +291,7 @@ impl<'w> Interpreter<'w> {
             natives: HashMap::new(),
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
+            properties: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
@@ -319,6 +324,11 @@ impl<'w> Interpreter<'w> {
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
         self.free_fns.insert(name.to_string(), f);
+    }
+
+    /// Register a computed-property intrinsic on a builtin receiver type.
+    pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
+        self.properties.insert((recv, name.to_string()), f);
     }
 
     /// Register a method intrinsic on a builtin receiver type.
@@ -3362,6 +3372,13 @@ impl<'w> Interpreter<'w> {
             }
             return self.read_struct_member(&value, &member);
         }
+        // Standard-library computed-property intrinsics (`Double.isNaN`,
+        // `Int.magnitude`, …) on builtin receivers.
+        if let Some(kind) = BuiltinReceiver::of(&value) {
+            if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
+                return func(value).map_err(Self::std_error_to_signal);
+            }
+        }
         match (&value, member.as_str()) {
             (SwiftValue::Array(items), "count") => Ok(SwiftValue::int(items.len() as i128)),
             (SwiftValue::Array(items), "isEmpty") => Ok(SwiftValue::Bool(items.is_empty())),
@@ -4231,6 +4248,20 @@ impl<'w> Interpreter<'w> {
                 SwiftValue::Int(i) => i.raw,
                 SwiftValue::Double(d) => d.trunc() as i128,
                 SwiftValue::Bool(b) => *b as i128,
+                // Failable string conversion: `Int("42")` → 42, `Int("x")` → nil.
+                SwiftValue::Str(s) => {
+                    return Ok(Some(match s.trim().parse::<i128>() {
+                        Ok(n) => {
+                            let v = IntValue::new(n, w);
+                            if v.in_range() {
+                                SwiftValue::Int(v)
+                            } else {
+                                SwiftValue::Nil
+                            }
+                        }
+                        Err(_) => SwiftValue::Nil,
+                    }))
+                }
                 _ => {
                     return Err(EvalError::Type(format!(
                         "cannot convert {} to {name}",
@@ -4250,6 +4281,13 @@ impl<'w> Interpreter<'w> {
                 let d = match value {
                     SwiftValue::Int(i) => i.raw as f64,
                     SwiftValue::Double(d) => *d,
+                    // Failable string conversion: `Double("3.14")` → 3.14.
+                    SwiftValue::Str(s) => {
+                        return Ok(Some(match s.trim().parse::<f64>() {
+                            Ok(n) => SwiftValue::Double(n),
+                            Err(_) => SwiftValue::Nil,
+                        }))
+                    }
                     _ => {
                         return Err(EvalError::Type(format!(
                             "cannot convert {} to {name}",
@@ -4261,6 +4299,16 @@ impl<'w> Interpreter<'w> {
                 Ok(Some(SwiftValue::Double(d)))
             }
             "String" => Ok(Some(SwiftValue::Str(value.to_string()))),
+            // Failable `Bool("true")`/`Bool("false")`.
+            "Bool" => Ok(match value {
+                SwiftValue::Str(s) => Some(match s.trim() {
+                    "true" => SwiftValue::Bool(true),
+                    "false" => SwiftValue::Bool(false),
+                    _ => SwiftValue::Nil,
+                }),
+                SwiftValue::Bool(b) => Some(SwiftValue::Bool(*b)),
+                _ => None,
+            }),
             // `Array(seq)` materializes any builtin sequence into an array.
             "Array" => Ok(materialize_sequence(value).map(|v| SwiftValue::Array(StdRc::new(v)))),
             _ => Ok(None),
