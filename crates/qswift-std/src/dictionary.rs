@@ -22,6 +22,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_intrinsic(d, "merge", MethodEntry { mutating: true, func: merge });
     interp.register_intrinsic(d, "merging", MethodEntry { mutating: false, func: merging });
     interp.register_intrinsic(d, "mapValues", MethodEntry { mutating: false, func: map_values });
+    interp.register_intrinsic(d, "filter", MethodEntry { mutating: false, func: filter });
     interp.register_intrinsic(
         d,
         "compactMapValues",
@@ -134,6 +135,24 @@ fn merging(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) ->
     Ok(Outcome { result: SwiftValue::Dict(Rc::new(store)), receiver: recv })
 }
 
+/// `filter(_:)` — keep the `(key, value)` pairs for which the predicate holds.
+///
+/// Unlike the generic `Sequence.filter` (which returns an array), the
+/// dictionary form returns a `Dictionary`, so chained dictionary members
+/// (`.keys`, `.mapValues`, …) keep working. The closure receives each element
+/// as a `(key, value)` tuple.
+fn filter(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let id = closure(&args).ok_or_else(|| type_err("filter expects a closure".into()))?;
+    let mut out: Pairs = Vec::new();
+    for (k, v) in pairs(recv.clone())?.iter() {
+        let element = SwiftValue::Tuple(vec![k.clone(), v.clone()]);
+        if matches!(ctx.call_closure(id, vec![element])?, SwiftValue::Bool(true)) {
+            out.push((k.clone(), v.clone()));
+        }
+    }
+    Ok(Outcome { result: SwiftValue::Dict(Rc::new(out)), receiver: recv })
+}
+
 /// `mapValues(_:)` — transform each value, keeping keys.
 fn map_values(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let id = closure(&args).ok_or_else(|| type_err("mapValues expects a closure".into()))?;
@@ -198,6 +217,11 @@ mod tests {
             Ok(match id {
                 0 => SwiftValue::int(args.iter().map(n).sum()),
                 1 => SwiftValue::int(n(&args[0]) * 10),
+                // Predicate over a `(key, value)` element tuple: value >= 2.
+                2 => match args.first() {
+                    Some(SwiftValue::Tuple(t)) => SwiftValue::Bool(n(&t[1]) >= 2),
+                    _ => SwiftValue::Bool(false),
+                },
                 _ => SwiftValue::Nil,
             })
         }
@@ -261,6 +285,20 @@ mod tests {
             .unwrap()
             .result;
         assert_eq!(mapped, dict(&[("a", 10), ("b", 20)]));
+    }
+
+    #[test]
+    fn filter_returns_dictionary() {
+        let mut c = Summer;
+        let out = filter(
+            &mut c,
+            dict(&[("a", 1), ("b", 2), ("c", 3)]),
+            vec![SwiftValue::Closure(2)],
+        )
+        .unwrap()
+        .result;
+        // Returns a Dictionary (not an array) of the pairs whose value >= 2.
+        assert_eq!(out, dict(&[("b", 2), ("c", 3)]));
     }
 
     #[test]

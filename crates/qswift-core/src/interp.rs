@@ -3594,6 +3594,11 @@ impl<'w> Interpreter<'w> {
                     .cloned()
                     .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
             }
+            // Dictionary iteration yields a `(key:, value:)` element tuple;
+            // resolve its labelled members to the positional slots. Sema only
+            // admits these labels on the dictionary element tuple shape.
+            (SwiftValue::Tuple(items), "key") if items.len() == 2 => Ok(items[0].clone()),
+            (SwiftValue::Tuple(items), "value") if items.len() == 2 => Ok(items[1].clone()),
             _ => Err(
                 EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
             ),

@@ -17,6 +17,7 @@ Array.removeFirst
 Array.removeLast
 Array.replaceSubrange
 Array.reserveCapacity
+Array.sort
 Array.startIndex
 Bool.description
 Bool.flatMap
@@ -26,6 +27,7 @@ Bool.random
 Bool.toggle
 Dictionary.compactMapValues
 Dictionary.count
+Dictionary.filter
 Dictionary.isEmpty
 Dictionary.keys
 Dictionary.mapValues

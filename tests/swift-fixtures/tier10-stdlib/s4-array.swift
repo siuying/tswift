@@ -23,4 +23,10 @@ d += [2, 3]
 let repeated = Array(repeating: 0, count: 3)
 let fromRange = Array(1...4)
 
-let _ = (removed, popped, front, c, f, l, s, e, joined, d, repeated, fromRange)
+// `sort()` — in-place mutating sibling of `sorted` (natural and `by:` order).
+var toSort = [3, 1, 2]
+toSort.sort()
+var toSortDesc = [3, 1, 2]
+toSortDesc.sort(by: { $0 > $1 })
+
+let _ = (removed, popped, front, c, f, l, s, e, joined, d, repeated, fromRange, toSort, toSortDesc)

@@ -23,4 +23,10 @@ let comp = ["a": 1, "b": -1].compactMapValues { $0 > 0 ? $0 : nil }
 let fromPairs = Dictionary(uniqueKeysWithValues: [("one", 1)])
 let grouped = Dictionary(grouping: [1, 2, 3], by: { $0 % 2 })
 
-let _ = (ada, withDefault, names, vals, c, e, old, removed, d1, d2, doubled, comp, fromPairs, grouped)
+// Iteration yields a `(key:, value:)` element tuple; `.key` / `.value` resolve
+// the element's slots.
+let high = ["x": 95, "y": 80].filter { $0.value >= 90 }
+let topKeys = ["x": 95, "y": 80].filter { $0.value >= 90 }.keys.sorted()
+let firstKey = ["x": 1].sorted(by: { $0.key < $1.key }).first?.key
+
+let _ = (ada, withDefault, names, vals, c, e, old, removed, d1, d2, doubled, comp, fromPairs, grouped, high, topKeys, firstKey)

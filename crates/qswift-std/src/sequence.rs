@@ -173,7 +173,7 @@ fn count_where(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>)
 
 // ---- ordering --------------------------------------------------------------
 
-fn sorted(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
+pub(crate) fn sorted(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
     let mut out = items;
     if let Ok(id) = closure(&args, "") {
         // sorted(by:) — closure is a strict-weak `<`-style comparator.

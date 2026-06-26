@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use qswift_core::{
-    BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult,
-    SwiftValue,
+    Arg, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, SwiftValue,
 };
 
 /// Register the `Array` intrinsics of this slice.
@@ -30,6 +30,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
         );
     };
     mutating(interp, "append", append);
+    mutating(interp, "sort", sort);
     mutating(interp, "insert", insert);
     mutating(interp, "remove", remove_at);
     mutating(interp, "removeLast", remove_last);
@@ -152,6 +153,25 @@ fn append(
     Ok(Outcome {
         result: SwiftValue::Void,
         receiver: SwiftValue::Array(items),
+    })
+}
+
+/// `Array.sort()` / `Array.sort(by:)` — sort in place.
+///
+/// Mutating sibling of `sorted`: delegates to the shared sort so the natural
+/// `Comparable` order and the `(by:)` comparator behave identically, then
+/// writes the ordered array back through the receiver lvalue.
+fn sort(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let elements = items(recv)?.as_ref().clone();
+    let labeled: Vec<Arg> = args.into_iter().map(Arg::positional).collect();
+    let ordered = crate::sequence::sorted(ctx, elements, labeled)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: ordered,
     })
 }
 
@@ -459,6 +479,29 @@ mod tests {
             }
             other => panic!("expected array, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sort_orders_in_place_and_preserves_cow() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let shared = Rc::new(vec![SwiftValue::int(3), SwiftValue::int(1), SwiftValue::int(2)]);
+        let recv = SwiftValue::Array(Rc::clone(&shared));
+
+        let out = sort(&mut ctx, recv, vec![]).unwrap();
+
+        assert_eq!(out.result, SwiftValue::Void);
+        match out.receiver {
+            SwiftValue::Array(items) => assert_eq!(
+                items.as_slice(),
+                &[SwiftValue::int(1), SwiftValue::int(2), SwiftValue::int(3)]
+            ),
+            other => panic!("expected array, got {other:?}"),
+        }
+        // The original storage is untouched (sort works on a value copy).
+        assert_eq!(
+            shared.as_slice(),
+            &[SwiftValue::int(3), SwiftValue::int(1), SwiftValue::int(2)]
+        );
     }
 
     #[test]
