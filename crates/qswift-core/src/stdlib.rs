@@ -133,6 +133,14 @@ pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
 
+/// A `Sequence`/`Collection` algorithm written once against the materialized
+/// elements of any builtin sequence receiver (`map`, `filter`, `sorted`, …).
+///
+/// The dispatcher expands the receiver into its elements via the sequence
+/// adapter and passes the (labeled) call arguments through, so closure-taking
+/// algorithms can call back into [`StdContext`].
+pub type AlgoFn = fn(&mut dyn StdContext, Vec<SwiftValue>, Vec<Arg>) -> StdResult;
+
 /// One registered method intrinsic plus whether it mutates its receiver.
 #[derive(Clone, Copy)]
 pub struct MethodEntry {
