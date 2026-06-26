@@ -16,3 +16,4 @@ See docs/swift-runtime/blocked-features.md
 | 4 | done | Type subscripts (static subscript) | keep | struct+class static_subscript |
 | 5 | done | @unknown default | keep | parser accepts attribute before default |
 | 6 | done | Metatypes T.self + type(of:) | keep | new SwiftValue::Metatype |
+| 7 | ebe0ac1 | `@autoclosure` parameters | keep | parser records attr; thunk-wraps deferred args (free fns + methods) |

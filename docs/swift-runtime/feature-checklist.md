@@ -192,7 +192,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
 | [~] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
 | [~] | `@escaping` closures | ✅ | ★★★ | R3 |
-| [ ] | `@autoclosure` | ✅ | ★★ | R3 |
+| [x] | `@autoclosure` | ✅ | ★★ | R3 |
 | [ ] | Closures capturing `inout` | ✅ | ★★★ | R3 |
 
 ---
