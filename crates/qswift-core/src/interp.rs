@@ -121,6 +121,9 @@ struct Param {
     ty: Option<String>,
     variadic: bool,
     inout_: bool,
+    /// `@autoclosure`: the argument expression is wrapped in a zero-argument
+    /// thunk and only evaluated when the parameter is called.
+    autoclosure: bool,
     default: Option<Node<'static>>,
 }
 
@@ -2003,6 +2006,7 @@ impl<'w> Interpreter<'w> {
                         ty: None,
                         variadic: child.param_info().variadic,
                         inout_: false,
+                        autoclosure: false,
                         default: None,
                     });
                     last_param = Some(child);
@@ -4012,7 +4016,17 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        let args = self.eval_args(arg_nodes)?;
+        // If the callee is a known user function with `@autoclosure` params,
+        // defer those argument expressions into thunks (capturing this scope).
+        let autoclosure_params = if callee.kind() == NodeKind::IdentExpr {
+            callee.text().and_then(|name| match self.env.get(&name) {
+                Some(SwiftValue::Function(id)) => Some(clone_params(&self.funcs[id].params)),
+                _ => None,
+            })
+        } else {
+            None
+        };
+        let args = self.eval_args_with(arg_nodes, autoclosure_params.as_deref())?;
 
         if callee.kind() == NodeKind::IdentExpr {
             let name = callee
@@ -4200,9 +4214,39 @@ impl<'w> Interpreter<'w> {
     /// Evaluate call arguments, resolving `inout` (`&place`) into a write-back
     /// location.
     fn eval_args(&mut self, arg_nodes: &[Node<'static>]) -> Result<Vec<CallArg>, Signal> {
+        self.eval_args_with(arg_nodes, None)
+    }
+
+    /// Evaluate call arguments, deferring any that map to an `@autoclosure`
+    /// parameter into a zero-argument thunk closure (capturing the caller's
+    /// scope) instead of evaluating them eagerly.
+    fn eval_args_with(
+        &mut self,
+        arg_nodes: &[Node<'static>],
+        params: Option<&[Param]>,
+    ) -> Result<Vec<CallArg>, Signal> {
+        let autoclosure = params.map(|p| autoclosure_flags(p, arg_nodes));
         let mut args = Vec::new();
-        for arg in arg_nodes {
+        for (i, arg) in arg_nodes.iter().enumerate() {
             let label = arg.arg_label();
+            if autoclosure.as_ref().is_some_and(|f| f[i]) {
+                // `@autoclosure`: wrap the unevaluated expression in a thunk.
+                let captured = self.env.capture();
+                let id = self.closures.len();
+                self.closures.push((
+                    ClosureDef::User {
+                        params: Vec::new(),
+                        body: vec![*arg],
+                    },
+                    captured,
+                ));
+                args.push(CallArg {
+                    label,
+                    value: SwiftValue::Closure(id),
+                    place: None,
+                });
+                continue;
+            }
             if arg.kind() == NodeKind::InoutExpr {
                 let inner = arg
                     .children()
@@ -4396,7 +4440,8 @@ impl<'w> Interpreter<'w> {
         // Class instance: dynamic dispatch from the runtime class.
         if let SwiftValue::Object(obj) = &base_value {
             let class_name = obj.borrow().class_name.clone();
-            let args = self.eval_args(arg_nodes)?;
+            let params = self.user_method_params(&class_name, &method);
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
             return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
         }
 
@@ -4443,12 +4488,15 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        let args = self.eval_args(arg_nodes)?;
         let type_name = match &base_value {
             SwiftValue::Struct(o) => Some(o.type_name.clone()),
             SwiftValue::Enum(e) => Some(e.type_name.clone()),
             _ => None,
         };
+        let method_params = type_name
+            .as_ref()
+            .and_then(|tn| self.user_method_params(tn, &method));
+        let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
         if let Some(type_name) = type_name {
             if self.type_has_method(&type_name, &method) {
                 let place = self.resolve_place(&base);
@@ -4535,6 +4583,26 @@ impl<'w> Interpreter<'w> {
             Err(Signal::Return(v)) => Ok(v),
             Err(e) => Err(e),
         }
+    }
+
+    /// The declared parameters of a user method on `type_name`, across class,
+    /// struct, and enum types (used to spot `@autoclosure` params before the
+    /// arguments are evaluated).
+    fn user_method_params(&self, type_name: &str, method: &str) -> Option<Vec<Param>> {
+        if let Some((params, _, _)) = self.lookup_method(type_name, method) {
+            return Some(params);
+        }
+        if let Some(d) = self.structs.get(type_name) {
+            if let Some(m) = d.methods.get(method) {
+                return Some(clone_params(&m.params));
+            }
+        }
+        if let Some(d) = self.enums.get(type_name) {
+            if let Some(m) = d.methods.get(method) {
+                return Some(clone_params(&m.params));
+            }
+        }
+        None
     }
 
     /// Whether a struct or enum type declares a method `method`.
@@ -5224,6 +5292,7 @@ fn clone_params(params: &[Param]) -> Vec<Param> {
             ty: p.ty.clone(),
             variadic: p.variadic,
             inout_: p.inout_,
+            autoclosure: p.autoclosure,
             default: p.default,
         })
         .collect()
@@ -5247,11 +5316,37 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
                 ty,
                 variadic: info.variadic,
                 inout_: info.is_inout,
+                autoclosure: info.autoclosure,
                 default,
             });
         }
     }
     params
+}
+
+/// For each call argument, whether its target parameter is `@autoclosure`
+/// (and so its expression must be deferred into a thunk). Arguments are aligned
+/// to parameters positionally, with labelled arguments matched by name — enough
+/// for the way `@autoclosure` parameters are written in practice.
+fn autoclosure_flags(params: &[Param], args: &[Node<'static>]) -> Vec<bool> {
+    let mut flags = vec![false; args.len()];
+    let mut pi = 0usize;
+    for (i, arg) in args.iter().enumerate() {
+        let target = match arg.arg_label() {
+            Some(l) => params
+                .iter()
+                .enumerate()
+                .find(|(_, p)| p.label.as_deref() == Some(l.as_str()) || p.name == l),
+            None => params.get(pi).map(|p| (pi, p)),
+        };
+        if let Some((idx, p)) = target {
+            if !p.variadic {
+                flags[i] = p.autoclosure;
+                pi = idx + 1;
+            }
+        }
+    }
+    flags
 }
 
 /// What a loop body asks its loop to do next.

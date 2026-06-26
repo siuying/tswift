@@ -635,6 +635,17 @@ impl<'a> Parser<'a> {
             self.bump();
             self.ast.add_modifier(param, "inout");
         }
+        // Type attributes on the parameter type (`@autoclosure`, `@escaping`).
+        // They are recorded as modifiers on the parameter so the runtime can
+        // defer an `@autoclosure` argument and treat an `@escaping` closure as
+        // long-lived. `parse_type` would otherwise discard them.
+        while self.peek().kind == TokenKind::Attribute {
+            let name = self.peek().text.trim_start_matches('@').to_string();
+            if name == "autoclosure" || name == "escaping" {
+                self.ast.add_modifier(param, &name);
+            }
+            self.bump();
+        }
         let ty = self.parse_type()?;
         self.ast.append_child(param, ty);
         if self.at_oper("...") {
@@ -2330,10 +2341,8 @@ impl<'a> Parser<'a> {
     /// expression. The label uses the same `identifier :` shape as a call
     /// argument label, distinct from the `?:` ternary.
     fn parse_tuple_element(&mut self) -> Result<(Option<&'a str>, NodeId), ParseError> {
-        let label = if matches!(
-            self.peek().kind,
-            TokenKind::Identifier | TokenKind::Keyword
-        ) && self.tokens[self.pos + 1].kind == TokenKind::Colon
+        let label = if matches!(self.peek().kind, TokenKind::Identifier | TokenKind::Keyword)
+            && self.tokens[self.pos + 1].kind == TokenKind::Colon
         {
             let name = self.bump().text;
             self.bump(); // ':'
@@ -3954,5 +3963,17 @@ mod tests {
             .unwrap();
         let ty = param.children().next().unwrap();
         assert_eq!(ty.text(), Some("() -> Void"));
+    }
+
+    #[test]
+    fn autoclosure_attribute_is_recorded_on_the_parameter() {
+        let ast = ast_of("func f(_ p: @autoclosure () -> Bool) { }");
+        let param = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .unwrap();
+        assert!(param.modifiers().iter().any(|m| m == "autoclosure"));
+        let ty = param.children().next().unwrap();
+        assert_eq!(ty.text(), Some("() -> Bool"));
     }
 }

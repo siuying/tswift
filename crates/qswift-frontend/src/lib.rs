@@ -413,6 +413,8 @@ pub struct ParamInfo {
     pub name: String,
     /// Whether the parameter is variadic (`T...`).
     pub variadic: bool,
+    /// Whether the parameter is `@autoclosure` (its argument is deferred).
+    pub autoclosure: bool,
     /// Whether the parameter is `inout`.
     pub is_inout: bool,
 }

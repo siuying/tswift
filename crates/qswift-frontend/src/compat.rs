@@ -496,11 +496,13 @@ impl RuntimeAst {
     pub(crate) fn param_info(&self, id: NodeId) -> ParamInfo {
         const MOD_VARIADIC: u32 = 1 << 28;
         const MOD_INOUT: u32 = 1 << 30;
+        const MOD_AUTOCLOSURE: u32 = 1 << 27;
         let bits = self.node(id).modifier_bits;
         ParamInfo {
             label: None,
             name: self.text(id).unwrap_or_default(),
             variadic: bits & MOD_VARIADIC != 0,
+            autoclosure: bits & MOD_AUTOCLOSURE != 0,
             is_inout: bits & MOD_INOUT != 0
                 || self
                     .node(id)
@@ -631,6 +633,9 @@ fn modifier_bits(modifiers: &[String]) -> u32 {
             "required" => 1 << 17,
             "convenience" => 1 << 18,
             "dynamic" => 1 << 19,
+            // Parameter type attributes carried for the runtime.
+            "escaping" => 1 << 26,
+            "autoclosure" => 1 << 27,
             // Parameter flags: `T...` variadic and `inout`. The runtime reads
             // variadic via the same 1<<28 bit; inout uses a frontend-internal
             // bit surfaced through `param_info`.
