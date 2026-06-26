@@ -50,22 +50,12 @@ Once confirmed, run forever until user interrupts or problem is solved.
 
 - Pick the next experiment idea from the strategy list (generate new ones when exhausted).
 - Make a focused, atomic change to the in-scope files.
-- Follow TDD when adding/fixing behavior: write a failing test first, then the minimal code to pass it.
+- Use `tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
 - `git add` the changes (do **not** commit yet).
 
 #### Gate 2 — Review
 
-- Capture current SHAs: `BASE=$(git rev-parse HEAD)`, `HEAD_STAGED=$(git stash create)`.
-- Dispatch a `general-purpose` code reviewer subagent using the template at  
-  [`../../requesting-code-review/code-reviewer.md`](../../requesting-code-review/code-reviewer.md), filling:
-  - `[DESCRIPTION]` — what this experiment tries
-  - `[PLAN_OR_REQUIREMENTS]` — the problem statement + strategy
-  - `[BASE_SHA]` — `$BASE`
-  - `[HEAD_SHA]` — staged diff or stash SHA
-- Act on feedback:
-  - **Critical** → fix before proceeding (or discard the idea entirely)
-  - **Important** → fix before proceeding
-  - **Minor** → note in log, continue
+- Request a review of the changes with skills `requesting-code-review`
 
 #### Gate 3 — Verify
 
@@ -75,12 +65,12 @@ Once confirmed, run forever until user interrupts or problem is solved.
 
 #### Gate 4 — Commit or Discard
 
-| Outcome | Action |
-|---------|--------|
+| Outcome                               | Action                                                              |
+| ------------------------------------- | ------------------------------------------------------------------- |
 | Signal improved **and** review passed | `git commit -m "<type>(<scope>): <experiment>"` → status = **keep** |
-| Signal same/worse | `git checkout -- .` (unstage/discard) → status = **discard** |
-| Crash / timeout | Diagnose briefly; fix trivially or skip → status = **crash** |
-| Review Critical unfixable | Discard idea → status = **discard** |
+| Signal same/worse                     | `git checkout -- .` (unstage/discard) → status = **discard**        |
+| Crash / timeout                       | Diagnose briefly; fix trivially or skip → status = **crash**        |
+| Review Critical unfixable             | Discard idea → status = **discard**                                 |
 
 After each iteration, append a row to `loop-log.md`.
 
@@ -100,14 +90,14 @@ Create in the project root; do **not** commit it (add to `.gitignore` if needed)
 
 ## Iterations
 
-| # | commit  | metric | Δ      | review | status  | description                     |
-|---|---------|--------|--------|--------|---------|---------------------------------|
-| 0 | c0ffee1 | —      | —      | —      | keep    | scaffold: add coverage signal   |
-| 1 | a1b2c3d | 72.3%  | +0.0%  | pass   | keep    | baseline                        |
-| 2 | b2c3d4e | 74.1%  | +1.8%  | pass   | keep    | add tests for edge case X       |
-| 3 | —       | 73.0%  | −1.1%  | pass   | discard | refactor Y (coverage dropped)   |
-| 4 | —       | —      | —      | fail   | discard | idea Z (critical review issue)  |
-| 5 | —       | —      | —      | —      | crash   | OOM in benchmark                |
+| #   | commit  | metric | Δ     | review | status  | description                    |
+| --- | ------- | ------ | ----- | ------ | ------- | ------------------------------ |
+| 0   | c0ffee1 | —      | —     | —      | keep    | scaffold: add coverage signal  |
+| 1   | a1b2c3d | 72.3%  | +0.0% | pass   | keep    | baseline                       |
+| 2   | b2c3d4e | 74.1%  | +1.8% | pass   | keep    | add tests for edge case X      |
+| 3   | —       | 73.0%  | −1.1% | pass   | discard | refactor Y (coverage dropped)  |
+| 4   | —       | —      | —     | fail   | discard | idea Z (critical review issue) |
+| 5   | —       | —      | —     | —      | crash   | OOM in benchmark               |
 ```
 
 ---
@@ -115,6 +105,7 @@ Create in the project root; do **not** commit it (add to `.gitignore` if needed)
 ## Rules
 
 **Simplicity criterion** — All else equal, simpler is better:
+
 - Marginal gain + added complexity → discard
 - Zero gain + simpler code → keep (simplification win)
 - Clear gain → keep regardless of complexity
@@ -128,10 +119,12 @@ Create in the project root; do **not** commit it (add to `.gitignore` if needed)
 ## Stop Conditions
 
 Stop when:
+
 - Problem fully solved (all tests green, metric hits goal, etc.)
 - User manually interrupts
 
 On stop, print a final summary:
+
 ```
 Iterations: N  |  Best metric: X  |  Kept: K  |  Discarded: D  |  Crashed: C
 ```
