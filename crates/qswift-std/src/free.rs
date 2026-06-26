@@ -38,11 +38,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
 /// `print(_:separator:terminator:)` — display each item, default `" "`/`"\n"`.
 fn print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let (items, sep, term) = output_parts(args, " ", "\n");
-    let line = items
-        .iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join(&sep);
+    let rendered: Vec<String> = items.iter().map(|v| ctx.display(v)).collect();
+    let line = rendered.join(&sep);
     let _ = write!(ctx.out(), "{line}{term}");
     Ok(SwiftValue::Void)
 }
