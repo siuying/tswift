@@ -1,6 +1,6 @@
 # Plan — Standard Library Support
 
-**Status:** proposed
+**Status:** active (S1–S10 implemented; N1–N3 are next)
 **Date:** 2026-06-26
 **Reference toolchain:** Swift **6.3.2** (`swift-6.3.2-RELEASE`)
 **Related:**
@@ -261,14 +261,14 @@ exclusions) is documented per §3.3.
 ## 5. Deliverables
 
 - [x] `tools/stdlib-inventory/extract.py` + generated `stdlib-inventory.md`
-- [ ] `.swift-version` pinned to 6.3.2 (committed)
-- [ ] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
+- [x] `.swift-version` pinned to 6.3.2 (committed)
+- [x] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
       (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
-- [ ] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
+- [x] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
 - [x] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
       three-state report (CLI `.expected` signal for `verified`)
-- [ ] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
-      checklist/coverage updates
+- [x] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
+      checklist/coverage updates (PRs #82–#92)
 
 ## 6. Resolved decisions
 
@@ -289,3 +289,65 @@ exclusions) is documented per §3.3.
 - **Fixture target** → executing CLI `.expected` fixtures for behaviour + a
   frontend fixture for parse; the `tier10-stdlib` frontend fixtures alone do not
   prove behaviour (§4.4).
+
+## 7. Next steps (post-S10, capability-driven)
+
+**Baseline (PRs #82–#92):** S1–S10 registry + two-layer seam are landed; every
+registered key has a passing fixture (*implemented* = *verified* for all but a few
+free functions). Live coverage: **17.8% implemented / 16.1% verified** across all
+targeted sections + free functions (86/484 members). The remaining surface is the
+`missing` column (members not registered at all).
+
+### 7.1 Governing principle — capability-driven, not pure-inventory %
+
+Next steps are chosen by *"what real Swift programs can't run yet,"* not by chasing
+the inventory percentage. A large fraction of `missing` is already-out-of-scope
+noise (unsafe pointers, reflection) that inflates the gap. Resolved (grilling
+2026-06-26).
+
+### 7.2 Coverage tool — add an `out-of-scope` bucket
+
+Add a fifth bucket to `tools/stdlib-inventory/coverage.py`, mirroring the existing
+`core` rule (a hardcoded category allowlist like `is_core_member`), so the
+denominator reflects the real target. **Out-of-scope = narrow "unsafe + reflection"
+set only:**
+
+1. **Unsafe / pointer / memory** — `withUnsafe*`, `span`/`mutableSpan`, `bitPattern`,
+   `unsafeBitCast`, `unsafeDowncast`, `withCString`, `getVaList`/`withVaList`,
+   `withExtendedLifetime`, `withUnsafeTemporaryAllocation`,
+   `withContiguousStorageIfAvailable`.
+2. **Reflection / debugging hooks** — `customMirror`, `customPlaygroundQuickLook`.
+
+The **index/iterator model** (`startIndex`/`endIndex`/`index`/`formIndex`/
+`distance`/`makeIterator`/`indices`/`next`) and low-level bit-pattern accessors
+stay as **`missing`** (visible deferred capability), *not* out-of-scope.
+
+### 7.3 Ordered capability slices (after the coverage-tool fix)
+
+**N1 — Numeric completion** (small, no value-model change):
+- Double static constants — `.pi` `.infinity` `.nan` `.greatestFiniteMagnitude`
+  `.leastNonzeroMagnitude` (generalize the existing `Int.max`/`min` static path in
+  `interp.rs`).
+- Double instance — `round` (mutating) `negate` `nextUp` `sign` `isZero` `exponent`
+  `significand`.
+- Int — `addingReportingOverflow`/`multiplied…`/`subtracting…`,
+  `leadingZeroBitCount` `trailingZeroBitCount` `nonzeroBitCount` `bitWidth`
+  `byteSwapped`.
+- *Already done (do not re-do):* `isNaN` `squareRoot` `rounded` `magnitude`
+  `truncatingRemainder` `signum` `isFinite`/`isInfinite` `quotientAndRemainder`.
+
+**N2 — Builtin conformance accessors** (small, leverages `render_description`):
+- `.description`/`.debugDescription` as explicit members on builtins (the
+  print/interpolation path already renders these — wire the accessor to existing
+  machinery).
+- `hashValue` on builtins. Defer `.encode`/Codable to the JSON layer as a later
+  step.
+
+**N3 — String index model + views** (hard, ★★★, own grilling + ADR):
+- `String.Index` over grapheme clusters, `unicodeScalars`/`utf8`/`utf16` views,
+  `insert`/`remove`/`replaceSubrange`/`removeSubrange`. Biggest single modeling
+  decision; unblocks Substring + the cross-collection index plumbing. **Defer the
+  representation decision to its own grilling/ADR when N3 starts.**
+
+**Slice order: N1 → N2 → N3** — cheap self-contained wins first, the one big
+modeling investment last.

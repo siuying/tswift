@@ -66,6 +66,108 @@ pre { min-height: 320px; max-height: 580px; overflow: auto; margin: 0; padding: 
 .variant-c .tabs button { color: #475569; border-color: #cbd5e1; }
 .variant-c .tabs button.active { background: #111827; color: white; }
 
+/* ── Presets bar (horizontal, variants A & C) ── */
+.presets-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  padding: 10px 4px 18px;
+}
+.preset-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.preset-group-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #6b7db8;
+  padding-right: 2px;
+}
+.variant-c .preset-group-label { color: #94a3b8; }
+.preset-pill {
+  border: 1px solid rgba(139,92,246,.4);
+  border-radius: 999px;
+  padding: 5px 13px;
+  background: rgba(139,92,246,.1);
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.preset-pill:hover {
+  background: rgba(139,92,246,.25);
+  border-color: #a78bfa;
+  color: #ede9fe;
+}
+.preset-pill.active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: white;
+}
+.variant-c .preset-pill {
+  border-color: rgba(249,115,22,.4);
+  background: rgba(249,115,22,.08);
+  color: #c2410c;
+}
+.variant-c .preset-pill:hover {
+  background: rgba(249,115,22,.18);
+  border-color: #f97316;
+  color: #7c2d12;
+}
+.variant-c .preset-pill.active {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: white;
+}
+
+/* ── Presets sidebar (variant B) ── */
+.presets-sidebar {
+  margin-top: 20px;
+}
+.presets-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #31410c;
+  margin: 0 0 10px;
+}
+.preset-group-b {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.preset-group-b .preset-group-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: #31410c;
+  margin-bottom: 2px;
+}
+.preset-pill-b {
+  border: 1px solid rgba(17,24,39,.2);
+  border-radius: 10px;
+  padding: 5px 10px;
+  background: rgba(17,24,39,.08);
+  color: #101506;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  transition: background .15s;
+}
+.preset-pill-b:hover { background: rgba(17,24,39,.15); }
+.preset-pill-b.active { background: #111827; color: #d8ff70; border-color: #111827; }
+
 @media (max-width: 900px) {
   .shell, .variant-b { display: block; padding: 16px 16px 88px; }
   .hero.compact, .ide-grid, .lab-grid { display: block; }
