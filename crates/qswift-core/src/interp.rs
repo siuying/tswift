@@ -531,6 +531,28 @@ impl<'w> Interpreter<'w> {
             });
     }
 
+    /// Register the builtin `FloatingPointSign` enum (`plus = 0`, `minus = 1`)
+    /// so `Double.sign` results compare against `.plus`/`.minus` and expose
+    /// `rawValue`.
+    fn register_builtin_floating_point_sign(&mut self) {
+        self.enums
+            .entry("FloatingPointSign".into())
+            .or_insert_with(|| EnumDef {
+                cases: vec![
+                    EnumCaseDef {
+                        name: "plus".into(),
+                        raw: Some(SwiftValue::int(0)),
+                    },
+                    EnumCaseDef {
+                        name: "minus".into(),
+                        raw: Some(SwiftValue::int(1)),
+                    },
+                ],
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            });
+    }
+
     /// Evaluate a fully-analyzed program.
     pub fn run(&mut self, analysis: &'static Analysis) -> Result<(), EvalError> {
         if !analysis.is_ok() {
@@ -543,6 +565,7 @@ impl<'w> Interpreter<'w> {
             return Err(EvalError::Analysis(diags));
         }
         self.register_builtin_result();
+        self.register_builtin_floating_point_sign();
         let mut outcome = self.eval(&analysis.root());
         // Run the `@main` entry point, if one was declared.
         if outcome.is_ok() {

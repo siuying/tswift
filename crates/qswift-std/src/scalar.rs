@@ -1,8 +1,10 @@
 //! Scalar-value method and property intrinsics for `Int` and `Double`.
 
+use std::rc::Rc;
+
 use qswift_core::{
-    BuiltinReceiver, EvalError, IntValue, Interpreter, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, SwiftValue,
+    BuiltinReceiver, EnumObj, EvalError, IntValue, Interpreter, MethodEntry, Outcome, StdContext,
+    StdError, StdResult, SwiftValue,
 };
 
 /// Register the `Int`/`Double` intrinsics of this slice.
@@ -86,6 +88,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Double, "isFinite", double_is_finite);
     interp.register_property(BuiltinReceiver::Double, "isInfinite", double_is_infinite);
     interp.register_property(BuiltinReceiver::Double, "isZero", double_is_zero);
+    interp.register_property(BuiltinReceiver::Double, "sign", double_sign);
     interp.register_property(BuiltinReceiver::Double, "nextUp", double_next_up);
     interp.register_property(BuiltinReceiver::Double, "exponent", double_exponent);
     interp.register_property(BuiltinReceiver::Double, "significand", double_significand);
@@ -287,6 +290,21 @@ fn double_magnitude(recv: SwiftValue) -> StdResult {
 
 fn double_is_zero(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(as_double(&recv)? == 0.0))
+}
+
+/// `Double.sign` — `.minus` when the sign bit is set (incl. `-0.0`), else
+/// `.plus`. Returns the builtin `FloatingPointSign` enum.
+fn double_sign(recv: SwiftValue) -> StdResult {
+    let case = if as_double(&recv)?.is_sign_negative() {
+        "minus"
+    } else {
+        "plus"
+    };
+    Ok(SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: "FloatingPointSign".into(),
+        case: case.into(),
+        payload: vec![],
+    })))
 }
 
 /// `Double.nextUp` — the smallest representable value greater than `self`.
@@ -642,6 +660,26 @@ mod tests {
             double_significand(SwiftValue::Double(f64::from_bits(1))).unwrap(),
             SwiftValue::Double(1.0)
         );
+    }
+
+    #[test]
+    fn sign_returns_floating_point_sign_case() {
+        match double_sign(SwiftValue::Double(-3.5)).unwrap() {
+            SwiftValue::Enum(e) => {
+                assert_eq!(e.type_name, "FloatingPointSign");
+                assert_eq!(e.case, "minus");
+            }
+            other => panic!("expected enum, got {other:?}"),
+        }
+        // -0.0 has the sign bit set -> .minus; +0.0 -> .plus.
+        match double_sign(SwiftValue::Double(-0.0)).unwrap() {
+            SwiftValue::Enum(e) => assert_eq!(e.case, "minus"),
+            other => panic!("expected enum, got {other:?}"),
+        }
+        match double_sign(SwiftValue::Double(0.0)).unwrap() {
+            SwiftValue::Enum(e) => assert_eq!(e.case, "plus"),
+            other => panic!("expected enum, got {other:?}"),
+        }
     }
 
     #[test]
