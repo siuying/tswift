@@ -36,9 +36,17 @@ three states:
 - **verified** — in the registry *and* used by an executing CLI golden fixture
   (`crates/qswift-cli/tests/fixtures/*.swift`), i.e. behaviourally proven.
 
+Two levels of detail:
+
 ```sh
+# List every targeted section with impl/verified/total counts + overall %.
 python3 tools/stdlib-inventory/coverage.py
+python3 tools/stdlib-inventory/coverage.py --all      # incl. 0%-coverage sections
+
+# Detail one section, member-by-member (verified / implemented / missing).
+python3 tools/stdlib-inventory/coverage.py Array
+python3 tools/stdlib-inventory/coverage.py "free functions"
 ```
 
-Prints per-type implemented/verified/total counts, a free-function line, and an
-overall percentage across the targeted types plus free functions.
+Section names match the inventory headings (case-insensitive); an unknown name
+prints close matches.
