@@ -12,8 +12,11 @@ Array.removeFirst
 Array.removeLast
 Array.reserveCapacity
 Array.startIndex
+Bool.description
 Bool.flatMap
+Bool.hashValue
 Bool.map
+Bool.toggle
 Dictionary.compactMapValues
 Dictionary.count
 Dictionary.isEmpty
