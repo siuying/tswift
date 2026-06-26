@@ -16,4 +16,12 @@ let _ignored = pair.1
 let widened = Int(Int8(100))
 let mixed = number + viaIndex + Int(mutable)
 
-let _ = (ternary, label, widened, mixed, _ignored)
+// Tuple-destructuring assignment (swap + multi-element).
+var s0 = 0, s1 = 1
+(s0, s1) = (s1, s0 + s1)
+
+// Integer literal in a Double context coerces; mixed arithmetic is Double.
+let scaled: Double = 5
+let half = scaled / 2
+
+let _ = (ternary, label, widened, mixed, _ignored, s0, s1, half)

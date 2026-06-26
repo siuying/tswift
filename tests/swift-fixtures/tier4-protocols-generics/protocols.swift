@@ -53,10 +53,18 @@ protocol Cloneable: AnyObject {
 
 func describe(_ value: any Named) -> String { value.greet() }
 
+// A struct conforming via a protocol-composition typealias still resolves a
+// default method supplied by a component protocol.
+struct Member: Person {
+    let name: String
+    let age: Int
+}
+let greeting = Member(name: "Bo", age: 20).greet()
+
 let employee = Employee(name: "Ada", age: 36)
 let person: Person = employee
 let box = IntBox(items: [1, 2, 3])
 let sedan = Sedan()
 sedan.drive()
 
-let _ = (describe(employee), person.name, person.age, box.item(at: 0), box.count)
+let _ = (describe(employee), person.name, person.age, box.item(at: 0), box.count, greeting)

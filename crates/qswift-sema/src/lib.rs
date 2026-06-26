@@ -326,7 +326,9 @@ impl Resolver {
         let bound_ty = match (annotation, init_ty) {
             // `Void` from an initializer means "type not modelled" (e.g. a method
             // call the skeleton sema cannot resolve), not a real mismatch.
-            (Some(a), Some(b)) if a != b && b != Type::Void => {
+            // An integer literal in a floating context coerces to the annotation
+            // (`let r: Double = 5`), so it is not a mismatch.
+            (Some(a), Some(b)) if a != b && b != Type::Void && !is_coercible(b, a) => {
                 let n = ast.node(decl);
                 self.diags.push(Diagnostic {
                     message: format!(
@@ -495,6 +497,11 @@ impl Resolver {
         let rhs = rhs.filter(|t| *t != Type::Void);
         match (lhs, rhs) {
             (Some(a), Some(b)) if a == b => Some(a),
+            // Mixed integer/floating arithmetic: an integer literal coerces to
+            // the floating operand, so the result is `Double` (matches the
+            // runtime's numeric promotion).
+            (Some(a), Some(b)) if is_coercible(a, b) => Some(b),
+            (Some(a), Some(b)) if is_coercible(b, a) => Some(a),
             (Some(a), Some(b)) => {
                 self.diags.push(Diagnostic {
                     message: format!(
@@ -544,6 +551,13 @@ fn parse_type_name(text: &str) -> Option<Type> {
         "Void" => Some(Type::Void),
         _ => None,
     }
+}
+
+/// Whether a value of type `from` implicitly coerces to `to` in an annotated
+/// context — currently an integer literal widening to a floating type, matching
+/// Swift's `ExpressibleByIntegerLiteral` conversion for `Double`/`Float`.
+fn is_coercible(from: Type, to: Type) -> bool {
+    matches!((from, to), (Type::Int, Type::Double))
 }
 
 fn is_comparison(op: &str) -> bool {
@@ -630,6 +644,22 @@ mod tests {
         let (_ast, diags) = resolved(r#"let x: Int = "oops""#);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("cannot convert"), "{diags:?}");
+    }
+
+    #[test]
+    fn integer_literal_coerces_to_double_without_diagnostic() {
+        // `let r: Double = 5` is an integer literal in a floating context.
+        let (ast, diags) = resolved("let r: Double = 5");
+        assert!(diags.is_empty(), "{diags:?}");
+        let decl = ast.node(ast.root()).children().next().unwrap();
+        assert_eq!(decl.type_name(), Some("Double"));
+    }
+
+    #[test]
+    fn mixed_int_double_arithmetic_is_double() {
+        // `d / 4` with `d: Double` promotes the integer operand.
+        let (_ast, diags) = resolved("let d: Double = 10\nlet half = d / 4");
+        assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]

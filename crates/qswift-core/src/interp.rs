@@ -116,6 +116,9 @@ type Eval = Result<SwiftValue, Signal>;
 struct Param {
     label: Option<String>,
     name: String,
+    /// The written parameter type (`Double`, …), used to coerce integer
+    /// literal arguments into floating parameters.
+    ty: Option<String>,
     variadic: bool,
     inout_: bool,
     default: Option<Node<'static>>,
@@ -131,6 +134,9 @@ struct FuncDef {
 /// A stored property of a struct.
 struct StoredProp {
     name: String,
+    /// The written type annotation (`Double`, `Int`, …), used to coerce an
+    /// integer initializer literal into a floating field at construction.
+    ty: Option<String>,
     default: Option<Node<'static>>,
     lazy: bool,
     will_set: Option<(String, Node<'static>)>,
@@ -168,6 +174,10 @@ struct EnumCaseDef {
     name: String,
     /// The precomputed raw value (with Swift's auto-increment / name defaults).
     raw: Option<SwiftValue>,
+    /// The written type of each associated value (`circle(radius: Double)` →
+    /// `[Some("Double")]`), used to coerce integer literals into floating
+    /// payload slots at construction.
+    payload_types: Vec<Option<String>>,
 }
 
 /// The backing type of an enum's raw values.
@@ -252,6 +262,10 @@ pub struct Interpreter<'w> {
     protocols: HashMap<String, ProtoDef>,
     /// type name → protocols it conforms to (directly).
     conformances: HashMap<String, Vec<String>>,
+    /// Protocol-composition typealiases (`typealias X = A & B`) → their
+    /// component protocol names, so a conformance to `X` expands to `A` + `B`
+    /// for default-implementation lookup.
+    protocol_aliases: HashMap<String, Vec<String>>,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
     /// Stack of class names for the methods currently executing (for `super`).
@@ -335,6 +349,7 @@ impl<'w> Interpreter<'w> {
             classes: HashMap::new(),
             protocols: HashMap::new(),
             conformances: HashMap::new(),
+            protocol_aliases: HashMap::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
             class_ctx: Vec::new(),
@@ -475,10 +490,12 @@ impl<'w> Interpreter<'w> {
                     EnumCaseDef {
                         name: "success".into(),
                         raw: None,
+                        payload_types: Vec::new(),
                     },
                     EnumCaseDef {
                         name: "failure".into(),
                         raw: None,
+                        payload_types: Vec::new(),
                     },
                 ],
                 methods: std::collections::HashMap::new(),
@@ -730,6 +747,7 @@ impl<'w> Interpreter<'w> {
                 // registered exactly like a class.
                 NodeKind::ClassDecl | NodeKind::ActorDecl => self.register_class(&child),
                 NodeKind::ProtocolDecl => self.register_protocol(&child),
+                NodeKind::TypealiasDecl => self.register_typealias(&child),
                 _ => {}
             }
         }
@@ -738,6 +756,30 @@ impl<'w> Interpreter<'w> {
             if child.kind() == NodeKind::ExtensionDecl {
                 self.register_extension(&child);
             }
+        }
+    }
+
+    /// Register a `typealias X = A & B` whose right-hand side is a protocol
+    /// composition, so conformance to `X` can be expanded to its components.
+    fn register_typealias(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        let Some(rhs) = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeIdent)
+            .and_then(|c| c.text())
+        else {
+            return;
+        };
+        if !rhs.contains('&') {
+            return;
+        }
+        let components: Vec<String> = rhs
+            .split('&')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !components.is_empty() {
+            self.protocol_aliases.insert(name, components);
         }
     }
 
@@ -839,6 +881,12 @@ impl<'w> Interpreter<'w> {
             .cloned()
             .unwrap_or_default();
         while let Some(p) = stack.pop() {
+            // Expand a protocol-composition typealias (`typealias X = A & B`)
+            // into its component protocols.
+            if let Some(components) = self.protocol_aliases.get(&p) {
+                stack.extend(components.iter().cloned());
+                continue;
+            }
             if result.contains(&p) {
                 continue;
             }
@@ -964,7 +1012,20 @@ impl<'w> Interpreter<'w> {
                             }
                             None => explicit,
                         };
-                        cases.push(EnumCaseDef { name: cname, raw });
+                        let payload_types: Vec<Option<String>> = element
+                            .children()
+                            .filter(|ec| ec.kind() == NodeKind::Param)
+                            .map(|p| {
+                                p.children()
+                                    .find(|c| c.kind() == NodeKind::TypeIdent)
+                                    .and_then(|c| c.text())
+                            })
+                            .collect();
+                        cases.push(EnumCaseDef {
+                            name: cname,
+                            raw,
+                            payload_types,
+                        });
                     }
                 }
                 NodeKind::FuncDecl => {
@@ -1091,6 +1152,7 @@ impl<'w> Interpreter<'w> {
                         });
                         stored.push(StoredProp {
                             name: pname,
+                            ty: field_type_name(&member),
                             default,
                             lazy: member.modifiers() & MOD_LAZY != 0,
                             will_set,
@@ -1223,6 +1285,7 @@ impl<'w> Interpreter<'w> {
                         } else {
                             stored.push(StoredProp {
                                 name: pname,
+                                ty: field_type_name(&member),
                                 default,
                                 lazy: mods & MOD_LAZY != 0,
                                 will_set,
@@ -1389,7 +1452,13 @@ impl<'w> Interpreter<'w> {
         };
         for child in node.children() {
             if child.kind() == NodeKind::TypeIdent {
-                if let Some(w) = child.text().as_deref().and_then(IntWidth::from_type_name) {
+                let ty = child.text();
+                // An integer literal in a `Double`/`Float` context coerces to
+                // floating point (`let r: Double = 5`).
+                if matches!(ty.as_deref(), Some("Double") | Some("Float")) {
+                    return SwiftValue::Double(i.raw as f64);
+                }
+                if let Some(w) = ty.as_deref().and_then(IntWidth::from_type_name) {
                     return SwiftValue::Int(IntValue::new(i.raw, w));
                 }
             }
@@ -1461,13 +1530,22 @@ impl<'w> Interpreter<'w> {
         case: &str,
         payload: Vec<SwiftValue>,
     ) -> Result<Option<SwiftValue>, Signal> {
-        let exists = self
-            .enums
-            .get(type_name)
-            .is_some_and(|d| d.cases.iter().any(|c| c.name == case));
-        if !exists {
+        let payload_types = self.enums.get(type_name).and_then(|d| {
+            d.cases
+                .iter()
+                .find(|c| c.name == case)
+                .map(|c| c.payload_types.clone())
+        });
+        let Some(payload_types) = payload_types else {
             return Ok(None);
-        }
+        };
+        // Coerce integer literals into floating associated-value slots
+        // (`.circle(radius: 5)` where `radius: Double`).
+        let payload = payload
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| coerce_numeric(v, payload_types.get(i).and_then(|t| t.as_deref())))
+            .collect();
         Ok(Some(SwiftValue::Enum(Rc::new(EnumObj {
             type_name: type_name.to_string(),
             case: case.to_string(),
@@ -1790,6 +1868,7 @@ impl<'w> Interpreter<'w> {
                     params.push(Param {
                         label: None,
                         name,
+                        ty: None,
                         variadic: child.param_info().variadic,
                         inout_: false,
                         default: None,
@@ -2160,6 +2239,24 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Str(_) => type_name == "String",
             SwiftValue::Struct(s) => s.type_name == type_name,
             SwiftValue::Enum(e) => e.type_name == type_name,
+            // Array cast `[Element]`: every element must match the element
+            // type. A covariant optional element (`[T]` as `[T?]`) succeeds
+            // because each `T` is a valid `T?` and `nil` qualifies too.
+            SwiftValue::Array(items) => match array_element_type(type_name) {
+                Some(elem) => {
+                    let (base, optional) = match elem.strip_suffix('?') {
+                        Some(b) => (b.trim(), true),
+                        None => (elem, false),
+                    };
+                    items.iter().all(|v| {
+                        (optional && matches!(v, SwiftValue::Nil))
+                            || self.value_is_type(v, base)
+                    })
+                }
+                None => false,
+            },
+            // A `nil` is any optional type (`T?`, `[T]?`, …).
+            SwiftValue::Nil => type_name.ends_with('?'),
             _ => false,
         }
     }
@@ -2543,28 +2640,28 @@ impl<'w> Interpreter<'w> {
             };
         }
 
-        let plan: Vec<(String, bool, Option<Node<'static>>)> = self
+        let plan: Vec<(String, Option<String>, bool, Option<Node<'static>>)> = self
             .structs
             .get(type_name)
             .map(|d| {
                 d.stored
                     .iter()
-                    .map(|p| (p.name.clone(), p.lazy, p.default))
+                    .map(|p| (p.name.clone(), p.ty.clone(), p.lazy, p.default))
                     .collect()
             })
             .unwrap_or_default();
 
         let mut fields: Vec<(String, SwiftValue)> = Vec::new();
         let mut positional = args.iter().filter(|(l, _)| l.is_none());
-        for (pname, lazy, default) in plan {
+        for (pname, field_ty, lazy, default) in plan {
             let labeled = args
                 .iter()
                 .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
                 .map(|(_, v)| v.clone());
             let value = if let Some(v) = labeled {
-                v
+                coerce_numeric(v, field_ty.as_deref())
             } else if let Some((_, v)) = positional.next() {
-                v.clone()
+                coerce_numeric(v.clone(), field_ty.as_deref())
             } else if lazy {
                 // Lazy properties are materialized on first access, not here.
                 continue;
@@ -3434,6 +3531,16 @@ impl<'w> Interpreter<'w> {
         let rhs = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("assignment without value".into()))?;
+
+        // Tuple-destructuring assignment `(a, b) = (b, a + b)`: evaluate the
+        // whole right side first (so swaps read the old values), then write each
+        // element back through its own lvalue.
+        if target.kind() == NodeKind::TupleExpr && op == "=" {
+            let value = self.eval(&rhs)?;
+            let targets: Vec<Node<'static>> = target.children().collect();
+            self.assign_destructured(&targets, value)?;
+            return Ok(SwiftValue::Void);
+        }
 
         // Member assignment whose base is a class instance mutates in place
         // (reference semantics) rather than through a copy-on-write place.
@@ -4410,7 +4517,9 @@ impl<'w> Interpreter<'w> {
             } else if ai < args.len() {
                 let arg = &args[ai];
                 // `inout` params are mutable and write back to the caller.
-                self.env.declare(&p.name, arg.value.clone(), p.inout_);
+                // Coerce an integer literal argument into a floating parameter.
+                let value = coerce_numeric(arg.value.clone(), p.ty.as_deref());
+                self.env.declare(&p.name, value, p.inout_);
                 if p.inout_ {
                     if let Some(place) = arg.place.clone() {
                         inout_binds.push((p.name.clone(), place));
@@ -4447,6 +4556,75 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Resolve an lvalue expression to a [`Place`] (root variable + field path).
+    /// Write the elements of `value` (a tuple) to a list of lvalue targets, as
+    /// in tuple-destructuring assignment `(a, b) = (b, a + b)`.
+    fn assign_destructured(
+        &mut self,
+        targets: &[Node<'static>],
+        value: SwiftValue,
+    ) -> Result<(), Signal> {
+        let SwiftValue::Tuple(items) = value else {
+            return Err(EvalError::Type(
+                "tuple-destructuring assignment expects a tuple value".into(),
+            )
+            .into());
+        };
+        if items.len() != targets.len() {
+            return Err(EvalError::Type(format!(
+                "tuple pattern has {} elements but value has {}",
+                targets.len(),
+                items.len()
+            ))
+            .into());
+        }
+        for (t, v) in targets.iter().zip(items.iter().cloned()) {
+            self.assign_destructured_one(t, v)?;
+        }
+        Ok(())
+    }
+
+    /// Assign one already-evaluated `value` to a single lvalue `target` (a
+    /// destructuring-assignment element): a nested tuple, a wildcard discard, a
+    /// class-instance member, or a place-based binding.
+    fn assign_destructured_one(
+        &mut self,
+        target: &Node<'static>,
+        value: SwiftValue,
+    ) -> Result<(), Signal> {
+        match target.kind() {
+            NodeKind::TupleExpr => {
+                let nested: Vec<Node<'static>> = target.children().collect();
+                self.assign_destructured(&nested, value)
+            }
+            // `_` discards its element.
+            NodeKind::PatternWildcard => Ok(()),
+            NodeKind::IdentExpr if target.text().as_deref() == Some("_") => Ok(()),
+            NodeKind::MemberExpr => {
+                // A class-instance member mutates in place (reference semantics).
+                if let Some(base) = target.children().next() {
+                    let base_value = self.eval(&base)?;
+                    if let SwiftValue::Object(obj) = &base_value {
+                        let field = target.text().ok_or_else(|| {
+                            EvalError::Unsupported("member assignment without a name".into())
+                        })?;
+                        self.set_object_field(obj, &field, value);
+                        return Ok(());
+                    }
+                }
+                let place = self.resolve_place(target).ok_or_else(|| {
+                    EvalError::Unsupported("unsupported assignment target".into())
+                })?;
+                self.write_place(&place, value)
+            }
+            _ => {
+                let place = self.resolve_place(target).ok_or_else(|| {
+                    EvalError::Unsupported("unsupported assignment target".into())
+                })?;
+                self.write_place(&place, value)
+            }
+        }
+    }
+
     fn resolve_place(&self, node: &Node<'static>) -> Option<Place> {
         match node.kind() {
             NodeKind::IdentExpr => node.text().map(|root| Place {
@@ -4712,6 +4890,35 @@ fn metatype_name(node: &Node<'static>) -> Option<String> {
 /// Whether `name` is an operator token (every character is an operator symbol),
 /// i.e. a bare operator used in value position such as the `+` in
 /// `reduce(0, +)`. A normal identifier never contains these characters.
+/// The element type of an array type spelling (`[C?]` → `C?`, `[Int]` → `Int`),
+/// or `None` if `name` is not an `[…]` array type.
+fn array_element_type(name: &str) -> Option<&str> {
+    let inner = name.strip_prefix('[')?.strip_suffix(']')?;
+    // Reject dictionary types `[K: V]`; only homogeneous element arrays here.
+    if inner.contains(':') {
+        return None;
+    }
+    Some(inner.trim())
+}
+
+/// The written type annotation of a stored-property declaration (`var x: Double`
+/// → `Double`), if any.
+fn field_type_name(member: &Node<'static>) -> Option<String> {
+    member
+        .children()
+        .find(|c| c.kind() == NodeKind::TypeIdent)
+        .and_then(|c| c.text())
+}
+
+/// Coerce an integer value to floating point when the target type is
+/// `Double`/`Float` (an integer literal in a floating context).
+fn coerce_numeric(value: SwiftValue, target_ty: Option<&str>) -> SwiftValue {
+    if let (SwiftValue::Int(i), Some("Double") | Some("Float")) = (&value, target_ty) {
+        return SwiftValue::Double(i.raw as f64);
+    }
+    value
+}
+
 fn is_operator_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^~".contains(c))
 }
@@ -4722,6 +4929,7 @@ fn clone_params(params: &[Param]) -> Vec<Param> {
         .map(|p| Param {
             label: p.label.clone(),
             name: p.name.clone(),
+            ty: p.ty.clone(),
             variadic: p.variadic,
             inout_: p.inout_,
             default: p.default,
@@ -4737,9 +4945,14 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
             let info = child.param_info();
             // The parameter's default value, if any, is a non-type child.
             let default = child.children().find(is_value_node);
+            let ty = child
+                .children()
+                .find(|c| c.kind() == NodeKind::TypeIdent)
+                .and_then(|c| c.text());
             params.push(Param {
                 label: info.label,
                 name: info.name,
+                ty,
                 variadic: info.variadic,
                 inout_: info.is_inout,
                 default,
@@ -4966,6 +5179,20 @@ mod tests {
     }
 
     #[test]
+    fn protocol_composition_typealias_resolves_default_method() {
+        let out = run(
+            "protocol Scorable { var score: Int { get }; func grade() -> String }\n\
+             extension Scorable { func grade() -> String { score >= 90 ? \"A\" : \"B\" } }\n\
+             protocol Named { var name: String { get } }\n\
+             typealias NS = Named & Scorable\n\
+             struct S: NS { let name: String; let score: Int }\n\
+             print(S(name: \"a\", score: 95).grade())\n",
+        )
+        .unwrap();
+        assert_eq!(out, "A\n");
+    }
+
+    #[test]
     fn is_operator_name_recognizes_operator_tokens() {
         assert!(is_operator_name("+"));
         assert!(is_operator_name(">"));
@@ -5007,6 +5234,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "true false\n");
+    }
+
+    #[test]
+    fn tuple_destructuring_assignment_swaps() {
+        let out = run("var a = 1\nvar b = 2\n(a, b) = (b, a + b)\nprint(a, b)\n").unwrap();
+        assert_eq!(out, "2 3\n");
+    }
+
+    #[test]
+    fn int_literal_coerces_to_double_binding() {
+        let out = run("let r: Double = 5\nprint(r)\n").unwrap();
+        assert_eq!(out, "5.0\n");
+    }
+
+    #[test]
+    fn struct_double_field_coerces_int_literal() {
+        let out = run(
+            "struct P { var x: Double; var y: Double }\nlet p = P(x: 3, y: 4)\nprint(p.x, p.y)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "3.0 4.0\n");
+    }
+
+    #[test]
+    fn integer_division_unaffected_by_promotion() {
+        let out = run("print(7 / 2, 7 % 2)\n").unwrap();
+        assert_eq!(out, "3 1\n");
+    }
+
+    #[test]
+    fn array_covariant_optional_cast() {
+        let out = run("let xs = [1, 2, 3] as [Int?]\nprint(xs.count)\n").unwrap();
+        assert_eq!(out, "3\n");
     }
 
     #[test]

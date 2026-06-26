@@ -27,4 +27,11 @@ if case let value? = optionals[0] {
     optionals.append(value)
 }
 
-let _ = (displayName(User(name: "ada", nickname: nil)), forced, chainLength, viaIUO, optionals.count)
+// Covariant array cast `[T]` as `[T?]`, then appending nil.
+let present = [1, 2, 3] as [Int?]
+let padded = present + [nil]
+
+let _ = (
+    displayName(User(name: "ada", nickname: nil)), forced, chainLength, viaIUO, optionals.count,
+    padded.count,
+)

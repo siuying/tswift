@@ -35,9 +35,22 @@ func evaluate(_ e: Expr) -> Int {
     }
 }
 
+// Floating associated values accept integer literals at construction.
+enum Shape {
+    case circle(radius: Double)
+    case rect(width: Double, height: Double)
+    var area: Double {
+        switch self {
+        case .circle(let r): return 3.14159 * r * r
+        case .rect(let w, let h): return w * h
+        }
+    }
+}
+
 let code = Barcode.qr("ABC-123")
 let here = Planet.earth
 let everyDirection = Direction.allCases
 let folded = evaluate(.add(.literal(1), .add(.literal(2), .literal(3))))
+let rectArea = Shape.rect(width: 4, height: 6).area
 
-let _ = (Direction.north.opposite, code, here.rawValue, everyDirection.count, folded)
+let _ = (Direction.north.opposite, code, here.rawValue, everyDirection.count, folded, rectArea)

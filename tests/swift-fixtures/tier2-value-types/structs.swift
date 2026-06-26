@@ -28,4 +28,13 @@ let nested = Point.Pair(a: 1, b: 2)
 var q = p
 q.x = 100
 
-let _ = (d, p.x, q.x, nested.a, nested.b)
+// Integer literals coerce to Double in a floating field/binding context.
+struct Vec2 {
+    var x: Double
+    var y: Double
+    var length: Double { (x * x + y * y).squareRoot() }
+}
+let v = Vec2(x: 3, y: 4)
+let radius: Double = 5
+
+let _ = (d, p.x, q.x, nested.a, nested.b, v.length, radius)

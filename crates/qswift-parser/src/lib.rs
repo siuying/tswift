@@ -2335,7 +2335,10 @@ impl<'a> Parser<'a> {
                         expr = call;
                     }
                 }
-                TokenKind::LParen => {
+                // A call argument list must begin on the same line as the
+                // callee; a `(` after a newline starts a new (parenthesized /
+                // tuple) statement, e.g. `var b = 1` then `(a, b) = (b, a + b)`.
+                TokenKind::LParen if !self.peek().leading_newline => {
                     let open = self.bump();
                     let call = self.ast.add(NodeKind::CallExpr, None, open.line, open.col);
                     self.ast.append_child(call, expr);
@@ -3778,6 +3781,25 @@ mod tests {
         assert_eq!(kids.len(), 3);
         assert_eq!(kids[0].kind(), NodeKind::NamePattern);
         assert_eq!(kids[1].kind(), NodeKind::TypeRef);
+    }
+
+    #[test]
+    fn paren_on_next_line_is_not_a_call() {
+        // `var b = 1` then `(a, b) = (b, a + b)`: the `(` after the newline
+        // starts a tuple-assignment statement, not a call `1(a, b)`.
+        let ast = ast_of("var b = 1\n(a, b) = (b, b + 1)");
+        let stmts: Vec<_> = ast.node(ast.root()).children().collect();
+        assert_eq!(stmts.len(), 2);
+        assert_eq!(stmts[0].kind(), NodeKind::VarDecl);
+        assert_eq!(stmts[1].kind(), NodeKind::AssignExpr);
+        assert_eq!(stmts[1].children().next().unwrap().kind(), NodeKind::TupleExpr);
+    }
+
+    #[test]
+    fn same_line_paren_is_still_a_call() {
+        let ast = ast_of("f(1, 2)");
+        let call = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
     }
 
     #[test]

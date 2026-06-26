@@ -13,6 +13,11 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
     match (l, r) {
         (SwiftValue::Int(a), SwiftValue::Int(b)) => int_binary(op, *a, *b),
         (SwiftValue::Double(a), SwiftValue::Double(b)) => double_binary(op, *a, *b),
+        // Mixed integer/floating arithmetic promotes the integer side to
+        // `Double`, modelling an integer literal used in a floating context
+        // (`x += 1` on a `Double`, `radius * 2`, …).
+        (SwiftValue::Int(a), SwiftValue::Double(b)) => double_binary(op, a.raw as f64, *b),
+        (SwiftValue::Double(a), SwiftValue::Int(b)) => double_binary(op, *a, b.raw as f64),
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
@@ -222,6 +227,15 @@ mod tests {
             wrapped,
             SwiftValue::Int(IntValue::new(IntWidth::I8.min(), IntWidth::I8))
         );
+    }
+
+    #[test]
+    fn mixed_int_double_promotes_to_double() {
+        let i = int(3);
+        let d = SwiftValue::Double(2.0);
+        assert_eq!(binary("+", &i, &d).unwrap(), SwiftValue::Double(5.0));
+        assert_eq!(binary("*", &d, &int(4)).unwrap(), SwiftValue::Double(8.0));
+        assert_eq!(binary("<", &int(1), &SwiftValue::Double(2.0)).unwrap(), SwiftValue::Bool(true));
     }
 
     #[test]
