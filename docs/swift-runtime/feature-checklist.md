@@ -125,7 +125,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `indirect` enums (recursive) | ⚠️ | ★★★ | R3 |
 | [x] | Enum methods / computed props | ✅ | ★★ | R2 |
 | [x] | `CaseIterable` synthesis | ✅ | ★★ | R4 |
-| [ ] | Nested types | ✅ | ★★ | R2 |
+| [x] | Nested types | ✅ | ★★ | R2 |
 
 ### 2b. Properties
 | ✓ | Feature | FE | RT | Phase |

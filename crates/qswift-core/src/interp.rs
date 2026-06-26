@@ -735,12 +735,21 @@ impl<'w> Interpreter<'w> {
         for child in node.children() {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
-                NodeKind::StructDecl => self.register_struct(&child),
-                NodeKind::EnumDecl => self.register_enum(&child),
+                NodeKind::StructDecl => {
+                    self.register_struct(&child);
+                    self.register_nested_types(&child);
+                }
+                NodeKind::EnumDecl => {
+                    self.register_enum(&child);
+                    self.register_nested_types(&child);
+                }
                 // An `actor` is a reference type whose isolation is provided
                 // for free by our single-threaded executor (ADR-0005), so it is
                 // registered exactly like a class.
-                NodeKind::ClassDecl | NodeKind::ActorDecl => self.register_class(&child),
+                NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                    self.register_class(&child);
+                    self.register_nested_types(&child);
+                }
                 NodeKind::ProtocolDecl => self.register_protocol(&child),
                 NodeKind::TypealiasDecl => self.register_typealias(&child),
                 _ => {}
@@ -750,6 +759,31 @@ impl<'w> Interpreter<'w> {
         for child in node.children() {
             if child.kind() == NodeKind::ExtensionDecl {
                 self.register_extension(&child);
+            }
+        }
+    }
+
+    /// Register type declarations nested inside a type body so they resolve by
+    /// their simple name (e.g. `B` referenced inside `A`, or `A.B` qualified).
+    fn register_nested_types(&mut self, node: &Node<'static>) {
+        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
+            return;
+        };
+        for member in body.children() {
+            match member.kind() {
+                NodeKind::StructDecl => {
+                    self.register_struct(&member);
+                    self.register_nested_types(&member);
+                }
+                NodeKind::EnumDecl => {
+                    self.register_enum(&member);
+                    self.register_nested_types(&member);
+                }
+                NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                    self.register_class(&member);
+                    self.register_nested_types(&member);
+                }
+                _ => {}
             }
         }
     }
@@ -1516,6 +1550,21 @@ impl<'w> Interpreter<'w> {
                 self.read_enum_computed(&this, name)
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Whether `name` names a stored or computed member of the enclosing
+    /// `self`, used to resolve implicit `self.<name>` references.
+    fn is_self_member(&self, name: &str) -> bool {
+        match self.env.get("self") {
+            Some(SwiftValue::Struct(obj)) => {
+                obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name)
+            }
+            Some(SwiftValue::Object(obj)) => {
+                let class_name = obj.borrow().class_name.clone();
+                obj.borrow().get(name).is_some() || self.class_has_member(&class_name, name)
+            }
+            _ => false,
         }
     }
 
@@ -4098,6 +4147,27 @@ impl<'w> Interpreter<'w> {
                             }
                         }
                     }
+                    // `Outer.Nested(args)`: construct a nested type referenced
+                    // through its enclosing type. Nested types are registered by
+                    // their simple name, so resolve `method` against the type
+                    // tables when `tn` is itself a user type.
+                    let tn_is_type = self.structs.contains_key(&tn)
+                        || self.classes.contains_key(&tn)
+                        || self.enums.contains_key(&tn);
+                    if tn_is_type {
+                        if self.classes.contains_key(&method) {
+                            let args = self.eval_args(arg_nodes)?;
+                            return self.instantiate_class(&method, args);
+                        }
+                        if self.structs.contains_key(&method) {
+                            let simple: Vec<(Option<String>, SwiftValue)> = self
+                                .eval_args(arg_nodes)?
+                                .iter()
+                                .map(|a| (a.label.clone(), a.value.clone()))
+                                .collect();
+                            return self.instantiate_struct(&method, &simple);
+                        }
+                    }
                     if self.enum_has_case(&tn, &method) {
                         let args = self.eval_args(arg_nodes)?;
                         let payload = args.into_iter().map(|a| a.value).collect();
@@ -4650,10 +4720,22 @@ impl<'w> Interpreter<'w> {
 
     fn resolve_place(&self, node: &Node<'static>) -> Option<Place> {
         match node.kind() {
-            NodeKind::IdentExpr => node.text().map(|root| Place {
-                root,
-                path: Vec::new(),
-            }),
+            NodeKind::IdentExpr => {
+                let root = node.text()?;
+                // A bare identifier that is not a local binding but names a
+                // member of the enclosing `self` resolves as an implicit
+                // `self.<name>` place, so mutating-method writes flow back.
+                if self.env.get(&root).is_none() && self.is_self_member(&root) {
+                    return Some(Place {
+                        root: "self".into(),
+                        path: vec![root],
+                    });
+                }
+                Some(Place {
+                    root,
+                    path: Vec::new(),
+                })
+            }
             NodeKind::ParenExpr => node.children().next().and_then(|c| self.resolve_place(&c)),
             NodeKind::MemberExpr => {
                 let member = node.text()?;
