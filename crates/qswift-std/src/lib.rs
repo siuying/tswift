@@ -17,6 +17,7 @@ mod range;
 mod scalar;
 mod sequence;
 mod set;
+mod string;
 
 use qswift_core::Interpreter;
 
@@ -30,4 +31,5 @@ pub fn install(interp: &mut Interpreter<'_>) {
     optional::install(interp);
     sequence::install(interp);
     set::install(interp);
+    string::install(interp);
 }
