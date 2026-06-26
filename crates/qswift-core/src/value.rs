@@ -150,6 +150,9 @@ pub enum SwiftValue {
     /// (linear lookup) under an `Rc` for copy-on-write value semantics. Swift
     /// dictionaries are unordered, so callers must not rely on iteration order.
     Dict(Rc<Vec<(SwiftValue, SwiftValue)>>),
+    /// A set. Stored as insertion-ordered unique elements under an `Rc` for
+    /// copy-on-write value semantics; iteration order is not meaningful.
+    Set(Rc<Vec<SwiftValue>>),
     /// An integer range `lo..<hi` (exclusive) or `lo...hi` (inclusive).
     Range {
         lo: i128,
@@ -263,6 +266,7 @@ impl SwiftValue {
             SwiftValue::Tuple(_) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
             SwiftValue::Dict(_) => "Dictionary".into(),
+            SwiftValue::Set(_) => "Set".into(),
             SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
             SwiftValue::Struct(s) => s.type_name.clone(),
@@ -293,6 +297,10 @@ impl PartialEq for SwiftValue {
                 a.len() == b.len()
                     && a.iter()
                         .all(|(k, v)| b.iter().any(|(k2, v2)| k == k2 && v == v2))
+            }
+            // Sets are equal as unordered element collections.
+            (Set(a), Set(b)) => {
+                a.len() == b.len() && a.iter().all(|x| b.contains(x))
             }
             (
                 Range { lo: l1, hi: h1, inclusive: i1 },
@@ -349,6 +357,16 @@ impl fmt::Display for SwiftValue {
                         write!(f, ", ")?;
                     }
                     write!(f, "{k}: {v}")?;
+                }
+                write!(f, "]")
+            }
+            SwiftValue::Set(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
                 }
                 write!(f, "]")
             }
