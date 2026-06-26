@@ -36,6 +36,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     mutating(interp, "removeFirst", remove_first);
     mutating(interp, "removeAll", remove_all);
     mutating(interp, "reserveCapacity", reserve_capacity);
+    mutating(interp, "replaceSubrange", replace_subrange);
     nonmutating(interp, "distance", distance);
     nonmutating(interp, "index", index);
 
@@ -92,6 +93,39 @@ fn ensure_index(index: i128, len: i128, who: &str) -> Result<(), StdError> {
         Err(StdError::Error(EvalError::Trap(format!(
             "{who} index {index} out of range"
         ))))
+    }
+}
+
+fn range_bounds(range: &SwiftValue, len: usize, who: &str) -> Result<(usize, usize), StdError> {
+    let SwiftValue::Range { lo, hi, inclusive } = range else {
+        return Err(StdError::Error(EvalError::Type(format!(
+            "{who} expects a range"
+        ))));
+    };
+    let end = if *inclusive {
+        hi.checked_add(1).ok_or_else(|| {
+            StdError::Error(EvalError::Trap(format!("{who} range upperBound overflow")))
+        })?
+    } else {
+        *hi
+    };
+    ensure_index(*lo, len as i128, who)?;
+    ensure_index(end, len as i128, who)?;
+    if *lo > end {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "{who} range lowerBound exceeds upperBound"
+        ))));
+    }
+    Ok((*lo as usize, end as usize))
+}
+
+fn array_arg(value: &SwiftValue, who: &str) -> Result<Vec<SwiftValue>, StdError> {
+    match value {
+        SwiftValue::Array(items) => Ok(items.as_ref().clone()),
+        other => Err(StdError::Error(EvalError::Type(format!(
+            "{who} expects replacement elements, got {}",
+            other.type_name()
+        )))),
     }
 }
 
@@ -223,6 +257,27 @@ fn reserve_capacity(
     Ok(Outcome {
         result: SwiftValue::Void,
         receiver: recv,
+    })
+}
+
+/// `Array.replaceSubrange(_:with:)` — splice replacement elements into place.
+fn replace_subrange(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut v = items(recv)?;
+    let [range, replacement] = args.as_slice() else {
+        return Err(StdError::Error(EvalError::Type(
+            "replaceSubrange(_:with:) expects a range and replacement elements".into(),
+        )));
+    };
+    let (start, end) = range_bounds(range, v.len(), "replaceSubrange(_:with:)")?;
+    let replacement = array_arg(replacement, "replaceSubrange(_:with:)")?;
+    Rc::make_mut(&mut v).splice(start..end, replacement);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(v),
     })
 }
 
@@ -495,6 +550,53 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.result, SwiftValue::int(4));
+    }
+
+    #[test]
+    fn replace_subrange_splices_replacement_elements() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let shared = Rc::new(vec![
+            SwiftValue::int(1),
+            SwiftValue::int(2),
+            SwiftValue::int(3),
+            SwiftValue::int(4),
+        ]);
+
+        let out = replace_subrange(
+            &mut ctx,
+            SwiftValue::Array(Rc::clone(&shared)),
+            vec![
+                SwiftValue::Range {
+                    lo: 1,
+                    hi: 3,
+                    inclusive: false,
+                },
+                SwiftValue::Array(Rc::new(vec![SwiftValue::int(8), SwiftValue::int(9)])),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            shared.as_slice(),
+            &[
+                SwiftValue::int(1),
+                SwiftValue::int(2),
+                SwiftValue::int(3),
+                SwiftValue::int(4)
+            ]
+        );
+        match out.receiver {
+            SwiftValue::Array(items) => assert_eq!(
+                items.as_slice(),
+                &[
+                    SwiftValue::int(1),
+                    SwiftValue::int(8),
+                    SwiftValue::int(9),
+                    SwiftValue::int(4)
+                ]
+            ),
+            other => panic!("expected array, got {other:?}"),
+        }
     }
 
     #[test]

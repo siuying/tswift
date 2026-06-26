@@ -15,6 +15,7 @@ Array.remove
 Array.removeAll
 Array.removeFirst
 Array.removeLast
+Array.replaceSubrange
 Array.reserveCapacity
 Array.startIndex
 Bool.description
