@@ -51,13 +51,17 @@ Create a check list for each of the four gates, and **do not proceed to the next
 #### Gate 1 — Implement
 
 - Pick the next experiment idea from the strategy list (generate new ones when exhausted).
-- Make a focused, atomic change to the in-scope files.
-- Use `/skill:tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
+- Study code base or documentation to understand the problem and how to implement the idea.
+- Create an implementation plan, with clear steps and expected outcomes, break down into small and atomic size steps.
+- Implement the change by using `/skill:tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
 - `git add` the changes (do **not** commit yet).
 
 #### Gate 2 — Review
 
 - Dispatch a code reviewer subagent to review code (See `/skill:requesting-code-review`)
+- Fix Important issues before proceeding
+- Note Minor issues for later
+- Push back if reviewer is wrong (with reasoning)
 
 #### Gate 3 — Verify
 
