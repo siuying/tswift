@@ -169,6 +169,41 @@ impl StrViewKind {
             }
         }
     }
+
+    /// The ordered `(utf8_offset, transcoded)` positions of every index in this
+    /// view over `base`, from `startIndex` through `endIndex` inclusive
+    /// (ADR-0006). `index(after:)`/`distance` are ordinal moves over this list.
+    ///
+    /// For `utf8` every byte (including continuation bytes) is a position; for
+    /// `unicodeScalars` positions sit on scalar boundaries; for `utf16` an
+    /// astral scalar contributes two positions sharing a byte offset,
+    /// distinguished by `transcoded` (0 = high surrogate, 1 = low surrogate).
+    pub fn positions(self, base: &str) -> Vec<(usize, u32)> {
+        let mut out = Vec::new();
+        match self {
+            StrViewKind::Utf8 => {
+                for b in 0..=base.len() {
+                    out.push((b, 0));
+                }
+            }
+            StrViewKind::UnicodeScalars => {
+                for (b, _) in base.char_indices() {
+                    out.push((b, 0));
+                }
+                out.push((base.len(), 0));
+            }
+            StrViewKind::Utf16 => {
+                for (b, c) in base.char_indices() {
+                    out.push((b, 0));
+                    if c.len_utf16() == 2 {
+                        out.push((b, 1));
+                    }
+                }
+                out.push((base.len(), 0));
+            }
+        }
+        out
+    }
 }
 
 /// A Swift runtime value.
@@ -515,6 +550,28 @@ pub fn format_double(d: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn view_positions_span_index_space() {
+        // "a😀b": 'a'(1B) + emoji(4B, astral, 2 utf16 units) + 'b'(1B).
+        let s = "a😀b";
+        // utf8: every byte offset 0..=6 is a position.
+        assert_eq!(
+            StrViewKind::Utf8.positions(s),
+            (0..=6).map(|b| (b, 0)).collect::<Vec<_>>()
+        );
+        // unicodeScalars: scalar boundaries 0,1,5 plus end 6.
+        assert_eq!(
+            StrViewKind::UnicodeScalars.positions(s),
+            vec![(0, 0), (1, 0), (5, 0), (6, 0)]
+        );
+        // utf16: the astral scalar adds a transcoded=1 low-surrogate position
+        // sharing byte offset 1.
+        assert_eq!(
+            StrViewKind::Utf16.positions(s),
+            vec![(0, 0), (1, 0), (1, 1), (5, 0), (6, 0)]
+        );
+    }
 
     /// Copy-on-write: assigning shares the `Rc`; mutating one side clones it,
     /// leaving the other's storage uniquely owned and unchanged.
