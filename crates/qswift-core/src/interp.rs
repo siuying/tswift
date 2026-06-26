@@ -14,7 +14,8 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StdContext, StdError,
+    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticPropertyFn,
+    StdContext, StdError,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -239,6 +240,9 @@ pub struct Interpreter<'w> {
     intrinsics: HashMap<(BuiltinReceiver, String), Intrinsic>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    /// Static type-property intrinsics keyed by `(builtin type, property name)`,
+    /// for type-member access like `Double.pi` (no receiver instance).
+    static_properties: HashMap<(BuiltinReceiver, String), StaticPropertyFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
     /// builtin sequence receiver (layer 2 of the dispatch seam).
     algorithms: HashMap<String, AlgoFn>,
@@ -313,6 +317,7 @@ impl<'w> Interpreter<'w> {
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
             properties: HashMap::new(),
+            static_properties: HashMap::new(),
             algorithms: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
@@ -365,6 +370,9 @@ impl<'w> Interpreter<'w> {
         for (recv, name) in self.properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
+        for (recv, name) in self.static_properties.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
         for name in self.algorithms.keys() {
             keys.push(format!("Sequence.{name}"));
         }
@@ -382,6 +390,16 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a static type-property intrinsic on a builtin type (`Double.pi`).
+    pub fn register_static_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: StaticPropertyFn,
+    ) {
+        self.static_properties.insert((recv, name.to_string()), f);
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
@@ -3512,6 +3530,16 @@ impl<'w> Interpreter<'w> {
                             }
                         };
                     }
+                    // Static type properties on builtin scalars (`Double.pi`).
+                    if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
+                        if let Some(f) =
+                            self.static_properties.get(&(recv, member.clone())).copied()
+                        {
+                            self.exercised
+                                .insert(format!("{}.{}", recv.type_name(), member));
+                            return f().map_err(Self::std_error_to_signal);
+                        }
+                    }
                     // Static property of a struct type: `Type.prop`.
                     if self.structs.contains_key(&type_name) {
                         if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
@@ -5026,6 +5054,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "42\n1\n");
+    }
+
+    #[test]
+    fn builtin_static_property_dispatch_and_coverage() {
+        // A registered static type property on a builtin scalar resolves via
+        // `Type.member` access and records a semantic coverage key.
+        let analysis = Analysis::analyze("print(Double.answer)\n", "t.swift").unwrap();
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_static_property(BuiltinReceiver::Double, "answer", || {
+                Ok(SwiftValue::Double(42.0))
+            });
+            assert!(interp
+                .registered_keys()
+                .contains(&"Double.answer".to_string()));
+            interp.run(analysis).unwrap();
+            assert!(interp
+                .exercised_keys()
+                .contains(&"Double.answer".to_string()));
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "42.0\n");
     }
 
     #[test]
