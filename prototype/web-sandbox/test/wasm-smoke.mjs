@@ -8,7 +8,6 @@
 // Run with: npm test   (which builds the wasm first)
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const wasmDir = new URL('../src/wasm/', import.meta.url);
@@ -53,11 +52,17 @@ check('runtime error returns structured failure', () => {
 });
 
 // 4. Each supported preset in the page must run cleanly.
-const indexSrc = readFileSync(fileURLToPath(new URL('../src/pages/index.astro', import.meta.url)), 'utf8');
-const presetsMatch = indexSrc.match(/const presets = \[([\s\S]*?)\n\];/);
-assert(presetsMatch, 'could not locate presets array in index.astro');
-// eslint-disable-next-line no-eval
-const presets = eval(`[${presetsMatch[1]}\n]`);
+// Presets live as real `.swift` files under src/presets/, ordered by
+// manifest.mjs. The Astro page loads them via Vite's `?raw` glob; here in Node
+// we read the same files straight off disk so the test exercises the exact
+// source the page ships.
+const { presetManifest } = await import(new URL('../src/presets/manifest.mjs', import.meta.url));
+const presets = presetManifest.map((p) => ({
+  group: p.group,
+  label: p.label,
+  supported: p.supported,
+  code: readFileSync(new URL(`../src/presets/${p.file}`, import.meta.url), 'utf8').replace(/\n$/, ''),
+}));
 const supported = presets.filter((p) => p.supported !== false);
 assert(supported.length > 0, 'no supported presets found');
 for (const p of supported) {
