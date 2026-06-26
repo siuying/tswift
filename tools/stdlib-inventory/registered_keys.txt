@@ -110,7 +110,16 @@ String.first
 String.flatMap
 String.hasPrefix
 String.hasSuffix
+String.isASCII
 String.isEmpty
+String.isHexDigit
+String.isLetter
+String.isLowercase
+String.isNewline
+String.isNumber
+String.isUppercase
+String.isWhitespace
+String.isWholeNumber
 String.last
 String.lowercased
 String.map

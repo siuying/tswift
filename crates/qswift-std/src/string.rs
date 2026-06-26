@@ -25,6 +25,18 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "first", first);
     interp.register_property(s, "last", last);
 
+    // `Character` predicate properties. A Character is a single-grapheme
+    // String, so these classify its leading Unicode scalar.
+    interp.register_property(s, "isLetter", is_letter);
+    interp.register_property(s, "isNumber", is_number);
+    interp.register_property(s, "isWholeNumber", is_number);
+    interp.register_property(s, "isWhitespace", is_whitespace);
+    interp.register_property(s, "isNewline", is_newline);
+    interp.register_property(s, "isUppercase", is_uppercase);
+    interp.register_property(s, "isLowercase", is_lowercase);
+    interp.register_property(s, "isASCII", is_ascii);
+    interp.register_property(s, "isHexDigit", is_hex_digit);
+
     let mut pure = |name: &str, f: qswift_core::IntrinsicFn| {
         interp.register_intrinsic(s, name, MethodEntry { mutating: false, func: f });
     };
@@ -153,6 +165,60 @@ fn last(recv: SwiftValue) -> StdResult {
         .next_back()
         .map(SwiftValue::Str)
         .unwrap_or(SwiftValue::Nil))
+}
+
+// ---- Character predicates --------------------------------------------------
+
+/// The leading Unicode scalar of a (Character) value, if any.
+fn first_scalar(recv: &SwiftValue) -> Result<Option<char>, StdError> {
+    Ok(str_of(recv)?.chars().next())
+}
+
+/// Classify the leading scalar with `pred`; an empty value is `false`.
+fn classify(recv: SwiftValue, pred: impl Fn(char) -> bool) -> StdResult {
+    Ok(SwiftValue::Bool(first_scalar(&recv)?.is_some_and(pred)))
+}
+
+fn is_letter(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_alphabetic())
+}
+
+fn is_number(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_numeric())
+}
+
+fn is_whitespace(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_whitespace())
+}
+
+fn is_newline(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| {
+        matches!(
+            c,
+            '\n' | '\r'
+                | '\u{0B}'
+                | '\u{0C}'
+                | '\u{85}'
+                | '\u{2028}'
+                | '\u{2029}'
+        )
+    })
+}
+
+fn is_uppercase(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_uppercase())
+}
+
+fn is_lowercase(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_lowercase())
+}
+
+fn is_ascii(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_ascii())
+}
+
+fn is_hex_digit(recv: SwiftValue) -> StdResult {
+    classify(recv, |c| c.is_ascii_hexdigit())
 }
 
 // ---- transforms ------------------------------------------------------------
@@ -306,6 +372,27 @@ mod tests {
         assert_eq!(first(s("")).unwrap(), SwiftValue::Nil);
         let appended = append(&mut m, s("ab"), vec![s("c")]).unwrap();
         assert_eq!(appended.receiver, s("abc"));
+    }
+
+    #[test]
+    fn character_predicates_classify_leading_scalar() {
+        let t = SwiftValue::Bool(true);
+        let f = SwiftValue::Bool(false);
+        assert_eq!(is_letter(s("A")).unwrap(), t);
+        assert_eq!(is_letter(s("7")).unwrap(), f);
+        assert_eq!(is_number(s("7")).unwrap(), t);
+        assert_eq!(is_number(s("A")).unwrap(), f);
+        assert_eq!(is_whitespace(s(" ")).unwrap(), t);
+        assert_eq!(is_uppercase(s("A")).unwrap(), t);
+        assert_eq!(is_lowercase(s("a")).unwrap(), t);
+        assert_eq!(is_uppercase(s("a")).unwrap(), f);
+        assert_eq!(is_newline(s("\n")).unwrap(), t);
+        assert_eq!(is_ascii(s("z")).unwrap(), t);
+        assert_eq!(is_ascii(s("\u{00E9}")).unwrap(), f);
+        assert_eq!(is_hex_digit(s("F")).unwrap(), t);
+        assert_eq!(is_hex_digit(s("G")).unwrap(), f);
+        // An empty value classifies as false rather than trapping.
+        assert_eq!(is_letter(s("")).unwrap(), f);
     }
 
     #[test]
