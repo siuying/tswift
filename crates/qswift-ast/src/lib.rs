@@ -374,6 +374,27 @@ impl Ast {
         self.nodes[id.index()].kind = kind;
     }
 
+    /// Deep-copy the subtree rooted at `id`, returning the new root's id.
+    ///
+    /// Used to share a parsed type annotation across the desugared bindings of
+    /// a multi-name declaration (`var a, b, c: Double`), where each binding
+    /// needs its own copy of the annotation subtree.
+    pub fn clone_subtree(&mut self, id: NodeId) -> NodeId {
+        let data = self.nodes[id.index()].clone();
+        let index = u32::try_from(self.nodes.len()).expect("AST node count exceeds u32::MAX");
+        let new = NodeId(index);
+        let children = data.children.clone();
+        self.nodes.push(NodeData {
+            children: Vec::new(),
+            ..data
+        });
+        for child in children {
+            let cloned = self.clone_subtree(child);
+            self.nodes[new.index()].children.push(cloned);
+        }
+        new
+    }
+
     /// A read cursor over `id`.
     pub fn node(&self, id: NodeId) -> Node<'_> {
         Node { ast: self, id }
@@ -519,6 +540,34 @@ mod tests {
 
         let dump = ast.node(ast.root()).dump();
         assert_eq!(dump, "source_file L1\n  integer_literal \"42\" L1 :Int\n");
+    }
+
+    #[test]
+    fn clone_subtree_deep_copies_independently() {
+        let mut ast = Ast::new();
+        let dict = ast.add(NodeKind::TypeDict, None, 2, 5);
+        let key = ast.add(NodeKind::TypeRef, Some("String"), 2, 6);
+        let val = ast.add(NodeKind::TypeRef, Some("Int"), 2, 14);
+        ast.append_child(dict, key);
+        ast.append_child(dict, val);
+
+        let copy = ast.clone_subtree(dict);
+        assert_ne!(copy, dict, "clone is a distinct node");
+
+        let copied = ast.node(copy);
+        assert_eq!(copied.kind(), NodeKind::TypeDict);
+        let kids: Vec<_> = copied.children().map(|c| (c.kind(), c.text())).collect();
+        assert_eq!(
+            kids,
+            vec![
+                (NodeKind::TypeRef, Some("String")),
+                (NodeKind::TypeRef, Some("Int")),
+            ]
+        );
+        // Distinct child node ids: the clone does not alias the original.
+        let orig_children: Vec<_> = ast.node(dict).children().map(|c| c.id()).collect();
+        let copy_children: Vec<_> = ast.node(copy).children().map(|c| c.id()).collect();
+        assert_ne!(orig_children, copy_children);
     }
 
     #[test]

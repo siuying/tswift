@@ -3212,12 +3212,28 @@ impl<'w> Interpreter<'w> {
             }
             NodeKind::PatternRange => {
                 let bounds: Vec<Node<'static>> = pattern.children().collect();
+                let marker = pattern.text();
+                // One-sided range patterns carry a single bound tagged by
+                // direction: `..<n` (upTo), `...n` (through), `n...` (from).
+                if bounds.len() == 1 {
+                    let bound = self.eval(&bounds[0])?;
+                    let within = match (subject, &bound) {
+                        (SwiftValue::Int(s), SwiftValue::Int(b)) => match marker.as_deref() {
+                            Some("from") => s.raw >= b.raw,
+                            Some("through") => s.raw <= b.raw,
+                            Some("upTo") => s.raw < b.raw,
+                            _ => return Ok(None),
+                        },
+                        _ => return Ok(None),
+                    };
+                    return Ok(if within { Some(Vec::new()) } else { None });
+                }
                 if bounds.len() != 2 {
                     return Ok(None);
                 }
                 let lo = self.eval(&bounds[0])?;
                 let hi = self.eval(&bounds[1])?;
-                let inclusive = pattern.text().as_deref() == Some("...");
+                let inclusive = marker.as_deref() == Some("...");
                 if let (SwiftValue::Int(s), SwiftValue::Int(a), SwiftValue::Int(b)) =
                     (subject, &lo, &hi)
                 {

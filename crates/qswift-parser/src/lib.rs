@@ -36,6 +36,7 @@ pub fn parse(source: &str) -> Result<Ast, ParseError> {
         ast: Ast::new(),
         no_trailing_closure: false,
         op_precedence: HashMap::new(),
+        pending_siblings: Vec::new(),
     };
     p.collect_operator_precedence();
     p.parse_source_file()?;
@@ -53,6 +54,10 @@ struct Parser<'a> {
     /// from `operator`/`precedencegroup` declarations in a pre-pass so the Pratt
     /// parser nests custom operators by their real precedence group.
     op_precedence: HashMap<String, (u8, bool)>,
+    /// Extra declarations produced by desugaring a single source statement into
+    /// several (a multi-name binding `var a, b: T`). Drained by
+    /// [`Parser::append_statement`] into the same parent as the primary node.
+    pending_siblings: Vec<NodeId>,
 }
 
 /// A `precedencegroup` declaration as scanned before parsing: its relation to
@@ -230,9 +235,8 @@ impl<'a> Parser<'a> {
             if self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement_checked()?;
             let root = self.ast.root();
-            self.ast.append_child(root, stmt);
+            self.append_statement(root)?;
         }
         Ok(())
     }
@@ -252,6 +256,18 @@ impl<'a> Parser<'a> {
             return self.error("consecutive statements on a line must be separated by ';'");
         }
         Ok(stmt)
+    }
+
+    /// Parse one statement (checked) and append it to `parent`, along with any
+    /// sibling declarations a single source statement desugared into (a
+    /// multi-name binding `var a, b: T`).
+    fn append_statement(&mut self, parent: NodeId) -> Result<(), ParseError> {
+        let stmt = self.parse_statement_checked()?;
+        self.ast.append_child(parent, stmt);
+        for sibling in std::mem::take(&mut self.pending_siblings) {
+            self.ast.append_child(parent, sibling);
+        }
+        Ok(())
     }
 
     fn parse_statement(&mut self) -> Result<NodeId, ParseError> {
@@ -365,19 +381,79 @@ impl<'a> Parser<'a> {
         };
         let decl = self.ast.add(kind, None, kw.line, kw.col);
 
-        let pattern = self.parse_pattern()?;
-        self.ast.append_child(decl, pattern);
-
-        if self.peek().kind == TokenKind::Colon {
-            self.bump();
-            let ty = self.parse_type()?;
-            self.ast.append_child(decl, ty);
+        // A multi-name binding (`var a, b, c: T` / `let x = 1, y = 2`) declares
+        // several bindings on one line. Each is parsed independently; a binding
+        // without its own type annotation inherits a later sibling's annotation
+        // (Swift propagates a trailing `: T` to the preceding bare names).
+        let mut entries: Vec<(NodeId, Option<NodeId>, Option<NodeId>)> = Vec::new();
+        loop {
+            let pattern = self.parse_pattern()?;
+            let mut ty = None;
+            if self.peek().kind == TokenKind::Colon {
+                self.bump();
+                ty = Some(self.parse_type()?);
+            }
+            let mut init = None;
+            if self.at_oper("=") {
+                self.bump();
+                init = Some(self.parse_expr(0)?);
+            }
+            entries.push((pattern, ty, init));
+            if self.peek().kind == TokenKind::Comma {
+                self.bump();
+                continue;
+            }
+            break;
         }
 
-        if self.at_oper("=") {
-            self.bump();
-            let init = self.parse_expr(0)?;
-            self.ast.append_child(decl, init);
+        // Fast path: a single binding keeps the original (kind, [pattern, type?,
+        // init?]) shape exactly.
+        if entries.len() == 1 {
+            let (pattern, ty, init) = entries.pop().unwrap();
+            self.ast.append_child(decl, pattern);
+            if let Some(ty) = ty {
+                self.ast.append_child(decl, ty);
+            }
+            if let Some(init) = init {
+                self.ast.append_child(decl, init);
+            }
+            return Ok(decl);
+        }
+
+        // Propagate a trailing type annotation backward to the bare names that
+        // precede it and lack their own annotation/initializer.
+        let mut inherited: Option<NodeId> = None;
+        for entry in entries.iter_mut().rev() {
+            match entry.1 {
+                Some(ty) => inherited = Some(ty),
+                None if entry.2.is_none() => entry.1 = inherited,
+                None => {}
+            }
+        }
+
+        // Emit one decl per entry. The first reuses `decl`; the rest are queued
+        // as pending siblings for the enclosing parent.
+        for (idx, (pattern, ty, init)) in entries.into_iter().enumerate() {
+            let target = if idx == 0 {
+                decl
+            } else {
+                let p = self.ast.node(pattern);
+                self.ast.add(kind, None, p.line(), p.col())
+            };
+            self.ast.append_child(target, pattern);
+            if let Some(ty) = ty {
+                // Each binding needs its own annotation subtree; a shared
+                // inherited annotation is deep-copied for every reuse beyond the
+                // first.
+                let ty = if idx == 0 { ty } else { self.ast.clone_subtree(ty) };
+                self.ast.append_child(target, ty);
+            }
+            if let Some(init) = init {
+                self.ast.append_child(target, init);
+            }
+            if idx != 0 {
+                self.pending_siblings.push(target);
+            }
         }
         Ok(decl)
     }
@@ -401,8 +477,7 @@ impl<'a> Parser<'a> {
             if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement_checked()?;
-            self.ast.append_child(block, stmt);
+            self.append_statement(block)?;
         }
         self.expect(TokenKind::RBrace)?;
         Ok(block)
@@ -724,8 +799,7 @@ impl<'a> Parser<'a> {
             {
                 break;
             }
-            let stmt = self.parse_statement_checked()?;
-            self.ast.append_child(body, stmt);
+            self.append_statement(body)?;
         }
         self.ast.append_child(clause, body);
         Ok(clause)
@@ -771,15 +845,64 @@ impl<'a> Parser<'a> {
                 .ast
                 .add(NodeKind::NamePattern, Some(t.text), t.line, t.col));
         }
-        // Otherwise a value/expression pattern (a literal, range, etc.).
-        let expr = self.parse_expr(0)?;
-        // A range expression used as a pattern matches by containment.
-        if self.ast.node(expr).kind() == NodeKind::BinaryExpr
-            && matches!(self.ast.node(expr).text(), Some("...") | Some("..<"))
-        {
-            self.ast.set_kind(expr, NodeKind::RangePattern);
+        // One-sided range patterns with a leading range operator:
+        // `case ..<n:` (PartialRangeUpTo) and `case ...n:` (PartialRangeThrough).
+        // Each lowers to a single-bound `RangePattern` tagged by direction.
+        if self.at_oper("..<") || self.at_oper("...") {
+            let op = self.bump();
+            let bound = self.parse_expr(RANGE_RBP)?;
+            let marker = if op.text == "..<" { "upTo" } else { "through" };
+            let node = self
+                .ast
+                .add(NodeKind::RangePattern, Some(marker), op.line, op.col);
+            self.ast.append_child(node, bound);
+            return Ok(node);
         }
-        Ok(expr)
+        // Otherwise a value/expression pattern (a literal, range, etc.). Parse
+        // the leading operand at range precedence so a trailing range operator
+        // is left for the one-sided / two-sided handling below.
+        let lhs = self.parse_expr(RANGE_RBP)?;
+        // Postfix one-sided range `case n...:` (PartialRangeFrom): a `...` with
+        // no upper operand following it.
+        if self.at_oper("...") && self.at_one_sided_range_end() {
+            let op = self.bump();
+            let node = self
+                .ast
+                .add(NodeKind::RangePattern, Some("from"), op.line, op.col);
+            self.ast.append_child(node, lhs);
+            return Ok(node);
+        }
+        // Two-sided range `case lo...hi:` / `case lo..<hi:` matches by
+        // containment.
+        if self.at_oper("...") || self.at_oper("..<") {
+            let op = self.bump();
+            let hi = self.parse_expr(RANGE_RBP)?;
+            let node = self
+                .ast
+                .add(NodeKind::RangePattern, Some(op.text), op.line, op.col);
+            self.ast.append_child(node, lhs);
+            self.ast.append_child(node, hi);
+            return Ok(node);
+        }
+        Ok(lhs)
+    }
+
+    /// After a `...` at the cursor, whether the following token cannot begin an
+    /// upper-bound expression — i.e. the range is the postfix one-sided form
+    /// `n...` (PartialRangeFrom) rather than a two-sided `lo...hi`.
+    fn at_one_sided_range_end(&self) -> bool {
+        let next = &self.tokens[self.pos + 1];
+        next.leading_newline
+            || matches!(
+                next.kind,
+                TokenKind::Colon
+                    | TokenKind::Comma
+                    | TokenKind::RBrace
+                    | TokenKind::RParen
+                    | TokenKind::RBracket
+                    | TokenKind::Eof
+            )
+            || (next.kind == TokenKind::Keyword && next.text == "where")
     }
 
     /// Whether the cursor begins an enum-case pattern (`.case` or `Type.case`).
@@ -1100,8 +1223,7 @@ impl<'a> Parser<'a> {
             if active && !taken {
                 taken = true;
                 while !self.at_directive_boundary() {
-                    let stmt = self.parse_statement_checked()?;
-                    self.ast.append_child(node, stmt);
+                    self.append_statement(node)?;
                 }
             } else {
                 self.skip_to_directive_boundary();
@@ -1306,8 +1428,7 @@ impl<'a> Parser<'a> {
             if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                 break;
             }
-            let stmt = self.parse_statement_checked()?;
-            self.ast.append_child(node, stmt);
+            self.append_statement(node)?;
         }
         self.no_trailing_closure = saved;
         self.expect(TokenKind::RBrace)?;
@@ -1493,8 +1614,7 @@ impl<'a> Parser<'a> {
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
-                let member = self.parse_statement_checked()?;
-                self.ast.append_child(node, member);
+                self.append_statement(node)?;
             }
         }
         self.expect(TokenKind::RBrace)?;
@@ -1594,8 +1714,7 @@ impl<'a> Parser<'a> {
             if self.at_keyword("case") {
                 self.parse_enum_cases(node)?;
             } else {
-                let member = self.parse_statement_checked()?;
-                self.ast.append_child(node, member);
+                self.append_statement(node)?;
             }
         }
         self.expect(TokenKind::RBrace)?;
@@ -1718,8 +1837,7 @@ impl<'a> Parser<'a> {
                 if self.peek().kind == TokenKind::RBrace || self.at_eof() {
                     break;
                 }
-                let stmt = self.parse_statement_checked()?;
-                self.ast.append_child(block, stmt);
+                self.append_statement(block)?;
             }
             self.expect(TokenKind::RBrace)?;
             self.ast.append_child(getter, block);
@@ -2322,6 +2440,11 @@ impl<'a> Parser<'a> {
 
 /// Precedence of the ternary conditional (Swift `TernaryPrecedence`, /10).
 const TERNARY_BP: u8 = 6;
+
+/// Right binding power of the range operators (`..<` / `...`, precedence 13).
+/// Parsing a range operand at this power stops before another range operator,
+/// leaving it for one-sided / two-sided range-pattern handling.
+const RANGE_RBP: u8 = 14;
 
 /// Precedence of `is`/`as` casts (Swift `CastingPrecedence`, /10).
 const CAST_BP: u8 = 13;
@@ -3570,6 +3693,91 @@ mod tests {
         let expr = first_stmt(&ast).children().last().unwrap();
         assert_eq!(expr.kind(), NodeKind::PrefixExpr);
         assert_eq!(expr.text(), Some("..<"));
+    }
+
+    #[test]
+    fn one_sided_range_patterns_in_switch() {
+        // `case n...:` (from), `case ..<n:` (upTo), `case ...n:` (through) each
+        // lower to a single-bound RangePattern tagged by direction.
+        let ast = ast_of(
+            "switch x {\ncase 90...: break\ncase ..<60: break\ncase ...0: break\ndefault: break\n}",
+        );
+        let switch_stmt = first_stmt(&ast);
+        let clauses: Vec<_> = switch_stmt
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        let from = clauses[0].children().next().unwrap();
+        assert_eq!(from.kind(), NodeKind::RangePattern);
+        assert_eq!(from.text(), Some("from"));
+        assert_eq!(from.children().count(), 1);
+        let upto = clauses[1].children().next().unwrap();
+        assert_eq!(upto.text(), Some("upTo"));
+        assert_eq!(upto.children().count(), 1);
+        let through = clauses[2].children().next().unwrap();
+        assert_eq!(through.text(), Some("through"));
+        assert_eq!(through.children().count(), 1);
+    }
+
+    #[test]
+    fn two_sided_range_pattern_keeps_two_bounds() {
+        let ast = ast_of("switch x {\ncase 80..<90: break\ndefault: break\n}");
+        let clause = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::CaseClause)
+            .unwrap();
+        let pat = clause.children().next().unwrap();
+        assert_eq!(pat.kind(), NodeKind::RangePattern);
+        assert_eq!(pat.text(), Some("..<"));
+        assert_eq!(pat.children().count(), 2);
+    }
+
+    #[test]
+    fn multi_name_binding_shares_type_annotation() {
+        // `var a, b, c: Double` desugars to three VarDecls, each with its own
+        // NamePattern + a Double type annotation.
+        let ast = ast_of("var a, b, c: Double");
+        let decls: Vec<_> = ast
+            .node(ast.root())
+            .children()
+            .filter(|c| c.kind() == NodeKind::VarDecl)
+            .collect();
+        assert_eq!(decls.len(), 3);
+        for decl in &decls {
+            let kids: Vec<_> = decl.children().collect();
+            assert_eq!(kids[0].kind(), NodeKind::NamePattern);
+            assert_eq!(kids[1].kind(), NodeKind::TypeRef);
+            assert_eq!(kids[1].text(), Some("Double"));
+        }
+    }
+
+    #[test]
+    fn multi_name_binding_with_initializers() {
+        // `var x = 1, y = 2` desugars to two VarDecls, each with its own init.
+        let ast = ast_of("var x = 1, y = 2");
+        let decls: Vec<_> = ast
+            .node(ast.root())
+            .children()
+            .filter(|c| c.kind() == NodeKind::VarDecl)
+            .collect();
+        assert_eq!(decls.len(), 2);
+        assert_eq!(decls[0].children().next().unwrap().text(), Some("x"));
+        assert_eq!(decls[1].children().next().unwrap().text(), Some("y"));
+    }
+
+    #[test]
+    fn single_binding_keeps_original_shape() {
+        let ast = ast_of("let x: Int = 1");
+        let decls: Vec<_> = ast
+            .node(ast.root())
+            .children()
+            .filter(|c| c.kind() == NodeKind::LetDecl)
+            .collect();
+        assert_eq!(decls.len(), 1);
+        let kids: Vec<_> = decls[0].children().collect();
+        assert_eq!(kids.len(), 3);
+        assert_eq!(kids[0].kind(), NodeKind::NamePattern);
+        assert_eq!(kids[1].kind(), NodeKind::TypeRef);
     }
 
     #[test]
