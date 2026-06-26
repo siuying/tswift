@@ -109,8 +109,25 @@ pub struct Outcome {
 pub type IntrinsicFn =
     fn(&mut dyn StdContext, SwiftValue, Vec<SwiftValue>) -> Result<Outcome, StdError>;
 
+/// One evaluated free-function argument: its (optional) label and value.
+///
+/// Free functions see labels because some are label-overloaded
+/// (`stride(from:to:by:)` vs `stride(from:through:by:)`).
+#[derive(Debug, Clone)]
+pub struct Arg {
+    pub label: Option<String>,
+    pub value: SwiftValue,
+}
+
+impl Arg {
+    /// A positional (unlabeled) argument.
+    pub fn positional(value: SwiftValue) -> Arg {
+        Arg { label: None, value }
+    }
+}
+
 /// A free-function intrinsic (`print`, `min`, `max`, …).
-pub type FreeFn = fn(&mut dyn StdContext, Vec<SwiftValue>) -> StdResult;
+pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 
 /// One registered method intrinsic plus whether it mutates its receiver.
 #[derive(Clone, Copy)]

@@ -428,10 +428,10 @@ biggest sustained effort. Scope deliberately.*
 ### 10d. Functions & utilities
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
-| [ ] | `print` / `debugPrint` / `dump` | ★ | R0 |
+| [x] | `print` / `debugPrint` / `dump` | ★ | R0 |
 | [ ] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/… | ★★★ | R4 |
-| [ ] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
-| [ ] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
+| [x] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
+| [x] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
 | [ ] | `Result` | ★★ | R5 |
 | [ ] | `MemoryLayout` | ★★ | R6+ |
 | [ ] | `Unsafe*Pointer` family | ★★★★ | R6+ |
