@@ -961,9 +961,57 @@ impl<'w> Interpreter<'w> {
                 .flatten(),
             _ => None,
         };
-        match described {
-            Some(SwiftValue::Str(s)) => s,
+        if let Some(SwiftValue::Str(s)) = described {
+            return s;
+        }
+        // Collections render their *elements* in debug form (Swift quotes String
+        // elements inside `[...]`), so `description` of a container delegates to
+        // the debug renderer per element.
+        match value {
+            SwiftValue::Array(items) => self.render_sequence_body(items),
+            SwiftValue::Set(items) => self.render_sequence_body(items),
+            SwiftValue::Dict(pairs) => self.render_dict_body(pairs),
             _ => value.to_string(),
+        }
+    }
+
+    /// Render `[e1, e2, ...]` with each element in debug form (`[]` when empty).
+    fn render_sequence_body(&mut self, items: &[SwiftValue]) -> String {
+        let parts: Vec<String> = items
+            .iter()
+            .map(|v| self.render_debug_description(v))
+            .collect();
+        format!("[{}]", parts.join(", "))
+    }
+
+    /// Render `[k: v, ...]` with keys and values in debug form (`[:]` empty).
+    fn render_dict_body(&mut self, pairs: &[(SwiftValue, SwiftValue)]) -> String {
+        if pairs.is_empty() {
+            return "[:]".to_string();
+        }
+        let parts: Vec<String> = pairs
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "{}: {}",
+                    self.render_debug_description(k),
+                    self.render_debug_description(v)
+                )
+            })
+            .collect();
+        format!("[{}]", parts.join(", "))
+    }
+
+    /// Render a value as `debugDescription` / `String(reflecting:)`: `String`s
+    /// are quoted and escaped, `Set` is wrapped as `Set([...])`, and collection
+    /// elements recurse in debug form. Scalars fall back to their description.
+    fn render_debug_description(&mut self, value: &SwiftValue) -> String {
+        match value {
+            SwiftValue::Str(s) => quote_swift_string(s),
+            SwiftValue::Array(items) => self.render_sequence_body(items),
+            SwiftValue::Set(items) => format!("Set({})", self.render_sequence_body(items)),
+            SwiftValue::Dict(pairs) => self.render_dict_body(pairs),
+            _ => self.render_description(value),
         }
     }
 
@@ -4654,6 +4702,10 @@ impl StdContext for Interpreter<'_> {
         self.render_description(value)
     }
 
+    fn debug_display(&mut self, value: &SwiftValue) -> String {
+        self.render_debug_description(value)
+    }
+
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
         // Scalars use the natural order; struct/enum/class operands consult a
         // static `<` operator method on their type.
@@ -4872,6 +4924,26 @@ fn decode_string_literal(raw: &str) -> String {
 
 fn strip_multiline_indent(body: &str) -> &str {
     body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
+}
+
+/// Quote and escape a string the way Swift's `debugDescription` does:
+/// surround with `"` and escape `\`, `"`, and the common control characters.
+fn quote_swift_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn decode_escapes(s: &str) -> String {

@@ -62,6 +62,14 @@ pub trait StdContext {
         value.to_string()
     }
 
+    /// Render a value as `String(reflecting:)` / `debugDescription` would:
+    /// `String`s are quoted and escaped, and collection elements are rendered
+    /// in debug form. The default uses the plain rendering; the interpreter
+    /// overrides it.
+    fn debug_display(&mut self, value: &SwiftValue) -> String {
+        value.to_string()
+    }
+
     /// Whether `a < b` under `Comparable`. The default handles only the scalar
     /// values; the interpreter overrides it to also consult a type's static
     /// `<` operator. `None` means the values are not comparable.
