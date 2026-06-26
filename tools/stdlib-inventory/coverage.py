@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""Three-state stdlib coverage report.
+"""Four-state stdlib coverage report.
 
-Coverage is a pure join over three canonical sets of *semantic* stdlib keys
+Coverage is a pure join over canonical sets of *semantic* stdlib keys
 (`print`, `Array.append`, `Optional.map`, `Sequence.map`, …):
 
 * **inventory**   — every member declared in ``stdlib-inventory.md``.
 * **registered**  — what the qswift-std registry actually wires up.
 * **exercised**   — what a *passing* golden fixture actually dispatched.
 
-Each inventory member is classified by set membership, type-scoped (no global
-token matching):
+Each inventory member is classified, type-scoped (no global token matching):
 
-* **missing**     — not in the registry.
+* **core**        — an operator, `subscript`, or `init`. These are evaluated by
+  the interpreter core (`ops::binary`, `eval_subscript`, the constructor path),
+  never by the std registry, so they can never be "registered". Counting them as
+  registry *missing* understates real coverage; they get their own bucket.
+* **missing**     — a method/property the registry does not wire up.
 * **implemented** — registered but never exercised by a passing fixture.
 * **verified**    — registered *and* exercised by a passing fixture.
+
+The four buckets partition every inventory member, so per type
+``core + missing + implemented + verified == total``. Two headline numbers:
+``%covered = (core + implemented + verified) / total`` (everything the runtime
+handles, registry or core) and ``%verified = verified / total`` (the
+behaviourally-proven subset). The seam boundary — core owns
+operators/subscripts/inits; the std registry owns methods, computed properties,
+and free functions — is documented in ``docs/plan/stdlib-support.md`` §4.2.
 
 The `registered`/`exercised` inputs are regenerated live by the golden harness
 (they cannot drift from the code) into ``target/stdlib-coverage/``:
@@ -50,7 +61,21 @@ SEQUENCE_TYPES = {
 # normalize to those literal names (collapsing all overloads); the others take
 # the following identifier or operator token.
 _KEYWORD_RE = re.compile(r"\b(func|var|let|init|subscript|case)\b")
-_NAME_RE = re.compile(r"`?(?P<name>[A-Za-z_][A-Za-z0-9_]*|[-+*/<>=!%&|^~]+)")
+# Swift operator characters, including `?` and `.` so `??`, `...`, and `..<`
+# parse as their operator token rather than bleeding into a following name.
+_OP_CHARS = r"-+*/<>=!%&|^~?."
+_NAME_RE = re.compile(rf"`?(?P<name>[A-Za-z_][A-Za-z0-9_]*|[{_OP_CHARS}]+)")
+# A semantic key made entirely of operator characters (`+`, `&<<`, `??`, `...`).
+_OPERATOR_RE = re.compile(rf"^[{_OP_CHARS}]+$")
+
+
+def is_core_member(member: str) -> bool:
+    """True if `member` is handled by interpreter core, not the std registry.
+
+    Operators (`+`, `==`, `&<<`), `subscript`, and `init` are evaluated by
+    core eval / the constructor path and can never appear in the registry.
+    """
+    return member in ("subscript", "init") or bool(_OPERATOR_RE.match(member))
 
 
 def member_key(line: str) -> str | None:
@@ -117,6 +142,119 @@ def load_keys(path: Path) -> tuple[set[str], dict[str, set[str]], set[str]]:
     return free, by_type, seq_algos
 
 
+def classify(
+    ty: str,
+    member: str,
+    reg: tuple[set[str], dict[str, set[str]], set[str]],
+    ex: tuple[set[str], dict[str, set[str]], set[str]],
+) -> str:
+    """Assign one type member to a bucket: core/verified/implemented/missing."""
+    if is_core_member(member):
+        return "core"
+    _, reg_by_type, reg_seq = reg
+    _, ex_by_type, ex_seq = ex
+
+    def has(by_type: dict[str, set[str]], seq: set[str]) -> bool:
+        if member in by_type.get(ty, ()):
+            return True
+        return ty in SEQUENCE_TYPES and member in seq
+
+    if not has(reg_by_type, reg_seq):
+        return "missing"
+    return "verified" if has(ex_by_type, ex_seq) else "implemented"
+
+
+def compute_report(
+    free_inv: set[str],
+    types_inv: dict[str, set[str]],
+    reg: tuple[set[str], dict[str, set[str]], set[str]],
+    ex: tuple[set[str], dict[str, set[str]], set[str]],
+    report_types: list[str],
+) -> dict:
+    """Join inventory against registry/exercise sets into a report structure.
+
+    `reg`/`ex` are `(free, by_type, seq_algos)` triples as returned by
+    `load_keys`. `report_types` bounds which types appear (and which count
+    toward the overall denominator) — typically the registry-touched types.
+    """
+    free_reg, _, _ = reg
+    free_ex, _, _ = ex
+    types: dict[str, dict[str, int]] = {}
+    for ty in report_types:
+        members = types_inv.get(ty, set())
+        if not members:
+            continue
+        counts = {"core": 0, "missing": 0, "impl": 0, "verif": 0}
+        for m in members:
+            state = classify(ty, m, reg, ex)
+            counts[{"implemented": "impl", "verified": "verif"}.get(state, state)] += 1
+        counts["total"] = len(members)
+        types[ty] = counts
+
+    # Free functions can be operators too (`==`, `??`, `...`, `~=`): those are
+    # core-eval, the same as type-scoped operators. Only named free functions
+    # are the registry's responsibility.
+    named = [f for f in free_inv if not is_core_member(f)]
+    f_core = sum(1 for f in free_inv if is_core_member(f))
+    f_impl = sum(1 for f in named if f in free_reg and f not in free_ex)
+    f_verif = sum(1 for f in named if f in free_reg and f in free_ex)
+    free = {
+        "core": f_core,
+        "missing": len(named) - f_impl - f_verif,
+        "impl": f_impl,
+        "verif": f_verif,
+        "total": len(free_inv),
+    }
+
+    overall = {k: free[k] for k in ("core", "missing", "impl", "verif", "total")}
+    for counts in types.values():
+        for k in overall:
+            overall[k] += counts[k]
+    total = overall["total"] or 1
+    overall["pct_covered"] = 100 * (overall["core"] + overall["impl"] + overall["verif"]) / total
+    overall["pct_verified"] = 100 * overall["verif"] / total
+    return {"types": types, "free": free, "overall": overall, "order": report_types}
+
+
+def format_report(report: dict, n_types: int) -> str:
+    """Render a `compute_report` result as the textual coverage report."""
+    types = report["types"]
+    lines = ["# Stdlib coverage report", ""]
+    header = (
+        f"{'type':<20} {'core':>5} {'miss':>5} {'impl':>5} "
+        f"{'verif':>5} {'total':>5}  {'%cov':>6} {'%ver':>6}"
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for ty in report["order"]:
+        c = types.get(ty)
+        if not c:
+            continue
+        covered = c["core"] + c["impl"] + c["verif"]
+        pct_cov = 100 * covered / c["total"] if c["total"] else 0
+        pct_ver = 100 * c["verif"] / c["total"] if c["total"] else 0
+        lines.append(
+            f"{ty:<20} {c['core']:>5} {c['missing']:>5} {c['impl']:>5} "
+            f"{c['verif']:>5} {c['total']:>5}  {pct_cov:>5.1f}% {pct_ver:>5.1f}%"
+        )
+    f = report["free"]
+    lines.append("-" * len(header))
+    lines.append(
+        f"{'(free functions)':<20} {f['core']:>5} {f['missing']:>5} {f['impl']:>5} "
+        f"{f['verif']:>5} {f['total']:>5}"
+    )
+
+    o = report["overall"]
+    lines.append("")
+    lines.append("## Overall (targeted types + free functions)")
+    lines.append(f"core (operators/subscripts/inits): {o['core']}/{o['total']}")
+    lines.append(f"covered:  {o['core'] + o['impl'] + o['verif']}/{o['total']} ({o['pct_covered']:.1f}%)")
+    lines.append(f"verified: {o['verif']}/{o['total']} ({o['pct_verified']:.1f}%)")
+    lines.append("")
+    lines.append(f"inventory totals: {n_types} types, {f['total']} free functions")
+    return "\n".join(lines)
+
+
 def main() -> int:
     for required in (INVENTORY, REGISTERED, EXERCISED):
         if not required.exists():
@@ -129,58 +267,13 @@ def main() -> int:
             return 1
 
     free_inv, types_inv = parse_inventory(INVENTORY.read_text())
-    free_reg, reg_by_type, reg_seq = load_keys(REGISTERED)
-    free_ex, ex_by_type, ex_seq = load_keys(EXERCISED)
+    reg = load_keys(REGISTERED)
+    ex = load_keys(EXERCISED)
 
-    def has(ty: str, member: str, by_type: dict[str, set[str]], seq: set[str]) -> bool:
-        if member in by_type.get(ty, ()):
-            return True
-        return ty in SEQUENCE_TYPES and member in seq
-
-    def state(ty: str, member: str) -> str:
-        if not has(ty, member, reg_by_type, reg_seq):
-            return "missing"
-        if has(ty, member, ex_by_type, ex_seq):
-            return "verified"
-        return "implemented"
-
-    # Per-type report, limited to types the registry (or a sequence entry) touches.
-    touched = sorted(set(reg_by_type) | (SEQUENCE_TYPES & set(types_inv)))
-    print("# Stdlib coverage report\n")
-    print(f"{'type':<20} {'impl':>6} {'verif':>6} {'total':>6}  {'%verified':>9}")
-    print("-" * 56)
-    tot_impl = tot_verif = tot_total = 0
-    for ty in touched:
-        members = types_inv.get(ty, set())
-        if not members:
-            continue
-        impl = verif = 0
-        for m in members:
-            s = state(ty, m)
-            if s in ("implemented", "verified"):
-                impl += 1
-            if s == "verified":
-                verif += 1
-        total = len(members)
-        tot_impl += impl
-        tot_verif += verif
-        tot_total += total
-        pct = (100 * verif / total) if total else 0
-        print(f"{ty:<20} {impl:>6} {verif:>6} {total:>6}  {pct:>8.1f}%")
-
-    # Free functions.
-    f_impl = sum(1 for f in free_inv if f in free_reg)
-    f_verif = sum(1 for f in free_inv if f in free_reg and f in free_ex)
-    print("-" * 56)
-    print(f"{'(free functions)':<20} {f_impl:>6} {f_verif:>6} {len(free_inv):>6}")
-
-    print("\n## Overall (targeted types + free functions)")
-    g_total = tot_total + len(free_inv)
-    g_impl = tot_impl + f_impl
-    g_verif = tot_verif + f_verif
-    print(f"implemented: {g_impl}/{g_total} ({100 * g_impl / g_total:.1f}%)")
-    print(f"verified:    {g_verif}/{g_total} ({100 * g_verif / g_total:.1f}%)")
-    print(f"\ninventory totals: {len(types_inv)} types, {len(free_inv)} free functions")
+    # Report types the registry (or a sequence entry) touches.
+    touched = sorted(set(reg[1]) | (SEQUENCE_TYPES & set(types_inv)))
+    report = compute_report(free_inv, types_inv, reg, ex, touched)
+    print(format_report(report, n_types=len(types_inv)))
     return 0
 
 
