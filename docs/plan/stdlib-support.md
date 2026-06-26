@@ -1,0 +1,291 @@
+# Plan — Standard Library Support
+
+**Status:** proposed
+**Date:** 2026-06-26
+**Reference toolchain:** Swift **6.3.2** (`swift-6.3.2-RELEASE`)
+**Related:**
+- `docs/swift-runtime/feature-checklist.md` — Tier 10 is the hand-written surface
+- `docs/swift-runtime/stdlib-inventory.md` — generated API inventory (companion)
+- `docs/plan/swift-runtime-implementation-plan.md` — overall phasing (§3.2, §5)
+- `tools/stdlib-inventory/extract.py` — inventory generator
+
+## 1. Problem statement
+
+The standard library is the largest sustained effort in the runtime
+(feature-checklist Tier 10, risk register: *"Stdlib is unbounded — Highest"*).
+Today it is implemented **ad hoc and scattered**:
+
+- `crates/qswift-std/src/lib.rs` is a near-empty skeleton — it registers only
+  `print`.
+- Real behaviour lives as hardcoded `match` arms inside
+  `crates/qswift-core/src/interp.rs` (~4900 lines): `array_higher_order`
+  (`map`/`filter`/`reduce`/`forEach`/`contains`/`first`/`sorted`), `.count`/
+  `.isEmpty`, `max`/`min`/`abs`, `Int("…")` conversions, `Result.get()`, JSON
+  coders, and more.
+- Tier 10 of the checklist is **entirely unchecked**, even though fixtures in
+  `tests/swift-fixtures/tier10-stdlib/` already exercise a slice of it — there is
+  no systematic map from "what Swift provides" to "what we implement" to "what is
+  verified."
+
+This plan establishes (1) how we enumerate the stdlib surface, (2) the reference
+we measure against, and (3) how we implement and track it.
+
+## 2. Goal 1 — Enumerate the stdlib surface (machine-generated)
+
+We do **not** hand-curate the API list. We extract it from the reference
+toolchain's `.swiftinterface`, which is the exact public surface of the shipped
+stdlib.
+
+- **Source:** `…/swift-6.3.2-RELEASE.xctoolchain/usr/lib/swift/macosx/Swift.swiftmodule/arm64-apple-macos.swiftinterface`
+  (≈53.6k lines, valid Swift, full signatures + generic constraints).
+- **Tool:** `tools/stdlib-inventory/extract.py` — a brace-depth surface extractor
+  that groups every public `func`/`var`/`subscript`/`init`/`case` under its owning
+  type or `extension`, filtering out underscore-prefixed runtime internals and
+  ObjC-bridging shims.
+- **Output:** `docs/swift-runtime/stdlib-inventory.md` (regenerated, never edited
+  by hand): **192 types, 99 free functions**.
+
+Regenerate with:
+
+```sh
+F=~/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain/usr/lib/swift/macosx/Swift.swiftmodule/arm64-apple-macos.swiftinterface
+python3 tools/stdlib-inventory/extract.py "$F" > docs/swift-runtime/stdlib-inventory.md
+```
+
+The inventory is the **complete companion** to the curated Tier 10 checklist: the
+checklist says *what we intend to support and in which phase*; the inventory
+guarantees we never silently drift from the reference surface.
+
+## 3. Goal 2 — Reference version
+
+- **Pinned to Swift 6.3.2** (installed via `swiftly`; repo-local `.swift-version`
+  records the pin so differential testing uses the same toolchain).
+- Two reference roles:
+  - **API shape** — the `.swiftinterface` above (signatures, constraints).
+  - **Behaviour / ground truth** — running fixtures through real `swiftc` 6.3.2 and
+    diffing stdout (the plan's §5 differential-testing strategy). This is how we
+    decide "exact Swift behaviour" for floats, ordering, error messages, etc.
+- **Unicode pin:** `unicode-segmentation`/`-normalization` must track the Unicode
+  version of 6.3.2 (see overall plan §3.3); a CI fixture catches drift.
+
+## 4. Goal 3 — Implementation plan
+
+### 4.1 Refactor: give the stdlib a real home (incremental)
+
+Lift the scattered behaviour out of `interp.rs` into `qswift-std` behind a clean
+native-dispatch seam — **incrementally, one receiver type at a time** (`Array`
+first, then `String`, `Dictionary`, `Set`, numerics, `Optional`). Each step is a
+pure relocation guarded by the existing fixtures; no behaviour change per step.
+
+**Registry design — two layers (the recommended hybrid).** The inventory shows
+the higher-order algorithms (`map`/`filter`/`reduce`/`sorted`/`contains`/
+`prefix`/`enumerated`…) live on `Sequence`/`Collection`, *not* on `Array`
+directly — so they must be written **once**, not per concrete type. That rules out
+a purely flat registry and motivates two layers:
+
+1. **Intrinsic registry** — `HashMap<(BuiltinReceiver, &str), MethodEntry>`
+   for *type-specific* members: `Array.append`/`insert`/`removeAll`/`count`,
+   `Dictionary.keys`/`values`/`updateValue`, `String.uppercased`/`hasPrefix`,
+   `Int.isMultiple`/`signum`, `Set.union`/`intersection`, etc. `BuiltinReceiver`
+   is an enum (`Array`/`Dictionary`/`Set`/`String`/`Int`/`Double`/`Optional`/…).
+   Simple, fast, trivially unit-testable.
+2. **Protocol-algorithm layer** — the `Sequence`/`Collection` algorithms written
+   once against a small `as_sequence(&SwiftValue) -> Option<impl Iterator<
+   Item = SwiftValue>>` adapter, applied to *any* builtin sequence receiver.
+   This is the seed of real `Sequence`/`Collection` witness modelling (Tier 10c)
+   and removes the per-type duplication the current `array_higher_order` has.
+
+**Considered and rejected:**
+- *Flat tuple registry only* — forces `map`/`filter`/… to be re-registered on
+  every concrete sequence type (Array, Set, Dictionary, Range, String views).
+  Duplication; diverges from Swift's protocol-extension model.
+- *Per-type trait objects only* (`trait BuiltinType { fn call(…) }`) — groups
+  intrinsics nicely but still duplicates the sequence algorithms per type.
+- *Full protocol-witness tables for everything* — most faithful, but pulls the
+  whole conformance machinery forward before we need it; deferred, with layer 2
+  as the incremental on-ramp.
+
+**Dispatch order for a builtin receiver** (mirrors Swift, pragmatic):
+(1) intrinsic registry → (2) protocol-algorithm layer → (3) user `extension`
+methods on the builtin type → (4) protocol default/witness. We do **not** perform
+full overload resolution, so a user overload that reuses a stdlib method name does
+not shadow the builtin — a documented limitation.
+
+This is itself a deep-module exercise (see the `codebase-design` skill): one
+narrow registration seam, behaviour hidden behind it.
+
+#### Capability surface (`StdContext`) — resolved
+
+`std` intrinsics that need to call closures, recurse into `eval`, throw, or write
+output cannot use today's pure `fn(&mut dyn Write, &[SwiftValue]) -> SwiftValue`.
+They receive a **narrow capability trait**, not the whole `Interpreter`:
+
+```rust
+// defined in qswift-core; implemented for Interpreter.
+pub trait StdContext {
+    fn call_closure(&mut self, id: ClosureId, args: Vec<SwiftValue>) -> Eval;
+    fn throw(&mut self, error: SwiftValue) -> Signal;
+    fn out(&mut self) -> &mut dyn std::io::Write;
+    // widen only as a concrete S-slice needs it.
+}
+```
+
+- *Rejected: full `&mut Interpreter` handle* — leaks core internals into `std` and
+  couples the crates; the trait keeps `std` decoupled and unit-testable against a
+  mock.
+- *Rejected: split closure-taking methods back into core* — re-fragments the
+  stdlib, the very thing this refactor removes.
+
+#### Mutating intrinsics (`append`/`insert`/`removeLast`) — resolved
+
+Mutating methods take the receiver **by value** and return the updated receiver
+alongside the call result; the dispatcher resolves the lvalue `Place` first and
+writes the new receiver back — exactly mirroring `call_struct_method`'s existing
+write-back:
+
+```rust
+// non-mutating: -> Eval (just the result)
+// mutating:     -> Result<(SwiftValue /*result*/, SwiftValue /*new recv*/), Signal>
+struct MethodEntry { mutating: bool, /* fn ptr */ }
+```
+
+- *Rejected: `&mut SwiftValue` receiver* — the receiver lives in `env`, and
+  `StdContext` already borrows `&mut Interpreter`, so `&mut recv` + `&mut ctx`
+  would alias. By-value avoids the borrow conflict and gets copy-on-write for free
+  via `Rc::make_mut` on the returned value.
+- The `mutating: bool` flag on `MethodEntry` tells the dispatcher when to resolve
+  the `Place` and write back.
+
+### 4.2 Coverage tracking (from both registry and fixtures)
+
+`tools/stdlib-inventory/coverage.py` cross-references the generated inventory
+against **two** signals and assigns each member a state:
+
+- **missing** — not in the `qswift-std` registry.
+- **implemented** — present in the registry (declared coverage).
+- **verified** — in the registry **and** exercised by a passing fixture
+  (behavioural coverage).
+
+The registry signal comes from a `qswift_std::registered_keys() -> Vec<String>`
+accessor dumped to a file by a tiny `#[test]`/bin (authoritative — reads the live
+registry, so it cannot drift from source; no Rust parsing needed). The fixture
+signal is read from the **executing** CLI golden fixtures (see §4.4). Output is a
+coverage report (per-type %, overall %) that feeds Tier 10 checkbox updates —
+turning "stdlib is unbounded" into a tracked number with a verified subset.
+
+### 4.3 Ordered implementation list
+
+Concrete, ordered worklist derived from the inventory (member names are the
+user-facing public API of Swift 6.3.2). Each numbered step is a vertical slice:
+registry entries + fixtures + checklist/coverage update. Steps are demand-driven
+but this is the default order. (Scope ceiling: **Foundation is out** — no
+`Decimal`/`Date`/`URL`/`Data`; regex literals deferred to their checklist phase.)
+
+**S1 — Free utilities + output (10d core).** `print`/`debugPrint`/`dump`,
+`assert`/`assertionFailure`/`precondition`/`preconditionFailure`/`fatalError`,
+`min`/`max`/`abs`/`swap`, `zip`/`stride`/`repeatElement`/`sequence`,
+`readLine`, `isKnownUniquelyReferenced`. *(Also the refactor of the existing
+`print` + numeric helpers into the new seam.)*
+
+**S2 — Core scalar values (10a).** `Int`/`UInt` widths + overflow/wrapping ops +
+`isMultiple`/`signum`/`quotientAndRemainder`; `Double`/`Float` math
+(`rounded`/`squareRoot`/`isNaN`/`magnitude`/`truncatingRemainder`); `Bool`;
+failable string conversions `Int("…")`/`Double("…")`; width conversions.
+
+**S3 — Ranges & Optional (10a).** `Range`/`ClosedRange` (`contains`/`count`/
+`lowerBound`/`upperBound`/`clamped`), one-sided ranges; `Optional.map`/`flatMap`,
+`??`, pattern hooks already in core — move behaviour into the registry.
+
+**S4 — Array intrinsics + CoW (10b, ★★★★).** `append`/`insert(at:)`/
+`remove(at:)`/`removeAll`/`removeLast`/`reserveCapacity`/`+`/`+=`, `count`/
+`isEmpty`/`first`/`last`/`startIndex`/`endIndex`/`capacity`, subscript get/set,
+`init(repeating:count:)`/`init(_: Sequence)`. Verify copy-on-write via
+`Rc::make_mut` uniqueness tests.
+
+**S5 — Sequence/Collection algorithm layer (10c).** Implemented once against the
+`as_sequence` adapter, then available to Array/Set/Dictionary/Range/String views:
+`map`/`filter`/`reduce`/`compactMap`/`flatMap`/`forEach`/`contains`/`allSatisfy`/
+`first(where:)`/`firstIndex`/`sorted`/`sorted(by:)`/`min`/`max`/`reversed`/
+`enumerated`/`prefix`/`suffix`/`dropFirst`/`dropLast`/`split`/`joined`/`count`/
+`elementsEqual`/`starts(with:)`/`randomElement`/`shuffled`.
+
+**S6 — Dictionary + CoW (10b, ★★★★).** subscript get/set/default,
+`keys`/`values`/`count`/`isEmpty`, `updateValue`/`removeValue`/`merge`/`merging`/
+`mapValues`/`compactMapValues`, `init(uniqueKeysWithValues:)`/
+`init(grouping:by:)`.
+
+**S7 — Set + CoW (10b).** `insert`/`remove`/`contains`/`update`, `union`/
+`intersection`/`subtracting`/`symmetricDifference` (+ `form*` mutating),
+`isSubset`/`isSuperset`/`isDisjoint`, `count`/`isEmpty`.
+
+**S8 — String / Character / Substring (10a, ★★★★).** `count`/`isEmpty`/`first`/
+`last`, `uppercased`/`lowercased`, `hasPrefix`/`hasSuffix`/`contains`, `append`/
+`+`/`+=`, `split`/`replacingOccurrences`(if in scope)/`prefix`/`suffix`,
+index/subscript over grapheme clusters, `Substring` view, `Character` value,
+UTF-8/Unicode-segmentation backing pinned to 6.3.2.
+
+**S9 — Language-driving protocols + conformance synthesis (10c).**
+`Equatable`/`Hashable`/`Comparable` (operators + `hash(into:)`),
+`CustomStringConvertible`/`CustomDebugStringConvertible` (`description`),
+`RawRepresentable`/`CaseIterable`, `ExpressibleBy*Literal`, `Identifiable`,
+`Codable` round-trip via the existing JSON layer.
+
+**S10 — Slices & remaining containers (10b).** `ArraySlice`/`ContiguousArray`,
+`CollectionOfOne`/`EmptyCollection`, `Result` (move from ad-hoc), `KeyValuePairs`.
+
+`String`/`Character`/`Substring` (S8) and `Array`/`Dictionary` CoW (S4/S6) are the
+hardest items (★★★★) — schedule extra time and lean on differential testing
+against real `swiftc` 6.3.2.
+
+### 4.4 Definition of done per member
+
+Two fixture systems exist and both apply:
+
+- **Behaviour** — an executing CLI golden fixture
+  `crates/qswift-cli/tests/fixtures/<name>.swift` + `<name>.expected`, run through
+  the tree-walker by `crates/qswift-cli/tests/golden.rs` and diffed on stdout.
+  This is the only harness that verifies runtime behaviour and is the primary
+  bar for stdlib work.
+- **Parse/typecheck** — a `tests/swift-fixtures/*.swift` frontend fixture
+  (`// expected-no-diagnostics`) validated by `qswift-frontend`'s
+  `golden_fixtures` test, per AGENTS.md “every feature has a golden fixture”.
+  (Note: the `tier10-stdlib` fixtures there are frontend-only and do **not**
+  prove behaviour — e.g. `append` parses there but is not yet implemented.)
+
+A member is done when: dispatched from `qswift-std`, covered by a CLI `.expected`
+fixture **and** a frontend fixture, both tests pass, output matches real `swiftc`
+6.3.2 where applicable, and the Tier 10 checklist + coverage report are updated.
+Any intentional compatibility gap (float formatting, regex subset, Foundation
+exclusions) is documented per §3.3.
+
+## 5. Deliverables
+
+- [x] `tools/stdlib-inventory/extract.py` + generated `stdlib-inventory.md`
+- [ ] `.swift-version` pinned to 6.3.2 (committed)
+- [ ] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
+      (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
+- [ ] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
+- [ ] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
+      three-state report (CLI `.expected` signal for `verified`)
+- [ ] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
+      checklist/coverage updates
+
+## 6. Resolved decisions
+
+- **Refactor blast radius** → **incremental**, one receiver type at a time, each
+  step guarded by existing fixtures (§4.1).
+- **Registry key design** → **two-layer hybrid**: flat intrinsic registry +
+  write-once `Sequence`/`Collection` algorithm layer; dispatch order documented
+  (§4.1).
+- **Scope ceiling** → Foundation **out** of MVP; an explicit ordered list S1–S10
+  (§4.3); regex literals deferred to their checklist phase.
+- **Coverage signal** → **both** registry (`registered_keys()`) and CLI `.expected`
+  fixtures (verified), three-state report (§4.2).
+- **Capability surface** → narrow `StdContext` trait, not a full `Interpreter`
+  handle (§4.1).
+- **Mutating intrinsics** → by-value receiver + return updated receiver, dispatcher
+  writes back via `Place` (avoids the `&mut recv`/`&mut ctx` borrow conflict; CoW
+  via `Rc::make_mut`) (§4.1).
+- **Fixture target** → executing CLI `.expected` fixtures for behaviour + a
+  frontend fixture for parse; the `tier10-stdlib` frontend fixtures alone do not
+  prove behaviour (§4.4).

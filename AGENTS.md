@@ -3,7 +3,7 @@
 ## Folder Structure
 
 - `creates` - quick-swift rust packages.
-- `crates/swift-lexer`, `crates/swift-ast`, `crates/swift-parser`, `crates/swift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/quick-swift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
+- `crates/qswift-lexer`, `crates/qswift-ast`, `crates/qswift-parser`, `crates/qswift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/qswift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
 - `docs/plan/swift-runtime-implementation-plan.md` - overall plan
 - `docs/research` - research on the (now-removed) msf C frontend and the VM. `docs/research/msf-ast-cheatsheet.md` documents the runtime-facing AST contract the Rust compat lowerer reproduces — useful background before working against the AST.
 - `docs/agents/environment.md` - commit/signing conventions, offline-build constraints, tooling notes. Read before committing or adding a dependency.
@@ -21,7 +21,7 @@ Read `docs/swift-runtime/feature-checklist.md`. It is the feature checklist.
 
 When a feature is partially or fully implemented and fully verified, update the checklist item.
 
-Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.swift`) in Swift, validated against the Rust frontend by `quick-swift-frontend`'s `golden_fixtures` test.
+Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.swift`) in Swift, validated against the Rust frontend by `qswift-frontend`'s `golden_fixtures` test.
 
 Every rust change should be fully covered in tests.
 

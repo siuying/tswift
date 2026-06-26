@@ -7,7 +7,7 @@
 ## Context
 
 quick-swift currently executes Swift by **tree-walking** msf's typed AST
-(`crates/quick-swift-core/src/interp.rs`, ~4.4k LOC). Phases R0–R5 (lexical →
+(`crates/qswift-core/src/interp.rs`, ~4.4k LOC). Phases R0–R5 (lexical →
 errors/modules) are implemented this way. Issue #11 proposes the **R6 register
 bytecode VM** described in the design research docs:
 
@@ -106,7 +106,7 @@ Mirrors MiniJS §3–§6 / QuickJS §4–§8, specialised for Swift's **typed** 
 - **This ADR does not authorise building the VM.** It authorises (a) recording
   the decision framework and (b) standing up the **benchmark baseline** that the
   go/no-go needs. See the companion benchmark suite
-  (`crates/quick-swift-cli/benches/`).
+  (`crates/qswift-cli/benches/`).
 
 ## What this slice delivers (issue #11, partial)
 

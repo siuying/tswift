@@ -1,0 +1,11 @@
+[package]
+name = "qswift-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "qswift evaluator spine: SwiftValue, the eval dispatcher, and native registration."
+
+[dependencies]
+qswift-frontend.workspace = true
+corosensei = "0.3.4"

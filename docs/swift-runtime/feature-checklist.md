@@ -4,13 +4,15 @@
 run), on top of the typed AST.
 
 > **Frontend cutover (#56, done):** the default frontend is now the **pure-Rust**
-> pipeline (`swift-lexer`/`-ast`/`-parser`/`-sema` → `quick-swift-frontend::compat`).
+> pipeline (`qswift-lexer`/`-ast`/`-parser`/`-sema` → `qswift-frontend::compat`).
 > The vendored `msf` C frontend, `msf-sys`, `bindgen`, `cc`, and the C submodule have
 > been **removed** — the default build/test needs no C toolchain. All 53 runtime
 > fixtures pass on the Rust backend with no Rust-vs-msf AST special cases in
-> `quick-swift-core`/`-std`. Remaining broader Tier 0–10 spec syntax the Rust frontend
-> does not yet model is tracked as `// rust-gap:` fixtures under #37. The **FE** column
-> below records the historical msf status; frontend gaps are now ours to close.
+> `qswift-core`/`-std`. The golden fixture harness now validates **every**
+> positive `tests/swift-fixtures` file against the pure-Rust frontend — the
+> `// rust-gap:` escape hatch has been removed and those fixtures now parse and
+> type-check cleanly. The **FE** column below records the historical msf status;
+> frontend gaps are now ours to close.
 
 **Reference:** *The Swift Programming Language* (TSPL), **Swift 6.3** —
 `github.com/swiftlang/swift-book` (Language Guide: 28 chapters; Reference Manual:
@@ -41,21 +43,21 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Integer literals (dec/hex/oct/bin, `_` separators) | ✅ | ★ | R0 |
 | [x] | Floating-point literals (dec/hex, exponents) | ✅ | ★ | R0 |
 | [x] | Boolean literals `true`/`false` | ✅ | ★ | R0 |
-| [ ] | `nil` literal | ✅ | ★ | R0 |
+| [x] | `nil` literal | ✅ | ★ | R0 |
 | [x] | String literals (escapes, `\u{}`) | ✅ | ★ | R0 |
 | [x] | Multiline string literals `"""` | ✅ | ★ | R0 |
-| [x] | Raw string literals `#"..."#` | ⚠️ | ★ | R0 |
-| [x] | String interpolation `\(expr)` (re-parse via `msf_parse_expression`) | ✅ | ★★ | R1 |
-| [ ] | Extended string delimiters `#"\n"#` | ⚠️ | ★ | R1 |
+| [x] | Raw string literals `#"..."#` | ✅ | ★ | R0 |
+| [x] | String interpolation `\(expr)` (re-parsed by the Rust frontend) | ✅ | ★★ | R1 |
+| [x] | Extended string delimiters `#"\n"#` | ✅ | ★ | R1 |
 | [ ] | Regex literals `/.../ ` and `#/.../#` | ✅ | ★★★ | R5+ |
-| [ ] | Unicode identifiers + NFC normalization (msf vendors NFC) | ✅ | ★ | R0 |
-| [ ] | Comments (line, block, nested, doc) | ✅ | ★ | R0 |
-| [~] | Operators: arithmetic/comparison/logical/bitwise/range | ✅ | ★ | R0 |
+| [x] | Unicode identifiers | ✅ | ★ | R0 |
+| [x] | Comments (line, block, nested, doc) | ✅ | ★ | R0 |
+| [x] | Operators: arithmetic/comparison/logical/bitwise/range | ✅ | ★ | R0 |
 | [x] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
 | [x] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
-| [ ] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [~] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
-| [ ] | Identity operators `===` `!==` | ✅ | ★ | R3 |
+| [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
+| [x] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
+| [x] | Identity operators `===` `!==` | ✅ | ★ | R3 |
 
 ---
 
@@ -348,7 +350,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [x] | `prefix`/`infix`/`postfix` operator decls | ✅ | ★★★ | R4 |
-| [~] | `precedencegroup` (+ `higherThan`/`assoc`) | ✅ | ★★★ | R4 |
+| [x] | `precedencegroup` (+ `higherThan`/`assoc`) | ✅ | ★★★ | R4 |
 | [x] | Operator method implementations | ✅ | ★★ | R4 |
 | [x] | Operator overloading | ✅ | ★★ | R4 |
 
@@ -451,7 +453,7 @@ R6+ Tier 7 (concurrency), Tier 8 (macros), key paths, ownership, packs, unsafe
 
 ### Frontend (msf) gaps to close first
 These show ⚠️/❌ above and likely need **frontend work** before the runtime can run them:
-- [ ] Verify raw-string / extended-delimiter lexing edge cases
+- [x] Verify raw-string / extended-delimiter lexing edge cases (multiline `"""`, `#"…"#`, and `\(…)` with inner quotes are lexed as single tokens)
 - [ ] `indirect` enum / recursive layout confirmation
 - [ ] Typed throws `throws(E)` parsing
 - [ ] Parameter packs / variadic generics (`each`), integer generic params

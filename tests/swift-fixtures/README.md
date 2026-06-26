@@ -1,8 +1,8 @@
 # Swift frontend golden fixtures
 
 Repo-owned Swift source fixtures that specify what the quick-swift frontend
-(`swift-lexer` → `swift-ast` → `swift-parser` → `swift-sema`, exposed through
-`quick-swift-frontend`) must accept, reject, and how it must diagnose.
+(`qswift-lexer` → `qswift-ast` → `qswift-parser` → `qswift-sema`, exposed through
+`qswift-frontend`) must accept, reject, and how it must diagnose.
 
 These are **our own** fixtures, authored to track the feature checklist
 (`docs/swift-runtime/feature-checklist.md`). They are deliberately *not* a copy

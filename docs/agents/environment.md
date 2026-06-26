@@ -25,7 +25,7 @@ all cost time to rediscover.
 - Assume **no network access to crates.io** during a task. Adding a dependency
   that isn't already in `Cargo.lock` will fail to fetch.
   - Example: `serde_json` is *not* available — the `Codable` JSON layer is the
-    hand-written `crates/quick-swift-core/src/json.rs` for this reason.
+    hand-written `crates/qswift-core/src/json.rs` for this reason.
 - Prefer a small self-contained module over a new dependency. If a crate is
   genuinely required, confirm it's already vendored / in the lockfile first.
 
@@ -35,7 +35,7 @@ all cost time to rediscover.
   `newText2`; it's rejected. Merge nearby changes into one edit instead.
 - `request-code-review` is not installed; do a self-review against
   `scripts/presubmit` and the feature checklist.
-- To inspect how msf parses a construct, use `quick-swift dump <file>` rather
+- To inspect how msf parses a construct, use `qswift dump <file>` rather
   than writing throwaway AST-walker test modules. See
   `docs/research/msf-ast-cheatsheet.md`.
 

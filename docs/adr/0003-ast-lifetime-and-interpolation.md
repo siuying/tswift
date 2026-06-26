@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (implemented)
 - **Date:** 2026-06-25
-- **Context slice:** Evaluator core (`crates/quick-swift-core/src/interp.rs`), msf safe wrapper
+- **Context slice:** Evaluator core (`crates/qswift-core/src/interp.rs`), msf safe wrapper
 
 ## Context
 
@@ -38,7 +38,7 @@ each **interpolation-fragment** `Analysis` are intentionally leaked
 
 ## Rationale
 
-- **One process, one program.** `quick-swift` analyzes, runs, and exits. Leaked
+- **One process, one program.** `qswift` analyzes, runs, and exits. Leaked
   analyses are bounded by the program's own size (root + a fragment per distinct
   interpolation evaluated) and reclaimed by process exit. There is no
   long-running host accumulating leaks.

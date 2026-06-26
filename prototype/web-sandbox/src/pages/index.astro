@@ -1,0 +1,217 @@
+---
+import '../styles/global.css';
+
+const variants = [
+  ['A', 'IDE split pane'],
+  ['B', 'Terminal first'],
+  ['C', 'Learning lab'],
+];
+
+const current = Astro.url.searchParams.get('variant')?.toUpperCase() ?? 'A';
+const active = variants.some(([key]) => key === current) ? current : 'A';
+const activeLabel = variants.find(([key]) => key === active)?.[1] ?? variants[0][1];
+
+const sample = `func fib(_ n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+print("hello from qswift")
+print(fib(8))`;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>qswift web sandbox prototype</title>
+  </head>
+  <body data-variant={active}>
+    <script define:vars={{ sample }}>window.__QSWIFT_SAMPLE__ = sample;</script>
+
+    {active === 'A' && (
+      <main class="shell variant-a">
+        <section class="hero compact">
+          <p class="eyebrow">PROTOTYPE — throwaway web sandbox</p>
+          <div>
+            <h1>Swift in the browser, powered by qswift.</h1>
+            <p>Paste one Swift file, compile it through the Rust frontend, then run it with the qswift interpreter.</p>
+          </div>
+          <button id="run" class="primary">Compile & run</button>
+        </section>
+
+        <section class="ide-grid">
+          <article class="panel editor-panel">
+            <div class="panel-head"><span>main.swift</span><span id="source-meta">0 chars</span></div>
+            <textarea id="source" spellcheck="false" aria-label="Swift source"></textarea>
+          </article>
+          <article class="panel output-panel">
+            <div class="panel-head"><span>Output</span><span id="status">idle</span></div>
+            <div class="tabs"><button data-tab="run" class="active">stdout</button><button data-tab="compile">compile</button><button data-tab="state">state</button></div>
+            <pre id="output">Ready.</pre>
+            <pre id="compile" hidden></pre>
+            <pre id="state" hidden></pre>
+          </article>
+        </section>
+      </main>
+    )}
+
+    {active === 'B' && (
+      <main class="shell variant-b">
+        <aside class="sidebar">
+          <p class="eyebrow">qswift sandbox</p>
+          <h1>Run a single Swift file like a command.</h1>
+          <p>Terminal-first layout for checking language support quickly.</p>
+          <button id="run" class="primary wide">▶ Compile & run</button>
+          <dl class="stats">
+            <div><dt>Status</dt><dd id="status">idle</dd></div>
+            <div><dt>Source</dt><dd id="source-meta">0 chars</dd></div>
+          </dl>
+        </aside>
+        <section class="terminal-stack">
+          <article class="panel editor-panel dark">
+            <div class="panel-head"><span>$ edit main.swift</span></div>
+            <textarea id="source" spellcheck="false" aria-label="Swift source"></textarea>
+          </article>
+          <article class="panel output-panel dark">
+            <div class="panel-head"><span>$ qswift run main.swift</span></div>
+            <div class="tabs"><button data-tab="run" class="active">stdout</button><button data-tab="compile">compile</button><button data-tab="state">state</button></div>
+            <pre id="output">Ready.</pre>
+            <pre id="compile" hidden></pre>
+            <pre id="state" hidden></pre>
+          </article>
+        </section>
+      </main>
+    )}
+
+    {active === 'C' && (
+      <main class="shell variant-c">
+        <header class="lab-header">
+          <p class="eyebrow">Swift learning lab prototype</p>
+          <h1>Experiment, inspect, run.</h1>
+          <p>A guided sandbox that keeps compiler state visible beside the program result.</p>
+        </header>
+        <section class="lab-grid">
+          <article class="panel prompt-card">
+            <h2>Try this</h2>
+            <p>Change the recursion depth, add a variable, or paste a fixture from <code>tests/swift-fixtures</code>.</p>
+            <button id="run" class="primary wide">Compile & run lesson</button>
+            <p class="mini-state"><strong>Status:</strong> <span id="status">idle</span><br/><strong>Source:</strong> <span id="source-meta">0 chars</span></p>
+          </article>
+          <article class="panel editor-panel notebook">
+            <div class="panel-head"><span>Notebook cell · main.swift</span></div>
+            <textarea id="source" spellcheck="false" aria-label="Swift source"></textarea>
+          </article>
+          <article class="panel output-panel notebook-output">
+            <div class="panel-head"><span>Result + state</span></div>
+            <div class="tabs"><button data-tab="run" class="active">stdout</button><button data-tab="compile">compile</button><button data-tab="state">state</button></div>
+            <pre id="output">Ready.</pre>
+            <pre id="compile" hidden></pre>
+            <pre id="state" hidden></pre>
+          </article>
+        </section>
+      </main>
+    )}
+
+    <nav class="prototype-switcher" aria-label="Prototype variant switcher">
+      <button id="prev-variant" title="Previous variant">←</button>
+      <span>{active} — {activeLabel}</span>
+      <button id="next-variant" title="Next variant">→</button>
+    </nav>
+
+    <script is:inline>
+      const variants = ['A', 'B', 'C'];
+      const labels = { A: 'IDE split pane', B: 'Terminal first', C: 'Learning lab' };
+      const source = document.getElementById('source');
+      const runButton = document.getElementById('run');
+      const status = document.getElementById('status');
+      const sourceMeta = document.getElementById('source-meta');
+      const output = document.getElementById('output');
+      const compile = document.getElementById('compile');
+      const state = document.getElementById('state');
+      const tabs = [...document.querySelectorAll('[data-tab]')];
+      let lastRun = null;
+
+      const saved = sessionStorage.getItem('qswift-prototype-source');
+      source.value = saved || window.__QSWIFT_SAMPLE__;
+
+      function renderState(extra = {}) {
+        const snapshot = {
+          variant: `${document.body.dataset.variant} — ${labels[document.body.dataset.variant]}`,
+          sourceChars: source.value.length,
+          sourceLines: source.value.split('\n').length,
+          status: status.textContent,
+          lastRun,
+          ...extra,
+        };
+        sourceMeta.textContent = `${snapshot.sourceLines} lines · ${snapshot.sourceChars} chars`;
+        state.textContent = JSON.stringify(snapshot, null, 2);
+      }
+
+      function showTab(name) {
+        for (const el of [output, compile, state]) el.hidden = el.id !== (name === 'run' ? 'output' : name);
+        for (const tab of tabs) tab.classList.toggle('active', tab.dataset.tab === name);
+      }
+
+      source.addEventListener('input', () => {
+        sessionStorage.setItem('qswift-prototype-source', source.value);
+        renderState({ action: 'edit' });
+      });
+
+      for (const tab of tabs) tab.addEventListener('click', () => showTab(tab.dataset.tab));
+
+      runButton.addEventListener('click', async () => {
+        status.textContent = 'compiling…';
+        output.textContent = '';
+        compile.textContent = '';
+        renderState({ action: 'compile-start' });
+        showTab('state');
+
+        try {
+          const response = await fetch('/api/run', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ source: source.value }),
+          });
+          const result = await response.json();
+          lastRun = result;
+          status.textContent = result.ok ? 'ran successfully' : 'failed';
+          compile.textContent = result.compile
+            ? [`compile: ${result.compile.ok ? 'ok' : 'failed'} (${result.compile.elapsedMs}ms)`, result.compile.stderr, result.compile.astPreview].filter(Boolean).join('\n\n')
+            : JSON.stringify(result, null, 2);
+          output.textContent = result.run
+            ? [`run: ${result.run.ok ? 'ok' : 'failed'} (${result.run.elapsedMs}ms)`, result.run.stdout, result.run.stderr].filter(Boolean).join('\n\n')
+            : 'Program was not run because compile/analyze failed.';
+          renderState({ action: 'complete' });
+          showTab(result.run ? 'run' : 'compile');
+        } catch (error) {
+          status.textContent = 'request failed';
+          output.textContent = error.message;
+          lastRun = { error: error.message };
+          renderState({ action: 'request-error' });
+          showTab('run');
+        }
+      });
+
+      function setVariant(delta) {
+        const current = document.body.dataset.variant || 'A';
+        const next = variants[(variants.indexOf(current) + delta + variants.length) % variants.length];
+        const url = new URL(window.location.href);
+        url.searchParams.set('variant', next);
+        window.location.href = url.toString();
+      }
+
+      document.getElementById('prev-variant').addEventListener('click', () => setVariant(-1));
+      document.getElementById('next-variant').addEventListener('click', () => setVariant(1));
+      document.addEventListener('keydown', (event) => {
+        const target = event.target;
+        const typing = target.matches?.('input, textarea, [contenteditable="true"]');
+        if (typing) return;
+        if (event.key === 'ArrowLeft') setVariant(-1);
+        if (event.key === 'ArrowRight') setVariant(1);
+      });
+
+      renderState({ action: 'loaded' });
+    </script>
+  </body>
+</html>
