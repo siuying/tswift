@@ -14,8 +14,8 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticPropertyFn,
-    StdContext, StdError,
+    AlgoFn, Arg, BuiltinReceiver, ContextPropertyFn, FreeFn, MethodEntry, Outcome, PropertyFn,
+    StaticPropertyFn, StdContext, StdError,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -243,6 +243,9 @@ pub struct Interpreter<'w> {
     /// Static type-property intrinsics keyed by `(builtin type, property name)`,
     /// for type-member access like `Double.pi` (no receiver instance).
     static_properties: HashMap<(BuiltinReceiver, String), StaticPropertyFn>,
+    /// Context-aware computed-property intrinsics keyed by `(receiver, name)`,
+    /// for properties that render through the [`StdContext`] (`description`).
+    context_properties: HashMap<(BuiltinReceiver, String), ContextPropertyFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
     /// builtin sequence receiver (layer 2 of the dispatch seam).
     algorithms: HashMap<String, AlgoFn>,
@@ -318,6 +321,7 @@ impl<'w> Interpreter<'w> {
             intrinsics: HashMap::new(),
             properties: HashMap::new(),
             static_properties: HashMap::new(),
+            context_properties: HashMap::new(),
             algorithms: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
@@ -373,6 +377,9 @@ impl<'w> Interpreter<'w> {
         for (recv, name) in self.static_properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
+        for (recv, name) in self.context_properties.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
         for name in self.algorithms.keys() {
             keys.push(format!("Sequence.{name}"));
         }
@@ -400,6 +407,17 @@ impl<'w> Interpreter<'w> {
         f: StaticPropertyFn,
     ) {
         self.static_properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a context-aware computed-property intrinsic on a builtin
+    /// receiver (`description`), which renders through the [`StdContext`].
+    pub fn register_context_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: ContextPropertyFn,
+    ) {
+        self.context_properties.insert((recv, name.to_string()), f);
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
@@ -3609,6 +3627,11 @@ impl<'w> Interpreter<'w> {
                 self.exercised
                     .insert(format!("{}.{}", kind.type_name(), member));
                 return func(value).map_err(Self::std_error_to_signal);
+            }
+            if let Some(func) = self.context_properties.get(&(kind, member.clone())).copied() {
+                self.exercised
+                    .insert(format!("{}.{}", kind.type_name(), member));
+                return func(self, value).map_err(Self::std_error_to_signal);
             }
         }
         match (&value, member.as_str()) {

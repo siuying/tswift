@@ -197,6 +197,12 @@ pub type PropertyFn = fn(SwiftValue) -> StdResult;
 /// `Double.infinity`, …). Takes no receiver — it is a constant of the type.
 pub type StaticPropertyFn = fn() -> StdResult;
 
+/// A computed-property intrinsic that needs the [`StdContext`] capability handle
+/// (`description`, which renders through [`StdContext::display`] so it honours a
+/// nested value's `CustomStringConvertible`). Unlike [`PropertyFn`], it is not
+/// pure: it can call back into the interpreter via the context.
+pub type ContextPropertyFn = fn(&mut dyn StdContext, SwiftValue) -> StdResult;
+
 /// A `Sequence`/`Collection` algorithm written once against the materialized
 /// elements of any builtin sequence receiver (`map`, `filter`, `sorted`, …).
 ///
