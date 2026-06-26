@@ -158,13 +158,29 @@ struct MethodEntry { mutating: bool, /* fn ptr */ }
 
 ### 4.2 Coverage tracking (from both registry and fixtures)
 
-`tools/stdlib-inventory/coverage.py` is a pure join over **three** canonical sets
-of *semantic* stdlib keys and assigns each inventory member a state:
+`tools/stdlib-inventory/coverage.py` is a pure join over canonical sets
+of *semantic* stdlib keys and assigns each inventory member one of **four**
+states:
 
-- **missing** — not in the `qswift-std` registry.
+- **core** — an operator, `subscript`, or `init`. These are evaluated by the
+  interpreter core (`ops::binary`, `eval_subscript`, the constructor path), not
+  the `qswift-std` registry, so they can never be "registered". They are not a
+  coverage gap and must not count as registry *missing*; they get their own
+  bucket. This is the seam boundary: **core owns operators, subscripts, and
+  inits; the std registry owns methods, computed properties, and *named* free
+  functions.** Operator free functions (`==`, `??`, `...`, `~=`) are core-owned
+  too, not registry-owned.
+- **missing** — a method/property the `qswift-std` registry does not wire up.
 - **implemented** — registered but not exercised by a passing fixture.
 - **verified** — registered **and** exercised by a passing fixture
   (behavioural coverage).
+
+The four states partition every inventory member, so per type
+`core + missing + implemented + verified == total`. The report's headline
+numbers are `%covered = (core + implemented + verified) / total` (everything the
+runtime handles) and `%verified = verified / total` (the behaviourally-proven
+subset). The classifier is unit-tested in
+`tools/stdlib-inventory/test_coverage.py`.
 
 Both dynamic inputs are regenerated live (they cannot drift from source) into
 `target/stdlib-coverage/` by the `stdlib_coverage_inputs` golden test:
