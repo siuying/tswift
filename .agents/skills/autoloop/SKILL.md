@@ -16,13 +16,18 @@ An autonomous iterate-and-bookkeep loop. Each iteration goes through four gates 
    - Coverage → `cargo tarpaulin` / `pytest --cov`; signal = coverage %
    - Performance → benchmark command; signal = numeric score
    - Build / lint → `cargo build` / `ruff`; signal = exit code
-4. Determine the **iteration strategy**: ordered list of experiment ideas, simple → complex.
-5. Present plan to user and **wait for confirmation**:
+4. **If no signal exists**, do not proceed blindly. Propose adding one:
+   - Identify what kind of signal fits the problem (e.g. "no test covers this bug — I'll write one").
+   - Suggest a concrete command and what to measure.
+   - Offer to scaffold it (write the test file, benchmark harness, or lint config).
+   - Get user confirmation before scaffolding, then add it as iteration #0 (`keep`, no metric delta).
+5. Determine the **iteration strategy**: ordered list of experiment ideas, simple → complex.
+6. Present plan to user and **wait for confirmation**:
 
 ```
 Problem:        <restate>
 Files in scope: <list>
-Signal:         <command> → <metric>
+Signal:         <command> → <metric>  (or "none found — propose: <suggestion>")
 Strategy:       1. <idea>  2. <idea>  …
 Log file:       loop-log.md (untracked)
 ```
@@ -97,6 +102,7 @@ Create in the project root; do **not** commit it (add to `.gitignore` if needed)
 
 | # | commit  | metric | Δ      | review | status  | description                     |
 |---|---------|--------|--------|--------|---------|---------------------------------|
+| 0 | c0ffee1 | —      | —      | —      | keep    | scaffold: add coverage signal   |
 | 1 | a1b2c3d | 72.3%  | +0.0%  | pass   | keep    | baseline                        |
 | 2 | b2c3d4e | 74.1%  | +1.8%  | pass   | keep    | add tests for edge case X       |
 | 3 | —       | 73.0%  | −1.1%  | pass   | discard | refactor Y (coverage dropped)   |
