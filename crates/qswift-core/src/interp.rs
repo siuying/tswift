@@ -13,7 +13,7 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
-use crate::stdlib::{BuiltinReceiver, FreeFn, MethodEntry, Outcome, StdContext, StdError};
+use crate::stdlib::{Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, StdContext, StdError};
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
 
@@ -3440,6 +3440,30 @@ impl<'w> Interpreter<'w> {
                 }
                 _ => {}
             }
+            // `swap(&a, &b)` — exchange two inout locations. Needs the caller
+            // write-back `Place`s, so it cannot ride the value-only free-fn seam.
+            if name == "swap" && self.env.get("swap").is_none() && args.len() == 2 {
+                if let (Some(pa), Some(pb)) = (args[0].place.clone(), args[1].place.clone()) {
+                    let va = args[0].value.clone();
+                    let vb = args[1].value.clone();
+                    self.write_place(&pa, vb)?;
+                    self.write_place(&pb, va)?;
+                    return Ok(SwiftValue::Void);
+                }
+            }
+            // `isKnownUniquelyReferenced(&obj)` — true when the class instance is
+            // not shared. The env binding plus this evaluated clone account for
+            // two strong references, so a unique object reads as exactly two.
+            if name == "isKnownUniquelyReferenced"
+                && self.env.get("isKnownUniquelyReferenced").is_none()
+                && args.len() == 1
+            {
+                return Ok(match &args[0].value {
+                    SwiftValue::Object(rc) => SwiftValue::Bool(Rc::strong_count(rc) == 2),
+                    _ => SwiftValue::Bool(false),
+                });
+            }
+
             // Conversion initializers take exactly one argument.
             if args.len() == 1 {
                 if let Some(v) = self.try_conversion(&name, &args[0].value)? {
@@ -3448,8 +3472,14 @@ impl<'w> Interpreter<'w> {
             }
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.free_fns.get(&name).copied() {
-                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
-                return free(self, plain).map_err(Self::std_error_to_signal);
+                let labeled: Vec<Arg> = args
+                    .into_iter()
+                    .map(|a| Arg {
+                        label: a.label,
+                        value: a.value,
+                    })
+                    .collect();
+                return free(self, labeled).map_err(Self::std_error_to_signal);
             }
             if let Some(native) = self.natives.get(&name).copied() {
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
@@ -4231,8 +4261,24 @@ impl<'w> Interpreter<'w> {
                 Ok(Some(SwiftValue::Double(d)))
             }
             "String" => Ok(Some(SwiftValue::Str(value.to_string()))),
+            // `Array(seq)` materializes any builtin sequence into an array.
+            "Array" => Ok(materialize_sequence(value).map(|v| SwiftValue::Array(StdRc::new(v)))),
             _ => Ok(None),
         }
+    }
+}
+
+/// Eagerly materialize a builtin sequence value into a `Vec` of its elements,
+/// or `None` if the value is not a sequence the tree-walker can expand.
+fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
+    match value {
+        SwiftValue::Array(items) => Some(items.as_ref().clone()),
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive { *hi + 1 } else { *hi };
+            Some((*lo..end).map(SwiftValue::int).collect())
+        }
+        SwiftValue::Str(s) => Some(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+        _ => None,
     }
 }
 
