@@ -1581,7 +1581,7 @@ impl<'a> Parser<'a> {
     fn parse_conditions_inner(&mut self, parent: NodeId) -> Result<(), ParseError> {
         loop {
             let cond = if self.at_keyword("let") || self.at_keyword("var") {
-                self.parse_binding()?
+                self.parse_condition_binding()?
             } else if self.at_keyword("case") {
                 self.parse_case_condition()?
             } else {
@@ -1595,6 +1595,33 @@ impl<'a> Parser<'a> {
             break;
         }
         Ok(())
+    }
+
+    /// One optional-binding condition (`let x`, `let x = e`, `var y = e`) inside
+    /// an `if`/`guard`/`while` condition list. Unlike a statement-level binding,
+    /// it parses exactly one binding so a following comma separates the next
+    /// *condition* (`if let a = a, let b = b`) rather than another name.
+    fn parse_condition_binding(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump();
+        let kind = if kw.text == "let" {
+            NodeKind::LetDecl
+        } else {
+            NodeKind::VarDecl
+        };
+        let decl = self.ast.add(kind, None, kw.line, kw.col);
+        let pattern = self.parse_pattern()?;
+        self.ast.append_child(decl, pattern);
+        if self.peek().kind == TokenKind::Colon {
+            self.bump();
+            let ty = self.parse_type()?;
+            self.ast.append_child(decl, ty);
+        }
+        if self.at_oper("=") {
+            self.bump();
+            let init = self.parse_expr(0)?;
+            self.ast.append_child(decl, init);
+        }
+        Ok(decl)
     }
 
     /// A `case <pattern> = <expr>` condition (`if case let x? = optional`).
@@ -3942,6 +3969,40 @@ mod tests {
         let sub = first_stmt(&ast).children().next().unwrap();
         assert_eq!(sub.kind(), NodeKind::SubscriptExpr);
         assert_eq!(sub.children().nth(1).unwrap().arg_label(), Some("tag"));
+    }
+
+    #[test]
+    fn condition_list_parses_multiple_optional_bindings() {
+        let ast = ast_of("if let a = a, let b = b, a < b { print(a) }");
+        let if_stmt = first_stmt(&ast);
+        let conds: Vec<_> = if_stmt
+            .children()
+            .take_while(|c| c.kind() != NodeKind::Block)
+            .collect();
+        assert_eq!(conds.len(), 3);
+        assert_eq!(conds[0].kind(), NodeKind::LetDecl);
+        assert_eq!(conds[1].kind(), NodeKind::LetDecl);
+        assert_eq!(conds[2].kind(), NodeKind::BinaryExpr);
+    }
+
+    #[test]
+    fn guard_condition_mixes_binding_and_boolean() {
+        let ast = ast_of("func f() { guard let x = x, x > 0 else { return } }");
+        let body = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let guard = body
+            .children()
+            .find(|c| c.kind() == NodeKind::GuardStmt)
+            .unwrap();
+        let conds: Vec<_> = guard
+            .children()
+            .take_while(|c| c.kind() != NodeKind::Block)
+            .collect();
+        assert_eq!(conds.len(), 2);
+        assert_eq!(conds[0].kind(), NodeKind::LetDecl);
+        assert_eq!(conds[1].kind(), NodeKind::BinaryExpr);
     }
 
     #[test]

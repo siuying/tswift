@@ -3222,18 +3222,35 @@ impl<'w> Interpreter<'w> {
         Ok(true)
     }
 
-    /// `while cond { … }`.
+    /// `while <conds> { … }`. The condition list may bind optionals (`while let
+    /// x = …`) or match patterns (`while case …`), re-evaluated each iteration
+    /// in a fresh scope that also holds the loop body's bindings.
     fn eval_while(&mut self, node: &Node<'static>) -> Eval {
         let kids: Vec<Node<'static>> = node.children().collect();
-        let cond = kids
-            .first()
-            .ok_or_else(|| EvalError::Unsupported("while without condition".into()))?;
-        let body = kids
-            .last()
+        let body_idx = kids
+            .iter()
+            .position(|c| c.kind() == NodeKind::Block)
             .ok_or_else(|| EvalError::Unsupported("while without body".into()))?;
+        let conds = &kids[..body_idx];
+        let body = &kids[body_idx];
         let label = node.loop_label();
-        while self.eval_condition(cond)? {
-            match self.run_loop_body(body, &label)? {
+        loop {
+            // Each iteration's `while let` bindings live only for that pass.
+            self.env.push();
+            match self.eval_cond_list(conds) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.env.pop();
+                    break;
+                }
+                Err(e) => {
+                    self.env.pop();
+                    return Err(e);
+                }
+            }
+            let flow = self.run_loop_body(body, &label);
+            self.env.pop();
+            match flow? {
                 LoopFlow::Continue => {}
                 LoopFlow::Break => break,
             }
