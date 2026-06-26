@@ -310,7 +310,6 @@ print("Top: \\(topStudent(roster))")`,
   {
     group: 'Protocols',
     label: 'Generics',
-    supported: false,
     code: `// Generic free functions with Comparable / Equatable constraints
 // (Generic struct instantiation e.g. Stack<Int>() is not yet supported.)
 
@@ -332,16 +331,16 @@ func swapValues<T>(_ a: inout T, _ b: inout T) {
     let tmp = a; a = b; b = tmp
 }
 
-print("largest int: \(largest([3, 1, 4, 1, 5, 9, 2, 6])!)")
-print("largest str: \(largest([\"banana\", \"apple\", \"cherry\"])!)")
+print("largest int: \\(largest([3, 1, 4, 1, 5, 9, 2, 6])!)")
+print("largest str: \\(largest([\"banana\", \"apple\", \"cherry\"])!)")
 
-print("allEqual [1,1,1]: \(allEqual([1, 1, 1]))")
-print("allEqual [1,2,1]: \(allEqual([1, 2, 1]))")
+print("allEqual [1,1,1]: \\(allEqual([1, 1, 1]))")
+print("allEqual [1,2,1]: \\(allEqual([1, 2, 1]))")
 
 var x = 10
 var y = 99
 swapValues(&x, &y)
-print("after swap: x=\(x), y=\(y)")`,
+print("after swap: x=\\(x), y=\\(y)")`,
   },
   // ── Error Handling ───────────────────────────────────────────
   {
@@ -433,7 +432,6 @@ print("bass clamped to \\(audio.bass)")`,
   {
     group: 'Advanced',
     label: 'Switch Patterns',
-    supported: false,
     code: `// Advanced switch: ranges, where, tuple patterns, fallthrough
 func classify(_ n: Int) -> String {
     switch n {
@@ -501,7 +499,6 @@ print(banner)`,
   {
     group: 'Stdlib',
     label: 'Collections',
-    supported: false,
     code: `// Array, Dictionary, Set — the full suite
 // ── Array ──
 var nums = [3, 1, 4, 1, 5, 9, 2, 6]

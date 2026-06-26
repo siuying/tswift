@@ -17,23 +17,58 @@ land it (0 = trivial preset-text fix, 10 = deep cross-cutting work).
 | Fibonacci | ✅ (reworked) | underlying: tuple-destructuring assignment `K` | 5 |
 | Classes | ✅ | — | — |
 | Strings | ✅ | — | — |
-| Generics | ❌ | `J` preset escaping bug only (no runtime gap) | 0 |
-| Collections | ❌ | `I` `Array.sort()`, `L` dict element `.key`/`.value` | 3 |
-| Switch Patterns | ❌ | `B` one-sided range patterns | 3 |
-| Protocols | ❌ | `B` one-sided range patterns | 3 |
+| Generics | ✅ **fixed** | ~~`J` preset escaping bug~~ | 0 |
+| Collections | ✅ **fixed** | ~~`I` `Array.sort()`, `L` dict element `.key`/`.value`~~ | 3 |
+| Switch Patterns | ✅ **fixed** | ~~`B` one-sided range patterns~~ | 3 |
+| Protocols | ❌ | ~~`B` one-sided range patterns~~ (fixed); **new:** protocol default-method dispatch on a conforming struct | — |
 | Closures & HOF | ❌ | `C` operator function references | 4 |
 | Error Handling | ❌ | `F` `Character.isLetter/isNumber`, `G` `if case` binding | 4 |
-| Structs | ❌ | `D` multi-name binding, `A` Int→Double coercion | 8 |
+| Structs | ❌ | ~~`D` multi-name binding~~ (fixed), `A` Int→Double coercion | 8 |
 | Enums | ❌ | `A` Int→Double coercion | 8 |
 | Optionals | ❌ | `H` array `as [T?]` cast, `A` coercion | 8 |
 
 Fastest wins (lowest gap): **Generics (0)** → Collections / Switch / Protocols (3).
 
+### Landed (gap < 4)
+
+All gaps scored `< 4` are fixed and verified end-to-end. Each ships a golden
+fixture and a `qswift-cli` run fixture; `cargo test` is green and the
+`wasm_smoke` suite runs the re-enabled presets through the compiled wasm.
+
+- **`J` Generics escaping** — `prototype/web-sandbox/src/pages/index.astro` now
+  doubles the `\(` interpolation markers (the nested `\"` already collapse to
+  plain `"` under the JS template literal). `supported: false` removed.
+- **`I` `Array.sort()` / `sort(by:)`** — mutating intrinsic in
+  `crates/qswift-std/src/array.rs` delegating to the shared `sorted` algorithm;
+  registry key `Array.sort`.
+- **`L` dict element `.key` / `.value`** — named-tuple member access in
+  `crates/qswift-core/src/interp.rs`, plus `Dictionary.filter` returning a
+  `Dictionary` (registry key `Dictionary.filter`) so `scores.filter{…}.keys`
+  chains.
+- **`B` one-sided range patterns** — parser accepts `case n...:`, `case ..<n:`,
+  `case ...n:` (single-bound `RangePattern` tagged `from`/`upTo`/`through`);
+  matcher in `interp.rs` handles them. Unblocked **Switch Patterns**; also closed
+  the range-pattern half of **Protocols**.
+- **`D` multi-name binding** — `var a, b, c: T` / `let x = 1, y = 2` desugar to
+  N bindings in `crates/qswift-parser/src/lib.rs` (shared annotation deep-copied
+  via `Ast::clone_subtree`). Closed the structural half of **Structs**.
+
+Proof fixtures:
+`crates/qswift-cli/tests/fixtures/{array_sort,dict_element_members,one_sided_range_patterns,multi_name_binding}.{swift,expected}`,
+`tests/swift-fixtures/tier1-imperative/one_sided_range_patterns.swift`,
+`tests/swift-fixtures/tier2-value-types/multi_name_binding.swift`, and additions
+to `tests/swift-fixtures/tier10-stdlib/{s4-array,s6-dictionary}.swift`.
+
+> **Note on Protocols:** removing gap `B` revealed a second, larger gap — a
+> protocol's default method defined in an extension is not dispatched for a
+> conforming **struct** (`method .grade() on Student`). That is beyond the
+> `< 4` scope, so the preset stays `supported: false`.
+
 ---
 
 ## Gap inventory (ranked easiest → hardest)
 
-### J. Generics preset — interpolation escaping bug — `0/10`
+### J. Generics preset — interpolation escaping bug — `0/10` — ✅ FIXED
 **Not a runtime gap.** The Generics preset is the only one written with
 single-backslash `\(…)` interpolation inside the JS template literal
 (`index.astro` lines ~335–339). JS collapses `\(` → `(`, so the emitted Swift
@@ -48,8 +83,8 @@ preset, then drop `supported: false`. No frontend work.
 
 ---
 
-### I + L. Collections — `Array.sort()` and dict element members — `3/10`
-Two independent gaps:
+### I + L. Collections — `Array.sort()` and dict element members — `3/10` — ✅ FIXED
+Two independent gaps (plus `Dictionary.filter` returning a `Dictionary`):
 
 - **`I` `Array.sort()` (in-place mutating).** `var a=[3,1,2]; a.sort()` →
   `unsupported construct: method .sort() on Array`. Note `a.sorted()` (the
@@ -71,7 +106,7 @@ Both are localized; `mapValues`, `flatMap`, full `Set` algebra already work.
 
 ---
 
-### B. Switch / Protocols — one-sided range patterns — `3/10`
+### B. Switch / Protocols — one-sided range patterns — `3/10` — ✅ FIXED
 `case 90...:` and `case ..<0:` fail at parse:
 `expected an expression, found Colon`. The two-sided form `case 80..<90:`
 already works, so only the open-ended prefix/postfix range *pattern* is missing.
@@ -85,7 +120,7 @@ with `~=`. Sema/runtime already model the range types.
 
 ---
 
-### D. Structs (part 1) — multi-name binding `var a, b, c, d: T` — `3/10`
+### D. Structs (part 1) — multi-name binding `var a, b, c, d: T` — `3/10` — ✅ FIXED
 `struct M { var a, b, c, d: Double }` →
 `consecutive statements on a line must be separated by ';'`. The parser doesn't
 accept a comma-separated name list sharing one type annotation.
