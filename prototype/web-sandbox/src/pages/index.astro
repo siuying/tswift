@@ -119,7 +119,9 @@ print(fib(8))`;
       <button id="next-variant" title="Next variant">→</button>
     </nav>
 
-    <script is:inline>
+    <script>
+      import initQswift, { runSwift } from '../wasm/qswift_wasm.js';
+
       const variants = ['A', 'B', 'C'];
       const labels = { A: 'IDE split pane', B: 'Terminal first', C: 'Learning lab' };
       const source = document.getElementById('source');
@@ -131,6 +133,19 @@ print(fib(8))`;
       const state = document.getElementById('state');
       const tabs = [...document.querySelectorAll('[data-tab]')];
       let lastRun = null;
+      let wasmReady = false;
+      runButton.disabled = true;
+      status.textContent = 'loading wasm…';
+      initQswift().then(() => {
+        wasmReady = true;
+        runButton.disabled = false;
+        status.textContent = 'idle';
+        renderState({ action: 'wasm-ready' });
+      }).catch((error) => {
+        status.textContent = 'wasm failed';
+        output.textContent = error.message;
+        renderState({ action: 'wasm-error', error: error.message });
+      });
 
       const saved = sessionStorage.getItem('qswift-prototype-source');
       source.value = saved || window.__QSWIFT_SAMPLE__;
@@ -168,12 +183,8 @@ print(fib(8))`;
         showTab('state');
 
         try {
-          const response = await fetch('/api/run', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ source: source.value }),
-          });
-          const result = await response.json();
+          if (!wasmReady) return;
+          const result = JSON.parse(runSwift(source.value));
           lastRun = result;
           status.textContent = result.ok ? 'ran successfully' : 'failed';
           compile.textContent = result.compile

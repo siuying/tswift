@@ -1,6 +1,6 @@
 # qswift web sandbox prototype
 
-Question: can a throwaway Astro app make qswift feel like a tiny CodeSandbox for one Swift file?
+Question: can a throwaway Astro app make qswift feel like a tiny CodeSandbox for one Swift file, with compile/run happening entirely in the browser?
 
 Run locally:
 
@@ -12,13 +12,14 @@ npm run dev
 
 Open <http://127.0.0.1:4321/>.
 
-Deploy to Cloudflare Pages:
+Build/deploy to Cloudflare Pages:
 
 ```bash
+npm run build
 npm run deploy
 ```
 
-Cloudflare Workers cannot spawn `cargo`, so `/api/run` needs a deployed runner service. Set `QSWIFT_RUNNER_URL` in Cloudflare Pages when you want remote execution. Without it, the UI deploys but run requests return a setup error.
+`npm run build` compiles `crates/qswift-wasm` with `wasm-pack` into `src/wasm/`, then Astro bundles the static site. There is no server API and no `QSWIFT_RUNNER_URL`: the browser loads `qswift_wasm_bg.wasm` and calls `runSwift(source)` directly.
 
 Variants:
 
@@ -26,6 +27,6 @@ Variants:
 - `?variant=B` — terminal-first workflow
 - `?variant=C` — learning-lab workflow
 
-The app writes the editor content to a temporary `main.swift`, runs `cargo run -q -p qswift-cli -- dump --json` to compile/analyze it, then runs `cargo run -q -p qswift-cli -- run`. No state is persisted beyond browser `sessionStorage` for the editor text.
+No state is persisted beyond browser `sessionStorage` for the editor text.
 
 Verdict placeholder: after trying it, record which variant or interaction should be absorbed into a real product surface, then delete this prototype.

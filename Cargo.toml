@@ -9,6 +9,7 @@ members = [
     "crates/qswift-core",
     "crates/qswift-std",
     "crates/qswift-cli",
+    "crates/qswift-wasm",
 ]
 
 [workspace.package]
@@ -21,3 +22,4 @@ repository = "https://github.com/siuying/quick-swift"
 qswift-frontend = { path = "crates/qswift-frontend" }
 qswift-core = { path = "crates/qswift-core" }
 qswift-std = { path = "crates/qswift-std" }
+qswift-wasm = { path = "crates/qswift-wasm" }

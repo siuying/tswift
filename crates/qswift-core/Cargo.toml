@@ -8,4 +8,6 @@ description = "qswift evaluator spine: SwiftValue, the eval dispatcher, and nati
 
 [dependencies]
 qswift-frontend.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 corosensei = "0.3.4"

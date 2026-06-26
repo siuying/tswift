@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev --host 127.0.0.1 --port 4321",
-    "start": "astro dev --host 127.0.0.1 --port 4321",
-    "build": "astro build",
+    "dev": "npm run build:wasm && astro dev --host 127.0.0.1 --port 4321",
+    "start": "npm run dev",
+    "build:wasm": "wasm-pack build ../../crates/qswift-wasm --target web --out-dir ../../prototype/web-sandbox/src/wasm --out-name qswift_wasm",
+    "build": "npm run build:wasm && astro build",
     "preview": "wrangler pages dev ./dist --compatibility-date=2025-04-01",
     "deploy": "npm run build && wrangler pages deploy ./dist"
   },
@@ -14,7 +15,7 @@
     "astro": "^5.0.0"
   },
   "devDependencies": {
-    "@astrojs/cloudflare": "^12.6.13",
+    "wasm-pack": "^0.15.0",
     "wrangler": "^4.83.0"
   }
 }
