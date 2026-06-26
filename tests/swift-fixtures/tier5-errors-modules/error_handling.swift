@@ -37,4 +37,30 @@ let maybeBody = try? fetch("")
 let forcedBody = try! fetch("ok")
 let outcome: Result<Int, NetworkError> = .success(200)
 
-let _ = (process(), withCleanup(), try? retry({ 1 }), maybeBody, forcedBody, outcome)
+// `if case` / `guard case` pattern-match conditions with payload binding.
+func unwrap(_ r: Result<Int, NetworkError>) -> Int {
+    if case .success(let value) = r { return value }
+    return -1
+}
+
+func isTimeout(_ e: NetworkError) -> Bool {
+    guard case .timeout = e else { return false }
+    return true
+}
+
+// `Character` predicate properties (Character is a single-grapheme String).
+func isAlnum(_ ch: Character) -> Bool {
+    ch.isLetter || ch.isNumber
+}
+
+let _ = (
+    process(),
+    withCleanup(),
+    try? retry({ 1 }),
+    maybeBody,
+    forcedBody,
+    outcome,
+    unwrap(outcome),
+    isTimeout(.timeout),
+    isAlnum("a"),
+)

@@ -6,6 +6,9 @@ let numbers = [1, 2, 3, 4, 5]
 let doubled = numbers.map { $0 * 2 }
 let evens = numbers.filter { $0 % 2 == 0 }
 let total = numbers.reduce(0) { $0 + $1 }
+// Bare operators passed as function values.
+let totalViaOperator = numbers.reduce(0, +)
+let descending = numbers.sorted(by: >)
 
 func apply(_ x: Int, _ transform: (Int) -> Int) -> Int { transform(x) }
 let viaTrailing = apply(10) { value in value + 1 }
@@ -31,4 +34,7 @@ let increment = box.makeIncrementer()
 increment()
 let stored = defer_ { print("ran") }
 
-let _ = (doubled, evens, total, viaTrailing, add5(1), box.value, evaluate(1 < 2), stored)
+let _ = (
+    doubled, evens, total, totalViaOperator, descending, viaTrailing, add5(1), box.value,
+    evaluate(1 < 2), stored,
+)

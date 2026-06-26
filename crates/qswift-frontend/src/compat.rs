@@ -296,19 +296,38 @@ impl RuntimeAst {
         id
     }
 
-    /// Lower a conditional `let name = expr` binding into an `OptionalBinding`.
+    /// Lower a conditional binding. A simple `let name = expr` (the binding
+    /// pattern is a bare `NamePattern`) becomes an `OptionalBinding`. A refutable
+    /// `case` pattern (`if case .x(let v) = expr`, a tuple/enum/range pattern)
+    /// becomes a `CaseCondition` carrying the lowered pattern and the matched
+    /// expression, which the runtime evaluates by pattern match.
     fn lower_optional_binding(&mut self, node: qswift_ast::Node<'_>) -> NodeId {
         use qswift_ast::NodeKind as K;
         let mut name: Option<String> = None;
+        let mut binding_pattern: Option<qswift_ast::Node<'_>> = None;
         let mut init: Option<NodeId> = None;
         for child in node.children() {
             match child.kind() {
-                K::NamePattern if name.is_none() => {
+                K::NamePattern if name.is_none() && binding_pattern.is_none() => {
                     name = child.text().map(ToOwned::to_owned);
+                }
+                K::EnumCasePattern | K::TuplePattern | K::RangePattern if binding_pattern.is_none() => {
+                    binding_pattern = Some(child);
                 }
                 K::TypeRef => {}
                 _ => init = Some(self.lower_node(child)),
             }
+        }
+        // A refutable `case` pattern condition.
+        if let Some(pattern) = binding_pattern {
+            let pattern_id = self.lower_node(pattern);
+            let id = self.alloc(NodeKind::CaseCondition, None, node.line());
+            let mut children = vec![pattern_id];
+            if let Some(init) = init {
+                children.push(init);
+            }
+            self.set_children(id, children);
+            return id;
         }
         let id = self.alloc(NodeKind::OptionalBinding, name, node.line());
         if let Some(init) = init {

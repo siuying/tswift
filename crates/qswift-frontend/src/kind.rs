@@ -110,6 +110,10 @@ pub enum NodeKind {
     PatternWildcard,
     PatternValueBinding,
     OptionalBinding,
+    /// An `if case`/`guard case`/`while case` pattern-match condition:
+    /// children = [pattern, matched expression]. Distinct from
+    /// `OptionalBinding`, which only binds a simple `let name = expr`.
+    CaseCondition,
     MacroDecl,
     /// A kind newer than this crate's generated table (raw discriminant).
     Other(u32),
@@ -220,6 +224,7 @@ impl NodeKind {
             NodeKind::PatternWildcard => "pattern_wildcard",
             NodeKind::PatternValueBinding => "pattern_value_binding",
             NodeKind::OptionalBinding => "optional_binding",
+            NodeKind::CaseCondition => "case_condition",
             NodeKind::MacroDecl => "macro_decl",
             NodeKind::Other(_) => "other",
         }

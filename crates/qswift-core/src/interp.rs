@@ -203,10 +203,15 @@ struct ProtoDef {
     computed: std::collections::HashMap<String, ComputedProp>,
 }
 
-/// A closure value's definition: parameters and body statements.
-struct ClosureDef {
-    params: Vec<Param>,
-    body: Vec<Node<'static>>,
+/// A closure value's definition: either a user closure (parameters + body
+/// statements) or a synthesized operator-function reference (`+`, `<`, …) made
+/// when a bare operator is passed as a function value (`reduce(0, +)`).
+enum ClosureDef {
+    User {
+        params: Vec<Param>,
+        body: Vec<Node<'static>>,
+    },
+    Operator(String),
 }
 
 /// An assignable storage location: a root variable plus a field path.
@@ -1404,6 +1409,15 @@ impl<'w> Interpreter<'w> {
         if let Some(v) = self.implicit_self_member(&name)? {
             return Ok(v);
         }
+        // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
+        // synthesize an operator-function closure the standard-library
+        // algorithms can call back into.
+        if is_operator_name(&name) {
+            let id = self.closures.len();
+            self.closures
+                .push((ClosureDef::Operator(name), Vec::new()));
+            return Ok(SwiftValue::Closure(id));
+        }
         Err(EvalError::UnknownVariable(name).into())
     }
 
@@ -1821,7 +1835,7 @@ impl<'w> Interpreter<'w> {
             captured.push(scope);
         }
         let id = self.closures.len();
-        self.closures.push((ClosureDef { params, body }, captured));
+        self.closures.push((ClosureDef::User { params, body }, captured));
         Ok(SwiftValue::Closure(id))
     }
 
@@ -1835,9 +1849,28 @@ impl<'w> Interpreter<'w> {
             self.depth -= 1;
             return Err(trap("stack overflow: recursion too deep".into()));
         }
+        // An operator-function reference applies its operator directly to the
+        // arguments (binary for two, unary for one) without a call frame.
+        if let (ClosureDef::Operator(op), _) = &self.closures[id] {
+            let op = op.clone();
+            self.depth -= 1;
+            return match args.as_slice() {
+                [a, b] => ops::binary(&op, a, b).map_err(trap),
+                [a] => ops::unary(&op, a).map_err(trap),
+                _ => Err(EvalError::Unsupported(format!(
+                    "operator `{op}` reference expects 1 or 2 arguments"
+                ))
+                .into()),
+            };
+        }
         let (params, body, captured) = {
             let (def, cap) = &self.closures[id];
-            (clone_params(&def.params), def.body.clone(), cap.clone())
+            match def {
+                ClosureDef::User { params, body } => {
+                    (clone_params(params), body.clone(), cap.clone())
+                }
+                ClosureDef::Operator(_) => unreachable!("operator handled above"),
+            }
         };
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
@@ -1912,7 +1945,7 @@ impl<'w> Interpreter<'w> {
         let captured = self.env.capture();
         let closure_id = self.closures.len();
         self.closures.push((
-            ClosureDef {
+            ClosureDef::User {
                 params: Vec::new(),
                 body: vec![expr],
             },
@@ -2849,6 +2882,31 @@ impl<'w> Interpreter<'w> {
                         return Ok(false);
                     }
                     self.env.declare(&name, value, false);
+                }
+                // `if case <pattern> = <expr>` (and the `guard`/`while` forms):
+                // evaluate the subject, match the pattern, and bind on success.
+                NodeKind::CaseCondition => {
+                    let mut kids = cond.children();
+                    let pattern = kids.next().ok_or_else(|| {
+                        EvalError::Unsupported("case condition without a pattern".into())
+                    })?;
+                    let subject = match kids.next() {
+                        Some(expr) => self.eval(&expr)?,
+                        None => {
+                            return Err(EvalError::Unsupported(
+                                "case condition without a subject".into(),
+                            )
+                            .into())
+                        }
+                    };
+                    match self.match_pattern(&pattern, &subject)? {
+                        Some(binds) => {
+                            for (name, value) in binds {
+                                self.env.declare(&name, value, false);
+                            }
+                        }
+                        None => return Ok(false),
+                    }
                 }
                 _ => {
                     if !self.eval_condition(cond)? {
@@ -4651,6 +4709,13 @@ fn metatype_name(node: &Node<'static>) -> Option<String> {
 }
 
 /// Clone a parameter list (`Node` is `Copy`; only the strings allocate).
+/// Whether `name` is an operator token (every character is an operator symbol),
+/// i.e. a bare operator used in value position such as the `+` in
+/// `reduce(0, +)`. A normal identifier never contains these characters.
+fn is_operator_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^~".contains(c))
+}
+
 fn clone_params(params: &[Param]) -> Vec<Param> {
     params
         .iter()
@@ -4898,6 +4963,50 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn is_operator_name_recognizes_operator_tokens() {
+        assert!(is_operator_name("+"));
+        assert!(is_operator_name(">"));
+        assert!(is_operator_name("<="));
+        assert!(is_operator_name("=="));
+        assert!(!is_operator_name("foo"));
+        assert!(!is_operator_name(""));
+        assert!(!is_operator_name("a+"));
+    }
+
+    #[test]
+    fn operator_function_reference_reduces() {
+        let out = run("print([1, 2, 3, 4].reduce(0, +))\n").unwrap();
+        assert_eq!(out, "10\n");
+    }
+
+    #[test]
+    fn operator_function_reference_multiplies() {
+        // The `*` operator passed as a function value (the full comparator form,
+        // e.g. `sorted(by: >)`, is covered by the qswift-cli golden fixtures
+        // where the real sequence algorithms are installed).
+        let out = run("print([1, 2, 3, 4].reduce(1, *))\n").unwrap();
+        assert_eq!(out, "24\n");
+    }
+
+    #[test]
+    fn if_case_binds_enum_payload() {
+        let out = run(
+            "enum E { case a(Int); case b }\nlet e = E.a(7)\nif case .a(let n) = e { print(n) }\n",
+        )
+        .unwrap();
+        assert_eq!(out, "7\n");
+    }
+
+    #[test]
+    fn guard_case_matches_without_binding() {
+        let out = run(
+            "enum E { case a; case b }\nfunc f(_ e: E) -> Bool {\n  guard case .a = e else { return false }\n  return true\n}\nprint(f(.a), f(.b))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "true false\n");
     }
 
     #[test]
