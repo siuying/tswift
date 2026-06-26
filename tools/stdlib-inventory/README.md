@@ -13,30 +13,36 @@ F=~/Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain/usr/lib/swift/m
 python3 tools/stdlib-inventory/extract.py "$F" > docs/swift-runtime/stdlib-inventory.md
 ```
 
-## 2. Registry keys — `registered_keys.txt`
+## 2. Coverage inputs — `target/stdlib-coverage/`
 
-The authoritative set of entries registered by `qswift-std`, read from the live
-registry so it cannot drift from the registration code. Regenerate with:
+Two *semantic* key sets, regenerated live by the golden harness so they cannot
+drift from the code (and are not checked in):
+
+- `registered.txt` — every symbol the `qswift-std` registry wires up, read from
+  the live registry via `qswift_std::registered_keys()`.
+- `exercised.txt` — every symbol actually dispatched by a *passing* golden
+  fixture, captured through the interpreter's behavioural-coverage hook.
 
 ```sh
-cargo test -p qswift-std dump_registered_keys
+cargo test -p qswift-cli --test golden stdlib_coverage_inputs
 ```
 
-This runs `qswift_std::registered_keys()` and writes the sorted keys here. Keys
-are `print` (free function), `Array.append` (method/property intrinsic), or
-`Sequence.map` (algorithm-layer member).
+Keys are semantic, not receiver-dispatch: `print` (free function),
+`Array.append` (method/property), `Sequence.map` (algorithm layer), or
+`Optional.map` (one symbol even though it dispatches on several receiver kinds).
 
 ## 3. Coverage report — `coverage.py`
 
-Cross-references the inventory against two signals and assigns each member one of
-three states:
+A pure join over three semantic key sets — inventory (`stdlib-inventory.md`),
+registered, and exercised — assigning each inventory member one of three states,
+type-scoped (no global token matching):
 
 - **missing** — not in the registry,
-- **implemented** — in the registry,
-- **verified** — in the registry *and* used by an executing CLI golden fixture
-  (`crates/qswift-cli/tests/fixtures/*.swift`), i.e. behaviourally proven.
+- **implemented** — registered but not exercised by a passing fixture,
+- **verified** — registered *and* exercised by a passing fixture.
 
 ```sh
+cargo test -p qswift-cli --test golden stdlib_coverage_inputs  # refresh inputs
 python3 tools/stdlib-inventory/coverage.py
 ```
 

@@ -158,20 +158,23 @@ struct MethodEntry { mutating: bool, /* fn ptr */ }
 
 ### 4.2 Coverage tracking (from both registry and fixtures)
 
-`tools/stdlib-inventory/coverage.py` cross-references the generated inventory
-against **two** signals and assigns each member a state:
+`tools/stdlib-inventory/coverage.py` is a pure join over **three** canonical sets
+of *semantic* stdlib keys and assigns each inventory member a state:
 
 - **missing** — not in the `qswift-std` registry.
-- **implemented** — present in the registry (declared coverage).
-- **verified** — in the registry **and** exercised by a passing fixture
+- **implemented** — registered but not exercised by a passing fixture.
+- **verified** — registered **and** exercised by a passing fixture
   (behavioural coverage).
 
-The registry signal comes from a `qswift_std::registered_keys() -> Vec<String>`
-accessor dumped to a file by a tiny `#[test]`/bin (authoritative — reads the live
-registry, so it cannot drift from source; no Rust parsing needed). The fixture
-signal is read from the **executing** CLI golden fixtures (see §4.4). Output is a
-coverage report (per-type %, overall %) that feeds Tier 10 checkbox updates —
-turning "stdlib is unbounded" into a tracked number with a verified subset.
+Both dynamic inputs are regenerated live (they cannot drift from source) into
+`target/stdlib-coverage/` by the `stdlib_coverage_inputs` golden test:
+`registered.txt` from `qswift_std::registered_keys()` (semantic keys — a symbol
+like `Optional.map` registered on several receiver kinds collapses to one key),
+and `exercised.txt` from the interpreter's behavioural-coverage hook
+(`QSWIFT_COVERAGE_OUT`), gathered only from fixtures whose stdout matches their
+`.expected`. Output is a coverage report (per-type %, overall %) that feeds
+Tier 10 checkbox updates — turning "stdlib is unbounded" into a tracked number
+with a verified subset.
 
 ### 4.3 Ordered implementation list
 
@@ -265,8 +268,8 @@ exclusions) is documented per §3.3.
 - [ ] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
       (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
 - [ ] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
-- [x] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
-      three-state report (CLI `.expected` signal for `verified`)
+- [x] `qswift_std::registered_keys()` (semantic keys) + `Interpreter::exercised_keys()`
+      behavioural hook + `tools/stdlib-inventory/coverage.py` three-set join report
 - [ ] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
       checklist/coverage updates
 
@@ -279,8 +282,9 @@ exclusions) is documented per §3.3.
   (§4.1).
 - **Scope ceiling** → Foundation **out** of MVP; an explicit ordered list S1–S10
   (§4.3); regex literals deferred to their checklist phase.
-- **Coverage signal** → **both** registry (`registered_keys()`) and CLI `.expected`
-  fixtures (verified), three-state report (§4.2).
+- **Coverage signal** → three-set join over inventory, live semantic registry
+  keys (`registered_keys()`), and keys exercised by passing fixtures
+  (`exercised_keys()` via `QSWIFT_COVERAGE_OUT`); three-state report (§4.2).
 - **Capability surface** → narrow `StdContext` trait, not a full `Interpreter`
   handle (§4.1).
 - **Mutating intrinsics** → by-value receiver + return updated receiver, dispatcher

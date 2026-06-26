@@ -129,7 +129,22 @@ fn run(paths: &[String]) -> ExitCode {
     interp.set_filename(path);
 
     let result = interp.run(analysis);
+
+    // Behavioural-coverage hook: when `QSWIFT_COVERAGE_OUT` names a file, capture
+    // the semantic stdlib keys this program actually dispatched (one per line).
+    // Used by the golden-fixture coverage harness; a no-op in normal runs.
+    // Snapshot before flushing so `interp`'s borrow of `handle` ends here.
+    let coverage = std::env::var("QSWIFT_COVERAGE_OUT")
+        .ok()
+        .map(|out| (out, interp.exercised_keys().join("\n") + "\n"));
     let _ = handle.flush();
+
+    if let Some((out, body)) = coverage {
+        if let Err(e) = std::fs::write(&out, body) {
+            eprintln!("error: cannot write coverage output `{out}`: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
 
     match result {
         Ok(()) => ExitCode::SUCCESS,

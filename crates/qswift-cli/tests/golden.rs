@@ -188,6 +188,65 @@ fn ast_snapshots_match() {
     }
 }
 
+/// Regenerate the stdlib-coverage inputs `coverage.py` joins over, writing them
+/// to `target/stdlib-coverage/` (git-ignored — not a checked-in duplicate):
+///
+///   * `registered.txt` — live semantic registry keys (`qswift_std::registered_keys`).
+///   * `exercised.txt`   — semantic keys dispatched by *passing* golden fixtures.
+///
+/// Because exercised keys are gathered only from fixtures whose stdout matches
+/// their `.expected`, "verified" coverage means "exercised by a passing test",
+/// not merely "mentioned in fixture source".
+fn coverage_output_dir() -> PathBuf {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/stdlib-coverage");
+    std::fs::create_dir_all(&dir).expect("create coverage output dir");
+    dir
+}
+
+#[test]
+fn stdlib_coverage_inputs() {
+    let out_dir = coverage_output_dir();
+
+    // 1. Live registry keys — authoritative, cannot drift from registration.
+    let registered = qswift_std::registered_keys().join("\n") + "\n";
+    std::fs::write(out_dir.join("registered.txt"), registered).expect("write registered.txt");
+
+    // 2. Keys exercised by passing fixtures only.
+    let tmp = out_dir.join("tmp");
+    std::fs::create_dir_all(&tmp).expect("create tmp dir");
+    let mut exercised: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for (i, (swift_path, expected_path)) in fixtures().iter().enumerate() {
+        let expected = std::fs::read_to_string(expected_path).expect("read .expected");
+        let keys_file = tmp.join(format!("keys-{i}.txt"));
+        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+            .arg("run")
+            .arg(swift_path)
+            .env("QSWIFT_COVERAGE_OUT", &keys_file)
+            .output()
+            .expect("spawn qswift");
+        // Only count fixtures that ran cleanly and matched their golden output.
+        if !output.status.success() {
+            continue;
+        }
+        if String::from_utf8_lossy(&output.stdout) != expected {
+            continue;
+        }
+        if let Ok(body) = std::fs::read_to_string(&keys_file) {
+            exercised.extend(body.lines().filter(|l| !l.is_empty()).map(str::to_string));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    let body: String = exercised.iter().map(|k| format!("{k}\n")).collect();
+    std::fs::write(out_dir.join("exercised.txt"), body).expect("write exercised.txt");
+
+    assert!(
+        !exercised.is_empty(),
+        "no stdlib keys were exercised by any golden fixture"
+    );
+}
+
 /// A deliberately broken fixture must make the harness notice a mismatch — this
 /// guards the harness itself against silently passing.
 #[test]

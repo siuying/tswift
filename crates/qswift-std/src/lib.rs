@@ -34,11 +34,13 @@ pub fn install(interp: &mut Interpreter<'_>) {
     string::install(interp);
 }
 
-/// Every standard-library entry registered by [`install`], as coverage keys
-/// (`print`, `Array.append`, `Sequence.map`, …).
+/// Every standard-library entry registered by [`install`], as semantic coverage
+/// keys (`print`, `Array.append`, `Optional.map`, `Sequence.map`, …).
 ///
 /// Authoritative: it installs into a throwaway interpreter and reads the live
-/// registry, so it can never drift from the registration code.
+/// registry, so it can never drift from the registration code. This is a pure
+/// read — the coverage tooling regenerates its inputs from it (see
+/// `tools/stdlib-inventory/coverage.py`) rather than from a checked-in copy.
 pub fn registered_keys() -> Vec<String> {
     let mut sink = std::io::sink();
     let mut interp = Interpreter::new(&mut sink);
@@ -47,15 +49,36 @@ pub fn registered_keys() -> Vec<String> {
 }
 
 #[cfg(test)]
-mod coverage_dump {
-    /// Dump the live registry keys to `tools/stdlib-inventory/registered_keys.txt`
-    /// so `coverage.py` can read the authoritative set. Regenerate with:
-    /// `cargo test -p qswift-std dump_registered_keys`.
+mod tests {
+    use super::registered_keys;
+
+    /// The registry exposes a non-empty, sorted, de-duplicated semantic key set.
     #[test]
-    fn dump_registered_keys() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tools/stdlib-inventory/registered_keys.txt");
-        let body = super::registered_keys().join("\n") + "\n";
-        std::fs::write(&path, body).expect("write registered_keys.txt");
+    fn registered_keys_are_sorted_and_unique() {
+        let keys = registered_keys();
+        assert!(!keys.is_empty(), "registry should not be empty");
+
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "keys should come back sorted");
+
+        let mut deduped = keys.clone();
+        deduped.dedup();
+        assert_eq!(keys, deduped, "keys should be unique");
+    }
+
+    /// `Optional.map`/`flatMap` surface as semantic keys, not the scalar
+    /// receiver-dispatch keys (`Int.map`, `Bool.flatMap`, …) they register on.
+    #[test]
+    fn optional_keys_are_semantic_not_receiver() {
+        let keys = registered_keys();
+        assert!(keys.iter().any(|k| k == "Optional.map"));
+        assert!(keys.iter().any(|k| k == "Optional.flatMap"));
+        for leaked in ["Int.map", "Double.map", "Bool.flatMap", "String.map"] {
+            assert!(
+                !keys.iter().any(|k| k == leaked),
+                "receiver-dispatch key `{leaked}` leaked into coverage keys"
+            );
+        }
     }
 }

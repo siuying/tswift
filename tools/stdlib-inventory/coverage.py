@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """Three-state stdlib coverage report.
 
-Cross-references the generated API inventory (``stdlib-inventory.md``) against
-two signals to classify every inventory member:
+Coverage is a pure join over three canonical sets of *semantic* stdlib keys
+(`print`, `Array.append`, `Optional.map`, `Sequence.map`, …):
 
-* **missing**     — not in the qswift-std registry.
-* **implemented** — present in the registry (declared coverage).
-* **verified**    — in the registry *and* exercised by a passing CLI golden
-                    fixture (behavioural coverage).
+* **inventory**   — every member declared in ``stdlib-inventory.md``.
+* **registered**  — what the qswift-std registry actually wires up.
+* **exercised**   — what a *passing* golden fixture actually dispatched.
 
-The registry signal comes from ``registered_keys.txt`` (regenerate with
-``cargo test -p qswift-std dump_registered_keys`` — it reads the live registry,
-so it cannot drift). The fixture signal is read from the *executing* CLI golden
-fixtures under ``crates/qswift-cli/tests/fixtures`` (not the frontend-only
-``tests/swift-fixtures``).
+Each inventory member is classified by set membership, type-scoped (no global
+token matching):
 
-Usage:
+* **missing**     — not in the registry.
+* **implemented** — registered but never exercised by a passing fixture.
+* **verified**    — registered *and* exercised by a passing fixture.
+
+The `registered`/`exercised` inputs are regenerated live by the golden harness
+(they cannot drift from the code) into ``target/stdlib-coverage/``:
+
+    cargo test -p qswift-cli --test golden stdlib_coverage_inputs
+
+Then:
+
     python3 tools/stdlib-inventory/coverage.py
 """
 
@@ -27,31 +33,49 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "docs/swift-runtime/stdlib-inventory.md"
-KEYS = Path(__file__).resolve().parent / "registered_keys.txt"
-FIXTURES = ROOT / "crates/qswift-cli/tests/fixtures"
+COVERAGE_DIR = ROOT / "target/stdlib-coverage"
+REGISTERED = COVERAGE_DIR / "registered.txt"
+EXERCISED = COVERAGE_DIR / "exercised.txt"
 
-# Inventory types that conform to Sequence/Collection, so a `Sequence.<algo>`
-# registry entry covers their algorithm members too.
+# Inventory types that conform to Sequence/Collection: a `Sequence.<algo>`
+# registry/exercise entry covers their algorithm members too. This is the one
+# piece of domain knowledge the join needs, applied uniformly to both sets.
 SEQUENCE_TYPES = {
     "Array", "ArraySlice", "ContiguousArray", "Set", "Dictionary",
     "String", "Substring", "Range", "ClosedRange", "CollectionOfOne",
     "EmptyCollection", "ReversedCollection",
 }
 
-MEMBER_RE = re.compile(
-    r"""(?:func|var|let|init|subscript|case)\s+   # member keyword
-        `?                                          # optional backtick
-        (?P<name>[A-Za-z_][A-Za-z0-9_]*|[-+*/<>=!%&|^~]+)  # identifier or operator
-    """,
-    re.VERBOSE,
-)
+# Member-declaration keywords we map to a semantic member name. `init`/`subscript`
+# normalize to those literal names (collapsing all overloads); the others take
+# the following identifier or operator token.
+_KEYWORD_RE = re.compile(r"\b(func|var|let|init|subscript|case)\b")
+_NAME_RE = re.compile(r"`?(?P<name>[A-Za-z_][A-Za-z0-9_]*|[-+*/<>=!%&|^~]+)")
 
 
-def parse_inventory(text: str):
-    """Return (free_funcs:set, types:dict[str, set[str]])."""
+def member_key(line: str) -> str | None:
+    """Normalize one inventory bullet into a semantic member name.
+
+    `public init()` -> `init`; `public subscript(i:)` -> `subscript`;
+    `public func map<T>(...)` -> `map`; `static func + (...)` -> `+`.
+    Lines without a recognized member keyword (typealias, …) are ignored.
+    """
+    m = _KEYWORD_RE.search(line)
+    if not m:
+        return None
+    kw = m.group(1)
+    if kw in ("init", "subscript"):
+        return kw
+    rest = line[m.end():]
+    nm = _NAME_RE.search(rest)
+    return nm.group("name") if nm else None
+
+
+def parse_inventory(text: str) -> tuple[set[str], dict[str, set[str]]]:
+    """Return (free_funcs, types[type -> set of semantic member names])."""
     free: set[str] = set()
     types: dict[str, set[str]] = {}
-    current = None  # None means the "Free functions" section
+    current: str | None = None  # "__free__" for the free-functions section
     for line in text.splitlines():
         if line.startswith("## "):
             heading = line[3:].strip()
@@ -63,7 +87,7 @@ def parse_inventory(text: str):
             continue
         if not line.startswith("- `"):
             continue
-        name = extract_member(line)
+        name = member_key(line)
         if not name:
             continue
         if current == "__free__":
@@ -73,63 +97,55 @@ def parse_inventory(text: str):
     return free, types
 
 
-def extract_member(line: str) -> str | None:
-    m = MEMBER_RE.search(line)
-    return m.group("name") if m else None
-
-
-def load_keys():
+def load_keys(path: Path) -> tuple[set[str], dict[str, set[str]], set[str]]:
+    """Split a key file into (free, by_type[type -> members], sequence_algos)."""
     free: set[str] = set()
     by_type: dict[str, set[str]] = {}
     seq_algos: set[str] = set()
-    for raw in KEYS.read_text().splitlines():
+    for raw in path.read_text().splitlines():
         key = raw.strip()
         if not key:
             continue
         if "." not in key:
             free.add(key)
+            continue
+        ty, member = key.split(".", 1)
+        if ty == "Sequence":
+            seq_algos.add(member)
         else:
-            ty, member = key.split(".", 1)
-            if ty == "Sequence":
-                seq_algos.add(member)
-            else:
-                by_type.setdefault(ty, set()).add(member)
+            by_type.setdefault(ty, set()).add(member)
     return free, by_type, seq_algos
 
 
-def fixture_tokens() -> set[str]:
-    """Identifiers used in executing CLI fixtures (member + call names)."""
-    tokens: set[str] = set()
-    member_re = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)")
-    call_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-    for swift in FIXTURES.glob("*.swift"):
-        src = swift.read_text()
-        tokens.update(member_re.findall(src))
-        tokens.update(call_re.findall(src))
-    return tokens
-
-
 def main() -> int:
-    if not INVENTORY.exists() or not KEYS.exists():
-        print("missing inventory or registered_keys.txt", file=sys.stderr)
-        return 1
+    for required in (INVENTORY, REGISTERED, EXERCISED):
+        if not required.exists():
+            print(
+                f"missing input: {required}\n"
+                "regenerate with: "
+                "cargo test -p qswift-cli --test golden stdlib_coverage_inputs",
+                file=sys.stderr,
+            )
+            return 1
 
     free_inv, types_inv = parse_inventory(INVENTORY.read_text())
-    free_reg, by_type_reg, seq_algos = load_keys()
-    used = fixture_tokens()
+    free_reg, reg_by_type, reg_seq = load_keys(REGISTERED)
+    free_ex, ex_by_type, ex_seq = load_keys(EXERCISED)
+
+    def has(ty: str, member: str, by_type: dict[str, set[str]], seq: set[str]) -> bool:
+        if member in by_type.get(ty, ()):
+            return True
+        return ty in SEQUENCE_TYPES and member in seq
 
     def state(ty: str, member: str) -> str:
-        registered = (
-            member in by_type_reg.get(ty, set())
-            or (ty in SEQUENCE_TYPES and member in seq_algos)
-            or (ty == "Optional" and member in {"map", "flatMap"})
-        )
-        if not registered:
+        if not has(ty, member, reg_by_type, reg_seq):
             return "missing"
-        return "verified" if member in used else "implemented"
+        if has(ty, member, ex_by_type, ex_seq):
+            return "verified"
+        return "implemented"
 
-    # Per-type report, limited to types we touch (registry or sequence types).
-    touched = sorted(set(by_type_reg) | (SEQUENCE_TYPES & set(types_inv)))
+    # Per-type report, limited to types the registry (or a sequence entry) touches.
+    touched = sorted(set(reg_by_type) | (SEQUENCE_TYPES & set(types_inv)))
     print("# Stdlib coverage report\n")
     print(f"{'type':<20} {'impl':>6} {'verif':>6} {'total':>6}  {'%verified':>9}")
     print("-" * 56)
@@ -154,7 +170,7 @@ def main() -> int:
 
     # Free functions.
     f_impl = sum(1 for f in free_inv if f in free_reg)
-    f_verif = sum(1 for f in free_inv if f in free_reg and f in used)
+    f_verif = sum(1 for f in free_inv if f in free_reg and f in free_ex)
     print("-" * 56)
     print(f"{'(free functions)':<20} {f_impl:>6} {f_verif:>6} {len(free_inv):>6}")
 
@@ -162,8 +178,8 @@ def main() -> int:
     g_total = tot_total + len(free_inv)
     g_impl = tot_impl + f_impl
     g_verif = tot_verif + f_verif
-    print(f"implemented: {g_impl}/{g_total} ({100*g_impl/g_total:.1f}%)")
-    print(f"verified:    {g_verif}/{g_total} ({100*g_verif/g_total:.1f}%)")
+    print(f"implemented: {g_impl}/{g_total} ({100 * g_impl / g_total:.1f}%)")
+    print(f"verified:    {g_verif}/{g_total} ({100 * g_verif / g_total:.1f}%)")
     print(f"\ninventory totals: {len(types_inv)} types, {len(free_inv)} free functions")
     return 0
 

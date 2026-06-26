@@ -24,10 +24,14 @@ const WRAPPED_KINDS: [BuiltinReceiver; 5] = [
 ];
 
 /// Register `Optional.map`/`flatMap` across the wrapped-value receiver kinds.
+///
+/// The dispatch receiver is whatever the wrapped value happens to be (scalar or
+/// `Optional`), but the *semantic* coverage key is always `Optional.map` /
+/// `Optional.flatMap` — so reporting sees the symbol, not the dispatch quirk.
 pub fn install(interp: &mut Interpreter<'_>) {
     for kind in WRAPPED_KINDS {
-        interp.register_intrinsic(kind, "map", entry());
-        interp.register_intrinsic(kind, "flatMap", entry());
+        interp.register_intrinsic_as(kind, "map", "Optional.map", entry());
+        interp.register_intrinsic_as(kind, "flatMap", "Optional.flatMap", entry());
     }
 }
 

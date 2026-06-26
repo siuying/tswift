@@ -5,7 +5,7 @@
 //! construct that handles it — without panicking. Real interpreter failures ride
 //! the same channel as [`Signal::Error`].
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 use std::rc::Rc;
 
@@ -230,7 +230,13 @@ pub struct Interpreter<'w> {
     /// Free-function intrinsics served through the [`StdContext`] seam.
     free_fns: HashMap<String, FreeFn>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
-    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
+    ///
+    /// The value pairs the callable with its *semantic* coverage key
+    /// (`Array.append`, `Optional.map`, …), which is distinct from the
+    /// receiver-dispatch key: a single semantic symbol may be registered
+    /// against several receiver kinds (e.g. `Optional.map` lives on every
+    /// scalar receiver). Coverage reporting sees only the semantic key.
+    intrinsics: HashMap<(BuiltinReceiver, String), Intrinsic>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
@@ -252,6 +258,10 @@ pub struct Interpreter<'w> {
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
     main_type: Option<String>,
+    /// Semantic stdlib keys actually dispatched during this run, for behavioural
+    /// coverage. Populated on every successful intrinsic/property/algorithm/free
+    /// dispatch; read back via [`Interpreter::exercised_keys`].
+    exercised: BTreeSet<String>,
     /// The structured-concurrency task table (see ADR-0005). Each `async let`,
     /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
     /// `SwiftValue::Task` drives the matching slot to completion.
@@ -262,6 +272,14 @@ pub struct Interpreter<'w> {
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
+}
+
+/// A registered method intrinsic: the callable plus the semantic coverage key
+/// it counts toward. The semantic key decouples *what stdlib symbol this is*
+/// from *which receiver kind dispatch matched it on*.
+struct Intrinsic {
+    entry: MethodEntry,
+    semantic: String,
 }
 
 /// A spawned structured-concurrency task: a zero-argument closure producing the
@@ -308,6 +326,7 @@ impl<'w> Interpreter<'w> {
             class_ctx: Vec::new(),
             defer_stack: Vec::new(),
             main_type: None,
+            exercised: BTreeSet::new(),
             tasks: Vec::new(),
             groups: Vec::new(),
             filename: "main.swift".into(),
@@ -330,15 +349,18 @@ impl<'w> Interpreter<'w> {
         self.free_fns.insert(name.to_string(), f);
     }
 
-    /// The keys of every registered standard-library entry, for coverage
-    /// tooling. Free functions are bare names; method/property intrinsics are
-    /// `Type.member`; sequence algorithms are `Sequence.member`. Sorted and
-    /// deduplicated so the output is stable.
+    /// The *semantic* keys of every registered standard-library entry, for
+    /// coverage tooling. Free functions are bare names; method/property
+    /// intrinsics are `Type.member`; sequence algorithms are `Sequence.member`.
+    ///
+    /// Keys are semantic, not receiver-dispatch: a symbol registered against
+    /// several receiver kinds (e.g. `Optional.map`) collapses to one key.
+    /// Sorted and deduplicated so the output is stable.
     pub fn registered_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
         keys.extend(self.free_fns.keys().cloned());
-        for (recv, name) in self.intrinsics.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
+        for intrinsic in self.intrinsics.values() {
+            keys.push(intrinsic.semantic.clone());
         }
         for (recv, name) in self.properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
@@ -351,6 +373,12 @@ impl<'w> Interpreter<'w> {
         keys
     }
 
+    /// The semantic stdlib keys actually dispatched so far this run (behavioural
+    /// coverage). Sorted and unique. Empty until something is exercised.
+    pub fn exercised_keys(&self) -> Vec<String> {
+        self.exercised.iter().cloned().collect()
+    }
+
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
@@ -361,14 +389,35 @@ impl<'w> Interpreter<'w> {
         self.algorithms.insert(name.to_string(), f);
     }
 
-    /// Register a method intrinsic on a builtin receiver type.
+    /// Register a method intrinsic on a builtin receiver type. Its semantic
+    /// coverage key defaults to `<receiver>.<name>`.
     pub fn register_intrinsic(
         &mut self,
         recv: BuiltinReceiver,
         name: &str,
         entry: MethodEntry,
     ) {
-        self.intrinsics.insert((recv, name.to_string()), entry);
+        let semantic = format!("{}.{}", recv.type_name(), name);
+        self.register_intrinsic_as(recv, name, &semantic, entry);
+    }
+
+    /// Register a method intrinsic with an explicit semantic coverage key,
+    /// for symbols whose dispatch receiver differs from the symbol they model
+    /// (e.g. `Optional.map` dispatched on scalar receiver kinds).
+    pub fn register_intrinsic_as(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        semantic: &str,
+        entry: MethodEntry,
+    ) {
+        self.intrinsics.insert(
+            (recv, name.to_string()),
+            Intrinsic {
+                entry,
+                semantic: semantic.to_string(),
+            },
+        );
     }
 
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
@@ -405,8 +454,11 @@ impl<'w> Interpreter<'w> {
         base_place: Option<Place>,
     ) -> Option<Eval> {
         let kind = BuiltinReceiver::of(&recv_value)?;
-        let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
+        let intrinsic = self.intrinsics.get(&(kind, method.to_string()))?;
+        let entry = intrinsic.entry;
+        let semantic = intrinsic.semantic.clone();
         let outcome = (entry.func)(self, recv_value, args);
+        self.exercised.insert(semantic);
         Some(match outcome {
             Ok(Outcome { result, receiver }) => {
                 if entry.mutating {
@@ -3526,6 +3578,8 @@ impl<'w> Interpreter<'w> {
         // `Int.magnitude`, …) on builtin receivers.
         if let Some(kind) = BuiltinReceiver::of(&value) {
             if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
+                self.exercised
+                    .insert(format!("{}.{}", kind.type_name(), member));
                 return func(value).map_err(Self::std_error_to_signal);
             }
         }
@@ -3686,6 +3740,7 @@ impl<'w> Interpreter<'w> {
             }
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.free_fns.get(&name).copied() {
+                self.exercised.insert(name.clone());
                 let labeled: Vec<Arg> = args
                     .into_iter()
                     .map(|a| Arg {
@@ -3924,6 +3979,7 @@ impl<'w> Interpreter<'w> {
         if self.algorithms.contains_key(&method) {
             if let Some(items) = materialize_sequence(&base_value) {
                 let func = self.algorithms[&method];
+                self.exercised.insert(format!("Sequence.{method}"));
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
                     .into_iter()
