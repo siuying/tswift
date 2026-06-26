@@ -120,6 +120,18 @@ impl BuiltinReceiver {
         }
     }
 
+    /// The receiver a builtin *type name* refers to, for static type-member
+    /// access (`Double.pi`). Only the scalar types with static members are
+    /// mapped; integer widths keep their dedicated core path (`Int.max`).
+    pub fn from_type_name(name: &str) -> Option<BuiltinReceiver> {
+        Some(match name {
+            "Double" | "Float" | "Float64" => BuiltinReceiver::Double,
+            "Bool" => BuiltinReceiver::Bool,
+            "String" => BuiltinReceiver::String,
+            _ => return None,
+        })
+    }
+
     /// The receiver classification for a runtime value, if it is a builtin one.
     pub fn of(value: &SwiftValue) -> Option<BuiltinReceiver> {
         Some(match value {
@@ -180,6 +192,10 @@ pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// A computed-property intrinsic on a builtin receiver (`Double.isNaN`,
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
+
+/// A static type-property intrinsic on a builtin type (`Double.pi`,
+/// `Double.infinity`, …). Takes no receiver — it is a constant of the type.
+pub type StaticPropertyFn = fn() -> StdResult;
 
 /// A `Sequence`/`Collection` algorithm written once against the materialized
 /// elements of any builtin sequence receiver (`map`, `filter`, `sorted`, …).
