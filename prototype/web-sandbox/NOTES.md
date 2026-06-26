@@ -21,6 +21,17 @@ npm run deploy
 
 `npm run build` compiles `crates/qswift-wasm` with `wasm-pack` into `src/wasm/`, then Astro bundles the static site. There is no server API and no `QSWIFT_RUNNER_URL`: the browser loads `qswift_wasm_bg.wasm` and calls `runSwift(source)` directly.
 
+Test the compiled wasm (builds it, then runs representative programs + every
+supported preset through the real `.wasm` in Node):
+
+```bash
+npm test
+```
+
+This catches wasm-only regressions that native `cargo test` cannot (e.g. a
+panic from `SystemTime::now()`, which is unimplemented on wasm32). The crate
+logic itself is also covered by native unit tests in `crates/qswift-wasm`.
+
 Variants:
 
 - `?variant=A` — IDE split pane

@@ -8,6 +8,7 @@
     "start": "npm run dev",
     "build:wasm": "wasm-pack build ../../crates/qswift-wasm --target web --out-dir ../../prototype/web-sandbox/src/wasm --out-name qswift_wasm",
     "build": "npm run build:wasm && astro build",
+    "test": "npm run build:wasm && node test/wasm-smoke.mjs",
     "preview": "wrangler pages dev ./dist --compatibility-date=2025-04-01",
     "deploy": "npm run build && wrangler pages deploy ./dist"
   },
