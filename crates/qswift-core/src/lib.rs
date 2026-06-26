@@ -6,6 +6,7 @@
 //! integer-width overflow/wrap semantics.
 
 mod env;
+mod grapheme;
 mod interp;
 mod json;
 mod ops;
@@ -19,7 +20,8 @@ pub use stdlib::{
     scalar_less_than, AlgoFn, Arg, BuiltinReceiver, ContextPropertyFn, FreeFn, IntrinsicFn,
     MethodEntry, Outcome, PropertyFn, StaticPropertyFn, StdContext, StdError, StdResult,
 };
-pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
+pub use grapheme::graphemes;
+pub use value::{format_double, EnumObj, IntValue, IntWidth, StrViewKind, StructObj, SwiftValue};
 
 /// Register a minimal stdlib subset for unit tests inside this crate.
 ///

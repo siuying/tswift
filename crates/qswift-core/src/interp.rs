@@ -20,7 +20,7 @@ use crate::stdlib::{
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
 
-use crate::value::{ClassObj, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
+use crate::value::{ClassObj, EnumObj, IntValue, IntWidth, StrViewKind, StructObj, SwiftValue};
 
 // Declaration modifier bits used by this milestone (see msf.h §9).
 const MOD_STATIC: u32 = 1 << 5;
@@ -2482,13 +2482,71 @@ impl<'w> Interpreter<'w> {
                     .map(|(_, v)| v.clone())
                     .unwrap_or_else(|| indices.get(1).cloned().unwrap_or(SwiftValue::Nil)))
             }
-            SwiftValue::Str(s) => {
-                let i = subscript_index(indices)?;
-                s.chars()
-                    .nth(i)
-                    .map(|c| SwiftValue::Str(c.to_string()))
-                    .ok_or_else(|| trap(format!("string index {i} out of range")))
+            // `view[i]` — the code unit / scalar at the shared `String.Index`
+            // (ADR-0006): map the byte offset (+ transcoded) to an element.
+            SwiftValue::StringView { base, kind } => {
+                let Some(SwiftValue::StringIndex { utf8, transcoded }) = indices.first() else {
+                    return Err(trap("string view subscript needs a String.Index".into()));
+                };
+                let byte = *utf8;
+                if byte > base.len() || !base.is_char_boundary(byte) {
+                    return Err(trap("String index is out of bounds".into()));
+                }
+                let prefix = &base[..byte];
+                let elem_idx = match kind {
+                    StrViewKind::Utf8 => byte,
+                    StrViewKind::Utf16 => prefix.encode_utf16().count() + *transcoded as usize,
+                    StrViewKind::UnicodeScalars => prefix.chars().count(),
+                };
+                kind.elements(base)
+                    .into_iter()
+                    .nth(elem_idx)
+                    .ok_or_else(|| trap("String index is out of bounds".into()))
             }
+            SwiftValue::Str(s) => match indices.first() {
+                // `s[i]` — the grapheme cluster beginning at byte offset `i`
+                // (suffix segmentation, ADR-0006). `endIndex` traps.
+                Some(SwiftValue::StringIndex { utf8, .. }) => {
+                    let byte = *utf8;
+                    if byte >= s.len() || !s.is_char_boundary(byte) {
+                        return Err(trap("String index is out of bounds".into()));
+                    }
+                    crate::graphemes(&s[byte..])
+                        .into_iter()
+                        .next()
+                        .map(SwiftValue::Str)
+                        .ok_or_else(|| trap("String index is out of bounds".into()))
+                }
+                // `s[i..<j]` / `s[i...j]` — a substring over byte offsets carried
+                // in the integer Range (ADR-0006).
+                Some(SwiftValue::Range { lo, hi, inclusive }) => {
+                    let lo = *lo as usize;
+                    let mut hi = *hi as usize;
+                    if *inclusive && hi < s.len() && s.is_char_boundary(hi) {
+                        // Include the grapheme at `hi`.
+                        if let Some(g) = crate::graphemes(&s[hi..]).into_iter().next() {
+                            hi += g.len();
+                        }
+                    }
+                    if lo > hi
+                        || hi > s.len()
+                        || !s.is_char_boundary(lo)
+                        || !s.is_char_boundary(hi)
+                    {
+                        return Err(trap("String range is out of bounds".into()));
+                    }
+                    Ok(SwiftValue::Str(s[lo..hi].to_string()))
+                }
+                // Legacy integer subscript (not valid Swift, retained for
+                // internal callers): the `i`-th scalar.
+                _ => {
+                    let i = subscript_index(indices)?;
+                    s.chars()
+                        .nth(i)
+                        .map(|c| SwiftValue::Str(c.to_string()))
+                        .ok_or_else(|| trap(format!("string index {i} out of range")))
+                }
+            },
             SwiftValue::Struct(obj) => {
                 let type_name = obj.type_name.clone();
                 let has = self
@@ -3203,6 +3261,8 @@ impl<'w> Interpreter<'w> {
                 .collect()),
             SwiftValue::Set(items) => Ok(items.as_ref().clone()),
             SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+            // Encoding views iterate over their code units / scalars (ADR-0006).
+            SwiftValue::StringView { base, kind } => Ok(kind.elements(base)),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
             }
@@ -3705,6 +3765,26 @@ impl<'w> Interpreter<'w> {
                 return func(self, value).map_err(Self::std_error_to_signal);
             }
         }
+        // Encoding-view members (`s.utf8.count`, `.first`, …) over the
+        // materialized elements; the view shares its base string's index space
+        // (ADR-0006).
+        if let SwiftValue::StringView { base, kind } = &value {
+            let elems = kind.elements(base);
+            match member.as_str() {
+                "count" => return Ok(SwiftValue::int(elems.len() as i128)),
+                "isEmpty" => return Ok(SwiftValue::Bool(elems.is_empty())),
+                "first" => return Ok(elems.first().cloned().unwrap_or(SwiftValue::Nil)),
+                "last" => return Ok(elems.last().cloned().unwrap_or(SwiftValue::Nil)),
+                "startIndex" => return Ok(SwiftValue::StringIndex { utf8: 0, transcoded: 0 }),
+                "endIndex" => {
+                    return Ok(SwiftValue::StringIndex {
+                        utf8: base.len(),
+                        transcoded: 0,
+                    })
+                }
+                _ => {}
+            }
+        }
         match (&value, member.as_str()) {
             // Array `count`/`isEmpty` are served by the property registry (S4).
             (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
@@ -4087,9 +4167,14 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
+                // Disambiguate label-overloaded builtin methods that otherwise
+                // collide once argument labels are stripped at the seam
+                // (`String.index(before:)` vs `index(after:)`).
+                let effective = effective_intrinsic_method(&method, &args);
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
-                if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
+                if let Some(result) = self.dispatch_intrinsic(base_value, &effective, plain, place)
+                {
                     return result;
                 }
                 unreachable!("intrinsic presence checked above");
@@ -4669,6 +4754,8 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             Some((*lo..end).map(SwiftValue::int).collect())
         }
         SwiftValue::Str(s) => Some(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+        // An encoding view materializes to its code units / scalars (ADR-0006).
+        SwiftValue::StringView { base, kind } => Some(kind.elements(base)),
         // A dictionary is a sequence of `(key, value)` tuples.
         SwiftValue::Dict(pairs) => Some(
             pairs
@@ -4884,6 +4971,16 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
                     .zip(&y.payload)
                     .all(|(p, q)| values_equal(p, q))
         }
+        (
+            SwiftValue::StringIndex {
+                utf8: a,
+                transcoded: at,
+            },
+            SwiftValue::StringIndex {
+                utf8: b,
+                transcoded: bt,
+            },
+        ) => a == b && at == bt,
         _ => false,
     }
 }
@@ -4924,6 +5021,16 @@ fn decode_string_literal(raw: &str) -> String {
 
 fn strip_multiline_indent(body: &str) -> &str {
     body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
+}
+
+/// Map a label-overloaded builtin method to a distinct registry key when the
+/// stripped-label seam would otherwise conflate two overloads. Currently only
+/// `String.index(before:)` needs this; everything else keeps its plain name.
+fn effective_intrinsic_method(method: &str, args: &[CallArg]) -> String {
+    if method == "index" && args.first().and_then(|a| a.label.as_deref()) == Some("before") {
+        return "index(before:)".to_string();
+    }
+    method.to_string()
 }
 
 /// Quote and escape a string the way Swift's `debugDescription` does:

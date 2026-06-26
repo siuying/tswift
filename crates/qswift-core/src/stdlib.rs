@@ -88,6 +88,17 @@ pub fn scalar_less_than(a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
         (SwiftValue::Double(x), SwiftValue::Int(y)) => x.partial_cmp(&(y.raw as f64))?,
         (SwiftValue::Str(x), SwiftValue::Str(y)) => x.cmp(y),
         (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x.cmp(y),
+        // String.Index is Comparable by (byte offset, transcoded sub-offset).
+        (
+            SwiftValue::StringIndex {
+                utf8: a,
+                transcoded: at,
+            },
+            SwiftValue::StringIndex {
+                utf8: b,
+                transcoded: bt,
+            },
+        ) => (a, at).cmp(&(b, bt)),
         _ => return None,
     };
     Some(ord == Ordering::Less)

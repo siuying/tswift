@@ -133,6 +133,44 @@ impl IntValue {
     }
 }
 
+/// Which encoding view a [`SwiftValue::StringView`] presents (ADR-0006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrViewKind {
+    UnicodeScalars,
+    Utf8,
+    Utf16,
+}
+
+impl StrViewKind {
+    /// The Swift type name for this view.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            StrViewKind::UnicodeScalars => "String.UnicodeScalarView",
+            StrViewKind::Utf8 => "String.UTF8View",
+            StrViewKind::Utf16 => "String.UTF16View",
+        }
+    }
+
+    /// Materialize this view's elements over `base`: `UInt8` code units for
+    /// `utf8`, `UInt16` code units for `utf16`, and single-scalar `Unicode.Scalar`
+    /// values (modelled as one-scalar strings) for `unicodeScalars`.
+    pub fn elements(self, base: &str) -> Vec<SwiftValue> {
+        match self {
+            StrViewKind::Utf8 => base
+                .bytes()
+                .map(|b| SwiftValue::Int(IntValue::new(b as i128, IntWidth::U8)))
+                .collect(),
+            StrViewKind::Utf16 => base
+                .encode_utf16()
+                .map(|u| SwiftValue::Int(IntValue::new(u as i128, IntWidth::U16)))
+                .collect(),
+            StrViewKind::UnicodeScalars => {
+                base.chars().map(|c| SwiftValue::Str(c.to_string())).collect()
+            }
+        }
+    }
+}
+
 /// A Swift runtime value.
 #[derive(Debug, Clone)]
 pub enum SwiftValue {
@@ -159,6 +197,13 @@ pub enum SwiftValue {
         hi: i128,
         inclusive: bool,
     },
+    /// A `String.Index`: a UTF-8 byte offset plus a transcoded sub-offset that
+    /// distinguishes the two UTF-16 surrogate halves of an astral scalar
+    /// (`0` for every String/Character/unicodeScalars/utf8 index). See ADR-0006.
+    StringIndex { utf8: usize, transcoded: u32 },
+    /// An encoding view over a `String` (`unicodeScalars`/`utf8`/`utf16`),
+    /// sharing the `String.Index` space with its backing. See ADR-0006.
+    StringView { base: Rc<String>, kind: StrViewKind },
     /// A first-class function value: an index into the interpreter's function
     /// table paired with its captured scope chain (opaque to this crate).
     Function(usize),
@@ -268,6 +313,8 @@ impl SwiftValue {
             SwiftValue::Dict(_) => "Dictionary".into(),
             SwiftValue::Set(_) => "Set".into(),
             SwiftValue::Range { .. } => "Range".into(),
+            SwiftValue::StringIndex { .. } => "String.Index".into(),
+            SwiftValue::StringView { kind, .. } => kind.type_name().into(),
             SwiftValue::Function(_) => "function".into(),
             SwiftValue::Struct(s) => s.type_name.clone(),
             SwiftValue::Nil => "Optional".into(),
@@ -306,6 +353,14 @@ impl PartialEq for SwiftValue {
                 Range { lo: l1, hi: h1, inclusive: i1 },
                 Range { lo: l2, hi: h2, inclusive: i2 },
             ) => l1 == l2 && h1 == h2 && i1 == i2,
+            (
+                StringIndex { utf8: a, transcoded: at },
+                StringIndex { utf8: b, transcoded: bt },
+            ) => a == b && at == bt,
+            (
+                StringView { base: a, kind: ak },
+                StringView { base: b, kind: bk },
+            ) => ak == bk && a == b,
             (Function(a), Function(b)) => a == b,
             (Closure(a), Closure(b)) => a == b,
             (Struct(a), Struct(b)) => a == b,
@@ -376,6 +431,22 @@ impl fmt::Display for SwiftValue {
                 } else {
                     write!(f, "{lo}..<{hi}")
                 }
+            }
+            // String.Index has no stable printed form in Swift; render an
+            // opaque token (never asserted by fixtures, per ADR-0006).
+            SwiftValue::StringIndex { utf8, transcoded } => {
+                write!(f, "Index(utf8: {utf8}, transcoded: {transcoded})")
+            }
+            // A view prints as its element sequence, like Swift's view print.
+            SwiftValue::StringView { base, kind } => {
+                write!(f, "[")?;
+                for (i, item) in kind.elements(base).into_iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
             }
             SwiftValue::Function(_) => write!(f, "(Function)"),
             SwiftValue::Struct(s) => {

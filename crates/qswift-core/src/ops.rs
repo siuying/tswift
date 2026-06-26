@@ -16,11 +16,37 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        (
+            SwiftValue::StringIndex { utf8: a, .. },
+            SwiftValue::StringIndex { utf8: b, .. },
+        ) => string_index_binary(op, *a, *b),
         _ => Err(format!(
             "operator `{op}` cannot apply to {} and {}",
             l.type_name(),
             r.type_name()
         )),
+    }
+}
+
+/// Range and comparison operators over two `String.Index` values. A range of
+/// indices is carried in the integer `Range` value as byte offsets (ADR-0006);
+/// String subscript/mutation interpret those bounds as `String.Index`es.
+fn string_index_binary(op: &str, a: usize, b: usize) -> Result<SwiftValue, String> {
+    if let Some(res) = compare_op(op, a as i128, b as i128) {
+        return Ok(SwiftValue::Bool(res));
+    }
+    match op {
+        "..<" => Ok(SwiftValue::Range {
+            lo: a as i128,
+            hi: b as i128,
+            inclusive: false,
+        }),
+        "..." => Ok(SwiftValue::Range {
+            lo: a as i128,
+            hi: b as i128,
+            inclusive: true,
+        }),
+        _ => Err(format!("operator `{op}` cannot apply to two String.Index values")),
     }
 }
 
