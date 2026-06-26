@@ -413,15 +413,15 @@ biggest sustained effort. Scope deliberately.*
 ### 10c. Protocols that drive the language
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
-| [ ] | `Equatable` / `Hashable` / `Comparable` | ★★★ | R4 |
+| [x] | `Equatable` / `Hashable` / `Comparable` | ★★★ | R4 |
 | [ ] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
 | [ ] | `Collection` / `BidirectionalCollection` / `RandomAccess` | ★★★★ | R4 |
 | [ ] | `RangeReplaceableCollection` | ★★★ | R4 |
 | [ ] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |
-| [ ] | `CustomStringConvertible` / `Debug…` | ★★ | R2 |
-| [ ] | `RawRepresentable` / `CaseIterable` | ★★ | R2 |
-| [ ] | `Codable` / `Encodable` / `Decodable` | ★★★★ | R5 |
-| [ ] | `Identifiable` | ★ | R4 |
+| [x] | `CustomStringConvertible` / `Debug…` | ★★ | R2 |
+| [x] | `RawRepresentable` / `CaseIterable` | ★★ | R2 |
+| [x] | `Codable` / `Encodable` / `Decodable` | ★★★★ | R5 |
+| [x] | `Identifiable` | ★ | R4 |
 | [ ] | `Sendable` | ★★ | R6+ |
 | [ ] | `AsyncSequence` / `AsyncIteratorProtocol` | ★★★★ | R6+ |
 

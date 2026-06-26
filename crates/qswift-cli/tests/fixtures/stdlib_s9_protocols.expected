@@ -1,0 +1,11 @@
+true false
+(1, 2)
+point is (1, 2)
+(1, 2) (1, 5) (3, 0)
+(1, 2) (3, 0)
+4
+north,south,east,west
+true false
+east
+Ada 36
+true
