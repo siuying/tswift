@@ -4449,6 +4449,12 @@ impl<'w> Interpreter<'w> {
             // `Set(seq)` deduplicates a materialized sequence into a set.
             "Set" => Ok(materialize_sequence(value)
                 .map(|v| SwiftValue::Set(StdRc::new(dedup_preserving_order(v))))),
+            // `ContiguousArray(seq)` is an array in this model.
+            "ContiguousArray" => {
+                Ok(materialize_sequence(value).map(|v| SwiftValue::Array(StdRc::new(v))))
+            }
+            // `CollectionOfOne(x)` is a one-element array.
+            "CollectionOfOne" => Ok(Some(SwiftValue::Array(StdRc::new(vec![value.clone()])))),
             _ => Ok(None),
         }
     }
