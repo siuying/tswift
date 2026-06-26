@@ -79,6 +79,7 @@ impl BuiltinReceiver {
         Some(match value {
             SwiftValue::Array(_) => BuiltinReceiver::Array,
             SwiftValue::Dict(_) => BuiltinReceiver::Dictionary,
+            SwiftValue::Set(_) => BuiltinReceiver::Set,
             SwiftValue::Str(_) => BuiltinReceiver::String,
             SwiftValue::Int(_) => BuiltinReceiver::Int,
             SwiftValue::Double(_) => BuiltinReceiver::Double,
