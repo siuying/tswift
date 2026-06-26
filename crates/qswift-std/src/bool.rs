@@ -1,8 +1,8 @@
 //! `Bool` method and property intrinsics.
 
 use qswift_core::{
-    BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult,
-    SwiftValue,
+    Arg, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, SwiftValue,
 };
 
 /// Register the `Bool` intrinsics of this slice.
@@ -17,6 +17,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     interp.register_property(BuiltinReceiver::Bool, "description", description);
     interp.register_property(BuiltinReceiver::Bool, "hashValue", hash_value);
+    interp.register_static(BuiltinReceiver::Bool, "random", random);
+}
+
+/// `Bool.random()` — a uniformly random boolean from the builtin RNG.
+fn random(c: &mut dyn StdContext, _a: Vec<Arg>) -> StdResult {
+    Ok(SwiftValue::Bool(c.random_u64() & 1 == 1))
 }
 
 type Outcomes = Result<Outcome, StdError>;
@@ -58,7 +64,9 @@ fn as_bool(v: &SwiftValue) -> Result<bool, StdError> {
 mod tests {
     use super::*;
 
-    struct MockCtx;
+    struct MockCtx {
+        rng: u64,
+    }
     impl StdContext for MockCtx {
         fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
             Ok(SwiftValue::Nil)
@@ -66,11 +74,28 @@ mod tests {
         fn out(&mut self) -> &mut dyn std::io::Write {
             unreachable!("bool intrinsics never write output")
         }
+        fn random_u64(&mut self) -> u64 {
+            self.rng = self.rng.wrapping_add(1);
+            self.rng
+        }
+    }
+
+    fn ctx() -> MockCtx {
+        MockCtx { rng: 0 }
+    }
+
+    #[test]
+    fn random_draws_both_values() {
+        let mut c = ctx();
+        // The mock RNG yields 1, 2, 3, …; low bit alternates true/false.
+        assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(false));
+        assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(true));
     }
 
     #[test]
     fn toggle_flips_value() {
-        let mut c = MockCtx;
+        let mut c = ctx();
         let out = toggle(&mut c, SwiftValue::Bool(true), vec![]).unwrap();
         assert_eq!(out.receiver, SwiftValue::Bool(false));
         assert_eq!(out.result, SwiftValue::Nil);
@@ -104,7 +129,7 @@ mod tests {
 
     #[test]
     fn non_bool_receiver_errors() {
-        let mut c = MockCtx;
+        let mut c = ctx();
         assert!(toggle(&mut c, SwiftValue::int(1), vec![]).is_err());
         assert!(description(SwiftValue::int(1)).is_err());
     }

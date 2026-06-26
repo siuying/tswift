@@ -68,6 +68,13 @@ pub trait StdContext {
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
         scalar_less_than(a, b)
     }
+
+    /// Draw the next 64-bit value from the builtin RNG (`Bool.random()`, …).
+    /// The default is a fixed value; the interpreter overrides it with a
+    /// seeded, advancing generator.
+    fn random_u64(&mut self) -> u64 {
+        0
+    }
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).
@@ -118,6 +125,23 @@ impl BuiltinReceiver {
             BuiltinReceiver::Optional => "Optional",
             BuiltinReceiver::Range => "Range",
         }
+    }
+
+    /// The receiver for a builtin Swift type name (`"Bool"` → `Bool`, …).
+    pub fn from_type_name(name: &str) -> Option<BuiltinReceiver> {
+        Some(match name {
+            "Array" => BuiltinReceiver::Array,
+            "Dictionary" => BuiltinReceiver::Dictionary,
+            "Set" => BuiltinReceiver::Set,
+            "String" => BuiltinReceiver::String,
+            "Character" => BuiltinReceiver::Character,
+            "Int" => BuiltinReceiver::Int,
+            "Double" => BuiltinReceiver::Double,
+            "Bool" => BuiltinReceiver::Bool,
+            "Optional" => BuiltinReceiver::Optional,
+            "Range" => BuiltinReceiver::Range,
+            _ => return None,
+        })
     }
 
     /// The receiver classification for a runtime value, if it is a builtin one.
@@ -176,6 +200,10 @@ impl Arg {
 
 /// A free-function intrinsic (`print`, `min`, `max`, …).
 pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
+
+/// A static (type-level) method intrinsic on a builtin type (`Bool.random()`,
+/// …). Receives the context and the evaluated, labeled call arguments.
+pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 
 /// A computed-property intrinsic on a builtin receiver (`Double.isNaN`,
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.

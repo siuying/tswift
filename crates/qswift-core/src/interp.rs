@@ -14,7 +14,8 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StdContext, StdError,
+    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext,
+    StdError,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -233,6 +234,8 @@ pub struct Interpreter<'w> {
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
+    static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
     /// builtin sequence receiver (layer 2 of the dispatch seam).
     algorithms: HashMap<String, AlgoFn>,
@@ -262,6 +265,9 @@ pub struct Interpreter<'w> {
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
+    /// SplitMix64 state for builtin randomness (`Bool.random()`, …). Seeded
+    /// from wall-clock time so runs vary; advanced per draw.
+    rng_state: u64,
 }
 
 /// A spawned structured-concurrency task: a zero-argument closure producing the
@@ -295,6 +301,7 @@ impl<'w> Interpreter<'w> {
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
             properties: HashMap::new(),
+            static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
@@ -312,6 +319,11 @@ impl<'w> Interpreter<'w> {
             groups: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
+            rng_state: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E3779B97F4A7C15)
+                | 1,
         }
     }
 
@@ -343,6 +355,9 @@ impl<'w> Interpreter<'w> {
         for (recv, name) in self.properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
+        for (recv, name) in self.static_methods.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
         for name in self.algorithms.keys() {
             keys.push(format!("Sequence.{name}"));
         }
@@ -354,6 +369,11 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a static (type-level) method intrinsic on a builtin type.
+    pub fn register_static(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
+        self.static_methods.insert((recv, name.to_string()), f);
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
@@ -3840,6 +3860,22 @@ impl<'w> Interpreter<'w> {
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
                 if self.env.get(&tn).is_none() {
+                    // Builtin static methods, e.g. `Bool.random()`.
+                    if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
+                        if let Some(func) =
+                            self.static_methods.get(&(recv, method.clone())).copied()
+                        {
+                            let labeled: Vec<Arg> = self
+                                .eval_args(arg_nodes)?
+                                .into_iter()
+                                .map(|a| Arg {
+                                    label: a.label,
+                                    value: a.value,
+                                })
+                                .collect();
+                            return func(self, labeled).map_err(Self::std_error_to_signal);
+                        }
+                    }
                     if self.enum_has_case(&tn, &method) {
                         let args = self.eval_args(arg_nodes)?;
                         let payload = args.into_iter().map(|a| a.value).collect();
@@ -4297,6 +4333,15 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Draw the next 64-bit value from the SplitMix64 builtin RNG.
+    fn next_random(&mut self) -> u64 {
+        self.rng_state = self.rng_state.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.rng_state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
     /// Resolve an lvalue expression to a [`Place`] (root variable + field path).
     fn resolve_place(&self, node: &Node<'static>) -> Option<Place> {
         match node.kind() {
@@ -4522,6 +4567,10 @@ impl StdContext for Interpreter<'_> {
 
     fn display(&mut self, value: &SwiftValue) -> String {
         self.render_description(value)
+    }
+
+    fn random_u64(&mut self) -> u64 {
+        self.next_random()
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {

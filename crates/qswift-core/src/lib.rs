@@ -18,7 +18,7 @@ pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
 pub use stdlib::{
     scalar_less_than, AlgoFn, Arg, BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome,
-    PropertyFn, StdContext, StdError, StdResult,
+    PropertyFn, StaticFn, StdContext, StdError, StdResult,
 };
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 

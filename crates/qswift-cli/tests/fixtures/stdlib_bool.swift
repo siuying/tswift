@@ -14,3 +14,6 @@ for value in [true, false, true] where value {
 print(count)
 
 print(true.hashValue == true.hashValue, true.hashValue == false.hashValue)
+
+let r = Bool.random()
+print(r == true || r == false)

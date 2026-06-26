@@ -16,6 +16,7 @@ Bool.description
 Bool.flatMap
 Bool.hashValue
 Bool.map
+Bool.random
 Bool.toggle
 Dictionary.compactMapValues
 Dictionary.count
