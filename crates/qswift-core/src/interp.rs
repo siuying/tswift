@@ -541,6 +541,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::OptionalChain => self.eval_only_child(node),
             NodeKind::SubscriptExpr => self.eval_subscript(node),
             NodeKind::ArrayLiteral => self.eval_array_literal(node),
+            NodeKind::DictLiteral => self.eval_dict_literal(node),
             other => Err(EvalError::Unsupported(format!("{other:?}")).into()),
         }
     }
@@ -2140,6 +2141,26 @@ impl<'w> Interpreter<'w> {
         Ok(SwiftValue::Array(Rc::new(items)))
     }
 
+    /// A dictionary literal `[k: v, …]` — children alternate key, value. An
+    /// empty dictionary is written `[:]`.
+    fn eval_dict_literal(&mut self, node: &Node<'static>) -> Eval {
+        let children: Vec<Node<'static>> = node.children().collect();
+        let mut pairs: Vec<(SwiftValue, SwiftValue)> = Vec::new();
+        let mut i = 0;
+        while i + 1 < children.len() {
+            let key = self.eval(&children[i])?;
+            let value = self.eval(&children[i + 1])?;
+            // Later duplicate keys overwrite earlier ones.
+            if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == key) {
+                slot.1 = value;
+            } else {
+                pairs.push((key, value));
+            }
+            i += 2;
+        }
+        Ok(SwiftValue::Dict(Rc::new(pairs)))
+    }
+
     /// A subscript read `base[index]` over arrays, strings, or a user
     /// `subscript` getter.
     fn eval_subscript(&mut self, node: &Node<'static>) -> Eval {
@@ -2166,11 +2187,37 @@ impl<'w> Interpreter<'w> {
         let index_node = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("subscript without an index".into()))?;
-        let idx = subscript_index(&[self.eval(&index_node)?])?;
+        let index_value = self.eval(&index_node)?;
         let Some(place) = self.resolve_place(&base) else {
             return Err(EvalError::Unsupported("subscript target is not assignable".into()).into());
         };
-        let current_array = self.read_place(&place)?;
+        let current = self.read_place(&place)?;
+        // `dict[key] = value` inserts/updates; `dict[key] = nil` removes.
+        if let SwiftValue::Dict(pairs) = &current {
+            let mut new_pairs = pairs.as_ref().clone();
+            let existing = new_pairs.iter().position(|(k, _)| *k == index_value);
+            let new_value = if op == "=" {
+                self.eval(rhs)?
+            } else {
+                let cur = existing
+                    .map(|i| new_pairs[i].1.clone())
+                    .unwrap_or(SwiftValue::Nil);
+                let r = self.eval(rhs)?;
+                ops::binary(op.trim_end_matches('='), &cur, &r).map_err(trap)?
+            };
+            match (existing, matches!(new_value, SwiftValue::Nil)) {
+                (Some(i), true) => {
+                    new_pairs.remove(i);
+                }
+                (Some(i), false) => new_pairs[i].1 = new_value,
+                (None, true) => {}
+                (None, false) => new_pairs.push((index_value, new_value)),
+            }
+            self.write_place(&place, SwiftValue::Dict(StdRc::new(new_pairs)))?;
+            return Ok(SwiftValue::Void);
+        }
+        let idx = subscript_index(&[index_value])?;
+        let current_array = current;
         let SwiftValue::Array(items) = &current_array else {
             return Err(EvalError::Type("subscript assignment requires an array".into()).into());
         };
@@ -2198,6 +2245,18 @@ impl<'w> Interpreter<'w> {
                     .get(i)
                     .cloned()
                     .ok_or_else(|| trap(format!("index {i} out of range")))
+            }
+            // `dict[key]` → the value, or `nil` when absent. `dict[key, default:]`
+            // returns the default instead of `nil` when the key is missing.
+            SwiftValue::Dict(pairs) => {
+                let key = indices
+                    .first()
+                    .ok_or_else(|| EvalError::Type("dictionary subscript needs a key".into()))?;
+                Ok(pairs
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| indices.get(1).cloned().unwrap_or(SwiftValue::Nil)))
             }
             SwiftValue::Str(s) => {
                 let i = subscript_index(indices)?;
@@ -2902,6 +2961,11 @@ impl<'w> Interpreter<'w> {
                 Ok((*lo..end).map(SwiftValue::int).collect())
             }
             SwiftValue::Array(items) => Ok(items.as_ref().clone()),
+            // Iterating a dictionary yields `(key, value)` tuples.
+            SwiftValue::Dict(pairs) => Ok(pairs
+                .iter()
+                .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
+                .collect()),
             SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
@@ -3504,6 +3568,13 @@ impl<'w> Interpreter<'w> {
                     });
                 if let (Some(elem), Some(n)) = (repeating, count) {
                     return Ok(SwiftValue::Array(Rc::new(vec![elem; n])));
+                }
+            }
+
+            // `Dictionary(uniqueKeysWithValues:)` and `Dictionary(grouping:by:)`.
+            if name == "Dictionary" && self.env.get("Dictionary").is_none() {
+                if let Some(v) = self.build_dictionary(&args)? {
+                    return Ok(v);
                 }
             }
 
@@ -4181,6 +4252,52 @@ impl<'w> Interpreter<'w> {
 
     /// Attempt a numeric/string conversion `Type(value)`. Returns `Ok(None)` if
     /// `name` is not a known conversion type.
+    /// Build a dictionary from `Dictionary(uniqueKeysWithValues:)` (a sequence
+    /// of key/value tuples) or `Dictionary(grouping:by:)` (bucket elements by a
+    /// key closure). Returns `None` if the args match neither initializer.
+    fn build_dictionary(&mut self, args: &[CallArg]) -> Result<Option<SwiftValue>, Signal> {
+        let labeled = |name: &str| args.iter().find(|a| a.label.as_deref() == Some(name));
+
+        if let Some(seq) = labeled("uniqueKeysWithValues") {
+            let elements = materialize_sequence(&seq.value)
+                .ok_or_else(|| EvalError::Type("uniqueKeysWithValues expects a sequence".into()))?;
+            let mut pairs: Vec<(SwiftValue, SwiftValue)> = Vec::new();
+            for el in elements {
+                if let SwiftValue::Tuple(t) = el {
+                    if t.len() == 2 {
+                        pairs.push((t[0].clone(), t[1].clone()));
+                        continue;
+                    }
+                }
+                return Err(EvalError::Type("uniqueKeysWithValues expects (key, value) pairs".into()).into());
+            }
+            return Ok(Some(SwiftValue::Dict(StdRc::new(pairs))));
+        }
+
+        if let (Some(seq), Some(by)) = (labeled("grouping"), labeled("by")) {
+            let elements = materialize_sequence(&seq.value)
+                .ok_or_else(|| EvalError::Type("grouping: expects a sequence".into()))?;
+            let SwiftValue::Closure(id) = by.value else {
+                return Err(EvalError::Type("grouping by: expects a closure".into()).into());
+            };
+            let mut pairs: Vec<(SwiftValue, Vec<SwiftValue>)> = Vec::new();
+            for el in elements {
+                let key = self.call_closure(id, vec![el.clone()])?;
+                match pairs.iter_mut().find(|(k, _)| *k == key) {
+                    Some(slot) => slot.1.push(el),
+                    None => pairs.push((key, vec![el])),
+                }
+            }
+            let pairs = pairs
+                .into_iter()
+                .map(|(k, v)| (k, SwiftValue::Array(StdRc::new(v))))
+                .collect();
+            return Ok(Some(SwiftValue::Dict(StdRc::new(pairs))));
+        }
+
+        Ok(None)
+    }
+
     fn try_conversion(&self, name: &str, value: &SwiftValue) -> Result<Option<SwiftValue>, Signal> {
         if let Some(w) = IntWidth::from_type_name(name) {
             let raw = match value {
@@ -4265,6 +4382,13 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             Some((*lo..end).map(SwiftValue::int).collect())
         }
         SwiftValue::Str(s) => Some(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+        // A dictionary is a sequence of `(key, value)` tuples.
+        SwiftValue::Dict(pairs) => Some(
+            pairs
+                .iter()
+                .map(|(k, v)| SwiftValue::Tuple(vec![k.clone(), v.clone()]))
+                .collect(),
+        ),
         _ => None,
     }
 }
@@ -4348,7 +4472,7 @@ fn is_expr(node: &Node) -> bool {
 fn is_builtin_iterable(value: &SwiftValue) -> bool {
     matches!(
         value,
-        SwiftValue::Range { .. } | SwiftValue::Array(_) | SwiftValue::Str(_)
+        SwiftValue::Range { .. } | SwiftValue::Array(_) | SwiftValue::Str(_) | SwiftValue::Dict(_)
     )
 }
 

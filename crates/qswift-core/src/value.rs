@@ -146,6 +146,10 @@ pub enum SwiftValue {
     Tuple(Vec<SwiftValue>),
     /// An array `[a, b, ...]` (used today for variadic parameter packs).
     Array(Rc<Vec<SwiftValue>>),
+    /// A dictionary `[k: v, ...]`. Stored as insertion-ordered key/value pairs
+    /// (linear lookup) under an `Rc` for copy-on-write value semantics. Swift
+    /// dictionaries are unordered, so callers must not rely on iteration order.
+    Dict(Rc<Vec<(SwiftValue, SwiftValue)>>),
     /// An integer range `lo..<hi` (exclusive) or `lo...hi` (inclusive).
     Range {
         lo: i128,
@@ -258,6 +262,7 @@ impl SwiftValue {
             SwiftValue::Str(_) => "String".into(),
             SwiftValue::Tuple(_) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
+            SwiftValue::Dict(_) => "Dictionary".into(),
             SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
             SwiftValue::Struct(s) => s.type_name.clone(),
@@ -283,6 +288,12 @@ impl PartialEq for SwiftValue {
             (Str(a), Str(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
             (Array(a), Array(b)) => a == b,
+            // Dictionaries are equal as unordered key/value sets.
+            (Dict(a), Dict(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .all(|(k, v)| b.iter().any(|(k2, v2)| k == k2 && v == v2))
+            }
             (
                 Range { lo: l1, hi: h1, inclusive: i1 },
                 Range { lo: l2, hi: h2, inclusive: i2 },
@@ -325,6 +336,19 @@ impl fmt::Display for SwiftValue {
                         write!(f, ", ")?;
                     }
                     write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            SwiftValue::Dict(pairs) => {
+                if pairs.is_empty() {
+                    return write!(f, "[:]");
+                }
+                write!(f, "[")?;
+                for (i, (k, v)) in pairs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
                 }
                 write!(f, "]")
             }
