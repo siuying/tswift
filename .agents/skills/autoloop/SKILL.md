@@ -46,16 +46,18 @@ Once confirmed, run forever until user interrupts or problem is solved.
 └─────────────────────────────────────────────────────┘
 ```
 
+Create a check list for each of the four gates, and **do not proceed to the next gate until the current one is complete**.
+
 #### Gate 1 — Implement
 
 - Pick the next experiment idea from the strategy list (generate new ones when exhausted).
 - Make a focused, atomic change to the in-scope files.
-- Use `tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
+- Use `/skill:tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
 - `git add` the changes (do **not** commit yet).
 
 #### Gate 2 — Review
 
-- Request a review of the changes with skills `requesting-code-review`
+- Dispatch a code reviewer subagent to review code (See `/skill:requesting-code-review`)
 
 #### Gate 3 — Verify
 
@@ -72,11 +74,11 @@ Once confirmed, run forever until user interrupts or problem is solved.
 | Crash / timeout                       | Diagnose briefly; fix trivially or skip → status = **crash**        |
 | Review Critical unfixable             | Discard idea → status = **discard**                                 |
 
-After each iteration, append a row to `loop-log.md`.
+After each iteration, append a row to `loop-log.{yyyymmdd}.md`.
 
 ---
 
-## Bookkeeping — loop-log.md
+## Bookkeeping — loop-log.{yyyymmdd}.md
 
 Create in the project root; do **not** commit it (add to `.gitignore` if needed).
 
