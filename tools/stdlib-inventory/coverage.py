@@ -50,6 +50,13 @@ SEQUENCE_TYPES = {
     "EmptyCollection", "ReversedCollection",
 }
 
+# Members whose runtime behaviour is implemented in qswift-core rather than the
+# qswift-std registry. They are still stdlib surface area and should count when
+# executable fixtures exercise them.
+CORE_MEMBERS = {
+    "Array": {"+", "+=", "=="},
+}
+
 MEMBER_RE = re.compile(
     r"""(?:func|var|let|init|subscript|case)\s+   # member keyword
         `?                                          # optional backtick
@@ -110,14 +117,16 @@ def load_keys():
 
 
 def fixture_tokens() -> set[str]:
-    """Identifiers used in executing CLI fixtures (member + call names)."""
+    """Identifiers/operators used in executing CLI fixtures."""
     tokens: set[str] = set()
     member_re = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)")
     call_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    operator_re = re.compile(r"(?<![=!<>+\-*/%&|^])(?:\+=|==|\+)(?![=+])")
     for swift in FIXTURES.glob("*.swift"):
         src = swift.read_text()
         tokens.update(member_re.findall(src))
         tokens.update(call_re.findall(src))
+        tokens.update(operator_re.findall(src))
     return tokens
 
 
@@ -139,6 +148,7 @@ class Coverage:
         else:
             registered = (
                 member in self.by_type_reg.get(section, set())
+                or member in CORE_MEMBERS.get(section, set())
                 or (section in SEQUENCE_TYPES and member in self.seq_algos)
                 or (section == "Optional" and member in {"map", "flatMap"})
             )
