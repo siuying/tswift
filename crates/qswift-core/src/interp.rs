@@ -14,7 +14,7 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StdContext, StdError,
+    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StdContext, StdError,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -233,6 +233,9 @@ pub struct Interpreter<'w> {
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
+    /// builtin sequence receiver (layer 2 of the dispatch seam).
+    algorithms: HashMap<String, AlgoFn>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -292,6 +295,7 @@ impl<'w> Interpreter<'w> {
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
             properties: HashMap::new(),
+            algorithms: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
@@ -329,6 +333,11 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a `Sequence`/`Collection` algorithm by method name.
+    pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
+        self.algorithms.insert(name.to_string(), f);
     }
 
     /// Register a method intrinsic on a builtin receiver type.
@@ -3739,14 +3748,20 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        // Built-in higher-order array methods taking a closure/predicate.
-        if let SwiftValue::Array(_) = &base_value {
-            if matches!(
-                method.as_str(),
-                "map" | "filter" | "reduce" | "forEach" | "contains" | "sorted" | "first"
-            ) {
-                let args = self.eval_args(arg_nodes)?;
-                return self.array_higher_order(&base_value, &method, args);
+        // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
+        // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
+        if self.algorithms.contains_key(&method) {
+            if let Some(items) = materialize_sequence(&base_value) {
+                let func = self.algorithms[&method];
+                let labeled: Vec<Arg> = self
+                    .eval_args(arg_nodes)?
+                    .into_iter()
+                    .map(|a| Arg {
+                        label: a.label,
+                        value: a.value,
+                    })
+                    .collect();
+                return func(self, items, labeled).map_err(Self::std_error_to_signal);
             }
         }
 
@@ -3856,99 +3871,6 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-    /// Built-in `map`/`filter`/`reduce`/`forEach`/`contains`/`sorted`/`first`.
-    fn array_higher_order(&mut self, base: &SwiftValue, method: &str, args: Vec<CallArg>) -> Eval {
-        let SwiftValue::Array(items) = base else {
-            unreachable!();
-        };
-        let items = items.as_ref().clone();
-        let closure = |v: &SwiftValue| match v {
-            SwiftValue::Closure(id) => Some(*id),
-            _ => None,
-        };
-        match method {
-            "map" => {
-                let id = args
-                    .last()
-                    .and_then(|a| closure(&a.value))
-                    .ok_or_else(|| EvalError::Type("map expects a closure".into()))?;
-                let mut out = Vec::new();
-                for it in items {
-                    out.push(self.call_closure(id, vec![it])?);
-                }
-                Ok(SwiftValue::Array(StdRc::new(out)))
-            }
-            "filter" => {
-                let id = args
-                    .last()
-                    .and_then(|a| closure(&a.value))
-                    .ok_or_else(|| EvalError::Type("filter expects a closure".into()))?;
-                let mut out = Vec::new();
-                for it in items {
-                    if self
-                        .call_closure(id, vec![it.clone()])?
-                        .as_bool()
-                        .unwrap_or(false)
-                    {
-                        out.push(it);
-                    }
-                }
-                Ok(SwiftValue::Array(StdRc::new(out)))
-            }
-            "forEach" => {
-                let id = args
-                    .last()
-                    .and_then(|a| closure(&a.value))
-                    .ok_or_else(|| EvalError::Type("forEach expects a closure".into()))?;
-                for it in items {
-                    self.call_closure(id, vec![it])?;
-                }
-                Ok(SwiftValue::Void)
-            }
-            "reduce" => {
-                let initial = args
-                    .first()
-                    .map(|a| a.value.clone())
-                    .ok_or_else(|| EvalError::Type("reduce expects an initial value".into()))?;
-                let id = args
-                    .last()
-                    .and_then(|a| closure(&a.value))
-                    .ok_or_else(|| EvalError::Type("reduce expects a closure".into()))?;
-                let mut acc = initial;
-                for it in items {
-                    acc = self.call_closure(id, vec![acc, it])?;
-                }
-                Ok(acc)
-            }
-            "contains" => {
-                if let Some(id) = args.last().and_then(|a| closure(&a.value)) {
-                    for it in items {
-                        if self.call_closure(id, vec![it])?.as_bool().unwrap_or(false) {
-                            return Ok(SwiftValue::Bool(true));
-                        }
-                    }
-                    Ok(SwiftValue::Bool(false))
-                } else {
-                    let needle = args
-                        .first()
-                        .map(|a| a.value.clone())
-                        .unwrap_or(SwiftValue::Nil);
-                    Ok(SwiftValue::Bool(items.contains(&needle)))
-                }
-            }
-            "first" => Ok(items.into_iter().next().unwrap_or(SwiftValue::Nil)),
-            "sorted" => {
-                let mut out = items;
-                out.sort_by(|a, b| match (a, b) {
-                    (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw.cmp(&y.raw),
-                    (SwiftValue::Str(x), SwiftValue::Str(y)) => x.cmp(y),
-                    _ => std::cmp::Ordering::Equal,
-                });
-                Ok(SwiftValue::Array(StdRc::new(out)))
-            }
-            _ => unreachable!(),
-        }
-    }
 
     /// Whether a struct or enum type declares a method `method`.
     fn type_has_method(&self, type_name: &str, method: &str) -> bool {
