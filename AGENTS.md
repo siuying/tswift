@@ -37,6 +37,10 @@ section. Tooling details live in `tools/stdlib-inventory/README.md`.
 
 ## Agent skills
 
+### Subagent
+
+If running Pi Agent, when user request subagent, use the skill `subagent`.
+
 ### Issue tracker
 
 Issues live in GitHub Issues; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
