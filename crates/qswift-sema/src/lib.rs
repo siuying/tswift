@@ -369,6 +369,7 @@ impl Resolver {
             NodeKind::IntegerLiteral => Some(Type::Int),
             NodeKind::FloatLiteral => Some(Type::Double),
             NodeKind::StringLiteral => Some(Type::String),
+            NodeKind::RegexLiteral => Some(Type::Regex),
             NodeKind::BoolLiteral => Some(Type::Bool),
             NodeKind::NilLiteral => None,
             NodeKind::IdentExpr => node.text().and_then(|name| self.lookup(name)),
@@ -549,6 +550,7 @@ fn parse_type_name(text: &str) -> Option<Type> {
         "String" => Some(Type::String),
         "Bool" => Some(Type::Bool),
         "Void" => Some(Type::Void),
+        "Regex" => Some(Type::Regex),
         _ => None,
     }
 }

@@ -107,6 +107,7 @@ String.append
 String.contains
 String.count
 String.first
+String.firstMatch
 String.flatMap
 String.hasPrefix
 String.hasSuffix
@@ -123,11 +124,15 @@ String.isWholeNumber
 String.last
 String.lowercased
 String.map
+String.matches
 String.prefix
+String.prefixMatch
+String.replacing
 String.reversed
 String.split
 String.suffix
 String.uppercased
+String.wholeMatch
 abs
 assert
 assertionFailure

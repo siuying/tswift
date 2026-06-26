@@ -9,6 +9,7 @@ mod env;
 mod interp;
 mod json;
 mod ops;
+pub mod regex;
 mod stdlib;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod suspend;
@@ -16,6 +17,7 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
+pub use regex::{Captures, Regex};
 pub use stdlib::{
     scalar_less_than, AlgoFn, Arg, BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome,
     PropertyFn, StaticFn, StdContext, StdError, StdResult,
@@ -29,8 +31,8 @@ pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValu
 /// how `qswift-std::install` populates the real seam.
 #[cfg(test)]
 pub(crate) fn install_test_print(interp: &mut Interpreter<'_>) {
-    use std::io::Write;
     use crate::{Arg, BuiltinReceiver, StdContext, StdResult};
+    use std::io::Write;
     fn print(out: &mut dyn Write, args: &[SwiftValue]) -> SwiftValue {
         let line = args
             .iter()
@@ -77,7 +79,11 @@ pub(crate) fn install_test_print(interp: &mut Interpreter<'_>) {
         let id = closure_id(&args).expect("filter closure");
         let mut out = Vec::new();
         for it in items {
-            if ctx.call_closure(id, vec![it.clone()])?.as_bool().unwrap_or(false) {
+            if ctx
+                .call_closure(id, vec![it.clone()])?
+                .as_bool()
+                .unwrap_or(false)
+            {
                 out.push(it);
             }
         }

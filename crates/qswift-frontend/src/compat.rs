@@ -161,7 +161,8 @@ impl RuntimeAst {
     ) -> Vec<NodeId> {
         let mut out = Vec::new();
         for child in children {
-            if child.kind() == qswift_ast::NodeKind::CompilerDirective && child.text() == Some("#if")
+            if child.kind() == qswift_ast::NodeKind::CompilerDirective
+                && child.text() == Some("#if")
             {
                 out.extend(self.lower_child_list(child.children()));
             } else {
@@ -311,7 +312,9 @@ impl RuntimeAst {
                 K::NamePattern if name.is_none() && binding_pattern.is_none() => {
                     name = child.text().map(ToOwned::to_owned);
                 }
-                K::EnumCasePattern | K::TuplePattern | K::RangePattern if binding_pattern.is_none() => {
+                K::EnumCasePattern | K::TuplePattern | K::RangePattern
+                    if binding_pattern.is_none() =>
+                {
                     binding_pattern = Some(child);
                 }
                 K::TypeRef => {}
@@ -596,6 +599,7 @@ fn map_kind(kind: qswift_ast::NodeKind) -> NodeKind {
         K::BoolLiteral => NodeKind::BoolLiteral,
         K::NilLiteral => NodeKind::NilLiteral,
         K::StringLiteral => NodeKind::StringLiteral,
+        K::RegexLiteral => NodeKind::RegexLiteral,
     }
 }
 

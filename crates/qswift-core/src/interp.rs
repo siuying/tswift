@@ -420,12 +420,7 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Register a method intrinsic on a builtin receiver type.
-    pub fn register_intrinsic(
-        &mut self,
-        recv: BuiltinReceiver,
-        name: &str,
-        entry: MethodEntry,
-    ) {
+    pub fn register_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
         self.intrinsics.insert((recv, name.to_string()), entry);
     }
 
@@ -435,11 +430,10 @@ impl<'w> Interpreter<'w> {
         match sig {
             Signal::Throw(v) => StdError::Throw(v),
             Signal::Error(e) => StdError::Error(e),
-            Signal::Return(_)
-            | Signal::Break(_)
-            | Signal::Continue(_)
-            | Signal::Fallthrough => {
-                StdError::Error(EvalError::Trap("control flow escaped a builtin call".into()))
+            Signal::Return(_) | Signal::Break(_) | Signal::Continue(_) | Signal::Fallthrough => {
+                StdError::Error(EvalError::Trap(
+                    "control flow escaped a builtin call".into(),
+                ))
             }
         }
     }
@@ -616,6 +610,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::BoolLiteral => Ok(SwiftValue::Bool(node.bool().unwrap_or(false))),
             NodeKind::FloatLiteral => Ok(SwiftValue::Double(node.float().unwrap_or(0.0))),
             NodeKind::StringLiteral => self.eval_string_literal(node),
+            NodeKind::RegexLiteral => self.eval_regex_literal(node),
             NodeKind::NilLiteral => Ok(SwiftValue::Nil),
             NodeKind::MacroExpansion => self.eval_macro(node),
             NodeKind::ForceUnwrap => self.eval_force_unwrap(node),
@@ -1438,7 +1433,10 @@ impl<'w> Interpreter<'w> {
         if let SwiftValue::Array(items) = &value {
             for child in node.children() {
                 if child.kind() == NodeKind::TypeIdent
-                    && child.text().as_deref().is_some_and(|t| t.starts_with("Set<") || t == "Set")
+                    && child
+                        .text()
+                        .as_deref()
+                        .is_some_and(|t| t.starts_with("Set<") || t == "Set")
                 {
                     return SwiftValue::Set(StdRc::new(dedup_preserving_order(
                         items.as_ref().clone(),
@@ -1483,8 +1481,7 @@ impl<'w> Interpreter<'w> {
         // algorithms can call back into.
         if is_operator_name(&name) {
             let id = self.closures.len();
-            self.closures
-                .push((ClosureDef::Operator(name), Vec::new()));
+            self.closures.push((ClosureDef::Operator(name), Vec::new()));
             return Ok(SwiftValue::Closure(id));
         }
         Err(EvalError::UnknownVariable(name).into())
@@ -1914,7 +1911,8 @@ impl<'w> Interpreter<'w> {
             captured.push(scope);
         }
         let id = self.closures.len();
-        self.closures.push((ClosureDef::User { params, body }, captured));
+        self.closures
+            .push((ClosureDef::User { params, body }, captured));
         Ok(SwiftValue::Closure(id))
     }
 
@@ -2249,8 +2247,7 @@ impl<'w> Interpreter<'w> {
                         None => (elem, false),
                     };
                     items.iter().all(|v| {
-                        (optional && matches!(v, SwiftValue::Nil))
-                            || self.value_is_type(v, base)
+                        (optional && matches!(v, SwiftValue::Nil)) || self.value_is_type(v, base)
                     })
                 }
                 None => false,
@@ -2884,8 +2881,16 @@ impl<'w> Interpreter<'w> {
                 if let Some(tn) = self.value_type_name(&l) {
                     if self.type_has_method(&tn, &op) {
                         let args = vec![
-                            CallArg { label: None, value: l.clone(), place: None },
-                            CallArg { label: None, value: r.clone(), place: None },
+                            CallArg {
+                                label: None,
+                                value: l.clone(),
+                                place: None,
+                            },
+                            CallArg {
+                                label: None,
+                                value: r.clone(),
+                                place: None,
+                            },
                         ];
                         return self.call_struct_method(SwiftValue::Void, &tn, &op, args, None);
                     }
@@ -4289,7 +4294,6 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-
     /// Whether a struct or enum type declares a method `method`.
     fn type_has_method(&self, type_name: &str, method: &str) -> bool {
         self.structs
@@ -4361,6 +4365,19 @@ impl<'w> Interpreter<'w> {
     }
 
     /// A string literal, processing escapes and `\( … )` interpolation.
+    /// Evaluate a `/.../` or `#/.../#` regex literal into a compiled
+    /// [`SwiftValue::Regex`]. The pattern between the delimiters is compiled
+    /// once here; an invalid pattern traps (Swift would reject it at compile
+    /// time, which this runtime surfaces as a runtime error).
+    fn eval_regex_literal(&mut self, node: &Node<'static>) -> Eval {
+        let raw = node.text().unwrap_or_default();
+        let pattern = strip_regex_delimiters(&raw);
+        match crate::regex::Regex::compile(pattern) {
+            Ok(re) => Ok(SwiftValue::Regex(std::rc::Rc::new(re))),
+            Err(msg) => Err(trap(format!("invalid regular expression: {msg}"))),
+        }
+    }
+
     fn eval_string_literal(&mut self, node: &Node<'static>) -> Eval {
         let raw = node.text().unwrap_or_default();
         // Raw strings do not interpolate; decode handles delimiters/escapes.
@@ -4696,7 +4713,10 @@ impl<'w> Interpreter<'w> {
                         continue;
                     }
                 }
-                return Err(EvalError::Type("uniqueKeysWithValues expects (key, value) pairs".into()).into());
+                return Err(EvalError::Type(
+                    "uniqueKeysWithValues expects (key, value) pairs".into(),
+                )
+                .into());
             }
             return Ok(Some(SwiftValue::Dict(StdRc::new(pairs))));
         }
@@ -4864,8 +4884,16 @@ impl StdContext for Interpreter<'_> {
         let tn = self.value_type_name(a)?;
         if self.type_has_method(&tn, "<") {
             let args = vec![
-                CallArg { label: None, value: a.clone(), place: None },
-                CallArg { label: None, value: b.clone(), place: None },
+                CallArg {
+                    label: None,
+                    value: a.clone(),
+                    place: None,
+                },
+                CallArg {
+                    label: None,
+                    value: b.clone(),
+                    place: None,
+                },
             ];
             if let Ok(SwiftValue::Bool(b)) =
                 self.call_struct_method(SwiftValue::Void, &tn, "<", args, None)
@@ -5090,6 +5118,29 @@ fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
 
 /// Decode a Swift string literal's *source text* (including its delimiters) into
 /// the runtime string it denotes: strips quotes and processes escapes.
+/// Strip the delimiters off a regex literal lexeme, leaving the bare pattern.
+/// Handles the bare `/.../` form and the extended `#/.../#` form (any number of
+/// `#`). Extended literals additionally trim surrounding whitespace on a
+/// single-line body, matching Swift's extended-delimiter regex semantics.
+fn strip_regex_delimiters(raw: &str) -> &str {
+    if raw.starts_with('#') {
+        let hashes = raw.chars().take_while(|&c| c == '#').count();
+        let inner = &raw[hashes..raw.len().saturating_sub(hashes)];
+        let inner = inner
+            .strip_prefix('/')
+            .and_then(|s| s.strip_suffix('/'))
+            .unwrap_or(inner);
+        return if inner.contains('\n') {
+            inner
+        } else {
+            inner.trim()
+        };
+    }
+    raw.strip_prefix('/')
+        .and_then(|s| s.strip_suffix('/'))
+        .unwrap_or(raw)
+}
+
 fn decode_string_literal(raw: &str) -> String {
     if raw.starts_with('#') {
         let hashes = raw.chars().take_while(|&c| c == '#').count();

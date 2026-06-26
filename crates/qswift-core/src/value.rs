@@ -8,6 +8,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
 
+use crate::regex::Regex;
+
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
 /// width integer family. `Int`/`UInt` map to the 64-bit arms on the platforms
 /// quick-swift targets.
@@ -176,6 +178,9 @@ pub enum SwiftValue {
     Object(Rc<RefCell<ClassObj>>),
     /// A `weak` reference to a class instance (zeroes to `nil` on dealloc).
     Weak(Weak<RefCell<ClassObj>>),
+    /// A compiled regular expression, produced by a `/.../`/`#/.../#` literal or
+    /// `Regex(_:)`. Shared under an `Rc` (the compiled program is immutable).
+    Regex(Rc<Regex>),
     /// A closure value: an index into the interpreter's closure table.
     Closure(usize),
     /// A structured-concurrency task handle: an index into the interpreter's
@@ -269,6 +274,7 @@ impl SwiftValue {
             SwiftValue::Set(_) => "Set".into(),
             SwiftValue::Range { .. } => "Range".into(),
             SwiftValue::Function(_) => "function".into(),
+            SwiftValue::Regex(_) => "Regex".into(),
             SwiftValue::Struct(s) => s.type_name.clone(),
             SwiftValue::Nil => "Optional".into(),
             SwiftValue::Enum(e) => e.type_name.clone(),
@@ -299,14 +305,21 @@ impl PartialEq for SwiftValue {
                         .all(|(k, v)| b.iter().any(|(k2, v2)| k == k2 && v == v2))
             }
             // Sets are equal as unordered element collections.
-            (Set(a), Set(b)) => {
-                a.len() == b.len() && a.iter().all(|x| b.contains(x))
-            }
+            (Set(a), Set(b)) => a.len() == b.len() && a.iter().all(|x| b.contains(x)),
             (
-                Range { lo: l1, hi: h1, inclusive: i1 },
-                Range { lo: l2, hi: h2, inclusive: i2 },
+                Range {
+                    lo: l1,
+                    hi: h1,
+                    inclusive: i1,
+                },
+                Range {
+                    lo: l2,
+                    hi: h2,
+                    inclusive: i2,
+                },
             ) => l1 == l2 && h1 == h2 && i1 == i2,
             (Function(a), Function(b)) => a == b,
+            (Regex(a), Regex(b)) => a == b,
             (Closure(a), Closure(b)) => a == b,
             (Struct(a), Struct(b)) => a == b,
             (Enum(a), Enum(b)) => a == b,
@@ -378,6 +391,7 @@ impl fmt::Display for SwiftValue {
                 }
             }
             SwiftValue::Function(_) => write!(f, "(Function)"),
+            SwiftValue::Regex(r) => write!(f, "{}", r.pattern()),
             SwiftValue::Struct(s) => {
                 write!(f, "{}(", s.type_name)?;
                 for (i, (name, value)) in s.fields.iter().enumerate() {

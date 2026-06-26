@@ -49,7 +49,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Raw string literals `#"..."#` | ✅ | ★ | R0 |
 | [x] | String interpolation `\(expr)` (re-parsed by the Rust frontend) | ✅ | ★★ | R1 |
 | [x] | Extended string delimiters `#"\n"#` | ✅ | ★ | R1 |
-| [ ] | Regex literals `/.../ ` and `#/.../#` | ✅ | ★★★ | R5+ |
+| [x] | Regex literals `/.../ ` and `#/.../#` | ✅ | ★★★ | R5+ |
 | [x] | Unicode identifiers | ✅ | ★ | R0 |
 | [x] | Comments (line, block, nested, doc) | ✅ | ★ | R0 |
 | [x] | Operators: arithmetic/comparison/logical/bitwise/range | ✅ | ★ | R0 |

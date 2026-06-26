@@ -12,9 +12,11 @@
 //! A `Character` is modelled as a single-grapheme `String`; `Substring` shares
 //! the flattened string representation (it is a `String` value here).
 
+use std::rc::Rc;
+
 use qswift_core::{
-    BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult,
-    SwiftValue,
+    BuiltinReceiver, Captures, EvalError, Interpreter, MethodEntry, Outcome, Regex, StdContext,
+    StdError, StdResult, SwiftValue,
 };
 
 /// Register the `String` intrinsics of this slice.
@@ -38,19 +40,38 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "isHexDigit", is_hex_digit);
 
     let mut pure = |name: &str, f: qswift_core::IntrinsicFn| {
-        interp.register_intrinsic(s, name, MethodEntry { mutating: false, func: f });
+        interp.register_intrinsic(
+            s,
+            name,
+            MethodEntry {
+                mutating: false,
+                func: f,
+            },
+        );
     };
     pure("uppercased", uppercased);
     pure("lowercased", lowercased);
     pure("hasPrefix", has_prefix);
     pure("hasSuffix", has_suffix);
     pure("contains", contains);
+    pure("firstMatch", first_match);
+    pure("wholeMatch", whole_match);
+    pure("prefixMatch", prefix_match);
+    pure("matches", matches);
+    pure("replacing", replacing);
     pure("prefix", prefix);
     pure("suffix", suffix);
     pure("split", split);
     pure("reversed", reversed);
 
-    interp.register_intrinsic(s, "append", MethodEntry { mutating: true, func: append });
+    interp.register_intrinsic(
+        s,
+        "append",
+        MethodEntry {
+            mutating: true,
+            func: append,
+        },
+    );
 }
 
 /// Segment a string into extended grapheme clusters (pragmatic UAX #29 subset).
@@ -85,7 +106,11 @@ pub fn graphemes(s: &str) -> Vec<String> {
             // Pair regional indicators (flags): join only when the run from the
             // cluster start is currently odd in length.
             if is_regional(prev) && is_regional(cur) {
-                let run = chars[start..i].iter().rev().take_while(|c| is_regional(**c)).count();
+                let run = chars[start..i]
+                    .iter()
+                    .rev()
+                    .take_while(|c| is_regional(**c))
+                    .count();
                 if run % 2 == 1 {
                     i += 1;
                     continue;
@@ -195,12 +220,7 @@ fn is_newline(recv: SwiftValue) -> StdResult {
     classify(recv, |c| {
         matches!(
             c,
-            '\n' | '\r'
-                | '\u{0B}'
-                | '\u{0C}'
-                | '\u{85}'
-                | '\u{2028}'
-                | '\u{2029}'
+            '\n' | '\r' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}'
         )
     })
 }
@@ -241,11 +261,71 @@ fn has_suffix(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) 
     val(SwiftValue::Bool(str_of(&recv)?.ends_with(&p)), recv)
 }
 
-/// `String.contains(_:)` — substring containment (overrides the element-wise
-/// sequence `contains`).
+/// `String.contains(_:)` — substring containment, or, when passed a `Regex`,
+/// whether the pattern matches anywhere in the string.
 fn contains(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    if let Some(re) = arg_regex(&args) {
+        let chars = chars_of(&recv)?;
+        return val(SwiftValue::Bool(re.find(&chars).is_some()), recv);
+    }
     let needle = arg_str(&args).ok_or_else(|| type_err("contains expects a string".into()))?;
     val(SwiftValue::Bool(str_of(&recv)?.contains(&needle)), recv)
+}
+
+/// `String.firstMatch(of:)` — the leftmost match of `regex`, or `nil`.
+fn first_match(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let re = arg_regex(&args).ok_or_else(|| type_err("firstMatch expects a Regex".into()))?;
+    let chars = chars_of(&recv)?;
+    val(optional_match(re.find(&chars), &chars), recv)
+}
+
+/// `String.wholeMatch(of:)` — a match spanning the entire string, or `nil`.
+fn whole_match(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let re = arg_regex(&args).ok_or_else(|| type_err("wholeMatch expects a Regex".into()))?;
+    let chars = chars_of(&recv)?;
+    val(optional_match(re.whole_match(&chars), &chars), recv)
+}
+
+/// `String.prefixMatch(of:)` — a match anchored at the start, or `nil`.
+fn prefix_match(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let re = arg_regex(&args).ok_or_else(|| type_err("prefixMatch expects a Regex".into()))?;
+    let chars = chars_of(&recv)?;
+    val(optional_match(re.prefix_match(&chars), &chars), recv)
+}
+
+/// `String.matches(of:)` — every non-overlapping match, left to right.
+fn matches(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let re = arg_regex(&args).ok_or_else(|| type_err("matches expects a Regex".into()))?;
+    let chars = chars_of(&recv)?;
+    let out: Vec<SwiftValue> = re
+        .find_all(&chars)
+        .iter()
+        .map(|m| match_tuple(m, &chars))
+        .collect();
+    val(SwiftValue::Array(Rc::new(out)), recv)
+}
+
+/// `String.replacing(_:with:)` — replace every match of `regex` with a string.
+fn replacing(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let re = arg_regex(&args).ok_or_else(|| type_err("replacing expects a Regex".into()))?;
+    let with = args
+        .iter()
+        .find_map(|a| match a {
+            SwiftValue::Str(s) => Some(s.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let chars = chars_of(&recv)?;
+    let mut out = String::new();
+    let mut cursor = 0;
+    for m in re.find_all(&chars) {
+        let (s, e) = m.whole();
+        out.extend(&chars[cursor..s]);
+        out.push_str(&with);
+        cursor = e;
+    }
+    out.extend(&chars[cursor..]);
+    val(SwiftValue::Str(out), recv)
 }
 
 fn prefix(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
@@ -289,7 +369,10 @@ fn append(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
     if let Some(extra) = arg_str(&args) {
         s.push_str(&extra);
     }
-    Ok(Outcome { result: SwiftValue::Void, receiver: SwiftValue::Str(s) })
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Str(s),
+    })
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -302,6 +385,42 @@ fn val(result: SwiftValue, receiver: SwiftValue) -> Outcomes {
 
 fn type_err(msg: String) -> StdError {
     StdError::Error(EvalError::Type(msg))
+}
+
+/// The first `Regex` argument, if any.
+fn arg_regex(args: &[SwiftValue]) -> Option<Rc<Regex>> {
+    args.iter().find_map(|a| match a {
+        SwiftValue::Regex(r) => Some(r.clone()),
+        _ => None,
+    })
+}
+
+/// The receiver string as a `char` vector (regex matching is scalar-indexed).
+fn chars_of(recv: &SwiftValue) -> Result<Vec<char>, StdError> {
+    Ok(str_of(recv)?.chars().collect())
+}
+
+/// Render a capture as a tuple of substrings: index 0 is the whole match, then
+/// one element per capture group (`nil` for a group that did not participate).
+/// `match.0`, `match.1`, … then read like Swift's `Regex.Match` output tuple.
+fn match_tuple(caps: &Captures, chars: &[char]) -> SwiftValue {
+    let parts = caps
+        .groups
+        .iter()
+        .map(|g| match g {
+            Some((s, e)) => SwiftValue::Str(chars[*s..*e].iter().collect()),
+            None => SwiftValue::Nil,
+        })
+        .collect();
+    SwiftValue::Tuple(parts)
+}
+
+/// Wrap an optional capture as a Swift `Optional`: the match tuple, or `nil`.
+fn optional_match(caps: Option<Captures>, chars: &[char]) -> SwiftValue {
+    match caps {
+        Some(c) => match_tuple(&c, chars),
+        None => SwiftValue::Nil,
+    }
 }
 
 fn labeled(args: &[SwiftValue], _label: &str) -> Option<String> {
@@ -356,10 +475,30 @@ mod tests {
         let mut m = M;
         assert_eq!(uppercased(&mut m, s("hi"), vec![]).unwrap().result, s("HI"));
         assert_eq!(lowercased(&mut m, s("HI"), vec![]).unwrap().result, s("hi"));
-        assert_eq!(has_prefix(&mut m, s("swift"), vec![s("sw")]).unwrap().result, SwiftValue::Bool(true));
-        assert_eq!(contains(&mut m, s("hello world"), vec![s("o w")]).unwrap().result, SwiftValue::Bool(true));
-        assert_eq!(prefix(&mut m, s("hello"), vec![SwiftValue::int(3)]).unwrap().result, s("hel"));
-        assert_eq!(suffix(&mut m, s("hello"), vec![SwiftValue::int(2)]).unwrap().result, s("lo"));
+        assert_eq!(
+            has_prefix(&mut m, s("swift"), vec![s("sw")])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            contains(&mut m, s("hello world"), vec![s("o w")])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            prefix(&mut m, s("hello"), vec![SwiftValue::int(3)])
+                .unwrap()
+                .result,
+            s("hel")
+        );
+        assert_eq!(
+            suffix(&mut m, s("hello"), vec![SwiftValue::int(2)])
+                .unwrap()
+                .result,
+            s("lo")
+        );
         assert_eq!(reversed(&mut m, s("abc"), vec![]).unwrap().result, s("cba"));
     }
 
@@ -402,5 +541,96 @@ mod tests {
             SwiftValue::Array(parts) => assert_eq!(parts.len(), 3),
             _ => panic!("split should yield an array"),
         }
+    }
+
+    fn re(p: &str) -> SwiftValue {
+        SwiftValue::Regex(Rc::new(Regex::compile(p).unwrap()))
+    }
+
+    #[test]
+    fn contains_matches_regex_or_substring() {
+        let mut m = M;
+        assert_eq!(
+            contains(&mut m, s("abc123"), vec![re(r"\d+")])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            contains(&mut m, s("abcdef"), vec![re(r"\d+")])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn first_match_returns_capture_tuple() {
+        let mut m = M;
+        let out = first_match(&mut m, s("order-42"), vec![re(r"(\w+)-(\d+)")])
+            .unwrap()
+            .result;
+        assert_eq!(
+            out,
+            SwiftValue::Tuple(vec![s("order-42"), s("order"), s("42")])
+        );
+    }
+
+    #[test]
+    fn first_match_misses_yield_nil() {
+        let mut m = M;
+        let out = first_match(&mut m, s("abc"), vec![re(r"\d+")])
+            .unwrap()
+            .result;
+        assert_eq!(out, SwiftValue::Nil);
+    }
+
+    #[test]
+    fn whole_match_requires_full_string() {
+        let mut m = M;
+        assert!(matches!(
+            whole_match(&mut m, s("abc"), vec![re(r"[a-z]+")])
+                .unwrap()
+                .result,
+            SwiftValue::Tuple(_)
+        ));
+        assert_eq!(
+            whole_match(&mut m, s("abc1"), vec![re(r"[a-z]+")])
+                .unwrap()
+                .result,
+            SwiftValue::Nil
+        );
+    }
+
+    #[test]
+    fn matches_collects_every_match() {
+        let mut m = M;
+        match matches(&mut m, s("a1 b22 c333"), vec![re(r"\d+")])
+            .unwrap()
+            .result
+        {
+            SwiftValue::Array(items) => {
+                let firsts: Vec<SwiftValue> = items
+                    .iter()
+                    .map(|t| match t {
+                        SwiftValue::Tuple(v) => v[0].clone(),
+                        _ => panic!("match should be a tuple"),
+                    })
+                    .collect();
+                assert_eq!(firsts, vec![s("1"), s("22"), s("333")]);
+            }
+            _ => panic!("matches should yield an array"),
+        }
+    }
+
+    #[test]
+    fn replacing_substitutes_every_match() {
+        let mut m = M;
+        assert_eq!(
+            replacing(&mut m, s("2024-01-02"), vec![re(r"\d+"), s("#")])
+                .unwrap()
+                .result,
+            s("#-#-#")
+        );
     }
 }

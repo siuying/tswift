@@ -443,6 +443,7 @@ fn stable_hash(value: &SwiftValue) -> u64 {
         ),
         SwiftValue::Object(obj) => Rc::as_ptr(obj) as usize as u64,
         SwiftValue::Weak(obj) => obj.as_ptr() as usize as u64,
+        SwiftValue::Regex(r) => r.pattern().bytes().fold(0xd0, |h, b| mix(h, b as u64)),
     }
 }
 
@@ -484,7 +485,11 @@ mod tests {
     #[test]
     fn sort_orders_in_place_and_preserves_cow() {
         let mut ctx = MockCtx { sink: Vec::new() };
-        let shared = Rc::new(vec![SwiftValue::int(3), SwiftValue::int(1), SwiftValue::int(2)]);
+        let shared = Rc::new(vec![
+            SwiftValue::int(3),
+            SwiftValue::int(1),
+            SwiftValue::int(2),
+        ]);
         let recv = SwiftValue::Array(Rc::clone(&shared));
 
         let out = sort(&mut ctx, recv, vec![]).unwrap();

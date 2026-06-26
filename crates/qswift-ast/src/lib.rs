@@ -165,6 +165,8 @@ pub enum NodeKind {
     NilLiteral,
     /// A string literal.
     StringLiteral,
+    /// A regex literal `/.../` or `#/.../#` (text includes the delimiters).
+    RegexLiteral,
 }
 
 impl NodeKind {
@@ -244,6 +246,7 @@ impl NodeKind {
             NodeKind::BoolLiteral => "bool_literal",
             NodeKind::NilLiteral => "nil_literal",
             NodeKind::StringLiteral => "string_literal",
+            NodeKind::RegexLiteral => "regex_literal",
         }
     }
 }
@@ -256,6 +259,7 @@ pub enum Type {
     String,
     Bool,
     Void,
+    Regex,
 }
 
 impl Type {
@@ -267,6 +271,7 @@ impl Type {
             Type::String => "String",
             Type::Bool => "Bool",
             Type::Void => "Void",
+            Type::Regex => "Regex",
         }
     }
 }

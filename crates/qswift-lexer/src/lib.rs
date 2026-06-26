@@ -9,8 +9,9 @@
 //! Coverage today spans **Tier 0** lexical structure: integer literals in every
 //! radix (with `_` separators), floating-point literals (decimal and hex), the
 //! full operator set, string literals (single-line, multiline `"""`, and raw
-//! `#"…"#`, with escapes), line/block/nested comments, and unicode identifiers.
-//! Keywords are lexed as [`TokenKind::Keyword`].
+//! `#"…"#`, with escapes), regex literals (`/…/` and extended `#/…/#`, with
+//! `/`-vs-division disambiguation), line/block/nested comments, and unicode
+//! identifiers. Keywords are lexed as [`TokenKind::Keyword`].
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +28,8 @@ pub enum TokenKind {
     FloatLiteral,
     /// A double-quoted string literal *including* its quotes, e.g. `"hi"`.
     StringLiteral,
+    /// A regex literal *including* its delimiters, e.g. `/\d+/` or `#/a\/b/#`.
+    RegexLiteral,
     /// `(`
     LParen,
     /// `)`
@@ -201,7 +204,8 @@ impl<'a> Lexer<'a> {
                 out.push(self.make(TokenKind::Eof, self.pos, self.line, self.col));
                 return Ok(out);
             }
-            out.push(self.next_token()?);
+            let prev = out.last().copied();
+            out.push(self.next_token(prev)?);
         }
     }
 
@@ -273,7 +277,7 @@ impl<'a> Lexer<'a> {
         Ok(saw_newline)
     }
 
-    fn next_token(&mut self) -> Result<Token<'a>, LexError> {
+    fn next_token(&mut self, prev: Option<Token<'a>>) -> Result<Token<'a>, LexError> {
         let start = self.pos;
         let line = self.line;
         let col = self.col;
@@ -290,8 +294,26 @@ impl<'a> Lexer<'a> {
             b':' => self.single(TokenKind::Colon),
             b';' => self.single(TokenKind::Semicolon),
             b'"' => return self.string(start, line, col),
+            // `#/…/#` extended regex literals are unambiguous regardless of
+            // expression position (they cannot be a comment or division).
+            b'#' if self.pound_regex_len().is_some() => {
+                return self.consume_regex(self.pound_regex_len().unwrap(), start, line, col)
+            }
             // `#"…"#` / `#"""…"""#` raw string literals (any number of hashes).
             b'#' if self.is_raw_string_start() => return self.string(start, line, col),
+            // A `/` begins a regex literal only where an expression is expected
+            // (otherwise it is division). `//` and `/*` are already consumed as
+            // comments by `skip_trivia`, so a `/` reaching here is real syntax.
+            b'/' if regex_allowed(prev) => match self.bare_regex_len() {
+                Some(len) => return self.consume_regex(len, start, line, col),
+                None => match self.match_operator() {
+                    Some(len) => {
+                        self.take(len);
+                        TokenKind::Oper
+                    }
+                    None => unreachable!("'/' always matches an operator"),
+                },
+            },
             // `@name` attribute and `#name` compiler directive lex as one token.
             b'@' | b'#' => {
                 self.advance_byte();
@@ -402,6 +424,92 @@ impl<'a> Lexer<'a> {
             self.advance_byte();
         }
         self.take_while(is_dec_or_us);
+    }
+
+    /// Byte length of a bare `/…/` regex literal at the cursor (delimiters
+    /// included), or `None` if no valid literal is present so `/` should lex as
+    /// an operator.
+    ///
+    /// Mirrors Swift's bare-regex constraints: the body may not begin with a
+    /// space/tab (which would be ambiguous with division), may not be empty,
+    /// may not span a newline, and its closing `/` may not be preceded by a
+    /// space. `\` escapes the next byte and `/` inside a `[…]` class is literal.
+    fn bare_regex_len(&self) -> Option<usize> {
+        debug_assert_eq!(self.bytes.get(self.pos), Some(&b'/'));
+        let mut i = self.pos + 1;
+        match self.bytes.get(i).copied() {
+            None | Some(b' ') | Some(b'\t') | Some(b'/') | Some(b'\n') | Some(b'\r') => {
+                return None
+            }
+            _ => {}
+        }
+        let mut in_class = false;
+        while let Some(&b) = self.bytes.get(i) {
+            match b {
+                b'\\' => {
+                    i += 1;
+                    if i >= self.bytes.len() || self.bytes[i] == b'\n' {
+                        return None;
+                    }
+                    i += 1;
+                }
+                b'\n' => return None,
+                b'[' => {
+                    in_class = true;
+                    i += 1;
+                }
+                b']' if in_class => {
+                    in_class = false;
+                    i += 1;
+                }
+                b'/' if !in_class => {
+                    if matches!(self.bytes[i - 1], b' ' | b'\t') {
+                        return None;
+                    }
+                    return Some(i + 1 - self.pos);
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    /// Byte length of an extended `#/…/#` regex literal at the cursor
+    /// (delimiters included), or `None` if the cursor is not at one. Any number
+    /// of leading `#` is allowed; the body extends to a matching `/#*` and may
+    /// contain newlines and unescaped whitespace.
+    fn pound_regex_len(&self) -> Option<usize> {
+        let hashes = self.leading_hashes();
+        if hashes == 0 || self.peek_at(hashes) != Some(b'/') {
+            return None;
+        }
+        let mut i = self.pos + hashes + 1;
+        while let Some(&b) = self.bytes.get(i) {
+            match b {
+                b'\\' => i += 2,
+                b'/' if (0..hashes).all(|h| self.bytes.get(i + 1 + h) == Some(&b'#')) => {
+                    return Some(i + 1 + hashes - self.pos);
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    /// Consume `len` bytes of a regex literal beginning at `start`, tracking
+    /// line/column across any embedded newlines, and emit the token.
+    fn consume_regex(
+        &mut self,
+        len: usize,
+        start: usize,
+        line: u32,
+        col: u32,
+    ) -> Result<Token<'a>, LexError> {
+        let end = start + len;
+        while self.pos < end {
+            self.advance_char();
+        }
+        Ok(self.make(TokenKind::RegexLiteral, start, line, col))
     }
 
     /// Whether the cursor begins a raw string literal: one or more `#` followed
@@ -618,6 +726,30 @@ impl<'a> Lexer<'a> {
             col,
             leading_newline: self.pending_newline,
         }
+    }
+}
+
+/// Whether a `/` following `prev` should be lexed as the start of a regex
+/// literal (an expression is expected) rather than the division operator.
+///
+/// Division follows anything that *ends* an expression — an identifier, a
+/// literal, a closing `)`/`]`, or a value keyword (`self`, `true`, …). A regex
+/// may begin anywhere else: at file start, or after an operator, `(`, `,`, `:`,
+/// `return`, etc.
+fn regex_allowed(prev: Option<Token<'_>>) -> bool {
+    let Some(t) = prev else { return true };
+    match t.kind {
+        TokenKind::Identifier
+        | TokenKind::IntLiteral
+        | TokenKind::FloatLiteral
+        | TokenKind::StringLiteral
+        | TokenKind::RegexLiteral
+        | TokenKind::RParen
+        | TokenKind::RBracket
+        | TokenKind::RBrace
+        | TokenKind::Dot => false,
+        TokenKind::Keyword => !matches!(t.text, "true" | "false" | "nil" | "self" | "super"),
+        _ => true,
     }
 }
 
@@ -881,6 +1013,63 @@ mod tests {
         let err = tokenize("\\").unwrap_err();
         assert!(err.message.contains("unexpected"), "{}", err.message);
         assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn bare_regex_literal_in_expression_position() {
+        use TokenKind::*;
+        assert_eq!(
+            lex("let r = /\\d+/"),
+            vec![
+                (Keyword, "let"),
+                (Identifier, "r"),
+                (Oper, "="),
+                (RegexLiteral, "/\\d+/"),
+            ]
+        );
+        // After `(` and after `:` an expression is expected.
+        assert_eq!(lex("f(/a/)")[2], (RegexLiteral, "/a/"));
+        assert_eq!(lex("g(of: /a-z/)")[4], (RegexLiteral, "/a-z/"));
+        // A `/` inside a `[…]` class does not close the literal.
+        assert_eq!(lex("let r = /[/a]/")[3], (RegexLiteral, "/[/a]/"));
+        // An escaped `/` does not close the literal.
+        assert_eq!(lex("let r = /a\\/b/")[3], (RegexLiteral, "/a\\/b/"));
+    }
+
+    #[test]
+    fn slash_is_division_after_an_expression() {
+        use TokenKind::*;
+        assert_eq!(kinds("10 / 3"), vec![IntLiteral, Oper, IntLiteral]);
+        assert_eq!(kinds("a / b"), vec![Identifier, Oper, Identifier]);
+        assert_eq!(kinds("x /= 2"), vec![Identifier, Oper, IntLiteral]);
+        // `count) / 2` — a `/` after `)` is division, not a regex.
+        assert_eq!(lex("f() / 2")[3], (Oper, "/"));
+    }
+
+    #[test]
+    fn slash_with_leading_or_trailing_space_is_not_regex() {
+        use TokenKind::*;
+        // `= / x` cannot be a regex (body starts with a space): division.
+        assert_eq!(lex("let r = / x /")[2], (Oper, "="));
+        assert_eq!(lex("let r = / x /")[3], (Oper, "/"));
+    }
+
+    #[test]
+    fn extended_pound_regex_literal() {
+        use TokenKind::*;
+        // `#/…/#` is unambiguous: inner `/` and whitespace are literal.
+        assert_eq!(lex("let r = #/a\\/b/#")[3], (RegexLiteral, "#/a\\/b/#"));
+        assert_eq!(lex("let r = #/ \\d+ /#")[3], (RegexLiteral, "#/ \\d+ /#"));
+        // A pound-regex is recognised even right after an identifier.
+        assert_eq!(lex("s.contains(#/x/#)")[4], (RegexLiteral, "#/x/#"));
+    }
+
+    #[test]
+    fn pound_regex_spans_newlines() {
+        let src = "let r = #/\n  \\d+\n/#\nlet y = 1";
+        let toks = tokenize(src).unwrap();
+        let y = toks.iter().find(|t| t.text == "y").unwrap();
+        assert_eq!(y.line, 4);
     }
 
     #[test]

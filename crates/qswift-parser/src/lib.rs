@@ -445,7 +445,11 @@ impl<'a> Parser<'a> {
                 // Each binding needs its own annotation subtree; a shared
                 // inherited annotation is deep-copied for every reuse beyond the
                 // first.
-                let ty = if idx == 0 { ty } else { self.ast.clone_subtree(ty) };
+                let ty = if idx == 0 {
+                    ty
+                } else {
+                    self.ast.clone_subtree(ty)
+                };
                 self.ast.append_child(target, ty);
             }
             if let Some(init) = init {
@@ -2150,6 +2154,11 @@ impl<'a> Parser<'a> {
                 self.ast
                     .add(NodeKind::StringLiteral, Some(t.text), t.line, t.col)
             }
+            TokenKind::RegexLiteral => {
+                self.bump();
+                self.ast
+                    .add(NodeKind::RegexLiteral, Some(t.text), t.line, t.col)
+            }
             TokenKind::Keyword if t.text == "if" => return self.parse_if(),
             TokenKind::Keyword if t.text == "true" || t.text == "false" => {
                 self.bump();
@@ -2655,6 +2664,17 @@ mod tests {
              call_expr L1\n      \
              ident_expr \"print\" L1\n      \
              string_literal \"\\\"hi\\\"\" L1\n"
+        );
+    }
+
+    #[test]
+    fn parses_regex_literal() {
+        assert_eq!(
+            dump("let r = /\\d+/"),
+            "source_file L1\n  \
+             let_decl L1\n    \
+             name_pattern \"r\" L1\n    \
+             regex_literal \"/\\\\d+/\" L1\n"
         );
     }
 
@@ -3792,7 +3812,10 @@ mod tests {
         assert_eq!(stmts.len(), 2);
         assert_eq!(stmts[0].kind(), NodeKind::VarDecl);
         assert_eq!(stmts[1].kind(), NodeKind::AssignExpr);
-        assert_eq!(stmts[1].children().next().unwrap().kind(), NodeKind::TupleExpr);
+        assert_eq!(
+            stmts[1].children().next().unwrap().kind(),
+            NodeKind::TupleExpr
+        );
     }
 
     #[test]
