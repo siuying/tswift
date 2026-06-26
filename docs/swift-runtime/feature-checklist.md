@@ -407,7 +407,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Array<Element>` + CoW | ★★★★ | R1 |
 | [x] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
 | [x] | `Set<Element>` + CoW | ★★★ | R2 |
-| [ ] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
+| [x] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
 | [ ] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
 
 ### 10c. Protocols that drive the language
@@ -432,7 +432,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/… | ★★★ | R4 |
 | [x] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
 | [x] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
-| [ ] | `Result` | ★★ | R5 |
+| [x] | `Result` | ★★ | R5 |
 | [ ] | `MemoryLayout` | ★★ | R6+ |
 | [ ] | `Unsafe*Pointer` family | ★★★★ | R6+ |
 
