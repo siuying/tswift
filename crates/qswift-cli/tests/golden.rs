@@ -33,6 +33,11 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("swift") {
+            // Trap fixtures (a `.trap` sibling) are programs expected to abort;
+            // they have no stdout golden and are checked by `trap_fixtures_match`.
+            if path.with_extension("trap").exists() {
+                continue;
+            }
             let expected = path.with_extension("expected");
             assert!(
                 expected.exists(),
@@ -44,6 +49,42 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     }
     pairs.sort();
     pairs
+}
+
+/// Collect `(swift_path, trap_path)` pairs: programs expected to *trap*. A
+/// `<name>.trap` sibling holds the expected stderr substring (e.g. the trap
+/// message). The program passes when it exits non-zero with that text in
+/// stderr. Add one with a `.swift` + `.trap` pair — no code changes.
+fn trap_fixtures() -> Vec<(PathBuf, PathBuf)> {
+    let dir = fixtures_dir();
+    let mut pairs = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .expect("fixtures dir is readable")
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("swift") {
+            let trap = path.with_extension("trap");
+            if trap.exists() {
+                pairs.push((path, trap));
+            }
+        }
+    }
+    pairs.sort();
+    pairs
+}
+
+/// Run the CLI on `swift_path` and report whether it trapped with `needle` in
+/// stderr. Returns `(passed, stderr)` so callers can build a readable failure.
+fn run_trap(swift_path: &Path, needle: &str) -> (bool, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+        .arg("run")
+        .arg(swift_path)
+        .output()
+        .expect("failed to spawn qswift");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let passed = !output.status.success() && stderr.contains(needle);
+    (passed, stderr)
 }
 
 /// Run the CLI on `swift_path` and return its stdout as a `String`.
@@ -90,6 +131,43 @@ fn golden_fixtures_match() {
     assert!(
         failures.is_empty(),
         "{} golden fixture(s) mismatched:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+/// Every `fixtures/<name>.swift` with a sibling `<name>.trap` is a program that
+/// must abort: exit non-zero with the `.trap` file's text in stderr. Covers the
+/// trapping standard-library surface (`fatalError`, `assertionFailure`,
+/// `preconditionFailure`) that a stdout golden cannot, since those never
+/// produce a clean exit.
+#[test]
+fn trap_fixtures_match() {
+    let pairs = trap_fixtures();
+    assert!(
+        !pairs.is_empty(),
+        "no trap fixtures found in {}",
+        fixtures_dir().display()
+    );
+
+    let mut failures = Vec::new();
+    for (swift_path, trap_path) in &pairs {
+        let needle = std::fs::read_to_string(trap_path).expect("read .trap");
+        let needle = needle.trim();
+        let (passed, stderr) = run_trap(swift_path, needle);
+        if !passed {
+            failures.push(format!(
+                "\u{2500}\u{2500} {} \u{2500}\u{2500}\n  expected trap containing: {:?}\n  stderr: {:?}",
+                swift_path.file_name().unwrap().to_string_lossy(),
+                needle,
+                stderr,
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} trap fixture(s) did not trap as expected:\n{}",
         failures.len(),
         failures.join("\n")
     );
@@ -211,8 +289,11 @@ fn stdlib_coverage_inputs() {
     let registered = qswift_std::registered_keys().join("\n") + "\n";
     std::fs::write(out_dir.join("registered.txt"), registered).expect("write registered.txt");
 
-    // 2. Keys exercised by passing fixtures only.
+    // 2. Keys exercised by passing fixtures only. Start from a clean tmp dir so a
+    // prior interrupted run can never leave stale per-fixture key files that
+    // would be mis-read as this run's coverage.
     let tmp = out_dir.join("tmp");
+    let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).expect("create tmp dir");
     let mut exercised: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -230,6 +311,28 @@ fn stdlib_coverage_inputs() {
             continue;
         }
         if String::from_utf8_lossy(&output.stdout) != expected {
+            continue;
+        }
+        if let Ok(body) = std::fs::read_to_string(&keys_file) {
+            exercised.extend(body.lines().filter(|l| !l.is_empty()).map(str::to_string));
+        }
+    }
+
+    // Trap fixtures abort (non-zero exit), so they are excluded above. Count one
+    // only when it traps with the expected message; the coverage hook in
+    // `main.rs` writes the keys file before the trap propagates out.
+    for (i, (swift_path, trap_path)) in trap_fixtures().iter().enumerate() {
+        let needle = std::fs::read_to_string(trap_path).expect("read .trap");
+        let needle = needle.trim();
+        let keys_file = tmp.join(format!("trap-keys-{i}.txt"));
+        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+            .arg("run")
+            .arg(swift_path)
+            .env("QSWIFT_COVERAGE_OUT", &keys_file)
+            .output()
+            .expect("spawn qswift");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.success() || !stderr.contains(needle) {
             continue;
         }
         if let Ok(body) = std::fs::read_to_string(&keys_file) {
