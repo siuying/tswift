@@ -25,6 +25,32 @@ Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.s
 
 Every rust change should be fully covered in tests.
 
+## Coverage
+
+### Stdlib coverage
+
+`docs/swift-runtime/stdlib-inventory.md` is the full public Swift stdlib surface
+(generated from the toolchain `.swiftinterface` by
+`tools/stdlib-inventory/extract.py`). `tools/stdlib-inventory/coverage.py`
+cross-references it against the live `qswift-std` registry and the executing CLI
+golden fixtures to classify every member as **missing**, **implemented** (in the
+registry), or **verified** (in the registry *and* exercised by a passing
+fixture). See `tools/stdlib-inventory/README.md` and
+`docs/plan/stdlib-support.md` §2/§4.2.
+
+To get the current coverage:
+
+```sh
+# 1. Refresh the registry-key snapshot from the live registry (cannot drift).
+cargo test -p qswift-std dump_registered_keys
+
+# 2. Print per-type implemented/verified/total counts and the overall %.
+python3 tools/stdlib-inventory/coverage.py
+```
+
+Step 1 regenerates `tools/stdlib-inventory/registered_keys.txt`; run it after
+registering any new stdlib intrinsic so the report reflects reality.
+
 ## Agent skills
 
 ### Issue tracker
