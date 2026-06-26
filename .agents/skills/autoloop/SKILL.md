@@ -29,7 +29,7 @@ Problem:        <restate>
 Files in scope: <list>
 Signal:         <command> → <metric>  (or "none found — propose: <suggestion>")
 Strategy:       1. <idea>  2. <idea>  …
-Log file:       loop-log.md (untracked)
+Log file:       loop-log.{yyyymmdd}.md (untracked)
 ```
 
 ---
