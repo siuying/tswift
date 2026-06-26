@@ -266,8 +266,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [ ] | Opaque types `some P` (return) | ✅ | ★★★ | R4 |
 | [ ] | Boxed/existential `any P` | ✅ | ★★★ | R4 |
-| [ ] | Metatypes `T.self` / `.Type` / `.Protocol` | ✅ | ★★★ | R4 |
-| [ ] | `type(of:)` dynamic type | ✅ | ★★ | R4 |
+| [x] | Metatypes `T.self` / `.Type` / `.Protocol` | ✅ | ★★★ | R4 |
+| [x] | `type(of:)` dynamic type | ✅ | ★★ | R4 |
 | [ ] | Key paths `\Root.path` | ✅ | ★★★ | R6+ |
 | [ ] | Key-path expressions as functions | ⚠️ | ★★★ | R6+ |
 | [ ] | `@dynamicMemberLookup` | ✅ | ★★★ | R6+ |

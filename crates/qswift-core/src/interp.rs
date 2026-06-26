@@ -1577,6 +1577,29 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Whether `name` spells a known type — a user struct/class/enum/protocol
+    /// or a builtin value type — so `Type.self` resolves to a metatype.
+    fn is_type_name(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+            || self.classes.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.protocols.contains_key(name)
+            || IntWidth::from_type_name(name).is_some()
+            || matches!(
+                name,
+                "Int"
+                    | "UInt"
+                    | "Double"
+                    | "Float"
+                    | "Bool"
+                    | "String"
+                    | "Character"
+                    | "Array"
+                    | "Dictionary"
+                    | "Set"
+            )
+    }
+
     /// Whether `name` names a stored or computed member of the enclosing
     /// `self`, used to resolve implicit `self.<name>` references.
     fn is_self_member(&self, name: &str) -> bool {
@@ -3814,6 +3837,10 @@ impl<'w> Interpreter<'w> {
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
                 if self.env.get(&type_name).is_none() {
+                    // `Type.self` — a metatype value naming the type.
+                    if member == "self" && self.is_type_name(&type_name) {
+                        return Ok(SwiftValue::Metatype(type_name));
+                    }
                     if let Some(w) = IntWidth::from_type_name(&type_name) {
                         return match member.as_str() {
                             "max" => Ok(SwiftValue::Int(IntValue::new(w.max(), w))),
@@ -3946,6 +3973,16 @@ impl<'w> Interpreter<'w> {
                 .text()
                 .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
 
+            // `type(of: x)` — the dynamic type of `x` as a metatype value.
+            if name == "type" && self.env.get("type").is_none() {
+                if let Some(arg) = args
+                    .iter()
+                    .find(|a| a.label.as_deref() == Some("of"))
+                    .or_else(|| args.first())
+                {
+                    return Ok(SwiftValue::Metatype(arg.value.type_name()));
+                }
+            }
             // Built-in JSON coder markers.
             if name == "JSONEncoder" || name == "JSONDecoder" {
                 return Ok(SwiftValue::Struct(Rc::new(StructObj {

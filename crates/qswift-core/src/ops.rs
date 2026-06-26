@@ -21,6 +21,12 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        // Metatype identity: `Int.self == type(of: x)`.
+        (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
+            "==" => Ok(SwiftValue::Bool(a == b)),
+            "!=" => Ok(SwiftValue::Bool(a != b)),
+            _ => Err(format!("operator `{op}` cannot apply to metatypes")),
+        },
         _ => Err(format!(
             "operator `{op}` cannot apply to {} and {}",
             l.type_name(),

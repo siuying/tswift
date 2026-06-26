@@ -191,6 +191,9 @@ pub enum SwiftValue {
     /// group table. `addTask` appends children; `for await` drains their
     /// results.
     TaskGroup(usize),
+    /// A metatype value, e.g. `Int.self` or `type(of: x)`. Carries the spelled
+    /// type name; printing it renders the bare type name like Swift.
+    Metatype(String),
 }
 
 /// The storage of a class instance.
@@ -283,6 +286,7 @@ impl SwiftValue {
             SwiftValue::Closure(_) => "closure".into(),
             SwiftValue::Task(_) => "Task".into(),
             SwiftValue::TaskGroup(_) => "TaskGroup".into(),
+            SwiftValue::Metatype(name) => format!("{name}.Type"),
         }
     }
 }
@@ -326,6 +330,7 @@ impl PartialEq for SwiftValue {
             // Class instances compare by identity (`===`).
             (Object(a), Object(b)) => Rc::ptr_eq(a, b),
             (Weak(a), Weak(b)) => a.ptr_eq(b),
+            (Metatype(a), Metatype(b)) => a == b,
             _ => false,
         }
     }
@@ -421,6 +426,7 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Closure(_) => write!(f, "(Function)"),
             SwiftValue::Task(_) => write!(f, "Task"),
             SwiftValue::TaskGroup(_) => write!(f, "TaskGroup"),
+            SwiftValue::Metatype(name) => write!(f, "{name}"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;
                 if !e.payload.is_empty() {
