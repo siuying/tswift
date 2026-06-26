@@ -175,7 +175,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [~] | Designated / convenience initializers | ✅ | ★★★ | R3 |
 | [~] | Initializer delegation + 2-phase init | ✅ | ★★★★ | R3 |
 | [ ] | `required` initializers | ✅ | ★★ | R3 |
-| [ ] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
+| [x] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
 | [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
 | [~] | `unowned` references | ✅ | ★★ | R3 |
 | [ ] | `unowned(unsafe)` | ⚠️ | ★★ | R3 |

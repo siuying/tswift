@@ -1727,6 +1727,9 @@ impl<'w> Interpreter<'w> {
             self.env.pop();
             self.class_ctx.pop();
             match result {
+                // A failable initializer that runs `return nil` produces the
+                // absent optional rather than the half-built instance.
+                Err(Signal::Return(SwiftValue::Nil)) => return Ok(SwiftValue::Nil),
                 Ok(_) | Err(Signal::Return(_)) => {}
                 Err(e) => return Err(e),
             }
@@ -2632,6 +2635,9 @@ impl<'w> Interpreter<'w> {
             let built = self.env.get("self").unwrap_or(SwiftValue::Void);
             self.env.pop();
             return match result {
+                // A failable initializer that runs `return nil` produces the
+                // absent optional rather than the half-built value.
+                Err(Signal::Return(SwiftValue::Nil)) => Ok(SwiftValue::Nil),
                 Ok(_) | Err(Signal::Return(_)) => Ok(built),
                 Err(e) => Err(e),
             };
