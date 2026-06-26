@@ -8,6 +8,38 @@ These are **our own** fixtures, authored to track the feature checklist
 (`docs/swift-runtime/feature-checklist.md`). They are deliberately *not* a copy
 of any upstream corpus — they live in this repo so we can evolve them freely.
 
+## Two kinds of tests (and when to use which)
+
+The repo has **two independent fixture corpora**. They validate different
+layers of the pipeline — don't confuse them:
+
+| | **Frontend golden fixtures** (this dir) | **Runtime golden fixtures** |
+|---|---|---|
+| Location | `tests/swift-fixtures/` | `crates/qswift-cli/tests/fixtures/` |
+| Harness | `qswift-frontend/tests/golden_fixtures.rs` | `qswift-cli/tests/golden.rs` |
+| What runs | `Analysis::analyze()` — lex → parse → sema only | `qswift run` — the full evaluator (`qswift-core` + `qswift-std`) |
+| What's asserted | **Diagnostics** match inline directives | Program **stdout** matches a `.expected` sibling, byte-for-byte |
+| Executes code? | No | Yes |
+| Add a case by | Dropping in a `.swift` with directives | Dropping in a `.swift` + `.expected` pair |
+
+**Use a frontend fixture when** you're validating *what the compiler accepts,
+rejects, or how it diagnoses* — parser coverage, type-checking, error messages.
+Negative cases (`expected-error`) live here.
+
+**Use a runtime fixture when** you're validating *what a program produces when
+executed* — evaluator semantics, stdlib behaviour, printed output. These must be
+valid, runnable Swift with deterministic output.
+
+**Use both when** you add a feature end-to-end: a frontend fixture proves the
+construct is accepted/diagnosed correctly, and a runtime fixture proves it
+evaluates to the right result. A construct accepted by the frontend but not yet
+handled by the evaluator is exactly the gap a runtime fixture catches.
+
+The runtime corpus also has two extra flavors (see
+`crates/qswift-cli/tests/golden.rs`): `fixtures/multifile/<case>/` directories
+for cross-file modules, and `fixtures/ast/<name>.swift` + `.ast` snapshots that
+pin the typed-AST shape via `qswift dump`.
+
 ## Layout
 
 One directory per checklist tier; one or more `.swift` files per feature group:
