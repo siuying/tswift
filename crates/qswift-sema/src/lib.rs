@@ -28,8 +28,10 @@ pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
         types: Vec::new(),
         diags: Vec::new(),
         in_type_body: false,
+        enums: HashMap::new(),
     };
     let root = ast.root();
+    r.collect_enums(ast, root);
     r.prebind_func_decls(ast, root);
     for stmt in child_ids(ast, root) {
         r.resolve_statement(ast, stmt);
@@ -58,6 +60,9 @@ struct Resolver {
     /// properties are bound as mutable here: assigning to them is legal inside
     /// the type's initializer, so the local-`let` constant check must not fire.
     in_type_body: bool,
+    /// Every `enum` in the program, by name, mapped to its case names in source
+    /// order. Used to diagnose non-exhaustive `switch` statements.
+    enums: HashMap<String, Vec<String>>,
 }
 
 impl Resolver {
@@ -75,6 +80,42 @@ impl Resolver {
                 self.bind(name, Some(ret), false);
             }
         }
+    }
+
+    /// Record every `enum` declaration (including nested ones) and its case
+    /// names, so a `switch` over an enum can be checked for exhaustiveness.
+    fn collect_enums(&mut self, ast: &Ast, parent: NodeId) {
+        for child in child_ids(ast, parent) {
+            if ast.node(child).kind() == NodeKind::EnumDecl {
+                if let Some(name) = ast.node(child).text() {
+                    let cases = self.collect_enum_cases(ast, child);
+                    if !cases.is_empty() {
+                        self.enums.insert(name.to_string(), cases);
+                    }
+                }
+            }
+            // Recurse: enums may be nested inside other types or blocks.
+            self.collect_enums(ast, child);
+        }
+    }
+
+    /// The case names declared directly under an `enum`, in source order. Only
+    /// the case-list `Block` is descended, so a nested type's cases are not
+    /// mistaken for this enum's.
+    fn collect_enum_cases(&self, ast: &Ast, enum_decl: NodeId) -> Vec<String> {
+        let mut cases = Vec::new();
+        for child in child_ids(ast, enum_decl) {
+            match ast.node(child).kind() {
+                NodeKind::EnumCaseDecl => {
+                    if let Some(name) = ast.node(child).text() {
+                        cases.push(name.to_string());
+                    }
+                }
+                NodeKind::Block => cases.extend(self.collect_enum_cases(ast, child)),
+                _ => {}
+            }
+        }
+        cases
     }
 
     fn push_scope(&mut self) {
@@ -214,6 +255,7 @@ impl Resolver {
                 for &clause in &kids[1..] {
                     self.resolve_case_clause(ast, clause);
                 }
+                self.check_switch_exhaustiveness(ast, stmt, &kids);
             }
             NodeKind::ReturnStmt | NodeKind::ThrowStmt => {
                 if let Some(&value) = kids.first() {
@@ -262,6 +304,101 @@ impl Resolver {
             }
         }
         self.pop_scope();
+    }
+
+    /// Diagnose a `switch` over an enum that omits cases and has no `default`.
+    ///
+    /// The check is deliberately *sound* (never a false positive): it fires only
+    /// when the subject enum is unambiguously identified from the case patterns,
+    /// no `default`/`@unknown default` clause is present, and the set of
+    /// irrefutably-covered cases is a strict subset of the enum's cases.
+    fn check_switch_exhaustiveness(&mut self, ast: &Ast, switch: NodeId, kids: &[NodeId]) {
+        let clauses = &kids[1..];
+        // A `default` (or `@unknown default`) clause makes the switch exhaustive.
+        if clauses
+            .iter()
+            .any(|&c| ast.node(c).text() == Some("default"))
+        {
+            return;
+        }
+
+        // Gather the enum-case names referenced by every clause's patterns, plus
+        // those covered irrefutably (no `where` guard, irrefutable payloads). A
+        // catch-all pattern (`_` / bare name binding) covers everything.
+        let mut referenced: Vec<String> = Vec::new();
+        let mut covered: Vec<String> = Vec::new();
+        for &clause in clauses {
+            let items = child_ids(ast, clause);
+            let guarded = items
+                .iter()
+                .any(|&c| ast.node(c).kind() == NodeKind::WhereClause);
+            for &item in &items {
+                match ast.node(item).kind() {
+                    NodeKind::EnumCasePattern => {
+                        if let Some(name) = ast.node(item).text() {
+                            referenced.push(name.to_string());
+                            if !guarded && self.payload_is_irrefutable(ast, item) {
+                                covered.push(name.to_string());
+                            }
+                        }
+                    }
+                    // A bare `case _:` or `case let x:` (unguarded) is a
+                    // catch-all: the switch is exhaustive regardless of cases.
+                    NodeKind::WildcardPattern | NodeKind::NamePattern if !guarded => return,
+                    _ => {}
+                }
+            }
+        }
+
+        // Identify the subject enum: the one enum whose case set contains every
+        // referenced case name. Ambiguity or a non-enum switch → no diagnostic.
+        if referenced.is_empty() {
+            return;
+        }
+        let fits: Vec<(&String, &Vec<String>)> = self
+            .enums
+            .iter()
+            .filter(|(_, cases)| referenced.iter().all(|r| cases.iter().any(|c| c == r)))
+            .collect();
+        let [(enum_name, all_cases)] = fits.as_slice() else {
+            return; // no match, or ambiguous (multiple enums fit) — stay silent.
+        };
+
+        let missing: Vec<String> = all_cases
+            .iter()
+            .filter(|c| !covered.iter().any(|cov| cov == *c))
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let enum_name = (*enum_name).clone();
+        let list = missing
+            .iter()
+            .map(|c| format!("'.{c}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let n = ast.node(switch);
+        self.diags.push(Diagnostic {
+            message: format!(
+                "switch must be exhaustive: add missing case(s) {list} for enum '{enum_name}' or a 'default' clause"
+            ),
+            line: n.line(),
+            col: n.col(),
+        });
+    }
+
+    /// Whether an enum-case pattern's payload sub-patterns are all irrefutable
+    /// (wildcards or plain name bindings), so the pattern matches the case for
+    /// every payload value. Literal/range/nested-enum payloads are refutable.
+    fn payload_is_irrefutable(&self, ast: &Ast, pattern: NodeId) -> bool {
+        child_ids(ast, pattern).iter().all(|&sub| {
+            match ast.node(sub).kind() {
+                NodeKind::WildcardPattern | NodeKind::NamePattern => true,
+                NodeKind::TuplePattern => self.payload_is_irrefutable(ast, sub),
+                _ => false,
+            }
+        })
     }
 
     fn resolve_func(&mut self, ast: &Ast, decl: NodeId, kids: &[NodeId]) {
@@ -884,5 +1021,95 @@ mod tests {
                    func maxOf<T>(a: T, b: T, pick: T) -> T { return pick }";
         let (_ast, diags) = resolved(src);
         assert!(diags.is_empty(), "{diags:?}");
+    }
+
+    // --- Switch exhaustiveness ---
+
+    fn exhaustiveness_diag(src: &str) -> Option<String> {
+        let (_ast, diags) = resolved(src);
+        diags
+            .into_iter()
+            .find(|d| d.message.contains("switch must be exhaustive"))
+            .map(|d| d.message)
+    }
+
+    #[test]
+    fn non_exhaustive_enum_switch_is_diagnosed() {
+        let src = "enum D { case north, south, east, west }\n\
+                   let d = D.north\n\
+                   switch d { case .north: break }";
+        let msg = exhaustiveness_diag(src).expect("expected a diagnostic");
+        assert!(msg.contains("'.south'"), "{msg}");
+        assert!(msg.contains("'.east'"), "{msg}");
+        assert!(msg.contains("'.west'"), "{msg}");
+    }
+
+    #[test]
+    fn exhaustive_enum_switch_has_no_diagnostic() {
+        let src = "enum D { case north, south }\n\
+                   let d = D.north\n\
+                   switch d { case .north: break\ncase .south: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn comma_separated_cases_count_as_covered() {
+        let src = "enum D { case a, b, c }\n\
+                   switch D.a { case .a, .b, .c: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn default_clause_makes_switch_exhaustive() {
+        let src = "enum D { case a, b, c }\n\
+                   switch D.a { case .a: break\ndefault: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn unknown_default_makes_switch_exhaustive() {
+        let src = "enum D { case a, b, c }\n\
+                   switch D.a { case .a: break\n@unknown default: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn catch_all_binding_makes_switch_exhaustive() {
+        let src = "enum D { case a, b, c }\n\
+                   switch D.a { case .a: break\ncase let other: _ = other }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn where_guarded_case_does_not_cover() {
+        // A `where`-guarded `.a` may fail, so `.a` is still missing.
+        let src = "enum D { case a, b }\n\
+                   let n = 1\n\
+                   switch D.a { case .a where n > 0: break\ncase .b: break }";
+        let msg = exhaustiveness_diag(src).expect("expected a diagnostic");
+        assert!(msg.contains("'.a'"), "{msg}");
+    }
+
+    #[test]
+    fn irrefutable_payload_binding_covers_case() {
+        let src = "enum D { case a(Int), b }\n\
+                   switch D.b { case .a(let x): _ = x\ncase .b: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
+    }
+
+    #[test]
+    fn refutable_payload_does_not_cover_case() {
+        // `.a(0)` only matches a specific payload, so `.a` is not fully covered.
+        let src = "enum D { case a(Int), b }\n\
+                   switch D.b { case .a(0): break\ncase .b: break }";
+        let msg = exhaustiveness_diag(src).expect("expected a diagnostic");
+        assert!(msg.contains("'.a'"), "{msg}");
+    }
+
+    #[test]
+    fn integer_switch_is_not_treated_as_enum() {
+        // No enum patterns → nothing to check; partial Int switch is fine here.
+        let src = "let n = 3\nswitch n { case 0: break\ncase 1: break }";
+        assert_eq!(exhaustiveness_diag(src), None);
     }
 }
