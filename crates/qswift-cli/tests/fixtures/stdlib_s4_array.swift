@@ -15,6 +15,13 @@ b[1] = 99
 print(b)
 b.reserveCapacity(100)
 print(b.count, b.capacity >= 0)
+print(b.description)
+print(b.debugDescription)
+print(b.hashValue == b.hashValue, [1, 2].hashValue == [2, 1].hashValue)
+print(b.distance(from: b.startIndex, to: b.endIndex))
+print(b.index(b.startIndex, offsetBy: 2))
+b.replaceSubrange(1..<3, with: [7, 8, 9])
+print(b)
 
 print([1, 2] + [3, 4])
 var c = [1]

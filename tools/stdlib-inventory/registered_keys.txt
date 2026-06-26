@@ -1,8 +1,13 @@
 Array.append
 Array.capacity
 Array.count
+Array.debugDescription
+Array.description
+Array.distance
 Array.endIndex
 Array.first
+Array.hashValue
+Array.index
 Array.insert
 Array.isEmpty
 Array.last
@@ -10,6 +15,7 @@ Array.remove
 Array.removeAll
 Array.removeFirst
 Array.removeLast
+Array.replaceSubrange
 Array.reserveCapacity
 Array.startIndex
 Bool.description
