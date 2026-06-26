@@ -9,16 +9,35 @@ use qswift_core::{
 
 /// Register the `Array` intrinsics of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
-    let m = |interp: &mut Interpreter<'_>, name: &str, func: qswift_core::IntrinsicFn| {
-        interp.register_intrinsic(BuiltinReceiver::Array, name, MethodEntry { mutating: true, func });
+    let mutating = |interp: &mut Interpreter<'_>, name: &str, func: qswift_core::IntrinsicFn| {
+        interp.register_intrinsic(
+            BuiltinReceiver::Array,
+            name,
+            MethodEntry {
+                mutating: true,
+                func,
+            },
+        );
     };
-    m(interp, "append", append);
-    m(interp, "insert", insert);
-    m(interp, "remove", remove_at);
-    m(interp, "removeLast", remove_last);
-    m(interp, "removeFirst", remove_first);
-    m(interp, "removeAll", remove_all);
-    m(interp, "reserveCapacity", reserve_capacity);
+    let nonmutating = |interp: &mut Interpreter<'_>, name: &str, func: qswift_core::IntrinsicFn| {
+        interp.register_intrinsic(
+            BuiltinReceiver::Array,
+            name,
+            MethodEntry {
+                mutating: false,
+                func,
+            },
+        );
+    };
+    mutating(interp, "append", append);
+    mutating(interp, "insert", insert);
+    mutating(interp, "remove", remove_at);
+    mutating(interp, "removeLast", remove_last);
+    mutating(interp, "removeFirst", remove_first);
+    mutating(interp, "removeAll", remove_all);
+    mutating(interp, "reserveCapacity", reserve_capacity);
+    nonmutating(interp, "distance", distance);
+    nonmutating(interp, "index", index);
 
     interp.register_property(BuiltinReceiver::Array, "count", count);
     interp.register_property(BuiltinReceiver::Array, "isEmpty", is_empty);
@@ -27,6 +46,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Array, "startIndex", start_index);
     interp.register_property(BuiltinReceiver::Array, "endIndex", end_index);
     interp.register_property(BuiltinReceiver::Array, "capacity", count);
+    interp.register_property(BuiltinReceiver::Array, "description", description);
+    interp.register_property(BuiltinReceiver::Array, "debugDescription", description);
+    interp.register_property(BuiltinReceiver::Array, "hashValue", hash_value);
 }
 
 /// Unwrap an array receiver into its backing `Rc<Vec>`.
@@ -46,7 +68,30 @@ fn index_arg(args: &[SwiftValue], who: &str) -> Result<usize, StdError> {
         _ => None,
     }) {
         Some(i) => Ok(i),
-        None => Err(StdError::Error(EvalError::Type(format!("{who} expects an index")))),
+        None => Err(StdError::Error(EvalError::Type(format!(
+            "{who} expects an index"
+        )))),
+    }
+}
+
+fn int_args(args: &[SwiftValue], who: &str) -> Result<Vec<i128>, StdError> {
+    args.iter()
+        .map(|a| match a {
+            SwiftValue::Int(i) => Ok(i.raw),
+            _ => Err(StdError::Error(EvalError::Type(format!(
+                "{who} expects integer indexes"
+            )))),
+        })
+        .collect()
+}
+
+fn ensure_index(index: i128, len: i128, who: &str) -> Result<(), StdError> {
+    if (0..=len).contains(&index) {
+        Ok(())
+    } else {
+        Err(StdError::Error(EvalError::Trap(format!(
+            "{who} index {index} out of range"
+        ))))
     }
 }
 
@@ -65,9 +110,10 @@ fn append(
             "append called on a non-array receiver".into(),
         )));
     };
-    let element = args.into_iter().next().ok_or_else(|| {
-        StdError::Error(EvalError::Type("append expects one argument".into()))
-    })?;
+    let element = args
+        .into_iter()
+        .next()
+        .ok_or_else(|| StdError::Error(EvalError::Type("append expects one argument".into())))?;
     Rc::make_mut(&mut items).push(element);
     Ok(Outcome {
         result: SwiftValue::Void,
@@ -76,7 +122,11 @@ fn append(
 }
 
 /// `Array.insert(_:at:)` — insert one element at an index.
-fn insert(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Result<Outcome, StdError> {
+fn insert(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
     let element = args
         .first()
@@ -89,11 +139,18 @@ fn insert(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> R
         ))));
     }
     Rc::make_mut(&mut v).insert(at, element);
-    Ok(Outcome { result: SwiftValue::Void, receiver: SwiftValue::Array(v) })
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(v),
+    })
 }
 
 /// `Array.remove(at:)` — remove and return the element at an index.
-fn remove_at(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Result<Outcome, StdError> {
+fn remove_at(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
     let at = index_arg(&args, "remove(at:)")?;
     if at >= v.len() {
@@ -102,38 +159,137 @@ fn remove_at(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -
         ))));
     }
     let removed = Rc::make_mut(&mut v).remove(at);
-    Ok(Outcome { result: removed, receiver: SwiftValue::Array(v) })
+    Ok(Outcome {
+        result: removed,
+        receiver: SwiftValue::Array(v),
+    })
 }
 
 /// `Array.removeLast()` — remove and return the final element.
-fn remove_last(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Result<Outcome, StdError> {
+fn remove_last(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
     let removed = Rc::make_mut(&mut v)
         .pop()
         .ok_or_else(|| StdError::Error(EvalError::Trap("removeLast on empty array".into())))?;
-    Ok(Outcome { result: removed, receiver: SwiftValue::Array(v) })
+    Ok(Outcome {
+        result: removed,
+        receiver: SwiftValue::Array(v),
+    })
 }
 
 /// `Array.removeFirst()` — remove and return the first element.
-fn remove_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Result<Outcome, StdError> {
+fn remove_first(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
     if v.is_empty() {
-        return Err(StdError::Error(EvalError::Trap("removeFirst on empty array".into())));
+        return Err(StdError::Error(EvalError::Trap(
+            "removeFirst on empty array".into(),
+        )));
     }
     let removed = Rc::make_mut(&mut v).remove(0);
-    Ok(Outcome { result: removed, receiver: SwiftValue::Array(v) })
+    Ok(Outcome {
+        result: removed,
+        receiver: SwiftValue::Array(v),
+    })
 }
 
 /// `Array.removeAll(keepingCapacity:)` — empty the array (capacity ignored).
-fn remove_all(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Result<Outcome, StdError> {
+fn remove_all(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
     Rc::make_mut(&mut v).clear();
-    Ok(Outcome { result: SwiftValue::Void, receiver: SwiftValue::Array(v) })
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(v),
+    })
 }
 
 /// `Array.reserveCapacity(_:)` — a no-op on our `Vec`-backed arrays.
-fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Result<Outcome, StdError> {
-    Ok(Outcome { result: SwiftValue::Void, receiver: recv })
+fn reserve_capacity(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `Array.distance(from:to:)` — integer indexes make distance simple subtraction.
+fn distance(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let len = items(recv.clone())?.len() as i128;
+    let indexes = int_args(&args, "distance(from:to:)")?;
+    match indexes.as_slice() {
+        [start, end] => {
+            ensure_index(*start, len, "distance(from:to:)")?;
+            ensure_index(*end, len, "distance(from:to:)")?;
+            Ok(Outcome {
+                result: SwiftValue::int(end - start),
+                receiver: recv,
+            })
+        }
+        _ => Err(StdError::Error(EvalError::Type(
+            "distance(from:to:) expects two indexes".into(),
+        ))),
+    }
+}
+
+/// `Array.index` overloads over integer indexes.
+fn index(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let len = items(recv.clone())?.len() as i128;
+    let indexes = int_args(&args, "index")?;
+    let result = match indexes.as_slice() {
+        [i, distance] => {
+            ensure_index(*i, len, "index")?;
+            let next = i + distance;
+            ensure_index(next, len, "index")?;
+            SwiftValue::int(next)
+        }
+        [i, distance, limit] => {
+            ensure_index(*i, len, "index")?;
+            ensure_index(*limit, len, "index")?;
+            let next = i + distance;
+            let passed_limit = if *distance >= 0 {
+                next > *limit
+            } else {
+                next < *limit
+            };
+            if passed_limit {
+                SwiftValue::Nil
+            } else {
+                ensure_index(next, len, "index")?;
+                SwiftValue::int(next)
+            }
+        }
+        _ => {
+            return Err(StdError::Error(EvalError::Type(
+                "index expects two or three integer arguments".into(),
+            )))
+        }
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
 }
 
 // ---- properties ------------------------------------------------------------
@@ -163,6 +319,58 @@ fn end_index(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(items(recv)?.len() as i128))
 }
 
+fn description(recv: SwiftValue) -> StdResult {
+    let _ = items(recv.clone())?;
+    Ok(SwiftValue::Str(recv.to_string()))
+}
+
+fn hash_value(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(stable_hash(&recv) as i64 as i128))
+}
+
+fn stable_hash(value: &SwiftValue) -> u64 {
+    fn mix(mut hash: u64, value: u64) -> u64 {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+        hash.rotate_left(5)
+    }
+
+    match value {
+        SwiftValue::Void => 0x01,
+        SwiftValue::Nil => 0x02,
+        SwiftValue::Bool(b) => u64::from(*b) + 0x10,
+        SwiftValue::Int(i) => mix(0x20, i.raw as u64),
+        SwiftValue::Double(d) => mix(0x30, d.to_bits()),
+        SwiftValue::Str(s) => s.bytes().fold(0x40, |h, b| mix(h, b as u64)),
+        SwiftValue::Tuple(items) => items.iter().fold(0x50, |h, v| mix(h, stable_hash(v))),
+        SwiftValue::Array(items) => items.iter().fold(0x60, |h, v| mix(h, stable_hash(v))),
+        SwiftValue::Dict(pairs) => pairs.iter().fold(0x70, |h, (k, v)| {
+            mix(mix(h, stable_hash(k)), stable_hash(v))
+        }),
+        SwiftValue::Set(items) => items.iter().fold(0x80, |h, v| mix(h, stable_hash(v))),
+        SwiftValue::Range { lo, hi, inclusive } => mix(
+            mix(mix(0x90, *lo as u64), *hi as u64),
+            u64::from(*inclusive),
+        ),
+        SwiftValue::Function(id)
+        | SwiftValue::Closure(id)
+        | SwiftValue::Task(id)
+        | SwiftValue::TaskGroup(id) => mix(0xa0, *id as u64),
+        SwiftValue::Struct(obj) => obj.fields.iter().fold(0xb0, |h, (name, field)| {
+            mix(
+                mix(h, stable_hash(&SwiftValue::Str(name.clone()))),
+                stable_hash(field),
+            )
+        }),
+        SwiftValue::Enum(obj) => obj.payload.iter().fold(
+            mix(0xc0, stable_hash(&SwiftValue::Str(obj.case.clone()))),
+            |h, payload| mix(h, stable_hash(payload)),
+        ),
+        SwiftValue::Object(obj) => Rc::as_ptr(obj) as usize as u64,
+        SwiftValue::Weak(obj) => obj.as_ptr() as usize as u64,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,11 +382,7 @@ mod tests {
     }
 
     impl StdContext for MockCtx {
-        fn call_closure(
-            &mut self,
-            _id: usize,
-            _args: Vec<SwiftValue>,
-        ) -> qswift_core::StdResult {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> qswift_core::StdResult {
             Ok(SwiftValue::Void)
         }
         fn out(&mut self) -> &mut dyn std::io::Write {
@@ -253,8 +457,44 @@ mod tests {
         assert_eq!(is_empty(arr.clone()).unwrap(), SwiftValue::Bool(false));
         assert_eq!(first(arr.clone()).unwrap(), SwiftValue::int(5));
         assert_eq!(last(arr.clone()).unwrap(), SwiftValue::int(6));
-        assert_eq!(end_index(arr).unwrap(), SwiftValue::int(2));
-        assert_eq!(first(SwiftValue::Array(Rc::new(vec![]))).unwrap(), SwiftValue::Nil);
+        assert_eq!(end_index(arr.clone()).unwrap(), SwiftValue::int(2));
+        assert_eq!(
+            description(arr.clone()).unwrap(),
+            SwiftValue::Str("[5, 6]".into())
+        );
+        assert_eq!(hash_value(arr.clone()).unwrap(), hash_value(arr).unwrap());
+        assert_eq!(
+            first(SwiftValue::Array(Rc::new(vec![]))).unwrap(),
+            SwiftValue::Nil
+        );
+    }
+
+    #[test]
+    fn index_helpers_use_integer_indexes() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let recv = SwiftValue::Array(Rc::new(vec![SwiftValue::int(1), SwiftValue::int(2)]));
+
+        let out = distance(
+            &mut ctx,
+            recv.clone(),
+            vec![SwiftValue::int(0), SwiftValue::int(2)],
+        )
+        .unwrap();
+        assert_eq!(out.result, SwiftValue::int(2));
+        assert_eq!(out.receiver, recv);
+
+        let out = index(
+            &mut ctx,
+            SwiftValue::Array(Rc::new(vec![
+                SwiftValue::int(0),
+                SwiftValue::int(1),
+                SwiftValue::int(2),
+                SwiftValue::int(3),
+            ])),
+            vec![SwiftValue::int(1), SwiftValue::int(3)],
+        )
+        .unwrap();
+        assert_eq!(out.result, SwiftValue::int(4));
     }
 
     #[test]
