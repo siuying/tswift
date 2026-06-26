@@ -9,11 +9,15 @@ mod env;
 mod interp;
 mod json;
 mod ops;
+mod stdlib;
 pub mod suspend;
 mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use interp::{EvalError, Interpreter, NativeFn};
+pub use stdlib::{
+    BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome, StdContext, StdError, StdResult,
+};
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 
 /// Register a minimal `print` native for unit tests inside this crate.

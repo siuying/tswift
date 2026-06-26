@@ -1,30 +1,21 @@
 //! qswift-std — native standard-library builtins.
 //!
-//! The walking skeleton ships a single builtin, `print`, and a one-call
-//! [`install`] that registers it into an [`Interpreter`]. Later milestones
-//! add `numeric`/`string`/`collection`/… here.
+//! Every builtin plugs into the interpreter through the [`StdContext`] seam
+//! defined in `qswift-core` (see `docs/plan/stdlib-support.md`). Two layers:
+//!
+//! * **free functions** (`print`, …) registered by name; and
+//! * **method intrinsics** registered against a [`BuiltinReceiver`] +
+//!   method-name key, each carrying a `mutating` flag.
+//!
+//! [`install`] wires every builtin into an [`Interpreter`] in one call.
 
-use std::io::Write;
+mod array;
+mod free;
 
-use qswift_core::{Interpreter, SwiftValue};
+use qswift_core::Interpreter;
 
 /// Register every standard-library native into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
-    interp.register_native("print", print);
-}
-
-/// Swift's `print(_:separator:terminator:)`, skeleton subset.
-///
-/// Joins its arguments with a single space and appends a newline — matching
-/// `print`'s default `separator: " "` and `terminator: "\n"`.
-fn print(out: &mut dyn Write, args: &[SwiftValue]) -> SwiftValue {
-    let line = args
-        .iter()
-        .map(|v| v.to_string())
-        .collect::<Vec<_>>()
-        .join(" ");
-    // The CLI flushes/owns the sink; ignore write errors here to keep the native
-    // signature infallible (errors surface when the sink is finalized).
-    let _ = writeln!(out, "{line}");
-    SwiftValue::Void
+    free::install(interp);
+    array::install(interp);
 }
