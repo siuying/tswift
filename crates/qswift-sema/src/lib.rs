@@ -351,7 +351,10 @@ impl Resolver {
         }
 
         // Identify the subject enum: the one enum whose case set contains every
-        // referenced case name. Ambiguity or a non-enum switch → no diagnostic.
+        // referenced case name. A type-qualified pattern (`Direction.north`)
+        // does not narrow this — the parser keeps only the case name — so the
+        // ambiguity guard below is what keeps the check sound. Ambiguity or a
+        // non-enum switch → no diagnostic.
         if referenced.is_empty() {
             return;
         }

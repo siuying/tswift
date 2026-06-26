@@ -3972,18 +3972,15 @@ impl<'w> Interpreter<'w> {
                     .cloned()
                     .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
             }
-            // Named tuple element access (`r.min` on `(min: 1, max: 9)`).
+            // Named tuple element access (`r.min` on `(min: 1, max: 9)`). This
+            // also serves a dictionary element's `.key`/`.value`, since those
+            // tuples carry the `key`/`value` labels (see `dict_element_tuple`).
             (SwiftValue::Tuple(items, labels), name)
                 if SwiftValue::tuple_label_index(labels, name).is_some() =>
             {
                 let i = SwiftValue::tuple_label_index(labels, name).unwrap();
                 Ok(items[i].clone())
             }
-            // Dictionary iteration yields a `(key:, value:)` element tuple;
-            // resolve its labelled members to the positional slots. Sema only
-            // admits these labels on the dictionary element tuple shape.
-            (SwiftValue::Tuple(items, _), "key") if items.len() == 2 => Ok(items[0].clone()),
-            (SwiftValue::Tuple(items, _), "value") if items.len() == 2 => Ok(items[1].clone()),
             _ => Err(
                 EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
             ),
@@ -5579,6 +5576,20 @@ mod tests {
     fn named_tuple_prints_labels() {
         let out = run("print((x: 10, y: 20))\n").unwrap();
         assert_eq!(out, "(x: 10, y: 20)\n");
+    }
+
+    #[test]
+    fn dict_element_key_value_resolve_by_label() {
+        let out = run("let d = [\"a\": 1]\nfor e in d { print(e.key, e.value) }\n").unwrap();
+        assert_eq!(out, "a 1\n");
+    }
+
+    #[test]
+    fn plain_tuple_rejects_key_label() {
+        // `.key`/`.value` are not admitted on an arbitrary 2-tuple — only on a
+        // tuple actually carrying those labels (a dictionary element).
+        let err = run("let p = (x: 1, y: 2)\nprint(p.key)\n").unwrap_err();
+        assert!(err.to_string().contains("member .key"), "{err}");
     }
 
     #[test]
