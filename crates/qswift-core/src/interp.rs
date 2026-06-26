@@ -13,6 +13,7 @@ use qswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
+use crate::stdlib::{BuiltinReceiver, FreeFn, MethodEntry, Outcome, StdContext, StdError};
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
 
@@ -224,6 +225,10 @@ struct CallArg {
 pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
+    /// Free-function intrinsics served through the [`StdContext`] seam.
+    free_fns: HashMap<String, FreeFn>,
+    /// Method intrinsics keyed by `(builtin receiver, method name)`.
+    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -280,6 +285,8 @@ impl<'w> Interpreter<'w> {
         Interpreter {
             out,
             natives: HashMap::new(),
+            free_fns: HashMap::new(),
+            intrinsics: HashMap::new(),
             env: Env::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
@@ -307,6 +314,72 @@ impl<'w> Interpreter<'w> {
     /// Register a native function callable from Swift source by `name`.
     pub fn register_native(&mut self, name: &str, f: NativeFn) {
         self.natives.insert(name.to_string(), f);
+    }
+
+    /// Register a free-function intrinsic served through the [`StdContext`] seam.
+    pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
+        self.free_fns.insert(name.to_string(), f);
+    }
+
+    /// Register a method intrinsic on a builtin receiver type.
+    pub fn register_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: MethodEntry,
+    ) {
+        self.intrinsics.insert((recv, name.to_string()), entry);
+    }
+
+    /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
+    /// Loop/`return` control flow cannot legitimately cross an intrinsic call.
+    fn signal_to_std_error(sig: Signal) -> StdError {
+        match sig {
+            Signal::Throw(v) => StdError::Throw(v),
+            Signal::Error(e) => StdError::Error(e),
+            Signal::Return(_)
+            | Signal::Break(_)
+            | Signal::Continue(_)
+            | Signal::Fallthrough => {
+                StdError::Error(EvalError::Trap("control flow escaped a builtin call".into()))
+            }
+        }
+    }
+
+    /// Lift a [`StdError`] from the seam back into the interpreter's [`Signal`].
+    fn std_error_to_signal(err: StdError) -> Signal {
+        match err {
+            StdError::Throw(v) => Signal::Throw(v),
+            StdError::Error(e) => Signal::Error(e),
+        }
+    }
+
+    /// Dispatch a method call on a builtin receiver through the intrinsic
+    /// registry, if one is registered. Returns `None` when no intrinsic matches
+    /// so the caller can fall through to the existing ad-hoc paths.
+    fn dispatch_intrinsic(
+        &mut self,
+        recv_value: SwiftValue,
+        method: &str,
+        args: Vec<SwiftValue>,
+        base_place: Option<Place>,
+    ) -> Option<Eval> {
+        let kind = BuiltinReceiver::of(&recv_value)?;
+        let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
+        let outcome = (entry.func)(self, recv_value, args);
+        Some(match outcome {
+            Ok(Outcome { result, receiver }) => {
+                if entry.mutating {
+                    if let Some(place) = base_place {
+                        if let Err(sig) = self.write_place(&place, receiver) {
+                            return Some(Err(sig));
+                        }
+                    }
+                }
+                Ok(result)
+            }
+            Err(err) => Err(Self::std_error_to_signal(err)),
+        })
     }
 
     /// Predeclare `Result<Success, Failure>` as a two-case enum so
@@ -3373,6 +3446,11 @@ impl<'w> Interpreter<'w> {
                     return Ok(v);
                 }
             }
+            // Free-function intrinsic served through the StdContext seam.
+            if let Some(free) = self.free_fns.get(&name).copied() {
+                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                return free(self, plain).map_err(Self::std_error_to_signal);
+            }
             if let Some(native) = self.natives.get(&name).copied() {
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 return Ok(native(self.out, &plain));
@@ -3581,6 +3659,20 @@ impl<'w> Interpreter<'w> {
             let class_name = obj.borrow().class_name.clone();
             let args = self.eval_args(arg_nodes)?;
             return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
+        }
+
+        // Standard-library intrinsic registry (layer 1): type-specific members
+        // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
+        if let Some(kind) = BuiltinReceiver::of(&base_value) {
+            if self.intrinsics.contains_key(&(kind, method.clone())) {
+                let args = self.eval_args(arg_nodes)?;
+                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                let place = self.resolve_place(&base);
+                if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
+                    return result;
+                }
+                unreachable!("intrinsic presence checked above");
+            }
         }
 
         // Built-in higher-order array methods taking a closure/predicate.
@@ -4141,6 +4233,24 @@ impl<'w> Interpreter<'w> {
             "String" => Ok(Some(SwiftValue::Str(value.to_string()))),
             _ => Ok(None),
         }
+    }
+}
+
+/// The capability surface the standard-library seam sees: a narrow window onto
+/// the interpreter (call a closure, write output, throw) — not the whole engine.
+impl StdContext for Interpreter<'_> {
+    fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> crate::stdlib::StdResult {
+        // Reuse the inherent closure caller; translate its control-flow channel
+        // into the seam's error type.
+        match Interpreter::call_closure(self, id, args) {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(sig) => Err(Self::signal_to_std_error(sig)),
+        }
+    }
+
+    fn out(&mut self) -> &mut dyn Write {
+        self.out
     }
 }
 
