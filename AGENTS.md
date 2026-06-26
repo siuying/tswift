@@ -4,6 +4,12 @@
 
 - `creates` - quick-swift rust packages.
 - `crates/qswift-lexer`, `crates/qswift-ast`, `crates/qswift-parser`, `crates/qswift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/qswift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
+
+## Notable Documents
+
+- `README.md` - overview of the project.
+- `docs/swift-runtime/feature-checklist.md` - high level checklist of features we want to implement.
+- `docs/swift-runtime/stdlib-inventory.md` - complete standard library interface of Swift.
 - `docs/plan/swift-runtime-implementation-plan.md` - overall plan
 - `docs/research` - research on the (now-removed) msf C frontend and the VM. `docs/research/msf-ast-cheatsheet.md` documents the runtime-facing AST contract the Rust compat lowerer reproduces — useful background before working against the AST.
 - `docs/agents/environment.md` - commit/signing conventions, offline-build constraints, tooling notes. Read before committing or adding a dependency.
