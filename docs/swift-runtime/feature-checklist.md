@@ -395,8 +395,8 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Int`/`UInt` family (all widths) + overflow ops | ★★ | R0 |
 | [x] | `Float`/`Double` + math | ★★ | R0 |
 | [x] | `Bool` | ★ | R0 |
-| [ ] | `String` (UTF-8, NFC, views) + `Character` | ★★★★ | R1 |
-| [ ] | `Substring` | ★★★ | R2 |
+| [~] | `String` (UTF-8, NFC, views) + `Character` | ★★★★ | R1 |
+| [~] | `Substring` | ★★★ | R2 |
 | [x] | `Optional<Wrapped>` | ★★ | R2 |
 | [x] | `Range`/`ClosedRange`/`Stride` | ★★ | R1 |
 | [ ] | Tuples | ★★ | R1 |
