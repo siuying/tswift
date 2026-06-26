@@ -16,7 +16,29 @@
 //!     caught.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+
+/// Run `qswift run <swift_path>`, optionally capturing coverage keys. If a
+/// `<name>.stdin` sibling exists, its bytes are piped to the program's stdin;
+/// otherwise stdin is left empty. Centralizes process spawning so every harness
+/// (golden, coverage, trap) handles stdin identically.
+fn run_program(swift_path: &Path, coverage_out: Option<&Path>) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_qswift"));
+    cmd.arg("run").arg(swift_path);
+    if let Some(out) = coverage_out {
+        cmd.env("QSWIFT_COVERAGE_OUT", out);
+    }
+    let stdin_path = swift_path.with_extension("stdin");
+    if stdin_path.exists() {
+        // Redirect the child's stdin straight from the file. This lets the OS
+        // feed input while `output()` concurrently drains stdout/stderr, so a
+        // program that both reads stdin and writes output can never deadlock on
+        // a full pipe (unlike writing all of stdin ourselves before reading).
+        let file = std::fs::File::open(&stdin_path).expect("open .stdin");
+        cmd.stdin(Stdio::from(file));
+    }
+    cmd.output().expect("failed to spawn qswift")
+}
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -77,11 +99,7 @@ fn trap_fixtures() -> Vec<(PathBuf, PathBuf)> {
 /// Run the CLI on `swift_path` and report whether it trapped with `needle` in
 /// stderr. Returns `(passed, stderr)` so callers can build a readable failure.
 fn run_trap(swift_path: &Path, needle: &str) -> (bool, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
-        .arg("run")
-        .arg(swift_path)
-        .output()
-        .expect("failed to spawn qswift");
+    let output = run_program(swift_path, None);
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let passed = !output.status.success() && stderr.contains(needle);
     (passed, stderr)
@@ -89,11 +107,7 @@ fn run_trap(swift_path: &Path, needle: &str) -> (bool, String) {
 
 /// Run the CLI on `swift_path` and return its stdout as a `String`.
 fn run_cli(swift_path: &Path) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
-        .arg("run")
-        .arg(swift_path)
-        .output()
-        .expect("failed to spawn qswift");
+    let output = run_program(swift_path, None);
 
     assert!(
         output.status.success(),
@@ -300,12 +314,7 @@ fn stdlib_coverage_inputs() {
     for (i, (swift_path, expected_path)) in fixtures().iter().enumerate() {
         let expected = std::fs::read_to_string(expected_path).expect("read .expected");
         let keys_file = tmp.join(format!("keys-{i}.txt"));
-        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
-            .arg("run")
-            .arg(swift_path)
-            .env("QSWIFT_COVERAGE_OUT", &keys_file)
-            .output()
-            .expect("spawn qswift");
+        let output = run_program(swift_path, Some(&keys_file));
         // Only count fixtures that ran cleanly and matched their golden output.
         if !output.status.success() {
             continue;
@@ -325,12 +334,7 @@ fn stdlib_coverage_inputs() {
         let needle = std::fs::read_to_string(trap_path).expect("read .trap");
         let needle = needle.trim();
         let keys_file = tmp.join(format!("trap-keys-{i}.txt"));
-        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
-            .arg("run")
-            .arg(swift_path)
-            .env("QSWIFT_COVERAGE_OUT", &keys_file)
-            .output()
-            .expect("spawn qswift");
+        let output = run_program(swift_path, Some(&keys_file));
         let stderr = String::from_utf8_lossy(&output.stderr);
         if output.status.success() || !stderr.contains(needle) {
             continue;
