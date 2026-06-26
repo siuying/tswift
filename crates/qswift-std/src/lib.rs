@@ -11,6 +11,7 @@
 
 mod array;
 mod free;
+mod scalar;
 
 use qswift_core::Interpreter;
 
@@ -18,4 +19,5 @@ use qswift_core::Interpreter;
 pub fn install(interp: &mut Interpreter<'_>) {
     free::install(interp);
     array::install(interp);
+    scalar::install(interp);
 }

@@ -392,9 +392,9 @@ biggest sustained effort. Scope deliberately.*
 ### 10a. Core values
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
-| [ ] | `Int`/`UInt` family (all widths) + overflow ops | ★★ | R0 |
-| [ ] | `Float`/`Double` + math | ★★ | R0 |
-| [ ] | `Bool` | ★ | R0 |
+| [x] | `Int`/`UInt` family (all widths) + overflow ops | ★★ | R0 |
+| [x] | `Float`/`Double` + math | ★★ | R0 |
+| [x] | `Bool` | ★ | R0 |
 | [ ] | `String` (UTF-8, NFC, views) + `Character` | ★★★★ | R1 |
 | [ ] | `Substring` | ★★★ | R2 |
 | [ ] | `Optional<Wrapped>` | ★★ | R2 |

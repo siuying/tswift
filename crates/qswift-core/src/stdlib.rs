@@ -129,6 +129,10 @@ impl Arg {
 /// A free-function intrinsic (`print`, `min`, `max`, …).
 pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 
+/// A computed-property intrinsic on a builtin receiver (`Double.isNaN`,
+/// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
+pub type PropertyFn = fn(SwiftValue) -> StdResult;
+
 /// One registered method intrinsic plus whether it mutates its receiver.
 #[derive(Clone, Copy)]
 pub struct MethodEntry {
