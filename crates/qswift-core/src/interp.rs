@@ -292,6 +292,26 @@ enum TaskState {
     Done(Eval),
 }
 
+/// Seed for the interpreter's SplitMix64 RNG.
+///
+/// On native targets this is the wall-clock nanosecond count. On
+/// `wasm32-unknown-unknown` the std clock is unimplemented and `SystemTime::now()`
+/// panics, so a fixed SplitMix64-friendly constant is used instead.
+fn initial_rng_seed() -> u64 {
+    const FALLBACK: u64 = 0x9E3779B97F4A7C15;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(FALLBACK)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        FALLBACK
+    }
+}
+
 impl<'w> Interpreter<'w> {
     /// Create an interpreter that writes program output to `out`.
     pub fn new(out: &'w mut dyn Write) -> Self {
@@ -321,10 +341,7 @@ impl<'w> Interpreter<'w> {
             depth: 0,
             // SplitMix64 tolerates any seed (including 0), so the wall-clock
             // nanos are used as-is rather than forcing the low bit.
-            rng_state: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0x9E3779B97F4A7C15),
+            rng_state: initial_rng_seed(),
         }
     }
 

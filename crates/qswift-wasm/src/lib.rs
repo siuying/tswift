@@ -6,6 +6,7 @@ use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(js_name = runSwift)]
 pub fn run_swift(source: &str) -> String {
+    install_panic_hook();
     let started = now_ms();
 
     let analysis = match Analysis::analyze(source, "main.swift") {
@@ -94,10 +95,24 @@ fn escape_json(value: &str) -> String {
 extern "C" {
     #[wasm_bindgen(js_namespace = performance, js_name = now)]
     fn performance_now() -> f64;
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(msg: &str);
 }
 
 fn now_ms() -> f64 {
     performance_now()
+}
+
+/// Forward Rust panics to `console.error` so the browser shows a real message
+/// instead of an opaque `RuntimeError: unreachable`.
+fn install_panic_hook() {
+    use std::sync::Once;
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            console_error(&format!("qswift-wasm panic: {info}"));
+        }));
+    });
 }
 
 fn elapsed_ms(started: f64) -> u64 {
