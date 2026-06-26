@@ -319,11 +319,12 @@ impl<'w> Interpreter<'w> {
             groups: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
+            // SplitMix64 tolerates any seed (including 0), so the wall-clock
+            // nanos are used as-is rather than forcing the low bit.
             rng_state: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0x9E3779B97F4A7C15)
-                | 1,
+                .unwrap_or(0x9E3779B97F4A7C15),
         }
     }
 
@@ -3860,20 +3861,27 @@ impl<'w> Interpreter<'w> {
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
                 if self.env.get(&tn).is_none() {
-                    // Builtin static methods, e.g. `Bool.random()`.
-                    if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
-                        if let Some(func) =
-                            self.static_methods.get(&(recv, method.clone())).copied()
-                        {
-                            let labeled: Vec<Arg> = self
-                                .eval_args(arg_nodes)?
-                                .into_iter()
-                                .map(|a| Arg {
-                                    label: a.label,
-                                    value: a.value,
-                                })
-                                .collect();
-                            return func(self, labeled).map_err(Self::std_error_to_signal);
+                    // Builtin static methods, e.g. `Bool.random()`. A user type
+                    // shadowing a builtin name (`struct Bool { … }`) wins, so
+                    // only fall back to the builtin when no user type matches.
+                    let user_defined = self.structs.contains_key(&tn)
+                        || self.enums.contains_key(&tn)
+                        || self.classes.contains_key(&tn);
+                    if !user_defined {
+                        if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
+                            if let Some(func) =
+                                self.static_methods.get(&(recv, method.clone())).copied()
+                            {
+                                let labeled: Vec<Arg> = self
+                                    .eval_args(arg_nodes)?
+                                    .into_iter()
+                                    .map(|a| Arg {
+                                        label: a.label,
+                                        value: a.value,
+                                    })
+                                    .collect();
+                                return func(self, labeled).map_err(Self::std_error_to_signal);
+                            }
                         }
                     }
                     if self.enum_has_case(&tn, &method) {

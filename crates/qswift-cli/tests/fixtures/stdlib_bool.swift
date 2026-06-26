@@ -1,4 +1,4 @@
-// Bool — toggle, description, hashValue.
+// Bool — toggle, description, hashValue, random.
 var flag = true
 flag.toggle()
 print(flag)

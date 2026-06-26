@@ -20,8 +20,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_static(BuiltinReceiver::Bool, "random", random);
 }
 
-/// `Bool.random()` — a uniformly random boolean from the builtin RNG.
-fn random(c: &mut dyn StdContext, _a: Vec<Arg>) -> StdResult {
+/// `Bool.random()` — a uniformly random boolean from the builtin RNG. The
+/// no-argument form is the only one supported; `random(using:)` is rejected
+/// rather than silently treated as `random()`.
+fn random(c: &mut dyn StdContext, a: Vec<Arg>) -> StdResult {
+    if !a.is_empty() {
+        return Err(StdError::Error(EvalError::Type(
+            "Bool.random() takes no arguments".into(),
+        )));
+    }
     Ok(SwiftValue::Bool(c.random_u64() & 1 == 1))
 }
 
@@ -91,6 +98,12 @@ mod tests {
         assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(true));
         assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(false));
         assert_eq!(random(&mut c, vec![]).unwrap(), SwiftValue::Bool(true));
+    }
+
+    #[test]
+    fn random_rejects_arguments() {
+        let mut c = ctx();
+        assert!(random(&mut c, vec![Arg::positional(SwiftValue::int(1))]).is_err());
     }
 
     #[test]
