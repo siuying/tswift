@@ -330,6 +330,27 @@ impl<'w> Interpreter<'w> {
         self.free_fns.insert(name.to_string(), f);
     }
 
+    /// The keys of every registered standard-library entry, for coverage
+    /// tooling. Free functions are bare names; method/property intrinsics are
+    /// `Type.member`; sequence algorithms are `Sequence.member`. Sorted and
+    /// deduplicated so the output is stable.
+    pub fn registered_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = Vec::new();
+        keys.extend(self.free_fns.keys().cloned());
+        for (recv, name) in self.intrinsics.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
+        for (recv, name) in self.properties.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
+        for name in self.algorithms.keys() {
+            keys.push(format!("Sequence.{name}"));
+        }
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
