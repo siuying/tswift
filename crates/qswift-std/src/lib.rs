@@ -10,6 +10,7 @@
 //! [`install`] wires every builtin into an [`Interpreter`] in one call.
 
 mod array;
+mod conformance;
 mod dictionary;
 mod free;
 mod optional;
@@ -25,6 +26,7 @@ use qswift_core::Interpreter;
 pub fn install(interp: &mut Interpreter<'_>) {
     free::install(interp);
     array::install(interp);
+    conformance::install(interp);
     dictionary::install(interp);
     scalar::install(interp);
     range::install(interp);
