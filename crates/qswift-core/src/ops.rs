@@ -15,6 +15,7 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Double(a), SwiftValue::Double(b)) => double_binary(op, *a, *b),
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
+        (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
         _ => Err(format!(
             "operator `{op}` cannot apply to {} and {}",
             l.type_name(),
@@ -157,6 +158,23 @@ fn str_binary(op: &str, a: &str, b: &str) -> Result<SwiftValue, String> {
         ">" => Ok(SwiftValue::Bool(a > b)),
         ">=" => Ok(SwiftValue::Bool(a >= b)),
         _ => Err(format!("unknown string operator `{op}`")),
+    }
+}
+
+fn array_binary(
+    op: &str,
+    a: &std::rc::Rc<Vec<SwiftValue>>,
+    b: &std::rc::Rc<Vec<SwiftValue>>,
+) -> Result<SwiftValue, String> {
+    match op {
+        "+" => {
+            let mut out = a.as_ref().clone();
+            out.extend(b.as_ref().clone());
+            Ok(SwiftValue::Array(std::rc::Rc::new(out)))
+        }
+        "==" => Ok(SwiftValue::Bool(a == b)),
+        "!=" => Ok(SwiftValue::Bool(a != b)),
+        _ => Err(format!("unknown array operator `{op}`")),
     }
 }
 

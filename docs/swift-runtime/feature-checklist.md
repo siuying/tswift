@@ -404,7 +404,7 @@ biggest sustained effort. Scope deliberately.*
 ### 10b. Collections (value semantics + CoW)
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
-| [ ] | `Array<Element>` + CoW | ★★★★ | R1 |
+| [x] | `Array<Element>` + CoW | ★★★★ | R1 |
 | [ ] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
 | [ ] | `Set<Element>` + CoW | ★★★ | R2 |
 | [ ] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
