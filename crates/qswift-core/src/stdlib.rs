@@ -104,6 +104,22 @@ pub enum BuiltinReceiver {
 }
 
 impl BuiltinReceiver {
+    /// The Swift type name this receiver corresponds to.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            BuiltinReceiver::Array => "Array",
+            BuiltinReceiver::Dictionary => "Dictionary",
+            BuiltinReceiver::Set => "Set",
+            BuiltinReceiver::String => "String",
+            BuiltinReceiver::Character => "Character",
+            BuiltinReceiver::Int => "Int",
+            BuiltinReceiver::Double => "Double",
+            BuiltinReceiver::Bool => "Bool",
+            BuiltinReceiver::Optional => "Optional",
+            BuiltinReceiver::Range => "Range",
+        }
+    }
+
     /// The receiver classification for a runtime value, if it is a builtin one.
     pub fn of(value: &SwiftValue) -> Option<BuiltinReceiver> {
         Some(match value {

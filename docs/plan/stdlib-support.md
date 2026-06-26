@@ -265,7 +265,7 @@ exclusions) is documented per §3.3.
 - [ ] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
       (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
 - [ ] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
-- [ ] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
+- [x] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
       three-state report (CLI `.expected` signal for `verified`)
 - [ ] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
       checklist/coverage updates

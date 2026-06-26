@@ -33,3 +33,29 @@ pub fn install(interp: &mut Interpreter<'_>) {
     set::install(interp);
     string::install(interp);
 }
+
+/// Every standard-library entry registered by [`install`], as coverage keys
+/// (`print`, `Array.append`, `Sequence.map`, …).
+///
+/// Authoritative: it installs into a throwaway interpreter and reads the live
+/// registry, so it can never drift from the registration code.
+pub fn registered_keys() -> Vec<String> {
+    let mut sink = std::io::sink();
+    let mut interp = Interpreter::new(&mut sink);
+    install(&mut interp);
+    interp.registered_keys()
+}
+
+#[cfg(test)]
+mod coverage_dump {
+    /// Dump the live registry keys to `tools/stdlib-inventory/registered_keys.txt`
+    /// so `coverage.py` can read the authoritative set. Regenerate with:
+    /// `cargo test -p qswift-std dump_registered_keys`.
+    #[test]
+    fn dump_registered_keys() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/stdlib-inventory/registered_keys.txt");
+        let body = super::registered_keys().join("\n") + "\n";
+        std::fs::write(&path, body).expect("write registered_keys.txt");
+    }
+}
