@@ -160,12 +160,22 @@ struct MethodDef {
     mutating: bool,
 }
 
+/// An instance `subscript` declaration. A type may declare several overloads,
+/// selected by the number of index parameters at the call site.
+struct SubscriptDef {
+    params: Vec<Param>,
+    getter: Option<Node<'static>>,
+    setter: Option<Node<'static>>,
+    /// The setter's value parameter name (`newValue` by default).
+    setter_param: String,
+}
+
 /// A struct type declaration.
 struct StructDef {
     stored: Vec<StoredProp>,
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
-    subscript: Option<MethodDef>,
+    subscripts: Vec<SubscriptDef>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
     /// A custom initializer, if the struct declares one (else memberwise).
@@ -1266,7 +1276,7 @@ impl<'w> Interpreter<'w> {
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
         let mut wrappers = std::collections::HashMap::new();
-        let mut subscript = None;
+        let mut subscripts: Vec<SubscriptDef> = Vec::new();
         let mut static_subscript = None;
         let mut init = None;
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
@@ -1282,18 +1292,24 @@ impl<'w> Interpreter<'w> {
                 }
                 NodeKind::SubscriptDecl => {
                     let acc = member.var_accessors();
-                    let body = acc
+                    let getter = acc
                         .getter_body
                         .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
-                    let def = MethodDef {
-                        params: parse_params(&member),
-                        body,
-                        mutating: false,
-                    };
                     if member.modifiers() & MOD_STATIC != 0 {
-                        static_subscript = Some(def);
+                        static_subscript = Some(MethodDef {
+                            params: parse_params(&member),
+                            body: getter,
+                            mutating: false,
+                        });
                     } else {
-                        subscript = Some(def);
+                        subscripts.push(SubscriptDef {
+                            params: parse_params(&member),
+                            getter,
+                            setter: acc.setter_body,
+                            setter_param: acc
+                                .setter_param
+                                .unwrap_or_else(|| "newValue".to_string()),
+                        });
                     }
                 }
                 NodeKind::FuncDecl => {
@@ -1378,7 +1394,7 @@ impl<'w> Interpreter<'w> {
                 stored,
                 computed,
                 methods,
-                subscript,
+                subscripts,
                 static_subscript,
                 init,
                 wrappers,
@@ -2645,62 +2661,151 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-    /// Assign `base[index] = value` (compound ops supported) for an array held
-    /// in a variable, or a struct field path ending in an array.
+    /// Assign `base[index] = value` (compound ops supported) over arrays,
+    /// dictionaries, and user `subscript { set }`s. A nested subscript base
+    /// (`m[i][j] = v`) is handled by read-modify-write through `base`.
     fn assign_subscript(&mut self, target: &Node<'static>, rhs: &Node<'static>, op: &str) -> Eval {
         let mut kids = target.children();
         let base = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
-        let index_node = kids
-            .next()
-            .ok_or_else(|| EvalError::Unsupported("subscript without an index".into()))?;
-        let index_value = self.eval(&index_node)?;
-        let Some(place) = self.resolve_place(&base) else {
-            return Err(EvalError::Unsupported("subscript target is not assignable".into()).into());
+        let index_nodes: Vec<Node<'static>> = kids.collect();
+        if index_nodes.is_empty() {
+            return Err(EvalError::Unsupported("subscript without an index".into()).into());
+        }
+        let index_values: Vec<SwiftValue> = index_nodes
+            .iter()
+            .map(|n| self.eval(n))
+            .collect::<Result<_, _>>()?;
+        let current = self.eval(&base)?;
+
+        // The leaf value to store: for a compound op, fold against the element
+        // currently at that index.
+        let new_value = if op == "=" {
+            self.eval(rhs)?
+        } else {
+            let cur_elem = self.read_subscript(&current, &index_values)?;
+            let r = self.eval(rhs)?;
+            ops::binary(op.trim_end_matches('='), &cur_elem, &r).map_err(trap)?
         };
-        let current = self.read_place(&place)?;
+
+        let updated = self.set_subscript_element(current, &index_values, new_value)?;
+        self.assign_value_to(&base, updated)
+    }
+
+    /// Return a copy of `container` with `container[indices]` set to `value`,
+    /// dispatching over arrays, dictionaries, and user struct subscript setters.
+    fn set_subscript_element(
+        &mut self,
+        container: SwiftValue,
+        indices: &[SwiftValue],
+        value: SwiftValue,
+    ) -> Eval {
+        debug_assert!(
+            !indices.is_empty(),
+            "set_subscript_element requires at least one index"
+        );
+        // A user `subscript { set }` on a struct runs the setter with `self`
+        // mutable, the index parameters, and the `newValue` binding.
+        if let SwiftValue::Struct(obj) = &container {
+            let type_name = obj.type_name.clone();
+            let selected = self.structs.get(&type_name).and_then(|d| {
+                d.subscripts
+                    .iter()
+                    .find(|s| s.params.len() == indices.len())
+                    .map(|s| (clone_params(&s.params), s.setter, s.setter_param.clone()))
+            });
+            if let Some((params, setter, setter_param)) = selected {
+                let setter_body = setter.ok_or_else(|| {
+                    EvalError::Type(format!("{type_name} subscript is read-only"))
+                })?;
+                let args: Vec<CallArg> = indices
+                    .iter()
+                    .map(|v| CallArg {
+                        label: None,
+                        value: v.clone(),
+                        place: None,
+                    })
+                    .collect();
+                self.env.push();
+                self.env.declare("self", container.clone(), true);
+                let bound = self.bind_params(&params, args);
+                let outcome = match bound {
+                    Ok(_) => {
+                        self.env.declare(&setter_param, value, false);
+                        self.eval(&setter_body)
+                    }
+                    Err(e) => Err(e),
+                };
+                let updated_self = self.env.get("self").unwrap_or_else(|| container.clone());
+                self.env.pop();
+                match outcome {
+                    Ok(_) | Err(Signal::Return(_)) => {}
+                    Err(e) => return Err(e),
+                }
+                return Ok(updated_self);
+            }
+            return Err(EvalError::Type(format!(
+                "{type_name} has no subscript taking {} index argument(s)",
+                indices.len()
+            ))
+            .into());
+        }
+
+        let index_value = indices
+            .first()
+            .cloned()
+            .expect("at least one index checked by caller");
         // `dict[key] = value` inserts/updates; `dict[key] = nil` removes.
-        if let SwiftValue::Dict(pairs) = &current {
+        if let SwiftValue::Dict(pairs) = &container {
             let mut new_pairs = pairs.as_ref().clone();
             let existing = new_pairs.iter().position(|(k, _)| *k == index_value);
-            let new_value = if op == "=" {
-                self.eval(rhs)?
-            } else {
-                let cur = existing
-                    .map(|i| new_pairs[i].1.clone())
-                    .unwrap_or(SwiftValue::Nil);
-                let r = self.eval(rhs)?;
-                ops::binary(op.trim_end_matches('='), &cur, &r).map_err(trap)?
-            };
-            match (existing, matches!(new_value, SwiftValue::Nil)) {
+            match (existing, matches!(value, SwiftValue::Nil)) {
                 (Some(i), true) => {
                     new_pairs.remove(i);
                 }
-                (Some(i), false) => new_pairs[i].1 = new_value,
+                (Some(i), false) => new_pairs[i].1 = value,
                 (None, true) => {}
-                (None, false) => new_pairs.push((index_value, new_value)),
+                (None, false) => new_pairs.push((index_value, value)),
             }
-            self.write_place(&place, SwiftValue::Dict(StdRc::new(new_pairs)))?;
-            return Ok(SwiftValue::Void);
+            return Ok(SwiftValue::Dict(StdRc::new(new_pairs)));
         }
         let idx = subscript_index(&[index_value])?;
-        let current_array = current;
-        let SwiftValue::Array(items) = &current_array else {
+        let SwiftValue::Array(items) = &container else {
             return Err(EvalError::Type("subscript assignment requires an array".into()).into());
         };
         if idx >= items.len() {
             return Err(trap(format!("index {idx} out of range")));
         }
-        let new_elem = if op == "=" {
-            self.eval(rhs)?
-        } else {
-            let r = self.eval(rhs)?;
-            ops::binary(op.trim_end_matches('='), &items[idx], &r).map_err(trap)?
-        };
         let mut new_items = items.as_ref().clone();
-        new_items[idx] = new_elem;
-        self.write_place(&place, SwiftValue::Array(StdRc::new(new_items)))?;
+        new_items[idx] = value;
+        Ok(SwiftValue::Array(StdRc::new(new_items)))
+    }
+
+    /// Write `value` back to the storage named by an lvalue `node`. A subscript
+    /// lvalue recurses (so `m[i][j] = v` updates the inner container, then
+    /// stores it back into the outer one); recursion terminates when the base is
+    /// a variable/member rather than another subscript, which resolves to a
+    /// place.
+    fn assign_value_to(&mut self, node: &Node<'static>, value: SwiftValue) -> Eval {
+        if node.kind() == NodeKind::SubscriptExpr {
+            let mut kids = node.children();
+            let inner_base = kids
+                .next()
+                .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
+            let idx_values: Vec<SwiftValue> = kids
+                .collect::<Vec<_>>()
+                .iter()
+                .map(|n| self.eval(n))
+                .collect::<Result<_, _>>()?;
+            let container = self.eval(&inner_base)?;
+            let updated = self.set_subscript_element(container, &idx_values, value)?;
+            return self.assign_value_to(&inner_base, updated);
+        }
+        let place = self
+            .resolve_place(node)
+            .ok_or_else(|| EvalError::Unsupported("subscript target is not assignable".into()))?;
+        self.write_place(&place, value)?;
         Ok(SwiftValue::Void)
     }
 
@@ -2735,15 +2840,14 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Struct(obj) => {
                 let type_name = obj.type_name.clone();
-                let has = self
-                    .structs
-                    .get(&type_name)
-                    .is_some_and(|d| d.subscript.is_some());
-                if has {
-                    let (params, body, _) = {
-                        let m = self.structs[&type_name].subscript.as_ref().unwrap();
-                        (clone_params(&m.params), m.body, m.mutating)
-                    };
+                // Select the overload whose arity matches the index count.
+                let getter = self.structs.get(&type_name).and_then(|d| {
+                    d.subscripts
+                        .iter()
+                        .find(|s| s.params.len() == indices.len())
+                        .map(|s| (clone_params(&s.params), s.getter))
+                });
+                if let Some((params, body)) = getter {
                     let args: Vec<CallArg> = indices
                         .iter()
                         .map(|v| CallArg {
