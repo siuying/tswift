@@ -2055,12 +2055,13 @@ impl<'w> Interpreter<'w> {
                     // first token (param_info's two-name heuristic mistakes the
                     // trailing `in` keyword for an internal name).
                     let name = child.text().unwrap_or_default();
+                    let info = child.param_info();
                     params.push(Param {
                         label: None,
                         name,
                         ty: None,
-                        variadic: child.param_info().variadic,
-                        inout_: false,
+                        variadic: info.variadic,
+                        inout_: info.is_inout,
                         autoclosure: false,
                         default: None,
                     });
@@ -2108,6 +2109,80 @@ impl<'w> Interpreter<'w> {
         self.closures
             .push((ClosureDef::User { params, body }, captured));
         Ok(SwiftValue::Closure(id))
+    }
+
+    /// Invoke a closure value with call arguments, writing back any `inout`
+    /// parameters to their caller locations (`f(&x)` over a closure whose
+    /// parameter is `inout`). Falls back to the value-only path when the
+    /// closure has no `inout` parameters.
+    fn call_closure_with_args(&mut self, id: usize, args: Vec<CallArg>) -> Eval {
+        let has_inout = matches!(
+            self.closures.get(id),
+            Some((ClosureDef::User { params, .. }, _)) if params.iter().any(|p| p.inout_)
+        );
+        if !has_inout {
+            let plain = args.into_iter().map(|a| a.value).collect();
+            return self.call_closure(id, plain);
+        }
+
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap("stack overflow: recursion too deep".into()));
+        }
+        let (params, body, captured) = match &self.closures[id] {
+            (ClosureDef::User { params, body }, cap) => {
+                (clone_params(params), body.clone(), cap.clone())
+            }
+            _ => unreachable!("operator/non-user closure has no inout params"),
+        };
+        let call_env = Env::with_captured(captured);
+        let saved = std::mem::replace(&mut self.env, call_env);
+
+        let mut writebacks: Vec<(String, Place)> = Vec::new();
+        for (i, p) in params.iter().enumerate() {
+            let v = args.get(i).map(|a| a.value.clone()).unwrap_or(SwiftValue::Nil);
+            self.env.declare(&p.name, v, p.inout_);
+            if p.inout_ {
+                if let Some(place) = args.get(i).and_then(|a| a.place.clone()) {
+                    writebacks.push((p.name.clone(), place));
+                }
+            }
+        }
+        for (i, a) in args.iter().enumerate() {
+            self.env.declare(&format!("${i}"), a.value.clone(), false);
+        }
+
+        let mut result = Ok(SwiftValue::Void);
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(v) => result = Ok(v),
+                Err(Signal::Return(v)) => {
+                    result = Ok(v);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        }
+        // Capture the final value of each `inout` parameter before unwinding.
+        let finals: Vec<(Place, SwiftValue)> = writebacks
+            .iter()
+            .filter_map(|(name, place)| self.env.get(name).map(|v| (place.clone(), v)))
+            .collect();
+        self.env = saved;
+        self.depth -= 1;
+        // Swift copies `inout` arguments back even when the callee throws, so
+        // mutations are visible after a caught/`try?`-converted error. Only a
+        // fatal interpreter trap (`Signal::Error`) skips the copy-out.
+        if !matches!(result, Err(Signal::Error(_))) {
+            for (place, v) in finals {
+                self.write_place(&place, v)?;
+            }
+        }
+        result
     }
 
     /// Invoke a closure value with already-evaluated arguments.
@@ -4326,8 +4401,7 @@ impl<'w> Interpreter<'w> {
             match self.env.get(&name) {
                 Some(SwiftValue::Function(id)) => return self.call_function(id, args),
                 Some(SwiftValue::Closure(id)) => {
-                    let plain = args.into_iter().map(|a| a.value).collect();
-                    return self.call_closure(id, plain);
+                    return self.call_closure_with_args(id, args);
                 }
                 _ => {}
             }
@@ -4438,10 +4512,7 @@ impl<'w> Interpreter<'w> {
         let value = self.eval(callee)?;
         match value {
             SwiftValue::Function(id) => self.call_function(id, args),
-            SwiftValue::Closure(id) => {
-                let plain = args.into_iter().map(|a| a.value).collect();
-                self.call_closure(id, plain)
-            }
+            SwiftValue::Closure(id) => self.call_closure_with_args(id, args),
             other => {
                 Err(EvalError::Type(format!("`{}` is not callable", other.type_name())).into())
             }

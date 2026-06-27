@@ -1554,15 +1554,18 @@ impl<'a> Parser<'a> {
         let save = self.pos;
         // Identifiers in name position become the closure's `Param` children;
         // tokens after `:` (a type) or `->` (the return type) are skipped.
-        let mut names: Vec<(&'a str, u32, u32)> = Vec::new();
+        let mut names: Vec<(&'a str, u32, u32, bool)> = Vec::new();
         let mut expect_name = true;
         let mut in_type = false;
         loop {
             let t = self.peek();
             if t.kind == TokenKind::Keyword && t.text == "in" {
                 self.bump();
-                for (name, line, col) in names {
+                for (name, line, col, is_inout) in names {
                     let p = self.ast.add(NodeKind::Param, Some(name), line, col);
+                    if is_inout {
+                        self.ast.add_modifier(p, "inout");
+                    }
                     self.ast.append_child(node, p);
                 }
                 return true;
@@ -1582,8 +1585,14 @@ impl<'a> Parser<'a> {
             }
             match t.kind {
                 TokenKind::Identifier if expect_name && !in_type && t.text != "_" => {
-                    names.push((t.text, t.line, t.col));
+                    names.push((t.text, t.line, t.col, false));
                     expect_name = false;
+                }
+                // `inout` after the colon marks the current parameter.
+                TokenKind::Keyword if t.text == "inout" => {
+                    if let Some(last) = names.last_mut() {
+                        last.3 = true;
+                    }
                 }
                 TokenKind::Comma => {
                     expect_name = true;
