@@ -3438,9 +3438,41 @@ impl<'w> Interpreter<'w> {
             .get(type_name)
             .and_then(|d| d.init.as_ref().map(|m| (clone_params(&m.params), m.body)));
         if let Some((params, body)) = custom_init {
+            // Stored properties with a default are initialized before the
+            // initializer body runs (Swift gives each such property its default
+            // value first; the body may then reassign it).
+            let defaults: Vec<(String, Node<'static>)> = self
+                .structs
+                .get(type_name)
+                .map(|d| {
+                    d.stored
+                        .iter()
+                        .filter(|p| !p.lazy)
+                        .filter_map(|p| p.default.map(|def| (p.name.clone(), def)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+            for (pname, def) in defaults {
+                let value = self.eval(&def)?;
+                // Wrap `@propertyWrapper` fields in their wrapper instance, the
+                // same way the memberwise initializer does.
+                let wrapper = self
+                    .structs
+                    .get(type_name)
+                    .and_then(|d| d.wrappers.get(&pname))
+                    .cloned();
+                let value = match wrapper {
+                    Some(wt) => {
+                        self.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
+                    }
+                    None => value,
+                };
+                fields.push((pname, value));
+            }
             let this = SwiftValue::Struct(Rc::new(StructObj {
                 type_name: type_name.to_string(),
-                fields: Vec::new(),
+                fields,
             }));
             let call_args: Vec<CallArg> = args
                 .iter()

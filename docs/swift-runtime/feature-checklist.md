@@ -341,9 +341,9 @@ needs a macro-expansion engine over the AST before evaluation.*
 ### 9a. Access control
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `open` `public` `internal` `fileprivate` `private` | ✅ | ★★ | R4 |
-| [ ] | `package` access level | ✅ | ★★ | R4 |
-| [ ] | Access on setters `private(set)` | ✅ | ★★ | R4 |
+| [x] | `open` `public` `internal` `fileprivate` `private` | ✅ | ★★ | R4 |
+| [x] | `package` access level | ✅ | ★★ | R4 |
+| [x] | Access on setters `private(set)` | ✅ | ★★ | R4 |
 | [~] | Module boundaries / `import` | ✅ | ★★★ | R5 |
 
 ### 9b. Custom operators
