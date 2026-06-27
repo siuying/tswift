@@ -178,7 +178,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
 | [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
 | [x] | `unowned` references | ✅ | ★★ | R3 |
-| [ ] | `unowned(unsafe)` | ⚠️ | ★★ | R3 |
+| [x] | `unowned(unsafe)` | ⚠️ | ★★ | R3 |
 | [x] | Identity `===` `!==` | ✅ | ★ | R3 |
 | [x] | Type casting `is` / `as?` / `as!` / `as` | ✅ | ★★★ | R3 |
 | [x] | Downcasting in class hierarchies | ✅ | ★★★ | R3 |
