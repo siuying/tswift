@@ -264,8 +264,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | Opaque types `some P` (return) | ✅ | ★★★ | R4 |
-| [ ] | Boxed/existential `any P` | ✅ | ★★★ | R4 |
+| [x] | Opaque types `some P` (return) | ✅ | ★★★ | R4 |
+| [x] | Boxed/existential `any P` | ✅ | ★★★ | R4 |
 | [x] | Metatypes `T.self` / `.Type` / `.Protocol` | ✅ | ★★★ | R4 |
 | [x] | `type(of:)` dynamic type | ✅ | ★★ | R4 |
 | [ ] | Key paths `\Root.path` | ✅ | ★★★ | R6+ |

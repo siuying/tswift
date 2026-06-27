@@ -64,6 +64,21 @@ impl Env {
         self.scopes.push(Scope::default());
     }
 
+    /// Replace the scope chain with one rooted only at the global (bottom)
+    /// scope plus a fresh innermost scope, returning the previous chain. Used
+    /// to run a method or computed-property body isolated from the caller's
+    /// locals: it sees globals (sibling functions, types) and its own
+    /// parameters/`self`, but never an enclosing function's variables.
+    pub fn enter_isolated(&mut self) -> Vec<Scope> {
+        let global = self.scopes.first().cloned().unwrap_or_default();
+        std::mem::replace(&mut self.scopes, vec![global, Scope::default()])
+    }
+
+    /// Restore a scope chain previously taken by [`Env::enter_isolated`].
+    pub fn restore(&mut self, saved: Vec<Scope>) {
+        self.scopes = saved;
+    }
+
     /// Leave the innermost scope, discarding its bindings.
     pub fn pop(&mut self) {
         self.scopes.pop();
@@ -109,6 +124,26 @@ impl Env {
             }
         }
         None
+    }
+
+    /// Look up a binding in the local scopes only — every scope except the
+    /// global (bottom) one. Used so that, inside a method, parameters and
+    /// block-locals are found first while the enclosing type's members get a
+    /// chance to shadow module-level globals.
+    pub fn get_local(&self, name: &str) -> Option<SwiftValue> {
+        for scope in self.scopes.iter().skip(1).rev() {
+            if let Some(b) = scope.borrow().get(name) {
+                return Some(b.value.clone());
+            }
+        }
+        None
+    }
+
+    /// Look up a binding in the global (bottom) scope only.
+    pub fn get_global(&self, name: &str) -> Option<SwiftValue> {
+        self.scopes
+            .first()
+            .and_then(|s| s.borrow().get(name).map(|b| b.value.clone()))
     }
 
     /// Assign to an existing mutable binding, searching innermost-outward.

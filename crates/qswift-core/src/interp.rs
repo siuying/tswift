@@ -971,7 +971,7 @@ impl<'w> Interpreter<'w> {
         let params = clone_params(&def.params);
         let body = def.body;
         let mutating = def.mutating;
-        self.env.push();
+        let saved_env = self.env.enter_isolated();
         self.env.declare("self", receiver, true);
         let outcome = match self.bind_params(&params, args) {
             Ok(_) => match body {
@@ -981,7 +981,7 @@ impl<'w> Interpreter<'w> {
             Err(e) => Err(e),
         };
         let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
-        self.env.pop();
+        self.env.restore(saved_env);
         let result = match outcome {
             Ok(v) => Ok(v),
             Err(Signal::Return(v)) => Ok(v),
@@ -1666,7 +1666,10 @@ impl<'w> Interpreter<'w> {
         let name = node
             .text()
             .ok_or_else(|| EvalError::Unsupported("unnamed identifier".into()))?;
-        if let Some(v) = self.env.get(&name) {
+        // Swift resolution order inside a method: local variables/parameters,
+        // then the enclosing type's members (which shadow module globals),
+        // then the module/global scope.
+        if let Some(v) = self.env.get_local(&name) {
             return Ok(v);
         }
         if let Some(v) = self.implicit_self_member(&name)? {
@@ -1681,6 +1684,9 @@ impl<'w> Interpreter<'w> {
             if let Some(v) = self.read_static_computed(&ty, &name)? {
                 return Ok(v);
             }
+        }
+        if let Some(v) = self.env.get_global(&name) {
+            return Ok(v);
         }
         // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
         // synthesize an operator-function closure the standard-library
@@ -1993,12 +1999,12 @@ impl<'w> Interpreter<'w> {
             ));
         }
         self.static_ctx.push(type_name.to_string());
-        self.env.push();
+        let saved_env = self.env.enter_isolated();
         // A type-level getter has no instance `self`; shadow any enclosing one
         // so unqualified names resolve against the type, not a caller instance.
         self.env.declare("self", SwiftValue::Void, false);
         let result = self.eval(&body);
-        self.env.pop();
+        self.env.restore(saved_env);
         self.static_ctx.pop();
         self.depth -= 1;
         match result {
@@ -2107,7 +2113,7 @@ impl<'w> Interpreter<'w> {
                 (clone_params(&m.params), m.body)
             };
             self.class_ctx.push(owner);
-            self.env.push();
+            let saved_env = self.env.enter_isolated();
             self.env.declare("self", value.clone(), false);
             let bound = self.bind_params(&params, args);
             let result = match bound {
@@ -2117,7 +2123,7 @@ impl<'w> Interpreter<'w> {
                 },
                 Err(e) => Err(e),
             };
-            self.env.pop();
+            self.env.restore(saved_env);
             self.class_ctx.pop();
             match result {
                 // A failable initializer that runs `return nil` produces the
@@ -3005,7 +3011,7 @@ impl<'w> Interpreter<'w> {
                         place: None,
                     })
                     .collect();
-                self.env.push();
+                let saved_env = self.env.enter_isolated();
                 self.env.declare("self", container.clone(), true);
                 let bound = self.bind_params(&params, args);
                 let outcome = match bound {
@@ -3016,7 +3022,7 @@ impl<'w> Interpreter<'w> {
                     Err(e) => Err(e),
                 };
                 let updated_self = self.env.get("self").unwrap_or_else(|| container.clone());
-                self.env.pop();
+                self.env.restore(saved_env);
                 match outcome {
                     Ok(_) | Err(Signal::Return(_)) => {}
                     Err(e) => return Err(e),
@@ -3134,7 +3140,7 @@ impl<'w> Interpreter<'w> {
                             place: None,
                         })
                         .collect();
-                    self.env.push();
+                    let saved_env = self.env.enter_isolated();
                     self.env.declare("self", base.clone(), false);
                     let bound = self.bind_params(&params, args);
                     let result = match bound {
@@ -3144,7 +3150,7 @@ impl<'w> Interpreter<'w> {
                         },
                         Err(e) => Err(e),
                     };
-                    self.env.pop();
+                    self.env.restore(saved_env);
                     return match result {
                         Ok(v) => Ok(v),
                         Err(Signal::Return(v)) => Ok(v),
@@ -3328,11 +3334,13 @@ impl<'w> Interpreter<'w> {
         this: SwiftValue,
         body: impl FnOnce(&mut Self) -> Eval,
     ) -> Result<(SwiftValue, SwiftValue), Signal> {
-        self.env.push();
+        // Isolated from caller locals: a computed property/method body sees
+        // globals, `self`, and its members — not enclosing variables.
+        let saved_env = self.env.enter_isolated();
         self.env.declare("self", this, true);
         let result = body(self);
         let updated = self.env.get("self").unwrap_or(SwiftValue::Void);
-        self.env.pop();
+        self.env.restore(saved_env);
         let value = match result {
             Ok(v) => v,
             Err(Signal::Return(v)) => v,
@@ -4277,7 +4285,7 @@ impl<'w> Interpreter<'w> {
         // An unqualified static-property write inside a `static` method.
         if target.kind() == NodeKind::IdentExpr {
             if let Some(n) = target.text() {
-                if self.env.get(&n).is_none() {
+                if self.env.get_local(&n).is_none() {
                     if let Some(key) = self.implicit_static_key(&n) {
                         let new_value = if op == "=" {
                             self.eval(&rhs)?
@@ -4296,7 +4304,7 @@ impl<'w> Interpreter<'w> {
         // `self.<name>` where `self` is a class instance.
         if target.kind() == NodeKind::IdentExpr {
             if let Some(n) = target.text() {
-                if self.env.get(&n).is_none() {
+                if self.env.get_local(&n).is_none() {
                     if let Some(SwiftValue::Object(obj)) = self.env.get("self") {
                         if self.class_has_member(&obj.borrow().class_name.clone(), &n) {
                             let new_value = if op == "=" {
@@ -4319,7 +4327,7 @@ impl<'w> Interpreter<'w> {
         // not a local binding but is a member of the current `self` becomes
         // `self.<name>`.
         let place = match self.resolve_place(&target) {
-            Some(p) if p.path.is_empty() && self.env.get(&p.root).is_none() => {
+            Some(p) if p.path.is_empty() && self.env.get_local(&p.root).is_none() => {
                 if self.self_has_member(&p.root) {
                     Place {
                         root: "self".into(),
@@ -5091,7 +5099,7 @@ impl<'w> Interpreter<'w> {
             (clone_params(&m.params), m.body)
         };
         self.class_ctx.push(owner);
-        self.env.push();
+        let saved_env = self.env.enter_isolated();
         self.env.declare("self", this, false);
         let bound = self.bind_params(&params, args);
         let result = match bound {
@@ -5101,7 +5109,7 @@ impl<'w> Interpreter<'w> {
             },
             Err(e) => Err(e),
         };
-        self.env.pop();
+        self.env.restore(saved_env);
         self.class_ctx.pop();
         match result {
             Ok(_) | Err(Signal::Return(_)) => Ok(()),
@@ -5134,7 +5142,9 @@ impl<'w> Interpreter<'w> {
             self.static_ctx.push(from_class.to_string());
         }
         self.class_ctx.push(owner);
-        self.env.push();
+        // Isolate from caller locals (a class `self` is a reference, so field
+        // mutations persist through the object regardless of the env).
+        let saved_env = self.env.enter_isolated();
         self.env.declare("self", this, false);
         let bound = self.bind_params(&params, args);
         let result = match bound {
@@ -5144,7 +5154,7 @@ impl<'w> Interpreter<'w> {
             },
             Err(e) => Err(e),
         };
-        self.env.pop();
+        self.env.restore(saved_env);
         self.class_ctx.pop();
         if is_static_call {
             self.static_ctx.pop();
@@ -5222,37 +5232,52 @@ impl<'w> Interpreter<'w> {
         if is_static_call {
             self.static_ctx.push(type_name.to_string());
         }
-        self.env.push();
+        // Run isolated from the caller's locals: the body sees globals, its
+        // parameters, and `self`/its members, but not enclosing variables.
+        let saved_env = self.env.enter_isolated();
         self.env.declare("self", this, true);
-        let inout_binds = self.bind_params(&params, args);
-        let outcome = match inout_binds {
+        let (outcome, inout_finals) = match self.bind_params(&params, args) {
             Ok(binds) => {
                 let result = match body {
                     Some(b) => self.eval(&b),
                     None => Ok(SwiftValue::Void),
                 };
-                self.apply_inout_writebacks(&binds);
-                result
+                // Capture `inout` write-backs against the method env before it
+                // is torn down; apply them to the caller below.
+                let finals: Vec<(Place, SwiftValue)> = binds
+                    .iter()
+                    .filter_map(|(name, place)| {
+                        self.env.get(name).map(|v| (place.clone(), v))
+                    })
+                    .collect();
+                (result, finals)
             }
-            Err(e) => Err(e),
+            Err(e) => (Err(e), Vec::new()),
         };
         let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
-        self.env.pop();
+        self.env.restore(saved_env);
         if is_static_call {
             self.static_ctx.pop();
         }
 
-        let ret = match outcome {
-            Ok(v) => v,
-            Err(Signal::Return(v)) => v,
-            Err(e) => return Err(e),
-        };
-        if mutating {
-            if let Some(place) = base_place {
-                self.write_place(&place, updated_self)?;
+        // Write `inout` parameters and the mutated receiver back to the caller,
+        // including on a thrown error (Swift copies them out on a caught
+        // error); only a fatal interpreter trap skips the copy-out.
+        if !matches!(outcome, Err(Signal::Error(_))) {
+            for (place, v) in inout_finals {
+                self.write_place(&place, v)?;
+            }
+            if mutating {
+                if let Some(place) = base_place {
+                    self.write_place(&place, updated_self)?;
+                }
             }
         }
-        Ok(ret)
+        match outcome {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(e) => Err(e),
+        }
     }
 
     /// A string literal, processing escapes and `\( … )` interpolation.
@@ -5500,16 +5525,6 @@ impl<'w> Interpreter<'w> {
         Ok(inout_binds)
     }
 
-    /// Write each captured `inout` parameter's current value back to its caller
-    /// location (used when the call shares the caller's environment).
-    fn apply_inout_writebacks(&mut self, binds: &[(String, Place)]) {
-        for (name, place) in binds {
-            if let Some(v) = self.env.get(name) {
-                let _ = self.write_place(place, v);
-            }
-        }
-    }
-
     /// Draw the next 64-bit value from the SplitMix64 builtin RNG.
     fn next_random(&mut self) -> u64 {
         self.rng_state = self.rng_state.wrapping_add(0x9E3779B97F4A7C15);
@@ -5595,8 +5610,9 @@ impl<'w> Interpreter<'w> {
                 let root = node.text()?;
                 // A bare identifier that is not a local binding but names a
                 // member of the enclosing `self` resolves as an implicit
-                // `self.<name>` place, so mutating-method writes flow back.
-                if self.env.get(&root).is_none() {
+                // `self.<name>` place (members shadow module globals), so
+                // mutating-method writes flow back.
+                if self.env.get_local(&root).is_none() {
                     if self.is_self_member(&root) {
                         return Some(Place {
                             root: "self".into(),
