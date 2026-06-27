@@ -4,7 +4,8 @@
 // or a fetch to the CLI) feeds it `mount(tree)` then `applyPatches(stream)` and
 // listens for `swiftui-event`s to round-trip back to the runtime.
 
-import { Patch, PatchApplier, UiirNode, mountPatch } from "./apply-patch.js";
+import { PatchApplier, mountPatch } from "./apply-patch.js";
+import type { Patch, UiirNode } from "./apply-patch.js";
 
 /** Detail of the `swiftui-event` CustomEvent dispatched on user interaction. */
 export interface SwiftUIEventDetail {
@@ -30,6 +31,7 @@ export class SwiftUICanvas extends HTMLElement {
     `;
     this.mountPoint = document.createElement("div");
     this.mountPoint.className = "root";
+    this.mountPoint.part.add("root");
     shadow.append(style, this.mountPoint);
 
     this.applier = new PatchApplier(this.mountPoint, (id, event, value) => {

@@ -67,9 +67,20 @@ const COLOR: Record<string, string> = {
   clear: "transparent",
 };
 
+function isToken(value: UiirValue, tag: string): value is { $: string; name: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "$" in value &&
+      value.$ === tag &&
+      "name" in value &&
+      typeof value.name === "string",
+  );
+}
+
 /** Resolve a color token (or raw rgba) to a CSS color string. */
 function cssColor(value: UiirValue): string | undefined {
-  if (value && typeof value === "object" && "$" in value && value.$ === "color") {
+  if (isToken(value, "color")) {
     return COLOR[value.name] ?? value.name;
   }
   return undefined;
@@ -93,13 +104,13 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
   for (const { name, value } of modifiers) {
     switch (name) {
       case "font": {
-        if (value && typeof value === "object" && "$" in value && value.$ === "textStyle") {
+        if (isToken(value, "textStyle")) {
           el.style.fontSize = TEXT_STYLE_SIZE[value.name] ?? "17px";
         }
         break;
       }
       case "fontWeight": {
-        if (value && typeof value === "object" && "$" in value && value.$ === "weight") {
+        if (isToken(value, "weight")) {
           el.style.fontWeight = FONT_WEIGHT[value.name] ?? "400";
         }
         break;

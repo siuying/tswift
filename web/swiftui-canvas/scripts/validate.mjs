@@ -1,8 +1,8 @@
 // validate.mjs — offline protocol check for the web host. Loads the committed
 // SwiftUI goldens and asserts they conform to the UIIR + patch protocol that
-// `apply-patch.ts` consumes. No browser, no toolchain — just `node`.
+// `src/apply-patch.ts` consumes. No browser, no toolchain — just `node`.
 //
-//   node web/swiftui-canvas/validate.mjs
+//   npm --prefix web/swiftui-canvas run validate
 //
 // Exit 0 = the goldens are a valid wire payload for this host.
 
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const fixtures = join(here, "../../tests/swiftui-fixtures");
+const fixtures = join(here, "../../../tests/swiftui-fixtures");
 
 const PATCH_OPS = new Set([
   "mount",

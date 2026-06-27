@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>swiftui-canvas example</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main class="workspace">
+      <section class="editor-panel" aria-label="SwiftUI editor">
+        <header class="toolbar">
+          <div>
+            <p class="eyebrow">SwiftUI canvas example</p>
+            <h1>ContentView.swift</h1>
+          </div>
+          <button id="render" type="button">Render preview</button>
+        </header>
+        <textarea id="source" spellcheck="false" aria-label="Swift source editor"></textarea>
+        <footer class="status-line">
+          <span id="source-meta">0 lines</span>
+          <span id="status">Ready</span>
+        </footer>
+      </section>
+
+      <section class="preview-panel" aria-label="Live SwiftUI preview">
+        <header class="preview-toolbar">
+          <span>Preview</span>
+          <span class="zoom">100%</span>
+        </header>
+        <div class="device-stage">
+          <div class="device">
+            <div class="speaker"></div>
+            <swiftui-canvas id="canvas"></swiftui-canvas>
+          </div>
+        </div>
+        <details>
+          <summary>Generated UIIR</summary>
+          <pre id="uiir"></pre>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>

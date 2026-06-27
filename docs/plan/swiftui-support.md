@@ -287,10 +287,13 @@ frameworks/swiftui/                 # NEW — framework descriptor (Layer A)
 
 tests/swiftui-fixtures/             # NEW — *.swift + *.uiir.json (+ *.events/*.patches.json)
 
-web/swiftui-canvas/                 # NEW — dependency-free host
-  canvas.ts                         #   <swiftui-canvas> custom element + Shadow DOM
-  apply-patch.ts                    #   Map<nodeId,Element> + applyPatch
-  modifier-css.ts                   #   SwiftUI-modifier → CSS design system
+web/swiftui-canvas/                 # NEW — dependency-free host package
+  package.json  tsconfig.json
+  src/
+    canvas.ts                       #   <swiftui-canvas> custom element + Shadow DOM
+    apply-patch.ts                  #   Map<nodeId,Element> + applyPatch
+    modifier-css.ts                 #   SwiftUI-modifier → CSS design system
+  example/                          #   editor + preview demo
 ```
 
 The Studio chrome (editor, tabs) is **not** in conflict with the canvas: it uses
@@ -450,8 +453,9 @@ continuous gestures need a streaming event channel, not the discrete protocol of
 - [~] `tswift swiftui render|dispatch` CLI subcommands shipped; the stateful
       `SwiftUISession` lives in `crates/tswift-swiftui::session` for now
       (promotion into `tswift-wasm` with `on_patch`/`pump` deferred to Tier 6).
-- [x] `web/swiftui-canvas/` dependency-free host: `<swiftui-canvas>` Shadow-DOM
-      element + `apply-patch.ts` + `modifier-css.ts` (+ `validate.mjs` offline check).
+- [x] `web/swiftui-canvas/` dependency-free host package: `<swiftui-canvas>`
+      Shadow-DOM element + `src/apply-patch.ts` + `src/modifier-css.ts`
+      (+ `scripts/validate.mjs` offline check and `example/` editor preview).
 - [x] **Layer B harness** (`crates/tswift-cli/tests/swiftui_goldens.rs`) + Counter `*.uiir.json`.
 - [x] **Layer C harness** (same file) + Counter `*.events.json`/`*.patches.json`.
 - [ ] Layer D macOS screenshot-diff CI job (non-gating artifact).

@@ -3,7 +3,8 @@
 // engine's keyed patch stream. No vdom, no reconciler — the runtime already
 // did the diffing.
 
-import { applyModifiers, Modifier } from "./modifier-css.js";
+import { applyModifiers } from "./modifier-css.js";
+import type { Modifier } from "./modifier-css.js";
 
 /** A UIIR node from `tswift swiftui render` / patch payloads. */
 export interface UiirNode {
