@@ -3,8 +3,8 @@
 A lightweight **Swift runtime** written in Rust.
 
 `qswift` runs Swift source code without a Swift toolchain, LLVM, codegen, or
-any C dependency. It parses Swift with a **pure-Rust frontend** (`qswift-lexer` →
-`qswift-parser` → `qswift-sema`) and implements **all runtime behaviour** (language
+any C dependency. It parses Swift with a **frontend** (`qswift-lexer` →
+`qswift-parser` → `qswift-sema`) and implements **runtime** (language
 semantics *and* the standard library) in safe Rust on top of that AST.
 
 ```sh
@@ -18,11 +18,11 @@ cargo run -p qswift-cli -- run hello.swift   # => hello, swift
 
 A tree-walking interpreter for Swift. The split of responsibilities is deliberate:
 
-- **pure-Rust frontend** owns lexing, parsing, and semantic analysis: `qswift-lexer`
+- **frontend** owns lexing, parsing, and semantic analysis: `qswift-lexer`
   → `qswift-ast` → `qswift-parser` → `qswift-sema`. Results are lowered through
   `qswift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
   `Node` / `NodeKind`). No C, no LLVM, no `unsafe`.
-- **quick-swift (Rust)** owns the *runtime*:
+- **quick-swift** owns the *runtime*:
   - **(a) Language features** — the evaluator/semantics: values, control flow, types,
     generics, ARC, closures, errors, concurrency, …
   - **(b) Standard library** — the *behaviour* of `Int` / `String` / `Array` /
