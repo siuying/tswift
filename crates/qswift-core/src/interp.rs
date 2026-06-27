@@ -3733,6 +3733,20 @@ impl<'w> Interpreter<'w> {
                 }
                 Ok(Some(all))
             }
+            // `<pattern> as Type` — a cast pattern matches only when the
+            // subject's dynamic type is `Type`, then binds the inner pattern.
+            NodeKind::CastExpr => {
+                let kids: Vec<Node<'static>> = pattern.children().collect();
+                let Some(inner) = kids.first() else {
+                    return Ok(None);
+                };
+                let ty = kids.get(1).and_then(|t| t.text()).unwrap_or_default();
+                if self.value_is_type(subject, &ty) {
+                    self.match_pattern(inner, subject)
+                } else {
+                    Ok(None)
+                }
+            }
             NodeKind::PatternTuple => {
                 let SwiftValue::Tuple(items, _) = subject else {
                     return Ok(None);

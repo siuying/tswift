@@ -842,6 +842,25 @@ impl<'a> Parser<'a> {
     /// `NamePattern`, `WildcardPattern`, `TuplePattern`, `EnumCasePattern`,
     /// `RangePattern`, or a value/expression pattern node.
     fn parse_case_pattern(&mut self, binding: bool) -> Result<NodeId, ParseError> {
+        let pat = self.parse_case_pattern_inner(binding)?;
+        // `<pattern> as Type` — a cast pattern (`case let x as String`,
+        // `catch let e as MyError`): match only when the subject is of `Type`.
+        if self.at_keyword("as") {
+            let kw = self.bump();
+            let mut op = "as".to_string();
+            if self.peek().kind == TokenKind::Question || self.at_oper("!") {
+                op.push_str(self.bump().text);
+            }
+            let ty = self.parse_type()?;
+            let cast = self.ast.add(NodeKind::CastExpr, Some(&op), kw.line, kw.col);
+            self.ast.append_child(cast, pat);
+            self.ast.append_child(cast, ty);
+            return Ok(cast);
+        }
+        Ok(pat)
+    }
+
+    fn parse_case_pattern_inner(&mut self, binding: bool) -> Result<NodeId, ParseError> {
         // `let`/`var` introduce (or re-enter) a binding context.
         if self.at_keyword("let") || self.at_keyword("var") {
             self.bump();
@@ -851,6 +870,16 @@ impl<'a> Parser<'a> {
         if self.peek().kind == TokenKind::Identifier && self.peek().text == "_" {
             let t = self.bump();
             return Ok(self.ast.add(NodeKind::WildcardPattern, None, t.line, t.col));
+        }
+        // `is Type` — a type-check pattern matching any subject of that type.
+        if self.at_keyword("is") {
+            let kw = self.bump();
+            let ty = self.parse_type()?;
+            let wild = self.ast.add(NodeKind::WildcardPattern, None, kw.line, kw.col);
+            let cast = self.ast.add(NodeKind::CastExpr, Some("is"), kw.line, kw.col);
+            self.ast.append_child(cast, wild);
+            self.ast.append_child(cast, ty);
+            return Ok(cast);
         }
         // Enum-case pattern: `.case[(subpatterns)]` or `Type.case[(...)]`.
         if self.at_enum_case_pattern() {
@@ -4003,6 +4032,34 @@ mod tests {
         assert_eq!(conds.len(), 2);
         assert_eq!(conds[0].kind(), NodeKind::LetDecl);
         assert_eq!(conds[1].kind(), NodeKind::BinaryExpr);
+    }
+
+    #[test]
+    fn catch_binding_with_as_cast_is_a_cast_pattern() {
+        let ast = ast_of("do { } catch let e as MyError { }");
+        let do_stmt = first_stmt(&ast);
+        let clause = do_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::CatchClause)
+            .unwrap();
+        let pat = clause.children().next().unwrap();
+        assert_eq!(pat.kind(), NodeKind::CastExpr);
+        assert_eq!(pat.text(), Some("as"));
+        let inner = pat.children().next().unwrap();
+        assert_eq!(inner.kind(), NodeKind::NamePattern);
+        assert_eq!(inner.text(), Some("e"));
+    }
+
+    #[test]
+    fn switch_is_pattern_is_a_cast_pattern() {
+        let ast = ast_of("switch v { case is String: break; default: break }");
+        let case = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::CaseClause)
+            .unwrap();
+        let pat = case.children().next().unwrap();
+        assert_eq!(pat.kind(), NodeKind::CastExpr);
+        assert_eq!(pat.text(), Some("is"));
     }
 
     #[test]
