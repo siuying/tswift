@@ -7,6 +7,11 @@
 //! so the interpreter sees plain static calls and needs no builder-specific
 //! evaluation.
 //!
+//! `async` builder closures evaluate components in order, but are **gated** on
+//! async-closure support elsewhere in the runtime; the rewrite itself is
+//! transparent to `async`/`throws` unwinding, so no special handling is needed
+//! here once that support lands.
+//!
 //! Handled so far: declarations and expression statements (`buildExpression` +
 //! `buildBlock`, #119) and `if`/`else`/`if let` conditionals (`buildEither` +
 //! `buildOptional`, #120). A body containing control flow not yet lowered is
@@ -315,6 +320,12 @@ fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols)
         return;
     };
     let stmts = child_ids(ast, body);
+    // SE-0289: a sole `return` is the result — the body bypasses the builder
+    // entirely. Erase the attribute and leave the `return` as ordinary code.
+    if stmts.len() == 1 && ast.node(stmts[0]).kind() == NodeKind::ReturnStmt {
+        erase_attribute(ast, decl, builder);
+        return;
+    }
     if !stmts.iter().all(|&s| is_handleable(ast, methods, s)) {
         return; // contains a construct a later slice will lower; defer.
     }
@@ -344,6 +355,9 @@ fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols)
 fn is_handleable(ast: &Ast, methods: &BuilderMethods, stmt: NodeId) -> bool {
     match ast.node(stmt).kind() {
         NodeKind::ExprStmt | NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::FuncDecl => true,
+        // `guard` is not a component (SE-0289): it stays as control flow and is
+        // passed through unchanged, so its early-exit body is irrelevant here.
+        NodeKind::GuardStmt => true,
         NodeKind::IfStmt => {
             // A conditional needs at least one of the selection methods; without
             // them the body is invalid Swift, so leave it to the runtime path.
@@ -1563,6 +1577,36 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("explicit 'return'")),
             "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn sole_return_bypasses_the_builder() {
+        // The body is left as a plain `return`, and the attribute is erased.
+        let ast = analyzed("@B\nfunc g() -> String {\n return \"x\"\n}");
+        let body = func_body(&ast, "g");
+        let kids: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(kids, vec![NodeKind::ReturnStmt]);
+        // No synthesized build calls: the return value is the literal itself.
+        let ret = body.children().next().unwrap();
+        assert_eq!(
+            ret.children().next().unwrap().kind(),
+            NodeKind::StringLiteral
+        );
+    }
+
+    #[test]
+    fn guard_is_passed_through_as_control_flow() {
+        let ast = analyzed(
+            "@B\nfunc g(_ x: Int) -> String {\n guard x > 0 else { return \"n\" }\n \"a\"\n}",
+        );
+        let body = func_body(&ast, "g");
+        // The guard survives verbatim; only the expression becomes a component.
+        assert!(body.children().any(|c| c.kind() == NodeKind::GuardStmt));
+        let kids: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![NodeKind::GuardStmt, NodeKind::LetDecl, NodeKind::ReturnStmt]
         );
     }
 
