@@ -40,3 +40,20 @@ print(bumpThenThrow(100) { (n: inout Int) in
     n += 1
     throw Boom()
 })
+
+// `$0` shorthand recognised as `inout` from the caller's `&` argument.
+let bump: (inout Int) -> Void = { $0 += 1 }
+var counter = 40
+bump(&counter)
+bump(&counter)
+print(counter)
+
+// Explicit `throws` annotation in the closure signature parses; writeback
+// still happens before the throw.
+let bumpThrows: (inout Int) throws -> Void = { (n: inout Int) throws in
+    n += 5
+    throw Boom()
+}
+var guarded = 1
+do { try bumpThrows(&guarded) } catch {}
+print(guarded)
