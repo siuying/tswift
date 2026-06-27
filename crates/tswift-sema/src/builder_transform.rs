@@ -39,12 +39,40 @@ impl Pass for BuilderTransform {
 /// declared inside a type) are found too.
 fn collect_targets(ast: &Ast, parent: NodeId, symbols: &Symbols, out: &mut Vec<(NodeId, String)>) {
     for child in child_ids(ast, parent) {
-        if ast.node(child).kind() == NodeKind::FuncDecl {
+        if is_builder_target(ast.node(child).kind()) {
             if let Some(builder) = builder_attr(ast, child, symbols) {
                 out.push((child, builder));
             }
         }
         collect_targets(ast, child, symbols, out);
+    }
+}
+
+/// Declaration kinds a builder attribute can apply to: a function body, a
+/// computed-property getter, or a subscript getter.
+fn is_builder_target(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::FuncDecl | NodeKind::VarDecl | NodeKind::SubscriptDecl
+    )
+}
+
+/// The body block a builder attribute transforms on `decl`: a function's direct
+/// block, or the `get` accessor's block of a computed property / subscript.
+fn decl_body_block(ast: &Ast, decl: NodeId) -> Option<NodeId> {
+    match ast.node(decl).kind() {
+        NodeKind::FuncDecl => child_ids(ast, decl)
+            .into_iter()
+            .find(|c| ast.node(*c).kind() == NodeKind::Block),
+        NodeKind::VarDecl | NodeKind::SubscriptDecl => {
+            let getter = child_ids(ast, decl).into_iter().find(|c| {
+                ast.node(*c).kind() == NodeKind::Accessor && ast.node(*c).text() == Some("get")
+            })?;
+            child_ids(ast, getter)
+                .into_iter()
+                .find(|c| ast.node(*c).kind() == NodeKind::Block)
+        }
+        _ => None,
     }
 }
 
@@ -58,9 +86,10 @@ fn builder_attr(ast: &Ast, func: NodeId, symbols: &Symbols) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Transform `func`'s body if it is fully handleable; otherwise leave it (and
-/// its attribute) untouched for the legacy runtime transform.
-fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols) {
+/// Transform `decl`'s body if it is fully handleable; otherwise leave it (and
+/// its attribute) untouched for the legacy runtime transform. Applies to
+/// `@Builder func`, computed-property getters, and subscript getters alike.
+fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols) {
     let Some(methods) = symbols.result_builder(builder) else {
         return;
     };
@@ -71,10 +100,7 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
     if !has_fold {
         return;
     }
-    let Some(body) = child_ids(ast, func)
-        .into_iter()
-        .find(|c| ast.node(*c).kind() == NodeKind::Block)
-    else {
+    let Some(body) = decl_body_block(ast, decl) else {
         return;
     };
     let stmts = child_ids(ast, body);
@@ -90,13 +116,13 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
         counter: 0,
     };
     let (mut new_body, value) = lowering.lower_block(&stmts, line, col);
-    // `buildFinalResult` wraps the outermost block's value exactly once, when
-    // the builder declares it.
+    // `buildFinalResult` wraps the outermost block's value (the accessor's
+    // result) exactly once, when the builder declares it.
     let value = lowering.build_final_result(value, line, col);
     let ret = astbuild::return_stmt(lowering.ast, value, line, col);
     new_body.push(ret);
     ast.set_children(body, new_body);
-    erase_attribute(ast, func, builder);
+    erase_attribute(ast, decl, builder);
 }
 
 /// Whether the transform can lower statement `stmt` (recursively): a declaration
@@ -1128,6 +1154,96 @@ mod tests {
             second_arg.children().next().and_then(|c| c.text()),
             Some("buildLimitedAvailability")
         );
+    }
+
+    /// Locate a var/subscript decl by checking it carries no attribute and has
+    /// a transformed `get` accessor block.
+    fn getter_block<'a>(ast: &'a Ast, name_kind: NodeKind) -> tswift_ast::Node<'a> {
+        fn find(ast: &Ast, parent: NodeId, kind: NodeKind) -> Option<NodeId> {
+            for c in child_ids(ast, parent) {
+                if ast.node(c).kind() == kind {
+                    return Some(c);
+                }
+                if let Some(f) = find(ast, c, kind) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        let decl = find(ast, ast.root(), name_kind).expect("decl present");
+        let getter = ast
+            .node(decl)
+            .children()
+            .find(|c| c.kind() == NodeKind::Accessor)
+            .expect("get accessor");
+        getter
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .expect("getter block")
+    }
+
+    #[test]
+    fn computed_property_getter_is_transformed() {
+        let ast = analyzed("struct S {\n @B var body: String {\n \"a\"\n \"b\"\n }\n}");
+        let block = getter_block(&ast, NodeKind::VarDecl);
+        let kids: Vec<_> = block.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![NodeKind::LetDecl, NodeKind::LetDecl, NodeKind::ReturnStmt]
+        );
+        // The builder attribute is erased from the property decl.
+        fn find_var(ast: &Ast, parent: NodeId) -> Option<NodeId> {
+            for c in child_ids(ast, parent) {
+                if ast.node(c).kind() == NodeKind::VarDecl {
+                    return Some(c);
+                }
+                if let Some(f) = find_var(ast, c) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        let var = find_var(&ast, ast.root()).unwrap();
+        assert!(!ast
+            .node(var)
+            .children()
+            .any(|c| c.kind() == NodeKind::Attribute));
+    }
+
+    #[test]
+    fn subscript_getter_is_transformed() {
+        let ast = analyzed(
+            "struct S {\n @B subscript(_ i: String) -> String {\n get {\n \"a\"\n i\n }\n }\n}",
+        );
+        let block = getter_block(&ast, NodeKind::SubscriptDecl);
+        assert_eq!(
+            block.children().last().unwrap().kind(),
+            NodeKind::ReturnStmt
+        );
+        let ret_call = block.children().last().unwrap().children().next().unwrap();
+        assert_eq!(
+            ret_call.children().next().unwrap().text(),
+            Some("buildBlock")
+        );
+    }
+
+    #[test]
+    fn nested_result_builder_is_recognized() {
+        // A @resultBuilder declared inside a struct is collected by Symbols and
+        // its attribute drives the transform of a method in the same scope.
+        let src = "struct Outer {\n\
+            @resultBuilder\n struct Inner {\n\
+              static func buildExpression(_ v: String) -> String { v }\n\
+              static func buildBlock(_ parts: String...) -> String { \"\" }\n }\n\
+            @Inner\n func make() -> String {\n \"a\"\n }\n}";
+        let mut ast = parse(src).expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "make");
+        // Transformed: ends in `return Inner.buildBlock(...)`.
+        let ret_call = body.children().last().unwrap().children().next().unwrap();
+        let callee = ret_call.children().next().unwrap();
+        assert_eq!(callee.text(), Some("buildBlock"));
+        assert_eq!(callee.children().next().unwrap().text(), Some("Inner"));
     }
 
     #[test]

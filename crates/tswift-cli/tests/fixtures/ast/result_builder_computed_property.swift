@@ -1,0 +1,15 @@
+@resultBuilder
+struct StringBuilder {
+    static func buildExpression(_ value: String) -> String { value }
+    static func buildBlock(_ parts: String...) -> String { parts.joined(separator: " ") }
+}
+
+struct View {
+    let name: String
+
+    @StringBuilder
+    var body: String {
+        "View"
+        name
+    }
+}
