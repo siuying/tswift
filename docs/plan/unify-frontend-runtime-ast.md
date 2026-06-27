@@ -1,6 +1,6 @@
 # Plan — Unify the Frontend Parse AST and the Runtime AST
 
-**Status:** in progress
+**Status:** complete
 **Date:** 2026-06-27
 **Supersedes the bridge in:** `docs/plan/rust-frontend-compat-bridge.md`
 
@@ -69,7 +69,7 @@ Each box = one atomic commit; full suite green before the next.
 - [x] 8. **enum collapse** — re-export `tswift_ast::NodeKind` as the frontend
       `NodeKind`, rewrite `tswift-core` match arms to the clean names, delete
       `map_kind`. Modifier bitfield stays (payload encoding, not structural).
-- [ ] 9. **arena deletion** — `Node` becomes a cursor straight over
+- [x] 9. **arena deletion** — `Node` becomes a cursor straight over
       `tswift_ast`; delete `RuntimeAst`/`RuntimeNode`; rename the module away
       from "compat".
 
@@ -81,6 +81,11 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 9 done (39bfbd1). Deleted the `RuntimeAst` arena and
+  `compat.rs`; `Node` is a thin cursor over `tswift_ast`, accessors compute on
+  the fly, decoders in `decode.rs`. Codex flagged labeled-`for` `text()` drift +
+  stale docs (Important/Minor) — both fixed. Updated AGENTS.md. 447 green.
+  **All 9 steps complete: the compat lowering is gone; one AST, one vocabulary.**
 - 2026-06-27 — step 8 done (91ecf64). Deleted `kind.rs`/`map_kind`; frontend
   `NodeKind` is now `tswift_ast::NodeKind`. Renamed all match arms; removed dead
   kinds (Conformance/OptionalChain/ParenExpr/Type{Optional,Inout,Func,Tuple}).
