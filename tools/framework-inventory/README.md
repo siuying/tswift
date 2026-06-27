@@ -20,8 +20,8 @@ resolve through the pinned Swift toolchain or `xcrun --show-sdk-path`.
 Each runtime crate dumps its live registry:
 
 ```sh
-cargo test -p qswift-std dump_registered_keys
-cargo test -p qswift-foundation dump_registered_keys
+cargo test -p tswift-std dump_registered_keys
+cargo test -p tswift-foundation dump_registered_keys
 ```
 
 ## Report coverage
@@ -34,6 +34,6 @@ python3 tools/framework-inventory/coverage.py --framework stdlib Array
 
 Coverage states are `missing`, `implemented`, and `verified`. Verified means the
 member is registered and mentioned by a tagged executing CLI golden fixture
-(e.g. `crates/qswift-cli/tests/fixtures/foundation_*.swift`).
+(e.g. `crates/tswift-cli/tests/fixtures/foundation_*.swift`).
 
 `tools/stdlib-inventory/{extract,coverage}.py` remain as compatibility shims.

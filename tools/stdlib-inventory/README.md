@@ -21,5 +21,5 @@ python3 tools/framework-inventory/coverage.py --framework stdlib
 ```
 
 Registry keys are now mirrored to `frameworks/stdlib/registered_keys.txt` by
-`cargo test -p qswift-std dump_registered_keys`; the legacy
+`cargo test -p tswift-std dump_registered_keys`; the legacy
 `tools/stdlib-inventory/registered_keys.txt` file is also refreshed.

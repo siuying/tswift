@@ -1,0 +1,24 @@
+[package]
+name = "tswift-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "qswift command-line interface."
+
+[[bin]]
+name = "qswift"
+path = "src/main.rs"
+
+[dependencies]
+tswift-frontend.workspace = true
+tswift-core.workspace = true
+tswift-std.workspace = true
+tswift-foundation.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "tree_walker"
+harness = false

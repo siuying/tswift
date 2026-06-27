@@ -10,8 +10,8 @@
 
 ## 1. Problem statement
 
-The #36 experiment showed that replacing the `qswift-frontend` backend with
-`qswift-parser` + `qswift-sema` is not blocked mainly by parse acceptance. It is blocked
+The #36 experiment showed that replacing the `tswift-frontend` backend with
+`tswift-parser` + `tswift-sema` is not blocked mainly by parse acceptance. It is blocked
 by **runtime-facing AST contract compatibility**.
 
 The runtime currently consumes the frontend through a small surface:
@@ -26,19 +26,19 @@ The runtime currently consumes the frontend through a small surface:
 The Rust AST is cleaner than the msf AST, but the runtime was written against msf's
 **effective tree contract**: node kinds, child ordering, payload conventions, modifier
 bits, synthesized semantic nodes, and type annotations. The attempted direct adapter
-forced every mismatch to leak into `qswift-core`, producing a broad set of failing
+forced every mismatch to leak into `tswift-core`, producing a broad set of failing
 runtime tests.
 
 ## 2. Decision
 
 Do **not** keep patching the runtime for Rust AST differences. Instead, introduce one
-deep compatibility module inside `qswift-frontend`:
+deep compatibility module inside `tswift-frontend`:
 
 ```text
-qswift-lexer/parser/sema clean AST
+tswift-lexer/parser/sema clean AST
           │
           ▼
-qswift-frontend::compat lowerer
+tswift-frontend::compat lowerer
           │
           ▼
 RuntimeAst: msf-compatible runtime-facing tree
@@ -47,17 +47,17 @@ RuntimeAst: msf-compatible runtime-facing tree
 Analysis / Node / NodeKind public facade
           │
           ▼
-qswift-core / qswift-std unchanged
+tswift-core / tswift-std unchanged
 ```
 
-The seam remains `qswift-frontend::{Analysis, Node, NodeKind}`. The new compat
+The seam remains `tswift-frontend::{Analysis, Node, NodeKind}`. The new compat
 lowerer hides the messy shape conversion behind that seam.
 
 ## 3. Non-goals
 
-- Do not rewrite `qswift-core` to understand both msf and Rust AST shapes.
+- Do not rewrite `tswift-core` to understand both msf and Rust AST shapes.
 - Do not delete `msf-sys` until the Rust backend passes the full workspace test suite.
-- Do not make `qswift_ast::NodeKind` a clone of msf. Keep `qswift_ast` clean and lower
+- Do not make `tswift_ast::NodeKind` a clone of msf. Keep `tswift_ast` clean and lower
   into a separate runtime-facing representation.
 - Do not skip or weaken runtime behavior fixtures as the final solution. Temporary
   `#[ignore]`/allow-lists are acceptable only on a WIP branch and must be tracked.
@@ -66,7 +66,7 @@ lowerer hides the messy shape conversion behind that seam.
 
 ### 4.1 Add `RuntimeAst`
 
-Add an internal module, e.g. `crates/qswift-frontend/src/compat/`, containing:
+Add an internal module, e.g. `crates/tswift-frontend/src/compat/`, containing:
 
 ```rust
 pub(crate) struct RuntimeAst {
@@ -95,22 +95,22 @@ not learn which backing store produced the tree.
 
 ### 4.2 Keep two node vocabularies
 
-- `qswift_ast::NodeKind`: clean parser/sema IR.
-- `qswift_frontend::NodeKind`: stable runtime-facing compatibility vocabulary.
+- `tswift_ast::NodeKind`: clean parser/sema IR.
+- `tswift_frontend::NodeKind`: stable runtime-facing compatibility vocabulary.
 
 The compat lowerer maps from the former into the latter. This lets us improve the Rust
 frontend without breaking runtime callers.
 
 ### 4.3 Define the compatibility contract explicitly
 
-Create `crates/qswift-frontend/src/compat/contract.rs` or a markdown spec listing,
+Create `crates/tswift-frontend/src/compat/contract.rs` or a markdown spec listing,
 for every runtime-facing `NodeKind`:
 
 - expected payload (`text`, `op_text`, `decl_name`, `type_name`, labels)
 - child order
 - type annotation behavior
 - modifier/flag behavior
-- known runtime consumers in `qswift-core`
+- known runtime consumers in `tswift-core`
 - one AST snapshot fixture that pins the shape
 
 This turns undocumented msf behavior into our owned contract.
@@ -122,7 +122,7 @@ before implementing the lowerer rule.
 
 ### Test layers
 
-1. **Compat unit tests** in `qswift-frontend`:
+1. **Compat unit tests** in `tswift-frontend`:
    - parse Rust AST
    - run lowerer
    - assert exact runtime-facing dump shape
@@ -132,8 +132,8 @@ before implementing the lowerer rule.
    - allow-list intentional differences only with comments and issue links
 
 3. **Runtime golden tests**:
-   - no fixture is considered fixed until the corresponding `qswift-core` or
-     `qswift-cli` runtime test passes on the Rust backend
+   - no fixture is considered fixed until the corresponding `tswift-core` or
+     `tswift-cli` runtime test passes on the Rust backend
 
 4. **Full presubmit gate**:
    - `cargo test --workspace`
@@ -147,14 +147,14 @@ Goal: make the interface stable before changing internals.
 
 Tasks:
 
-- Keep `qswift-frontend::{Analysis, Node, NodeKind}` as the only runtime-facing
+- Keep `tswift-frontend::{Analysis, Node, NodeKind}` as the only runtime-facing
   interface.
 - Promote any remaining `NodeKind::Other(n)` runtime matches into named variants.
 - Add a `frontend-backend` test helper that can run the same fixture against C and Rust
   backends.
 - Add a manifest of runtime-facing AST snapshots under
-  `crates/qswift-cli/tests/fixtures/ast/` or a new
-  `crates/qswift-frontend/tests/fixtures/compat/` directory.
+  `crates/tswift-cli/tests/fixtures/ast/` or a new
+  `crates/tswift-frontend/tests/fixtures/compat/` directory.
 
 Exit criteria:
 
@@ -217,7 +217,7 @@ Goal: restore metadata currently encoded in msf-specific fields.
 
 Tasks:
 
-- Define our own modifier bit layout in `qswift-frontend`; stop depending on C enum
+- Define our own modifier bit layout in `tswift-frontend`; stop depending on C enum
   values.
 - Lower access/modifier keywords:
   - `mutating`, `static`, `class`, `final`, `override`, `weak`, `unowned`, `lazy`,
@@ -248,7 +248,7 @@ Tasks:
   - cast/is patterns
   - range/value patterns
   - `where` clauses and fallthrough markers in switch cases
-- Preserve child order used by `qswift-core::match_pattern`.
+- Preserve child order used by `tswift-core::match_pattern`.
 
 Exit criteria:
 
@@ -340,8 +340,8 @@ This split prevents #36 from being another big-bang PR.
 
 The bridge is complete when:
 
-- `qswift-core` has no Rust-vs-msf AST special cases.
-- `qswift-frontend` owns the runtime-facing `NodeKind` contract.
+- `tswift-core` has no Rust-vs-msf AST special cases.
+- `tswift-frontend` owns the runtime-facing `NodeKind` contract.
 - All runtime fixtures pass on the Rust backend.
 - AST snapshots document the compatibility shapes we intentionally expose.
 - `cargo test --workspace` and `scripts/presubmit` pass without C tooling.

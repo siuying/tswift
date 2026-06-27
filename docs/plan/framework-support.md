@@ -7,7 +7,7 @@
 - `docs/plan/stdlib-support.md` — the proven prototype this generalizes
 - `tools/stdlib-inventory/` — `extract.py` / `coverage.py` / `registered_keys.txt`
 - `docs/swift-runtime/feature-checklist.md` — hand-written feature tiers
-- `crates/qswift-std` — the stdlib registry (the template for per-framework crates)
+- `crates/tswift-std` — the stdlib registry (the template for per-framework crates)
 
 ## 1. Problem statement
 
@@ -23,7 +23,7 @@ It is hardcoded to the stdlib in three places:
 - `extract.py` resolves only `Swift.swiftinterface`.
 - `coverage.py` hardcodes paths, the `SEQUENCE_TYPES`/`CORE_MEMBERS` rules, and
   the out-of-scope buckets.
-- `registered_keys.txt` is dumped from the single `qswift-std` registry.
+- `registered_keys.txt` is dumped from the single `tswift-std` registry.
 
 To build a roadmap that extends to Foundation and beyond, we generalize this loop
 into a **framework-parameterized** system. The four requirements below map 1:1 to
@@ -133,12 +133,12 @@ The three-state model is already correct and reused verbatim:
 Generalizations to `coverage.py`:
 
 1. **Per-framework registry signal.** Each framework gets its own runtime crate
-   (`qswift-foundation`, later `qswift-swiftui`) exposing
+   (`tswift-foundation`, later `tswift-swiftui`) exposing
    `registered_keys() -> Vec<String>`, dumped by a `dump_registered_keys` test to
-   `frameworks/<name>/registered_keys.txt` — exactly the `qswift-std` pattern
-   (`crates/qswift-std/src/lib.rs:44`). Cannot drift; reads the live registry.
+   `frameworks/<name>/registered_keys.txt` — exactly the `tswift-std` pattern
+   (`crates/tswift-std/src/lib.rs:44`). Cannot drift; reads the live registry.
 2. **Per-framework fixtures.** Reuse the executing CLI golden harness
-   (`crates/qswift-cli/tests/fixtures/*.swift` + `.expected`). Tag framework
+   (`crates/tswift-cli/tests/fixtures/*.swift` + `.expected`). Tag framework
    fixtures with a subdir or prefix so the `verified` signal is scoped.
 3. **Scope-aware denominator.** Read `scope.toml`; classify out-of-scope members
    into a fifth bucket excluded from the total.
@@ -157,7 +157,7 @@ framework a plug-in to the same loop:
 |-------|--------|-----------|---------|
 | **interface source** | toolchain `Swift.swiftinterface` | SDK `Foundation.swiftinterface` | SDK `SwiftUI.swiftinterface` |
 | **scope manifest** | `frameworks/stdlib/scope.toml` | `…/foundation/scope.toml` | `…/swiftui/scope.toml` |
-| **runtime crate** | `qswift-std` | `qswift-foundation` | `qswift-swiftui` |
+| **runtime crate** | `tswift-std` | `tswift-foundation` | `tswift-swiftui` |
 | **registry dump** | `registered_keys.txt` | `registered_keys.txt` | `registered_keys.txt` |
 | **fixtures** | CLI goldens | CLI goldens (tagged) | CLI goldens (tagged) |
 
@@ -168,7 +168,7 @@ is **shared and framework-agnostic**. Adding a framework becomes:
 1. Add a row to `frameworks.toml` (source resolver).
 2. Write `frameworks/<name>/scope.toml` (the roadmap + denominator).
 3. `extract.py --framework <name>` → `inventory.md`.
-4. Scaffold `qswift-<name>` crate with `registered_keys()` + `dump_*` test.
+4. Scaffold `tswift-<name>` crate with `registered_keys()` + `dump_*` test.
 5. Implement tier-by-tier, each slice = registry entries + CLI fixture +
    frontend fixture + coverage/checklist update.
 
@@ -188,7 +188,7 @@ visible from day one.
 - [x] `frameworks/<name>/scope.toml` schema + `frameworks/foundation/scope.toml`
       (F1–F5 above) as the first roadmap.
 - [x] `coverage.py --framework` with scope-aware denominator + out-of-scope bucket.
-- [x] `qswift-foundation` crate skeleton with `registered_keys()` + dump test.
+- [x] `tswift-foundation` crate skeleton with `registered_keys()` + dump test.
 - [x] `framework-coverage` skill (generalized from `stdlib-coverage`).
 - [x] Foundation tier F1 (`Data`/`UUID`) as the end-to-end proof slice.
 
@@ -196,7 +196,7 @@ visible from day one.
 
 - **Reference for behaviour.** The first slice mirrors Foundation value semantics
   directly and keeps Darwin/corelibs gaps visible through fixtures and coverage.
-- **One registry crate per framework.** `qswift-foundation` mirrors `qswift-std`
+- **One registry crate per framework.** `tswift-foundation` mirrors `tswift-std`
   and exposes its own `registered_keys()` dump.
 - **Fixture tagging convention.** Per-framework verified signals use filename
   prefixes (`foundation_*.swift`) while the coverage script also accepts a

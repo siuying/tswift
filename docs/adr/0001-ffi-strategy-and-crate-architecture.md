@@ -46,9 +46,9 @@ Two questions had to be settled:
 ```
 msf-sys  (raw FFI, generated, all unsafe)
   └─ msf  (safe wrapper — the ONLY place msf pointers are dereferenced)
-       └─ qswift-core  (SwiftValue + eval spine, safe)
-            ├─ qswift-std  (native builtins, safe)
-            └─ qswift-cli  (binary)
+       └─ tswift-core  (SwiftValue + eval spine, safe)
+            ├─ tswift-std  (native builtins, safe)
+            └─ tswift-cli  (binary)
 ```
 
 The lifetime invariant — *the AST lives exactly as long as its analysis* — is

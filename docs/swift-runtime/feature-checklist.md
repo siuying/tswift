@@ -4,11 +4,11 @@
 run), on top of the typed AST.
 
 > **Frontend cutover (#56, done):** the default frontend is now the **pure-Rust**
-> pipeline (`qswift-lexer`/`-ast`/`-parser`/`-sema` → `qswift-frontend::compat`).
+> pipeline (`tswift-lexer`/`-ast`/`-parser`/`-sema` → `tswift-frontend::compat`).
 > The vendored `msf` C frontend, `msf-sys`, `bindgen`, `cc`, and the C submodule have
 > been **removed** — the default build/test needs no C toolchain. All 53 runtime
 > fixtures pass on the Rust backend with no Rust-vs-msf AST special cases in
-> `qswift-core`/`-std`. The golden fixture harness now validates **every**
+> `tswift-core`/`-std`. The golden fixture harness now validates **every**
 > positive `tests/swift-fixtures` file against the pure-Rust frontend — the
 > `// rust-gap:` escape hatch has been removed and those fixtures now parse and
 > type-check cleanly. The **FE** column below records the historical msf status;

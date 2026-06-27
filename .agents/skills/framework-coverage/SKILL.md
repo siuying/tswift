@@ -6,8 +6,8 @@ description: Understand how much of a Swift framework runtime implements, by fra
 Use the top-down coverage workflow:
 
 1. Refresh the framework registry snapshot from the live runtime crate:
-   - stdlib: `cargo test -p qswift-std dump_registered_keys`
-   - Foundation: `cargo test -p qswift-foundation dump_registered_keys`
+   - stdlib: `cargo test -p tswift-std dump_registered_keys`
+   - Foundation: `cargo test -p tswift-foundation dump_registered_keys`
 2. Check the roll-up:
    - `python3 tools/framework-inventory/coverage.py --framework foundation`
    - `python3 tools/framework-inventory/coverage.py --framework stdlib`
@@ -19,4 +19,4 @@ Artifacts:
 - Scope manifests: `frameworks/<name>/scope.toml`
 - Inventories: `frameworks/<name>/inventory.md` (`docs/swift-runtime/stdlib-inventory.md` for stdlib)
 - Registry dumps: `frameworks/<name>/registered_keys.txt`
-- Tagged CLI fixtures: `crates/qswift-cli/tests/fixtures/<framework>_*.swift`
+- Tagged CLI fixtures: `crates/tswift-cli/tests/fixtures/<framework>_*.swift`

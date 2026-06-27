@@ -4,8 +4,8 @@
 
 Build a **lightweight Swift runtime**. It:
 
-1. **Parses Swift using a pure-Rust frontend** (`qswift-lexer` → `qswift-ast` →
-   `qswift-parser` → `qswift-sema` → `qswift-frontend::compat`) to produce a
+1. **Parses Swift using a pure-Rust frontend** (`tswift-lexer` → `tswift-ast` →
+   `tswift-parser` → `tswift-sema` → `tswift-frontend::compat`) to produce a
    typed AST — no C compiler, no FFI, no `unsafe`.
 2. **Implements the runtime in Rust**, consuming that AST through the stable
    `Analysis` / `Node` / `NodeKind` API, covering:
@@ -40,11 +40,11 @@ A typed tree-walking interpreter (R0–R5) before any bytecode VM (R6).
      ▼
 ┌────────────────────────────────┐
 │ pure-Rust frontend             │
-│  qswift-lexer                   │
-│    → qswift-ast                 │
-│    → qswift-parser              │
-│    → qswift-sema                │
-│    → qswift-frontend      │
+│  tswift-lexer                   │
+│    → tswift-ast                 │
+│    → tswift-parser              │
+│    → tswift-sema                │
+│    → tswift-frontend      │
 │      (compat lowerer → AST)    │
 └────────────────┬───────────────┘
                  │ Analysis / Node / NodeKind
@@ -67,16 +67,16 @@ The frontend is a black box behind the `Analysis` / `Node` / `NodeKind` API. All
 quick-swift/                       # cargo workspace
 ├── Cargo.toml                     # [workspace] members
 ├── crates/
-│   ├── qswift-lexer/               # tokenizer for Swift source
-│   ├── qswift-ast/                 # AST node definitions
-│   ├── qswift-parser/              # recursive-descent parser
-│   ├── qswift-sema/                # semantic analysis / type resolution
-│   ├── qswift-frontend/      # compat lowerer: drives the pipeline,
+│   ├── tswift-lexer/               # tokenizer for Swift source
+│   ├── tswift-ast/                 # AST node definitions
+│   ├── tswift-parser/              # recursive-descent parser
+│   ├── tswift-sema/                # semantic analysis / type resolution
+│   ├── tswift-frontend/      # compat lowerer: drives the pipeline,
 │   │   └── src/                   # exposes Analysis/Node/NodeKind to the runtime
 │   │       ├── compat.rs          # RuntimeAst arena + lowering from sema output
 │   │       ├── kind.rs            # NodeKind enum (runtime-facing)
 │   │       └── lib.rs             # Analysis::analyze / Node<'a> / AnalyzeError
-│   ├── qswift-core/          # LANGUAGE FEATURES (the evaluator)
+│   ├── tswift-core/          # LANGUAGE FEATURES (the evaluator)
 │   │   └── src/
 │   │       ├── value.rs           # SwiftValue enum, ARC (Rc), CoW
 │   │       ├── env.rs             # scope chain + interner
@@ -84,16 +84,16 @@ quick-swift/                       # cargo workspace
 │   │       ├── ops.rs             # operator dispatch
 │   │       ├── suspend.rs         # stackful-coroutine suspension primitive (ADR-0004)
 │   │       └── lib.rs
-│   ├── qswift-std/           # STANDARD LIBRARY (native Rust builtins)
+│   ├── tswift-std/           # STANDARD LIBRARY (native Rust builtins)
 │   │   └── src/
 │   │       └── lib.rs             # print, numeric, string, collection, optional, …
-│   └── qswift-cli/           # binary: qswift run file.swift
+│   └── tswift-cli/           # binary: qswift run file.swift
 │       └── tests/fixtures/        # *.swift + *.expected golden tests (53+)
 ```
 
 ### 1.2 The frontend API
 
-`qswift-frontend` is `#![forbid(unsafe_code)]` and the sole runtime-facing
+`tswift-frontend` is `#![forbid(unsafe_code)]` and the sole runtime-facing
 seam onto the Swift frontend. It exposes three types:
 
 - **`Analysis`** — owns the typed AST in a `RuntimeAst` arena; `impl Drop` disposes
@@ -106,7 +106,7 @@ seam onto the Swift frontend. It exposes three types:
 - **`NodeKind`** — a Rust `enum` covering every AST node the runtime needs to
   pattern-match on.
 
-Everything above `qswift-frontend` is safe Rust with no FFI.
+Everything above `tswift-frontend` is safe Rust with no FFI.
 
 ---
 
@@ -267,7 +267,7 @@ property-wrapper desugaring; `codable.rs`; `#if` evaluation pass; multi-file dri
 `actor` isolation, `@MainActor`/global actors, `Sendable`, `AsyncSequence`/`for await`.
 **Status:** substantially complete (issue #12). Cooperative single-threaded executor over
 `corosensei` stackful coroutines (ADR-0004, ADR-0005). Suspension primitive lives in
-`crates/qswift-core/src/suspend.rs`.
+`crates/tswift-core/src/suspend.rs`.
 **Gaps:** preemptive ordering / `Task.yield` interleaving; `withCheckedContinuation`;
 strict-concurrency diagnostics. Documented in ADR-0005 fidelity boundary.
 **Exit verified:** `async`/`await` round-trip; actor serialization; `withTaskGroup`; custom `AsyncSequence`.
@@ -297,7 +297,7 @@ must be closed first.
 
 ## 5. Testing strategy
 
-1. **Golden fixtures (primary)** — `crates/qswift-cli/tests/fixtures/*.swift` +
+1. **Golden fixtures (primary)** — `crates/tswift-cli/tests/fixtures/*.swift` +
    `*.expected` (53+ pairs). A Rust `#[test]` harness runs each via the CLI and diffs
    stdout. Every feature lands with ≥1 fixture.
 2. **Differential testing vs real Swift** — where a `swiftc` toolchain exists, run the

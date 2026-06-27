@@ -16,7 +16,7 @@ qswift dump --json path/to/snippet.swift   # structured, for tooling
 The text form prints one node per line: `Kind "text" L<line> :<ResolvedType>
 [mods]`. Diagnostics (errors/warnings) go to stderr, so you still see them even
 when analysis half-fails. To pin a construct's parse shape in a test, drop a
-`crates/qswift-cli/tests/fixtures/ast/<name>.swift` + `<name>.ast` pair
+`crates/tswift-cli/tests/fixtures/ast/<name>.swift` + `<name>.ast` pair
 (regenerate with `qswift dump`).
 
 msf itself also exposes `msf_dump_text` / `msf_dump_json` / `msf_dump_sexpr` in

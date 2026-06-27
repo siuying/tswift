@@ -14,7 +14,7 @@ executor over the VM's suspendable frames."
 
 ADR-0004 already decided the **suspension primitive**: each suspendable unit runs
 on its own native stack via [`corosensei`](https://docs.rs/corosensei), so the
-recursive tree-walker (`crates/qswift-core/src/interp.rs`) can pause at an
+recursive tree-walker (`crates/tswift-core/src/interp.rs`) can pause at an
 `await` and hand control back to a scheduler without unwinding. This ADR records
 the **scheduler/executor** built on top of that primitive — the design-decision
 gate that issue #12 calls out as its first acceptance criterion.
@@ -80,8 +80,8 @@ Per the issue ("aim for semantic fidelity, not scheduler-identical ordering"):
 
 - `unsafe` confinement (ADR-0001) is preserved: stack switching lives in
   `corosensei`; the executor adds only a stable-pointer/thread-local-yielder
-  boundary, encapsulated in `crates/qswift-core/src/concurrency.rs`.
-- Acceptance fixtures live under `crates/qswift-cli/tests/fixtures/` and
+  boundary, encapsulated in `crates/tswift-core/src/concurrency.rs`.
+- Acceptance fixtures live under `crates/tswift-cli/tests/fixtures/` and
   cover `async`/`await`, `async let`, `Task`/`withTaskGroup`, and `actor`.
 </content>
 </invoke>

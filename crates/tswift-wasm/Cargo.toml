@@ -1,0 +1,18 @@
+[package]
+name = "tswift-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser/Wasm bindings for running qswift in-process."
+
+[lib]
+# `rlib` lets the native unit tests link a test harness; `cdylib` is the wasm artifact.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true
+tswift-std.workspace = true
+tswift-foundation.workspace = true
+wasm-bindgen = "0.2.126"

@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (implemented)
 - **Date:** 2026-06-25
-- **Context slice:** Evaluator core (`crates/qswift-core/src/interp.rs`), msf safe wrapper
+- **Context slice:** Evaluator core (`crates/tswift-core/src/interp.rs`), msf safe wrapper
 
 ## Context
 

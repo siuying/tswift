@@ -15,10 +15,10 @@ The standard library is the largest sustained effort in the runtime
 (feature-checklist Tier 10, risk register: *"Stdlib is unbounded — Highest"*).
 Today it is implemented **ad hoc and scattered**:
 
-- `crates/qswift-std/src/lib.rs` is a near-empty skeleton — it registers only
+- `crates/tswift-std/src/lib.rs` is a near-empty skeleton — it registers only
   `print`.
 - Real behaviour lives as hardcoded `match` arms inside
-  `crates/qswift-core/src/interp.rs` (~4900 lines): `array_higher_order`
+  `crates/tswift-core/src/interp.rs` (~4900 lines): `array_higher_order`
   (`map`/`filter`/`reduce`/`forEach`/`contains`/`first`/`sorted`), `.count`/
   `.isEmpty`, `max`/`min`/`abs`, `Int("…")` conversions, `Result.get()`, JSON
   coders, and more.
@@ -72,7 +72,7 @@ guarantees we never silently drift from the reference surface.
 
 ### 4.1 Refactor: give the stdlib a real home (incremental)
 
-Lift the scattered behaviour out of `interp.rs` into `qswift-std` behind a clean
+Lift the scattered behaviour out of `interp.rs` into `tswift-std` behind a clean
 native-dispatch seam — **incrementally, one receiver type at a time** (`Array`
 first, then `String`, `Dictionary`, `Set`, numerics, `Optional`). Each step is a
 pure relocation guarded by the existing fixtures; no behaviour change per step.
@@ -121,7 +121,7 @@ output cannot use today's pure `fn(&mut dyn Write, &[SwiftValue]) -> SwiftValue`
 They receive a **narrow capability trait**, not the whole `Interpreter`:
 
 ```rust
-// defined in qswift-core; implemented for Interpreter.
+// defined in tswift-core; implemented for Interpreter.
 pub trait StdContext {
     fn call_closure(&mut self, id: ClosureId, args: Vec<SwiftValue>) -> Eval;
     fn throw(&mut self, error: SwiftValue) -> Signal;
@@ -161,12 +161,12 @@ struct MethodEntry { mutating: bool, /* fn ptr */ }
 `tools/stdlib-inventory/coverage.py` cross-references the generated inventory
 against **two** signals and assigns each member a state:
 
-- **missing** — not in the `qswift-std` registry.
+- **missing** — not in the `tswift-std` registry.
 - **implemented** — present in the registry (declared coverage).
 - **verified** — in the registry **and** exercised by a passing fixture
   (behavioural coverage).
 
-The registry signal comes from a `qswift_std::registered_keys() -> Vec<String>`
+The registry signal comes from a `tswift_std::registered_keys() -> Vec<String>`
 accessor dumped to a file by a tiny `#[test]`/bin (authoritative — reads the live
 registry, so it cannot drift from source; no Rust parsing needed). The fixture
 signal is read from the **executing** CLI golden fixtures (see §4.4). Output is a
@@ -242,17 +242,17 @@ against real `swiftc` 6.3.2.
 Two fixture systems exist and both apply:
 
 - **Behaviour** — an executing CLI golden fixture
-  `crates/qswift-cli/tests/fixtures/<name>.swift` + `<name>.expected`, run through
-  the tree-walker by `crates/qswift-cli/tests/golden.rs` and diffed on stdout.
+  `crates/tswift-cli/tests/fixtures/<name>.swift` + `<name>.expected`, run through
+  the tree-walker by `crates/tswift-cli/tests/golden.rs` and diffed on stdout.
   This is the only harness that verifies runtime behaviour and is the primary
   bar for stdlib work.
 - **Parse/typecheck** — a `tests/swift-fixtures/*.swift` frontend fixture
-  (`// expected-no-diagnostics`) validated by `qswift-frontend`'s
+  (`// expected-no-diagnostics`) validated by `tswift-frontend`'s
   `golden_fixtures` test, per AGENTS.md “every feature has a golden fixture”.
   (Note: the `tier10-stdlib` fixtures there are frontend-only and do **not**
   prove behaviour — e.g. `append` parses there but is not yet implemented.)
 
-A member is done when: dispatched from `qswift-std`, covered by a CLI `.expected`
+A member is done when: dispatched from `tswift-std`, covered by a CLI `.expected`
 fixture **and** a frontend fixture, both tests pass, output matches real `swiftc`
 6.3.2 where applicable, and the Tier 10 checklist + coverage report are updated.
 Any intentional compatibility gap (float formatting, regex subset, Foundation
@@ -262,10 +262,10 @@ exclusions) is documented per §3.3.
 
 - [x] `tools/stdlib-inventory/extract.py` + generated `stdlib-inventory.md`
 - [x] `.swift-version` pinned to 6.3.2 (committed)
-- [x] `StdContext` capability trait in core + two-layer dispatch seam in `qswift-std`
+- [x] `StdContext` capability trait in core + two-layer dispatch seam in `tswift-std`
       (intrinsic registry with `MethodEntry { mutating }` + algorithm layer)
 - [x] Incremental refactor of `interp.rs` ad-hoc arms into the seam (Array first)
-- [x] `qswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
+- [x] `tswift_std::registered_keys()` accessor + `tools/stdlib-inventory/coverage.py`
       three-state report (CLI `.expected` signal for `verified`)
 - [x] Ordered implementation S1–S10 (§4.3), each a vertical slice with fixtures +
       checklist/coverage updates (PRs #82–#92)

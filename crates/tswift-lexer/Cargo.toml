@@ -1,0 +1,7 @@
+[package]
+name = "tswift-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-Rust Swift lexer: UTF-8 source into a zero-copy token stream. Part of the qswift frontend pipeline."

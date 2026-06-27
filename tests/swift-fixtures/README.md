@@ -1,8 +1,8 @@
 # Swift frontend golden fixtures
 
 Repo-owned Swift source fixtures that specify what the quick-swift frontend
-(`qswift-lexer` → `qswift-ast` → `qswift-parser` → `qswift-sema`, exposed through
-`qswift-frontend`) must accept, reject, and how it must diagnose.
+(`tswift-lexer` → `tswift-ast` → `tswift-parser` → `tswift-sema`, exposed through
+`tswift-frontend`) must accept, reject, and how it must diagnose.
 
 These are **our own** fixtures, authored to track the feature checklist
 (`docs/swift-runtime/feature-checklist.md`). They are deliberately *not* a copy
@@ -15,9 +15,9 @@ layers of the pipeline — don't confuse them:
 
 | | **Frontend golden fixtures** (this dir) | **Runtime golden fixtures** |
 |---|---|---|
-| Location | `tests/swift-fixtures/` | `crates/qswift-cli/tests/fixtures/` |
-| Harness | `qswift-frontend/tests/golden_fixtures.rs` | `qswift-cli/tests/golden.rs` |
-| What runs | `Analysis::analyze()` — lex → parse → sema only | `qswift run` — the full evaluator (`qswift-core` + `qswift-std`) |
+| Location | `tests/swift-fixtures/` | `crates/tswift-cli/tests/fixtures/` |
+| Harness | `tswift-frontend/tests/golden_fixtures.rs` | `tswift-cli/tests/golden.rs` |
+| What runs | `Analysis::analyze()` — lex → parse → sema only | `qswift run` — the full evaluator (`tswift-core` + `tswift-std`) |
 | What's asserted | **Diagnostics** match inline directives | Program **stdout** matches a `.expected` sibling, byte-for-byte |
 | Executes code? | No | Yes |
 | Add a case by | Dropping in a `.swift` with directives | Dropping in a `.swift` + `.expected` pair |
@@ -36,7 +36,7 @@ evaluates to the right result. A construct accepted by the frontend but not yet
 handled by the evaluator is exactly the gap a runtime fixture catches.
 
 The runtime corpus also has two extra flavors (see
-`crates/qswift-cli/tests/golden.rs`): `fixtures/multifile/<case>/` directories
+`crates/tswift-cli/tests/golden.rs`): `fixtures/multifile/<case>/` directories
 for cross-file modules, and `fixtures/ast/<name>.swift` + `.ast` snapshots that
 pin the typed-AST shape via `qswift dump`.
 

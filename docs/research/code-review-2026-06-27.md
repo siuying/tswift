@@ -108,7 +108,7 @@ separate gpt-5.5 reviewer. Per-commit raw reviews live under `/tmp/reviews/<sha>
 12. **332187f** `regex.rs:548/668` — greedy unbounded repeat over nullable
     subpattern (`/()*/`, `/(a?)*/`) recurses forever / stack-overflow. Also
     `{3,2}` and huge counts unguarded.
-13. **893d28e** `qswift-wasm/lib.rs:70` — `truncate` slices by byte index; a
+13. **893d28e** `tswift-wasm/lib.rs:70` — `truncate` slices by byte index; a
     multibyte UTF-8 boundary panics/traps wasm. Plus per-run `Box::leak` of
     `Analysis` leaks memory each browser run.
 14. **ac60123** `sema/lib.rs:471`, `ops.rs:19` — Int→Double coercion applied by

@@ -1,16 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/qswift-lexer",
-    "crates/qswift-ast",
-    "crates/qswift-parser",
-    "crates/qswift-sema",
-    "crates/qswift-frontend",
-    "crates/qswift-core",
-    "crates/qswift-std",
-    "crates/qswift-foundation",
-    "crates/qswift-cli",
-    "crates/qswift-wasm",
+    "crates/tswift-lexer",
+    "crates/tswift-ast",
+    "crates/tswift-parser",
+    "crates/tswift-sema",
+    "crates/tswift-frontend",
+    "crates/tswift-core",
+    "crates/tswift-std",
+    "crates/tswift-foundation",
+    "crates/tswift-cli",
+    "crates/tswift-wasm",
 ]
 
 [workspace.package]
@@ -20,8 +20,8 @@ license = "MIT"
 repository = "https://github.com/siuying/quick-swift"
 
 [workspace.dependencies]
-qswift-frontend = { path = "crates/qswift-frontend" }
-qswift-core = { path = "crates/qswift-core" }
-qswift-std = { path = "crates/qswift-std" }
-qswift-foundation = { path = "crates/qswift-foundation" }
-qswift-wasm = { path = "crates/qswift-wasm" }
+tswift-frontend = { path = "crates/tswift-frontend" }
+tswift-core = { path = "crates/tswift-core" }
+tswift-std = { path = "crates/tswift-std" }
+tswift-foundation = { path = "crates/tswift-foundation" }
+tswift-wasm = { path = "crates/tswift-wasm" }

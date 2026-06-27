@@ -5,7 +5,7 @@ This project aimed to build a end-to-end, lightweight Swift compiler and runtime
 ## Folder Structure
 
 - `creates` - quick-swift rust packages.
-- `crates/qswift-lexer`, `crates/qswift-ast`, `crates/qswift-parser`, `crates/qswift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/qswift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
+- `crates/tswift-lexer`, `crates/tswift-ast`, `crates/tswift-parser`, `crates/tswift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/tswift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
 
 ## Notable Documents
 
@@ -28,7 +28,7 @@ Read `docs/swift-runtime/feature-checklist.md`. It is the feature checklist.
 
 When a feature is partially or fully implemented and fully verified, update the checklist item.
 
-Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.swift`) in Swift, validated against the Rust frontend by `qswift-frontend`'s `golden_fixtures` test.
+Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.swift`) in Swift, validated against the Rust frontend by `tswift-frontend`'s `golden_fixtures` test.
 
 Every rust change should be fully covered in tests.
 

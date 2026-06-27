@@ -244,84 +244,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qswift-ast"
-version = "0.0.0"
-
-[[package]]
-name = "qswift-cli"
-version = "0.0.0"
-dependencies = [
- "criterion",
- "qswift-core",
- "qswift-foundation",
- "qswift-frontend",
- "qswift-std",
-]
-
-[[package]]
-name = "qswift-core"
-version = "0.0.0"
-dependencies = [
- "corosensei",
- "qswift-frontend",
-]
-
-[[package]]
-name = "qswift-foundation"
-version = "0.0.0"
-dependencies = [
- "qswift-core",
-]
-
-[[package]]
-name = "qswift-frontend"
-version = "0.0.0"
-dependencies = [
- "qswift-ast",
- "qswift-lexer",
- "qswift-parser",
- "qswift-sema",
-]
-
-[[package]]
-name = "qswift-lexer"
-version = "0.0.0"
-
-[[package]]
-name = "qswift-parser"
-version = "0.0.0"
-dependencies = [
- "qswift-ast",
- "qswift-lexer",
-]
-
-[[package]]
-name = "qswift-sema"
-version = "0.0.0"
-dependencies = [
- "qswift-ast",
- "qswift-parser",
-]
-
-[[package]]
-name = "qswift-std"
-version = "0.0.0"
-dependencies = [
- "qswift-core",
-]
-
-[[package]]
-name = "qswift-wasm"
-version = "0.0.0"
-dependencies = [
- "qswift-core",
- "qswift-foundation",
- "qswift-frontend",
- "qswift-std",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -442,6 +364,84 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tswift-ast"
+version = "0.0.0"
+
+[[package]]
+name = "tswift-cli"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "tswift-core",
+ "tswift-foundation",
+ "tswift-frontend",
+ "tswift-std",
+]
+
+[[package]]
+name = "tswift-core"
+version = "0.0.0"
+dependencies = [
+ "corosensei",
+ "tswift-frontend",
+]
+
+[[package]]
+name = "tswift-foundation"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+]
+
+[[package]]
+name = "tswift-frontend"
+version = "0.0.0"
+dependencies = [
+ "tswift-ast",
+ "tswift-lexer",
+ "tswift-parser",
+ "tswift-sema",
+]
+
+[[package]]
+name = "tswift-lexer"
+version = "0.0.0"
+
+[[package]]
+name = "tswift-parser"
+version = "0.0.0"
+dependencies = [
+ "tswift-ast",
+ "tswift-lexer",
+]
+
+[[package]]
+name = "tswift-sema"
+version = "0.0.0"
+dependencies = [
+ "tswift-ast",
+ "tswift-parser",
+]
+
+[[package]]
+name = "tswift-std"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+]
+
+[[package]]
+name = "tswift-wasm"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+ "tswift-foundation",
+ "tswift-frontend",
+ "tswift-std",
+ "wasm-bindgen",
 ]
 
 [[package]]

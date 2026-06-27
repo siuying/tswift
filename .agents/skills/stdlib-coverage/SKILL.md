@@ -8,7 +8,7 @@ description: Understand how much of the Swift standard library the runtime imple
 Measures the runtime's Swift stdlib implementation against the full reference
 surface (`docs/swift-runtime/stdlib-inventory.md`). Each member is classified:
 
-- **missing** — not in the `qswift-std` registry.
+- **missing** — not in the `tswift-std` registry.
 - **implemented** — in the registry (declared coverage).
 - **verified** — in the registry *and* exercised by a passing CLI golden fixture.
 
@@ -18,7 +18,7 @@ Always go overall → section. Don't read the inventory by hand.
 
 1. **Refresh the registry snapshot** (cannot drift — reads the live registry):
    ```sh
-   cargo test -p qswift-std dump_registered_keys
+   cargo test -p tswift-std dump_registered_keys
    ```
 
 2. **Check overall coverage first** — list every targeted section with

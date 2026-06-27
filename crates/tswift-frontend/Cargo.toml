@@ -1,0 +1,15 @@
+[package]
+name = "tswift-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Pure-Rust Swift frontend: drives the lexer/parser/sema pipeline and exposes the runtime-facing typed AST."
+
+[dependencies]
+tswift-ast = { path = "../tswift-ast" }
+tswift-parser = { path = "../tswift-parser" }
+tswift-sema = { path = "../tswift-sema" }
+
+[dev-dependencies]
+tswift-lexer = { path = "../tswift-lexer" }

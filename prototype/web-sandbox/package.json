@@ -1,12 +1,12 @@
 {
-  "name": "qswift-web-sandbox-prototype",
+  "name": "tswift-web-sandbox-prototype",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "npm run build:wasm && astro dev --host 127.0.0.1 --port 4321",
     "start": "npm run dev",
-    "build:wasm": "wasm-pack build ../../crates/qswift-wasm --target web --out-dir ../../prototype/web-sandbox/src/wasm --out-name qswift_wasm",
+    "build:wasm": "wasm-pack build ../../crates/tswift-wasm --target web --out-dir ../../prototype/web-sandbox/src/wasm --out-name tswift_wasm",
     "build": "npm run build:wasm && astro build",
     "test": "npm run build:wasm && node test/wasm-smoke.mjs",
     "preview": "wrangler pages dev ./dist --compatibility-date=2025-04-01",

@@ -7,7 +7,7 @@
 
 ## The problem in one sentence
 
-Our evaluator (`crates/qswift-core/src/interp.rs`) runs Swift by **recursive
+Our evaluator (`crates/tswift-core/src/interp.rs`) runs Swift by **recursive
 descent on the Rust call stack**: `eval(node, env)` calls itself for sub-expressions.
 At a Swift `await`, the entire chain of in-flight evaluations lives in **native Rust
 stack frames** we cannot freeze, copy, or walk away from. To implement `async`/`await`,

@@ -2,7 +2,7 @@
 
 Date: 2026-06-26
 Scope: `prototype/web-sandbox/src/pages/index.astro` preset examples vs. the
-pure-Rust frontend + interpreter (`qswift-cli run`, same crates the wasm wraps).
+pure-Rust frontend + interpreter (`tswift-cli run`, same crates the wasm wraps).
 
 Each preset was run through `target/debug/qswift run`. This document records
 **every** failure, its root cause (reduced to a minimal repro), the path to
@@ -33,17 +33,17 @@ suite executes all presets through the compiled wasm artifact.
 ### Landed (gap < 4)
 
 All gaps scored `< 4` are fixed and verified end-to-end. Each ships a golden
-fixture and a `qswift-cli` run fixture; `cargo test` is green and the
+fixture and a `tswift-cli` run fixture; `cargo test` is green and the
 `wasm_smoke` suite runs the re-enabled presets through the compiled wasm.
 
 - **`J` Generics escaping** — `prototype/web-sandbox/src/pages/index.astro` now
   doubles the `\(` interpolation markers (the nested `\"` already collapse to
   plain `"` under the JS template literal). `supported: false` removed.
 - **`I` `Array.sort()` / `sort(by:)`** — mutating intrinsic in
-  `crates/qswift-std/src/array.rs` delegating to the shared `sorted` algorithm;
+  `crates/tswift-std/src/array.rs` delegating to the shared `sorted` algorithm;
   registry key `Array.sort`.
 - **`L` dict element `.key` / `.value`** — named-tuple member access in
-  `crates/qswift-core/src/interp.rs`, plus `Dictionary.filter` returning a
+  `crates/tswift-core/src/interp.rs`, plus `Dictionary.filter` returning a
   `Dictionary` (registry key `Dictionary.filter`) so `scores.filter{…}.keys`
   chains.
 - **`B` one-sided range patterns** — parser accepts `case n...:`, `case ..<n:`,
@@ -51,11 +51,11 @@ fixture and a `qswift-cli` run fixture; `cargo test` is green and the
   matcher in `interp.rs` handles them. Unblocked **Switch Patterns**; also closed
   the range-pattern half of **Protocols**.
 - **`D` multi-name binding** — `var a, b, c: T` / `let x = 1, y = 2` desugar to
-  N bindings in `crates/qswift-parser/src/lib.rs` (shared annotation deep-copied
+  N bindings in `crates/tswift-parser/src/lib.rs` (shared annotation deep-copied
   via `Ast::clone_subtree`). Closed the structural half of **Structs**.
 
 Proof fixtures:
-`crates/qswift-cli/tests/fixtures/{array_sort,dict_element_members,one_sided_range_patterns,multi_name_binding}.{swift,expected}`,
+`crates/tswift-cli/tests/fixtures/{array_sort,dict_element_members,one_sided_range_patterns,multi_name_binding}.{swift,expected}`,
 `tests/swift-fixtures/tier1-imperative/one_sided_range_patterns.swift`,
 `tests/swift-fixtures/tier2-value-types/multi_name_binding.swift`, and additions
 to `tests/swift-fixtures/tier10-stdlib/{s4-array,s6-dictionary}.swift`.
@@ -67,30 +67,30 @@ to `tests/swift-fixtures/tier10-stdlib/{s4-array,s6-dictionary}.swift`.
 
 ### Landed (gap = 4)
 
-Both gap-`4` presets are fixed and verified end-to-end (golden + `qswift-cli`
+Both gap-`4` presets are fixed and verified end-to-end (golden + `tswift-cli`
 fixtures, full `cargo test` green, `wasm_smoke` runs both re-enabled presets).
 
 - **`C` operator function references** — a bare operator in value position
   (`reduce(0, +)`, `sorted(by: >)`) now resolves to a synthesized operator
   closure. `ClosureDef` became an enum (`User` / `Operator(op)`) in
-  `crates/qswift-core/src/interp.rs`; `eval_ident` returns a `Closure` for an
+  `crates/tswift-core/src/interp.rs`; `eval_ident` returns a `Closure` for an
   operator token (`is_operator_name`) and `call_closure` applies the operator
   via `ops::binary`/`ops::unary`, so the stdlib HOFs call it like any closure.
   Unblocked **Closures & HOF**.
 - **`F` Character predicates** — `isLetter`/`isNumber`/`isWhitespace`/
   `isUppercase`/`isLowercase`/`isNewline`/`isWholeNumber`/`isHexDigit`/`isASCII`
   registered as properties on the (single-grapheme) `String`/`Character`
-  receiver in `crates/qswift-std/src/string.rs`, classifying the leading
+  receiver in `crates/tswift-std/src/string.rs`, classifying the leading
   Unicode scalar via `char` methods (no new deps, offline-safe).
 - **`G` `if case` / `guard case` binding** — a refutable `case` pattern in a
   condition now lowers to a new `CaseCondition` runtime node
-  (`crates/qswift-frontend/src/{kind,compat}.rs`) instead of an
+  (`crates/tswift-frontend/src/{kind,compat}.rs`) instead of an
   `OptionalBinding`; `eval_cond_list` evaluates the subject, runs the existing
   `match_pattern`, and binds payloads on success. Together `F`+`G` unblocked
   **Error Handling**.
 
 Proof fixtures:
-`crates/qswift-cli/tests/fixtures/{operator_references,character_predicates,if_case_binding}.{swift,expected}`,
+`crates/tswift-cli/tests/fixtures/{operator_references,character_predicates,if_case_binding}.{swift,expected}`,
 plus additions to `tests/swift-fixtures/tier3-reference-arc/closures.swift` and
 `tests/swift-fixtures/tier5-errors-modules/error_handling.swift`.
 
@@ -118,18 +118,18 @@ Two independent gaps (plus `Dictionary.filter` returning a `Dictionary`):
 
 - **`I` `Array.sort()` (in-place mutating).** `var a=[3,1,2]; a.sort()` →
   `unsupported construct: method .sort() on Array`. Note `a.sorted()` (the
-  non-mutating form) already works (`qswift-std/src/sequence.rs:27`).
+  non-mutating form) already works (`tswift-std/src/sequence.rs:27`).
 - **`L` dictionary element `.key` / `.value`.** `s.filter { $0.value >= 90 }`
   → `member .value on tuple`. Dictionary iteration yields a labelled
   `(key:, value:)` tuple, but member access by label on a tuple value isn't
   wired.
 
 **Path:**
-- `sort()`: add a mutating sibling to `sorted` in `qswift-std/src/sequence.rs`
+- `sort()`: add a mutating sibling to `sorted` in `tswift-std/src/sequence.rs`
   that writes back through the receiver lvalue (the runtime already has
   mutating-method plumbing for structs/arrays — e.g. `append`).
 - `.key`/`.value`: support named-tuple member access in the interpreter
-  (`qswift-core/src/interp.rs` member-access path) for the dictionary element
+  (`tswift-core/src/interp.rs` member-access path) for the dictionary element
   tuple shape.
 
 Both are localized; `mapValues`, `flatMap`, full `Set` algebra already work.
@@ -143,7 +143,7 @@ already works, so only the open-ended prefix/postfix range *pattern* is missing.
 This single gap blocks **two** presets (Switch Patterns directly; Protocols via
 the `grade()` extension's `switch score`).
 
-**Path:** in the parser (`qswift-parser/src/lib.rs`) accept a one-sided range
+**Path:** in the parser (`tswift-parser/src/lib.rs`) accept a one-sided range
 expression in pattern position (`expr...`, `...expr`, `..<expr`), lowering to
 the existing `PartialRangeFrom`/`PartialRangeUpTo` pattern the runtime can match
 with `~=`. Sema/runtime already model the range types.
@@ -167,7 +167,7 @@ function value isn't resolved. The closure form `reduce(0) { $0 + $1 }` works.
 
 **Path:** resolve operator tokens used in value position to a builtin
 function value. Touches name resolution in sema + a small set of operator
-thunks in the runtime (`qswift-core/src/ops.rs` already centralizes operator
+thunks in the runtime (`tswift-core/src/ops.rs` already centralizes operator
 semantics, so the thunks can delegate there).
 
 ---
@@ -176,7 +176,7 @@ semantics, so the thunks can delegate there).
 Two gaps:
 
 - **`F` `Character.isLetter` / `.isNumber`** (and friends). A `Character` is
-  modelled as a single-grapheme `String` (`qswift-std/src/string.rs:12`) but the
+  modelled as a single-grapheme `String` (`tswift-std/src/string.rs:12`) but the
   `isLetter`/`isNumber`/`isWhitespace`/… predicate properties aren't registered
   → `member .isLetter on String`.
 - **`G` `if case .success(let v) = r`** → `binding without a name`. The
@@ -184,10 +184,10 @@ Two gaps:
   pattern machinery exists; it just isn't reused by `if case` / `guard case`.
 
 **Path:**
-- Add the Character predicate intrinsics in `qswift-std/src/string.rs` (Unicode
+- Add the Character predicate intrinsics in `tswift-std/src/string.rs` (Unicode
   scalar classification on the single grapheme).
 - Route `if case` / `guard case` through the same enum-pattern binding path the
-  `switch` arm already uses (`qswift-core/src/interp.rs`).
+  `switch` arm already uses (`tswift-core/src/interp.rs`).
 
 `throws`/`do`-`catch`, `catch E.t(let n)`, `try?`, `Result`, `defer` all work.
 
@@ -201,10 +201,10 @@ gap remains.
 
 > **Landed.** Root cause was the parser gluing a newline-separated `(` into a
 > postfix call (`1\n(a, b)` → `1(a, b)`); a call argument list now must begin on
-> the callee's line (`qswift-parser`). The runtime then handles a `TupleExpr`
+> the callee's line (`tswift-parser`). The runtime then handles a `TupleExpr`
 > assignment target: it evaluates the whole RHS first (so swaps are correct) and
 > writes each element back through its lvalue (`assign_destructured` in
-> `qswift-core/src/interp.rs`), supporting nested tuples and `_` discards. The
+> `tswift-core/src/interp.rs`), supporting nested tuples and `_` discards. The
 > preset's iterative variant was restored to the idiomatic
 > `(a, b) = (b, a + b)` form.
 
@@ -224,9 +224,9 @@ element wrap) isn't handled by the runtime cast.
 > must match the element type, and an optional element (`[T?]`) also accepts
 > `nil`. Because the runtime models an optional value as the bare value (or
 > `Nil`), no per-element wrapping is needed — the array passes through unchanged
-> (`qswift-core/src/interp.rs`, helper `array_element_type`).
+> (`tswift-core/src/interp.rs`, helper `array_element_type`).
 
-**Path:** in the runtime `as`/cast logic (`qswift-core/src/interp.rs` +
+**Path:** in the runtime `as`/cast logic (`tswift-core/src/interp.rs` +
 `value.rs`), recognize array casts where the target element is the optional of
 the source element and wrap each element in `.some`. `guard let`, optional
 chaining, `??`, `compactMap`, `try?` already work.
@@ -253,7 +253,7 @@ context must be typed/stored as the contextual type. This needs:
    binary-op operand unification).
 2. AST/lowering: carry the resolved literal type to the runtime.
 3. Runtime: construct the literal as `Double` (not `Int`) when so typed; or a
-   uniform numeric-promotion rule in `qswift-core/src/ops.rs`.
+   uniform numeric-promotion rule in `tswift-core/src/ops.rs`.
 
 High effort because it touches the type-inference contract end-to-end, not a
 single intrinsic. Worth doing first conceptually — it unblocks the most
@@ -263,10 +263,10 @@ realistic programs — but it is the largest change.
 > typing, the runtime coerces an integer at the typed boundaries and promotes
 > mixed arithmetic:
 >
-> 1. **Sema** (`qswift-sema`) treats `Int → Double` as coercible, so an
+> 1. **Sema** (`tswift-sema`) treats `Int → Double` as coercible, so an
 >    annotated binding (`let r: Double = 5`) and mixed arithmetic (`d / 4`) no
 >    longer diagnose; mixed binary ops infer `Double`.
-> 2. **Runtime ops** (`qswift-core/src/ops.rs`) promote the integer side of a
+> 2. **Runtime ops** (`tswift-core/src/ops.rs`) promote the integer side of a
 >    mixed `Int`/`Double` binary op to `Double`.
 > 3. **Runtime coercion** (`coerce_numeric`) converts an integer literal to
 >    `Double`/`Float` at annotated `let`/`var` bindings, struct memberwise
@@ -289,7 +289,7 @@ protocols, so the default `grade()` from `Scorable` was not found.
 > **Landed.** The interpreter now registers protocol-composition typealiases
 > (`register_typealias` → `protocol_aliases`) and `all_protocols` expands an
 > alias to its components during default-implementation lookup
-> (`qswift-core/src/interp.rs`).
+> (`tswift-core/src/interp.rs`).
 
 ---
 
@@ -312,4 +312,4 @@ once green, the corresponding preset's `supported: false` flag removed in
 
 All gaps `A`–`P` are closed and every preset's `supported: false` flag has been
 removed. The `wasm_smoke` suite runs all 13 presets through the compiled wasm
-artifact; the golden corpus and `qswift-cli` run fixtures cover each fix.
+artifact; the golden corpus and `tswift-cli` run fixtures cover each fix.

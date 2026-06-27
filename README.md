@@ -3,13 +3,13 @@
 A lightweight **Swift runtime** written in Rust.
 
 `qswift` runs Swift source code without a Swift toolchain, LLVM, codegen, or
-any C dependency. It parses Swift with a **frontend** (`qswift-lexer` →
-`qswift-parser` → `qswift-sema`) and implements **runtime** (language
+any C dependency. It parses Swift with a **frontend** (`tswift-lexer` →
+`tswift-parser` → `tswift-sema`) and implements **runtime** (language
 semantics *and* the standard library) in safe Rust on top of that AST.
 
 ```sh
 echo 'print("hello, swift")' > hello.swift
-cargo run -p qswift-cli -- run hello.swift   # => hello, swift
+cargo run -p tswift-cli -- run hello.swift   # => hello, swift
 ```
 
 ---
@@ -18,9 +18,9 @@ cargo run -p qswift-cli -- run hello.swift   # => hello, swift
 
 A tree-walking interpreter for Swift. The split of responsibilities is deliberate:
 
-- **frontend** owns lexing, parsing, and semantic analysis: `qswift-lexer`
-  → `qswift-ast` → `qswift-parser` → `qswift-sema`. Results are lowered through
-  `qswift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
+- **frontend** owns lexing, parsing, and semantic analysis: `tswift-lexer`
+  → `tswift-ast` → `tswift-parser` → `tswift-sema`. Results are lowered through
+  `tswift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
   `Node` / `NodeKind`). No C, no LLVM, no `unsafe`.
 - **quick-swift** owns the *runtime*:
   - **(a) Language features** — the evaluator/semantics: values, control flow, types,
@@ -44,7 +44,7 @@ hard memory semantics become native Rust idioms rather than features we re-imple
 | UTF-8 `String` backing (Swift 5+) | Rust `String` |
 
 We get memory safety for free in the evaluator and there is no `unsafe` code anywhere
-in the stack (`qswift-frontend` is `#![forbid(unsafe_code)]`).
+in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 
 > **Status:** actively developed. Tiers 0–7 of the Swift feature surface (literals,
 > control flow, value/reference types, ARC, protocols, generics, error handling,
@@ -64,11 +64,11 @@ in the stack (`qswift-frontend` is `#![forbid(unsafe_code)]`).
      ▼
 ┌────────────────────────────────┐
 │ Frontend                       │
-│  qswift-lexer                   │
-│    → qswift-ast                 │
-│    → qswift-parser              │
-│    → qswift-sema                │
-│    → qswift-frontend      │
+│  tswift-lexer                   │
+│    → tswift-ast                 │
+│    → tswift-parser              │
+│    → tswift-sema                │
+│    → tswift-frontend      │
 │      (compat lowerer → AST)    │
 └────────────────┬───────────────┘
                  │ Analysis / Node / NodeKind
@@ -93,14 +93,14 @@ in the stack (`qswift-frontend` is `#![forbid(unsafe_code)]`).
 
 | Crate | Role |
 |---|---|
-| [`crates/qswift-lexer`](crates/qswift-lexer) | Tokenizer for Swift source |
-| [`crates/qswift-ast`](crates/qswift-ast) | AST node definitions |
-| [`crates/qswift-parser`](crates/qswift-parser) | Recursive-descent parser |
-| [`crates/qswift-sema`](crates/qswift-sema) | Semantic analysis / type resolution |
-| [`crates/qswift-frontend`](crates/qswift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime |
-| [`crates/qswift-core`](crates/qswift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam |
-| [`crates/qswift-std`](crates/qswift-std) | Native standard library builtins (e.g. `print`) |
-| [`crates/qswift-cli`](crates/qswift-cli) | The `qswift` binary |
+| [`crates/tswift-lexer`](crates/tswift-lexer) | Tokenizer for Swift source |
+| [`crates/tswift-ast`](crates/tswift-ast) | AST node definitions |
+| [`crates/tswift-parser`](crates/tswift-parser) | Recursive-descent parser |
+| [`crates/tswift-sema`](crates/tswift-sema) | Semantic analysis / type resolution |
+| [`crates/tswift-frontend`](crates/tswift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime |
+| [`crates/tswift-core`](crates/tswift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam |
+| [`crates/tswift-std`](crates/tswift-std) | Native standard library builtins (e.g. `print`) |
+| [`crates/tswift-cli`](crates/tswift-cli) | The `qswift` binary |
 
 ---
 
@@ -124,16 +124,16 @@ cargo build
 
 ```sh
 echo 'print(42)' > hello.swift
-cargo run -p qswift-cli -- run hello.swift     # => 42
+cargo run -p tswift-cli -- run hello.swift     # => 42
 
 # multiple files form a single module
-cargo run -p qswift-cli -- run a.swift b.swift
+cargo run -p tswift-cli -- run a.swift b.swift
 ```
 
 Or install the binary and call it directly:
 
 ```sh
-cargo install --path crates/qswift-cli
+cargo install --path crates/tswift-cli
 qswift run hello.swift
 ```
 
@@ -147,7 +147,7 @@ cargo test          # unit tests + golden-fixture tests
 ```
 
 The primary test mechanism is **golden fixtures**. They live in
-[`crates/qswift-cli/tests/fixtures/`](crates/qswift-cli/tests/fixtures) as
+[`crates/tswift-cli/tests/fixtures/`](crates/tswift-cli/tests/fixtures) as
 `<name>.swift` + `<name>.expected` pairs; the harness runs each through the CLI and
 diffs stdout. Adding a feature means adding a fixture pair — no harness changes needed.
 Where a `swiftc` toolchain is available, fixtures are validated against real Swift
