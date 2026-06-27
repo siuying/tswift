@@ -28,10 +28,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "last", last);
 
     // `Character` predicate properties. A Character is a single-grapheme
-    // String, so these classify its leading Unicode scalar.
+    // String, so these classify the whole cluster: `isASCII` requires every
+    // scalar to be ASCII, and digit-like predicates require a single scalar so
+    // an enclosed digit (e.g. a keycap `1\u{20E3}`) is not misread as a digit.
     interp.register_property(s, "isLetter", is_letter);
     interp.register_property(s, "isNumber", is_number);
-    interp.register_property(s, "isWholeNumber", is_number);
+    interp.register_property(s, "isWholeNumber", is_whole_number);
     interp.register_property(s, "isWhitespace", is_whitespace);
     interp.register_property(s, "isNewline", is_newline);
     interp.register_property(s, "isUppercase", is_uppercase);
@@ -199,9 +201,28 @@ fn first_scalar(recv: &SwiftValue) -> Result<Option<char>, StdError> {
     Ok(str_of(recv)?.chars().next())
 }
 
+/// The single Unicode scalar of a value, or `None` if it is empty or a
+/// multi-scalar grapheme cluster (combining marks, enclosing keycaps, ZWJ
+/// sequences, …). Used by predicates whose concept applies only to a lone
+/// scalar, so an adorned digit/letter is not misclassified.
+fn lone_scalar(recv: &SwiftValue) -> Result<Option<char>, StdError> {
+    let s = str_of(recv)?;
+    let mut it = s.chars();
+    Ok(match (it.next(), it.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    })
+}
+
 /// Classify the leading scalar with `pred`; an empty value is `false`.
 fn classify(recv: SwiftValue, pred: impl Fn(char) -> bool) -> StdResult {
     Ok(SwiftValue::Bool(first_scalar(&recv)?.is_some_and(pred)))
+}
+
+/// Classify a value that must be a single scalar; multi-scalar clusters and
+/// empty values are `false`.
+fn classify_lone(recv: SwiftValue, pred: impl Fn(char) -> bool) -> StdResult {
+    Ok(SwiftValue::Bool(lone_scalar(&recv)?.is_some_and(pred)))
 }
 
 fn is_letter(recv: SwiftValue) -> StdResult {
@@ -209,7 +230,13 @@ fn is_letter(recv: SwiftValue) -> StdResult {
 }
 
 fn is_number(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_numeric())
+    classify_lone(recv, |c| c.is_numeric())
+}
+
+/// `Character.isWholeNumber` — a digit with an integer value (e.g. `7`), unlike
+/// `isNumber` which also accepts fractions like `½`.
+fn is_whole_number(recv: SwiftValue) -> StdResult {
+    classify_lone(recv, |c| c.to_digit(10).is_some())
 }
 
 fn is_whitespace(recv: SwiftValue) -> StdResult {
@@ -233,12 +260,15 @@ fn is_lowercase(recv: SwiftValue) -> StdResult {
     classify(recv, |c| c.is_lowercase())
 }
 
+/// `Character.isASCII` — true only when every scalar of the cluster is ASCII,
+/// so `e\u{301}` (a combining accent) is not ASCII.
 fn is_ascii(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_ascii())
+    let s = str_of(&recv)?;
+    Ok(SwiftValue::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii())))
 }
 
 fn is_hex_digit(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_ascii_hexdigit())
+    classify_lone(recv, |c| c.is_ascii_hexdigit())
 }
 
 // ---- transforms ------------------------------------------------------------
@@ -532,6 +562,23 @@ mod tests {
         assert_eq!(is_hex_digit(s("G")).unwrap(), f);
         // An empty value classifies as false rather than trapping.
         assert_eq!(is_letter(s("")).unwrap(), f);
+    }
+
+    #[test]
+    fn character_predicates_consider_whole_cluster() {
+        let t = SwiftValue::Bool(true);
+        let f = SwiftValue::Bool(false);
+        // isASCII looks at every scalar: a combining accent is not ASCII.
+        assert_eq!(is_ascii(s("e\u{301}")).unwrap(), f);
+        // A digit with an enclosing keycap is not a number/whole-number/hex.
+        let keycap = s("1\u{20E3}");
+        assert_eq!(is_number(keycap.clone()).unwrap(), f);
+        assert_eq!(is_whole_number(keycap.clone()).unwrap(), f);
+        assert_eq!(is_hex_digit(keycap).unwrap(), f);
+        // isWholeNumber rejects fractions that isNumber accepts.
+        assert_eq!(is_number(s("\u{00BD}")).unwrap(), t); // ½ is a number
+        assert_eq!(is_whole_number(s("\u{00BD}")).unwrap(), f);
+        assert_eq!(is_whole_number(s("7")).unwrap(), t);
     }
 
     #[test]
