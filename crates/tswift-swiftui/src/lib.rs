@@ -18,7 +18,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn, StructObj,
+    SwiftValue,
 };
 
 /// Field name holding a view's ordered modifier list.
@@ -28,11 +29,28 @@ pub const CHILDREN_FIELD: &str = "_children";
 /// Type name of an appended modifier record (`_Modifier { name, <args> }`).
 pub const MODIFIER_TYPE: &str = "_Modifier";
 
-/// View modifiers registered as generic struct methods. Each appends a
-/// `_Modifier` record to the receiver view's `_modifiers` field (copy-on-write)
-/// and returns the new view. The list also drives the `View.<name>` coverage
-/// keys in [`registered_keys`].
-const MODIFIERS: &[&str] = &["frame"];
+/// Define a view-modifier intrinsic that appends a named `_Modifier` record to
+/// the receiver view (copy-on-write). All v1 modifiers share this shape; the
+/// host interprets the recorded name + args.
+macro_rules! modifier {
+    ($fn_name:ident, $swift_name:literal) => {
+        fn $fn_name(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+            append_modifier(recv, make_modifier($swift_name, args))
+        }
+    };
+}
+
+modifier!(modifier_frame, "frame");
+modifier!(modifier_padding, "padding");
+modifier!(modifier_corner_radius, "cornerRadius");
+
+/// View modifiers registered as generic struct methods, by Swift name. Drives
+/// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
+const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
+    ("frame", modifier_frame),
+    ("padding", modifier_padding),
+    ("cornerRadius", modifier_corner_radius),
+];
 
 /// Register every currently-supported SwiftUI view constructor and modifier
 /// into `interp`.
@@ -43,7 +61,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
 
-    interp.register_struct_method("frame", modifier_frame);
+    for (name, func) in MODIFIER_FNS {
+        interp.register_struct_method(name, *func);
+    }
 }
 
 /// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
@@ -68,7 +88,7 @@ pub fn registered_keys() -> Vec<String> {
         })
         .collect();
     // Modifiers are members of `View` for coverage purposes.
-    keys.extend(MODIFIERS.iter().map(|m| format!("View.{m}")));
+    keys.extend(MODIFIER_FNS.iter().map(|(m, _)| format!("View.{m}")));
     keys.sort();
     keys.dedup();
     keys
@@ -232,11 +252,6 @@ fn type_error(message: impl Into<String>) -> StdError {
     StdError::Error(EvalError::Type(message.into()))
 }
 
-/// `.frame(width:height:)` — fixed-size frame around the view.
-fn modifier_frame(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
-    append_modifier(recv, make_modifier("frame", args))
-}
-
 /// Returns the SwiftUI type name of a view value, if it is one.
 pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
     match value {
@@ -273,7 +288,9 @@ mod tests {
                 "Spacer.init",
                 "Text.init",
                 "VStack.init",
+                "View.cornerRadius",
                 "View.frame",
+                "View.padding",
             ]
         );
     }
@@ -301,6 +318,35 @@ struct V: View {
         assert_eq!(children.len(), 2);
         assert_eq!(view_type_name(&children[0]), Some("Text"));
         assert_eq!(view_type_name(&children[1]), Some("Text"));
+    }
+
+    #[test]
+    fn render_root_chains_modifiers_in_order() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Text("x").padding().cornerRadius(8)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let mods = modifiers_of(&view);
+        let names: Vec<String> = mods
+            .iter()
+            .filter_map(|m| match m {
+                SwiftValue::Struct(o) => match o.get("name") {
+                    Some(SwiftValue::Str(s)) => Some(s.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["padding", "cornerRadius"]);
+        // cornerRadius carries its numeric value positionally.
+        let SwiftValue::Struct(corner) = &mods[1] else {
+            panic!("expected struct");
+        };
+        assert_eq!(corner.get("value"), Some(&SwiftValue::int(8)));
     }
 
     #[test]

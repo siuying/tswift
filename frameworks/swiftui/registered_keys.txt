@@ -3,4 +3,6 @@ HStack.init
 Spacer.init
 Text.init
 VStack.init
+View.cornerRadius
 View.frame
+View.padding
