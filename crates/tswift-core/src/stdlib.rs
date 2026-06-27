@@ -47,6 +47,15 @@ pub type StdResult = Result<SwiftValue, StdError>;
 pub trait StdContext {
     /// Call the closure with table id `id`, returning its result.
     fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> StdResult;
+
+    /// Evaluate the body of closure `id` as a result-builder block, returning an
+    /// array of each top-level statement's value. This is the SwiftUI
+    /// `@ViewBuilder` shim: `VStack { Text(…); Text(…) }` yields both children.
+    /// The default treats the closure as producing a single value (its result).
+    fn eval_block_values(&mut self, id: usize) -> StdResult {
+        let value = self.call_closure(id, Vec::new())?;
+        Ok(SwiftValue::Array(std::rc::Rc::new(vec![value])))
+    }
     /// The program output sink (`print` and friends write here).
     fn out(&mut self) -> &mut dyn Write;
     /// Build a thrown-error outcome from a Swift error value.

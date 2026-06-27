@@ -17,7 +17,9 @@
 
 use std::rc::Rc;
 
-use tswift_core::{Arg, EvalError, Interpreter, StdContext, StdResult, StructObj, SwiftValue};
+use tswift_core::{
+    Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructObj, SwiftValue,
+};
 
 /// Field name holding a view's ordered modifier list.
 pub const MODIFIERS_FIELD: &str = "_modifiers";
@@ -109,14 +111,15 @@ fn text_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 }
 
 /// `VStack { ... }` — vertical container. Children arrive via the `@ViewBuilder`
-/// shim as the positional arguments evaluated from the trailing closure.
-fn vstack_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("VStack", child_views(args)))
+/// shim: the trailing closure is evaluated as a result-builder block and each
+/// view-valued statement becomes a child.
+fn vstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("VStack", collect_children(ctx, args)?))
 }
 
 /// `HStack { ... }` — horizontal container.
-fn hstack_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("HStack", child_views(args)))
+fn hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("HStack", collect_children(ctx, args)?))
 }
 
 /// `Spacer()` — flexible empty space.
@@ -141,17 +144,35 @@ fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     ))
 }
 
-/// Collect positional view arguments (the `@ViewBuilder` children) into a list,
-/// flattening any array a builder shim may have produced.
-fn child_views(args: Vec<Arg>) -> Vec<SwiftValue> {
+/// Resolve a container's `@ViewBuilder` content into an ordered child list.
+/// Each argument is either the content closure (evaluated as a result-builder
+/// block) or an already-built view; non-view statement values are dropped.
+fn collect_children(ctx: &mut dyn StdContext, args: Vec<Arg>) -> Result<Vec<SwiftValue>, StdError> {
     let mut out = Vec::new();
     for arg in args {
         match arg.value {
-            SwiftValue::Array(items) => out.extend(items.iter().cloned()),
-            other => out.push(other),
+            SwiftValue::Closure(id) => {
+                let block = ctx.eval_block_values(id)?;
+                push_views(&block, &mut out);
+            }
+            other => push_views(&other, &mut out),
         }
     }
-    out
+    Ok(out)
+}
+
+/// Append every view value reachable in `value` (flattening nested arrays a
+/// builder shim produces) to `out`, dropping non-view results.
+fn push_views(value: &SwiftValue, out: &mut Vec<SwiftValue>) {
+    match value {
+        SwiftValue::Array(items) => {
+            for item in items.iter() {
+                push_views(item, out);
+            }
+        }
+        v if view_type_name(v).is_some() => out.push(v.clone()),
+        _ => {}
+    }
 }
 
 /// Build a `_Modifier` record: a struct carrying `name` plus each call argument
@@ -207,8 +228,8 @@ fn append_modifier(view: SwiftValue, modifier: SwiftValue) -> StdResult {
     })))
 }
 
-fn type_error(message: impl Into<String>) -> tswift_core::StdError {
-    tswift_core::StdError::Error(EvalError::Type(message.into()))
+fn type_error(message: impl Into<String>) -> StdError {
+    StdError::Error(EvalError::Type(message.into()))
 }
 
 /// `.frame(width:height:)` — fixed-size frame around the view.
@@ -255,6 +276,31 @@ mod tests {
                 "View.frame",
             ]
         );
+    }
+
+    #[test]
+    fn render_root_collects_vstack_children() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        VStack {
+            Text("a")
+            Text("b")
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("VStack"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children array");
+        };
+        assert_eq!(children.len(), 2);
+        assert_eq!(view_type_name(&children[0]), Some("Text"));
+        assert_eq!(view_type_name(&children[1]), Some("Text"));
     }
 
     #[test]

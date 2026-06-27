@@ -2721,6 +2721,59 @@ impl<'w> Interpreter<'w> {
         result
     }
 
+    /// Evaluate the body of user closure `id` statement-by-statement, returning
+    /// each statement's value (Void results dropped) — the result-builder block
+    /// evaluation backing `@ViewBuilder`. Non-user closures yield their single
+    /// call result.
+    fn eval_builder_block(&mut self, id: usize) -> Result<Vec<SwiftValue>, Signal> {
+        if id >= self.closures.len() {
+            return Err(EvalError::UnknownFunction("<closure>".into()).into());
+        }
+        let (body, captured) = match &self.closures[id] {
+            (ClosureDef::User { body, .. }, cap) => (body.clone(), cap.clone()),
+            _ => {
+                // Operator/key-path closures carry no multi-statement body.
+                let v = self.call_closure(id, Vec::new())?;
+                return Ok(if matches!(v, SwiftValue::Void) {
+                    Vec::new()
+                } else {
+                    vec![v]
+                });
+            }
+        };
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap("stack overflow: recursion too deep".into()));
+        }
+        let call_env = Env::with_captured(captured);
+        let saved = std::mem::replace(&mut self.env, call_env);
+        let mut values = Vec::new();
+        let mut error = None;
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(SwiftValue::Void) => {}
+                Ok(v) => values.push(v),
+                Err(Signal::Return(v)) => {
+                    if !matches!(v, SwiftValue::Void) {
+                        values.push(v);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        self.env = saved;
+        self.depth -= 1;
+        match error {
+            Some(e) => Err(e),
+            None => Ok(values),
+        }
+    }
+
     /// Invoke a closure value with already-evaluated arguments.
     fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> Eval {
         if id >= self.closures.len() {
@@ -7110,6 +7163,13 @@ impl StdContext for Interpreter<'_> {
         }
     }
 
+    fn eval_block_values(&mut self, id: usize) -> crate::stdlib::StdResult {
+        match self.eval_builder_block(id) {
+            Ok(values) => Ok(SwiftValue::Array(Rc::new(values))),
+            Err(sig) => Err(Self::signal_to_std_error(sig)),
+        }
+    }
+
     fn out(&mut self) -> &mut dyn Write {
         self.out
     }
@@ -7806,6 +7866,34 @@ mod tests {
         // `A` has no `tag` method, so the generic fallback fires; `B` defines
         // one, so the user method wins.
         assert_eq!(String::from_utf8(buf).unwrap(), "builtin:A\nuser\n");
+    }
+
+    #[test]
+    fn eval_block_values_returns_each_statement_value() {
+        // A free function receives a trailing closure and asks the context to
+        // evaluate it as a result-builder block, counting its statements.
+        fn count(ctx: &mut dyn StdContext, args: Vec<Arg>) -> crate::StdResult {
+            let SwiftValue::Closure(id) = args[0].value else {
+                return Ok(SwiftValue::int(-1));
+            };
+            let block = ctx.eval_block_values(id)?;
+            let n = match block {
+                SwiftValue::Array(items) => items.len() as i128,
+                _ => -1,
+            };
+            Ok(SwiftValue::int(n))
+        }
+        let src = "print(count { 1; 2; 3 })\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_free_fn("count", count);
+            interp.run(analysis).expect("run");
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "3\n");
     }
 
     #[test]
