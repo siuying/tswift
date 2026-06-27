@@ -27,9 +27,6 @@ struct RuntimeNode {
     is_default: bool,
     /// For a `CaseClause`, its `where` guard expression, if any.
     where_expr: Option<NodeId>,
-    /// For a `for await` loop, the real loop binding (the node's text is the
-    /// `await` sentinel the runtime keys on; `token_text_offset(1)` returns it).
-    for_await_binding: Option<String>,
     /// For a `for`/`while`/`repeat` loop, its statement label (`outer:`), if any.
     loop_label: Option<String>,
     children: Vec<NodeId>,
@@ -74,7 +71,6 @@ impl RuntimeAst {
                 arg_label: None,
                 is_default: false,
                 where_expr: None,
-                for_await_binding: None,
                 loop_label: None,
                 children: Vec::new(),
             }],
@@ -94,7 +90,6 @@ impl RuntimeAst {
             arg_label: None,
             is_default: false,
             where_expr: None,
-            for_await_binding: None,
             loop_label: None,
             children: Vec::new(),
         });
@@ -339,40 +334,16 @@ impl RuntimeAst {
         id
     }
 
-    /// Lower a `for pattern in seq { body }` loop into the runtime-facing shape:
-    /// the loop variable name becomes the `ForStmt`'s text (as msf anchors it),
-    /// and the simple binding pattern is not re-emitted as a child — so the
-    /// runtime reads the iterable as the first non-`Block` child.
+    /// Lower a `for pattern in seq { body }` loop. The binding pattern,
+    /// iterable, optional `where` clause, and body all stay as children in
+    /// source order; the runtime reads the binding from the pattern child and
+    /// detects `for await` from the `async` modifier. The node's text carries
+    /// the statement label (`outer:`), if any.
     fn lower_for(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        use tswift_ast::NodeKind as K;
         let id = self.alloc(NodeKind::ForStmt, None, node.line());
-        // The `for` node's text is its statement label (`outer:`), if any; the
-        // loop binding comes from the pattern child below.
         self.nodes[id.0].loop_label = node.text().map(ToOwned::to_owned);
-        // `for await` is recorded as the async modifier by the parser; the
-        // runtime detects it via the `await` sentinel text (ADR-0005), reading
-        // the real binding through `token_text_offset(1)`.
-        const MOD_ASYNC: u32 = 1 << 13;
-        let is_await = modifier_bits(node.modifiers()) & MOD_ASYNC != 0;
-        let mut binding: Option<String> = None;
-        let mut children: Vec<NodeId> = Vec::new();
-        for child in node.children() {
-            match child.kind() {
-                K::NamePattern if binding.is_none() => {
-                    binding = child.text().map(ToOwned::to_owned);
-                }
-                K::WildcardPattern if binding.is_none() => {
-                    binding = Some("_".to_string());
-                }
-                _ => children.push(self.lower_node(child)),
-            }
-        }
-        if is_await {
-            self.nodes[id.0].for_await_binding = binding;
-            self.nodes[id.0].text = Some("await".to_string());
-        } else {
-            self.nodes[id.0].text = binding;
-        }
+        self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
+        let children = self.lower_child_list(node.children());
         self.set_children(id, children);
         id
     }
@@ -453,9 +424,6 @@ impl RuntimeAst {
         self.node(id).where_expr
     }
 
-    pub(crate) fn for_await_binding(&self, id: NodeId) -> Option<String> {
-        self.node(id).for_await_binding.clone()
-    }
 
     pub(crate) fn loop_label(&self, id: NodeId) -> Option<String> {
         self.node(id).loop_label.clone()

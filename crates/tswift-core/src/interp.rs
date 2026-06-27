@@ -4265,19 +4265,13 @@ impl<'w> Interpreter<'w> {
 
     /// `for v in seq [where cond] { … }` over an integer range or array.
     fn eval_for(&mut self, node: &Node<'static>) -> Eval {
-        let mut var_name = node.text();
-        // `for await r in seq`: msf anchors the node on the `await` keyword, so
-        // the binding name is the next token (ADR-0005).
-        let is_for_await = var_name.as_deref() == Some("await");
-        if is_for_await {
-            var_name = Some(
-                node.token_text_offset(1)
-                    .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?,
-            );
-        }
-        // `for case <pattern> in seq`: a refutable pattern child filters and
-        // destructures each element (the simple binding lowered into the node's
-        // text instead). The pattern is the first pattern-kind child.
+        // `for await r in seq`: the loop carries the `async` effect modifier.
+        let is_for_await = node.is_async();
+        // The binding is the first pattern child, before the iterable. A simple
+        // `for x in` / `for _ in` yields a name/wildcard binding read directly
+        // into `var_name`; a refutable `for case <pattern> in` keeps the pattern
+        // child so it can filter and destructure each element.
+        let mut var_name = None;
         let mut pattern = None;
         let mut iterable = None;
         let mut where_clause = None;
@@ -4286,7 +4280,21 @@ impl<'w> Interpreter<'w> {
             match child.kind() {
                 NodeKind::Param => {}
                 NodeKind::Block => body = Some(child),
-                k if is_pattern_node(k) && pattern.is_none() && iterable.is_none() => {
+                NodeKind::PatternValueBinding
+                    if var_name.is_none() && pattern.is_none() && iterable.is_none() =>
+                {
+                    var_name = Some(child.text().unwrap_or_else(|| "_".to_string()));
+                }
+                NodeKind::PatternWildcard
+                    if var_name.is_none() && pattern.is_none() && iterable.is_none() =>
+                {
+                    var_name = Some("_".to_string());
+                }
+                k if is_pattern_node(k)
+                    && pattern.is_none()
+                    && var_name.is_none()
+                    && iterable.is_none() =>
+                {
                     pattern = Some(child);
                 }
                 _ => {

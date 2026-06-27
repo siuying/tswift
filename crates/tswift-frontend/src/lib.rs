@@ -126,21 +126,16 @@ impl<'a> Node<'a> {
         self.analysis.rust.type_name(self.rust)
     }
 
-    /// The source text at `offset` tokens past this node's anchor. The Rust
-    /// backend only models `offset == 1`: the `for await` loop binding, which
-    /// sits one token past the `await` sentinel (ADR-0005).
-    pub fn token_text_offset(&self, offset: u32) -> Option<String> {
-        if offset == 1 {
-            self.analysis.rust.for_await_binding(self.rust)
-        } else {
-            None
-        }
+    /// Whether this node carries the `async` effect modifier — `async let`
+    /// on a binding, or `for await` on a loop.
+    pub fn is_async(&self) -> bool {
+        const MOD_ASYNC: u32 = 1 << 13;
+        self.analysis.rust.modifiers(self.rust) & MOD_ASYNC != 0
     }
 
     /// For a `LetDecl`/`VarDecl`, whether it was written `async let`.
     pub fn is_async_let(&self) -> bool {
-        const MOD_ASYNC: u32 = 1 << 13;
-        self.analysis.rust.modifiers(self.rust) & MOD_ASYNC != 0
+        self.is_async()
     }
 
     /// For a `break`/`continue` statement, its target loop label, if any.
@@ -676,8 +671,12 @@ mod tests {
             NodeKind::AwaitExpr
         );
         let for_stmt = stmts[3];
-        assert_eq!(for_stmt.text().as_deref(), Some("await"));
-        assert_eq!(for_stmt.token_text_offset(1).as_deref(), Some("x"));
+        assert!(for_stmt.is_async());
+        let binding = for_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::PatternValueBinding)
+            .unwrap();
+        assert_eq!(binding.text().as_deref(), Some("x"));
     }
 
     /// Calls, accessors, subscripts, and custom operators lower into the
