@@ -1,7 +1,9 @@
 //! Semantic analysis for the tswift frontend.
 //!
-//! [`resolve`] walks a parsed [`tswift_ast::Ast`], infers and records a [`Type`]
-//! on each expression node, and returns any [`Diagnostic`]s. Coverage today is
+//! [`analyze`] runs an ordered pipeline of [`passes`] over a parsed
+//! [`tswift_ast::Ast`], sharing one [`Symbols`] declaration registry. The sole
+//! pass today is [`annotate`], which walks the tree, infers and records a
+//! [`Type`] on each expression node, and returns any [`Diagnostic`]s. Coverage
 //! **Tier 0 + Tier 1a/1b/1c**: literal and operator types, lexically-scoped name
 //! resolution against `let`/`var` bindings and function parameters, type-
 //! annotation checking, and structural resolution of functions, blocks, and all
@@ -13,6 +15,14 @@ use std::collections::HashMap;
 
 use tswift_ast::{Ast, Node, NodeId, NodeKind, Type};
 
+mod astbuild;
+mod builder_transform;
+mod passes;
+mod symbols;
+
+pub use passes::analyze;
+use symbols::Symbols;
+
 /// One semantic diagnostic with its 1-based source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -21,17 +31,18 @@ pub struct Diagnostic {
     pub col: u32,
 }
 
-/// Resolve types over `ast` in place, returning diagnostics in source order.
-pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
+/// The annotate pass: resolve names and record a [`Type`] on each expression
+/// node of `ast` in place, returning diagnostics in source order. Reads
+/// declarations from the shared `symbols` registry; does not rewrite the tree.
+pub(crate) fn annotate(ast: &mut Ast, symbols: &Symbols) -> Vec<Diagnostic> {
     let mut r = Resolver {
         scopes: vec![HashMap::new()],
         types: Vec::new(),
         diags: Vec::new(),
         in_type_body: false,
-        enums: HashMap::new(),
+        symbols,
     };
     let root = ast.root();
-    r.collect_enums(ast, root);
     r.prebind_func_decls(ast, root);
     for stmt in child_ids(ast, root) {
         r.resolve_statement(ast, stmt);
@@ -50,7 +61,7 @@ struct Binding {
     mutable: bool,
 }
 
-struct Resolver {
+struct Resolver<'a> {
     /// A lexical scope stack; the last entry is the innermost scope.
     scopes: Vec<HashMap<String, Binding>>,
     /// Pending `(node, type)` annotations, applied after the walk.
@@ -60,62 +71,27 @@ struct Resolver {
     /// properties are bound as mutable here: assigning to them is legal inside
     /// the type's initializer, so the local-`let` constant check must not fire.
     in_type_body: bool,
-    /// Every `enum` in the program, by name, mapped to its case names in source
-    /// order. Used to diagnose non-exhaustive `switch` statements.
-    enums: HashMap<String, Vec<String>>,
+    /// The program's declaration registry: enum cases, function return types,
+    /// and other "what does the program declare?" facts, collected once and
+    /// shared across passes.
+    symbols: &'a Symbols,
 }
 
-impl Resolver {
+impl Resolver<'_> {
+    /// Bind the functions declared directly under `parent` into the current
+    /// scope, reading each return type from the declaration registry. Binding
+    /// (not the registry) controls visibility, so block-local functions stay
+    /// scoped to their block.
     fn prebind_func_decls(&mut self, ast: &Ast, parent: NodeId) {
         for child in child_ids(ast, parent) {
             if ast.node(child).kind() != NodeKind::FuncDecl {
                 continue;
             }
-            let ret = child_ids(ast, child)
-                .into_iter()
-                .find(|c| ast.node(*c).kind() == NodeKind::TypeRef)
-                .and_then(|c| ast.node(c).text().and_then(parse_type_name))
-                .unwrap_or(Type::Void);
             if let Some(name) = ast.node(child).text() {
+                let ret = self.symbols.func_return(name).unwrap_or(Type::Void);
                 self.bind(name, Some(ret), false);
             }
         }
-    }
-
-    /// Record every `enum` declaration (including nested ones) and its case
-    /// names, so a `switch` over an enum can be checked for exhaustiveness.
-    fn collect_enums(&mut self, ast: &Ast, parent: NodeId) {
-        for child in child_ids(ast, parent) {
-            if ast.node(child).kind() == NodeKind::EnumDecl {
-                if let Some(name) = ast.node(child).text() {
-                    let cases = self.collect_enum_cases(ast, child);
-                    if !cases.is_empty() {
-                        self.enums.insert(name.to_string(), cases);
-                    }
-                }
-            }
-            // Recurse: enums may be nested inside other types or blocks.
-            self.collect_enums(ast, child);
-        }
-    }
-
-    /// The case names declared directly under an `enum`, in source order. Only
-    /// the case-list `Block` is descended, so a nested type's cases are not
-    /// mistaken for this enum's.
-    fn collect_enum_cases(&self, ast: &Ast, enum_decl: NodeId) -> Vec<String> {
-        let mut cases = Vec::new();
-        for child in child_ids(ast, enum_decl) {
-            match ast.node(child).kind() {
-                NodeKind::EnumCaseDecl => {
-                    if let Some(name) = ast.node(child).text() {
-                        cases.push(name.to_string());
-                    }
-                }
-                NodeKind::Block => cases.extend(self.collect_enum_cases(ast, child)),
-                _ => {}
-            }
-        }
-        cases
     }
 
     fn push_scope(&mut self) {
@@ -359,8 +335,8 @@ impl Resolver {
             return;
         }
         let fits: Vec<(&String, &Vec<String>)> = self
-            .enums
-            .iter()
+            .symbols
+            .enums()
             .filter(|(_, cases)| referenced.iter().all(|r| cases.iter().any(|c| c == r)))
             .collect();
         let [(enum_name, all_cases)] = fits.as_slice() else {
@@ -721,7 +697,7 @@ mod tests {
 
     fn resolved(src: &str) -> (Ast, Vec<Diagnostic>) {
         let mut ast = parse(src).expect("parse ok");
-        let diags = resolve(&mut ast);
+        let diags = analyze(&mut ast);
         (ast, diags)
     }
 

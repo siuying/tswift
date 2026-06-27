@@ -362,6 +362,15 @@ impl Ast {
         self.nodes[parent.index()].children.push(child);
     }
 
+    /// Replace `parent`'s entire child list with `children` (in source order).
+    ///
+    /// Used by AST→AST rewrites (such as the result-builder transform) that
+    /// rebuild a node's body from synthesized statements. The replaced children
+    /// remain in the arena but become unreachable from `parent`.
+    pub fn set_children(&mut self, parent: NodeId, children: Vec<NodeId>) {
+        self.nodes[parent.index()].children = children;
+    }
+
     /// Record a declaration modifier/effect keyword on `id` (in source order).
     pub fn add_modifier(&mut self, id: NodeId, modifier: &str) {
         self.nodes[id.index()].modifiers.push(modifier.to_string());
@@ -550,6 +559,19 @@ mod tests {
 
         let dump = ast.node(ast.root()).dump();
         assert_eq!(dump, "source_file L1\n  integer_literal \"42\" L1 :Int\n");
+    }
+
+    #[test]
+    fn set_children_replaces_the_child_list() {
+        let mut ast = Ast::new();
+        let block = ast.add(NodeKind::Block, None, 1, 1);
+        let old = ast.add(NodeKind::IntegerLiteral, Some("1"), 1, 1);
+        ast.append_child(block, old);
+        let a = ast.add(NodeKind::IntegerLiteral, Some("2"), 1, 1);
+        let b = ast.add(NodeKind::IntegerLiteral, Some("3"), 1, 1);
+        ast.set_children(block, vec![a, b]);
+        let kids: Vec<_> = ast.node(block).children().map(|c| c.text()).collect();
+        assert_eq!(kids, vec![Some("2"), Some("3")]);
     }
 
     #[test]

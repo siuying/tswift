@@ -46,7 +46,7 @@ impl RuntimeAst {
             Ok(ast) => ast,
             Err(e) => return RuntimeAst::diagnostic(e.message, e.line, e.col),
         };
-        let diagnostics = tswift_sema::resolve(&mut ast)
+        let diagnostics = tswift_sema::analyze(&mut ast)
             .into_iter()
             .map(|d| Diagnostic {
                 message: d.message,
