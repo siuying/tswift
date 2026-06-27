@@ -1,4 +1,4 @@
-//! A recursive-descent + Pratt parser for the qswift frontend.
+//! A recursive-descent + Pratt parser for the tswift frontend.
 //!
 //! [`parse`] turns a [`tswift_lexer`] token stream into a [`tswift_ast::Ast`].
 //! Statements are parsed top-down; expressions use precedence climbing (Pratt)

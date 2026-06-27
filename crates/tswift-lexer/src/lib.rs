@@ -2,7 +2,7 @@
 //!
 //! [`tokenize`] turns UTF-8 Swift source into a flat, zero-copy [`Token`]
 //! stream: each token borrows its lexeme directly from the source and carries
-//! its 1-based line/column. This is the first stage of the quick-swift frontend
+//! its 1-based line/column. This is the first stage of the tswift frontend
 //! pipeline (lexer → ast → parser → sema), the pure-Rust replacement for the
 //! vendored C `msf` frontend.
 //!

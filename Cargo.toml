@@ -17,7 +17,7 @@ members = [
 version = "0.0.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/siuying/quick-swift"
+repository = "https://github.com/siuying/tswift"
 
 [workspace.dependencies]
 tswift-frontend = { path = "crates/tswift-frontend" }

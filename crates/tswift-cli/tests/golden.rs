@@ -1,7 +1,7 @@
 //! Golden-fixture harness.
 //!
 //! For every `tests/fixtures/<name>.swift` with a sibling `<name>.expected`,
-//! run `qswift run <name>.swift` and assert its stdout matches the expected
+//! run `tswift run <name>.swift` and assert its stdout matches the expected
 //! file byte-for-byte. A mismatch fails the test with a readable diff.
 //!
 //! Adding a feature? Drop in a `.swift` + `.expected` pair — no code changes.
@@ -11,7 +11,7 @@
 //!     several `.swift` files plus `expected.txt`. All `.swift` files (sorted)
 //!     are passed to one `run` invocation, exercising cross-file resolution.
 //!   * **AST snapshots** — `fixtures/ast/<name>.swift` with a sibling
-//!     `<name>.ast` holding the expected `qswift dump` output. These pin
+//!     `<name>.ast` holding the expected `tswift dump` output. These pin
 //!     down *how the Rust frontend parses a construct*, so AST-shape changes are
 //!     caught.
 
@@ -48,15 +48,15 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
 
 /// Run the CLI on `swift_path` and return its stdout as a `String`.
 fn run_cli(swift_path: &Path) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
         .arg("run")
         .arg(swift_path)
         .output()
-        .expect("failed to spawn qswift");
+        .expect("failed to spawn tswift");
 
     assert!(
         output.status.success(),
-        "qswift exited with failure on {}\nstderr:\n{}",
+        "tswift exited with failure on {}\nstderr:\n{}",
         swift_path.display(),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -123,11 +123,11 @@ fn multi_file_modules_match() {
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("swift"))
             .collect();
         sources.sort();
-        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+        let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
             .arg("run")
             .args(&sources)
             .output()
-            .expect("spawn qswift");
+            .expect("spawn tswift");
         assert!(
             output.status.success(),
             "multifile case {} failed:\n{}",
@@ -146,7 +146,7 @@ fn multi_file_modules_match() {
 }
 
 /// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
-/// AST shape: `qswift dump` must reproduce the snapshot byte-for-byte.
+/// AST shape: `tswift dump` must reproduce the snapshot byte-for-byte.
 
 #[test]
 fn ast_snapshots_match() {
@@ -167,11 +167,11 @@ fn ast_snapshots_match() {
             "AST fixture {} has no .ast sibling",
             swift.display()
         );
-        let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+        let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
             .arg("dump")
             .arg(&swift)
             .output()
-            .expect("spawn qswift");
+            .expect("spawn tswift");
         assert!(
             output.status.success(),
             "dump failed on {}:\n{}",

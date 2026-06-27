@@ -1,6 +1,6 @@
 //! The runtime-facing AST node vocabulary owned by the frontend.
 //!
-//! This is the stable `NodeKind` contract the runtime (`quick-swift-core`/
+//! This is the stable `NodeKind` contract the runtime (`tswift-core`/
 //! `-std`) consumes through [`Node::kind`](crate::Node::kind). The pure-Rust
 //! compatibility lowerer in [`crate::compat`] produces these named variants
 //! directly; `Other` remains a forward-compatible catch-all.

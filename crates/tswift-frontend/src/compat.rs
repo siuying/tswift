@@ -175,7 +175,7 @@ impl RuntimeAst {
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
     /// the runtime-facing shape: name as text, inherited types as `Conformance`
     /// children, attributes as `Attribute` children, and members wrapped in a
-    /// `Block`. This is the shape `quick-swift-core`'s `register_*` expects.
+    /// `Block`. This is the shape `tswift-core`'s `register_*` expects.
     fn lower_nominal(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
         use tswift_ast::NodeKind as K;
         let kind = map_kind(node.kind());
@@ -607,7 +607,7 @@ fn map_kind(kind: tswift_ast::NodeKind) -> NodeKind {
 }
 
 /// Translate parser modifier keywords into the runtime-facing modifier bitmask
-/// (the same bit layout `quick-swift-core` reads and `modifier_names` decodes).
+/// (the same bit layout `tswift-core` reads and `modifier_names` decodes).
 /// This is the frontend's stable modifier contract, independent of any C enum.
 fn modifier_bits(modifiers: &[String]) -> u32 {
     let mut bits = 0u32;

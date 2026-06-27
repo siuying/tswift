@@ -1,10 +1,10 @@
-//! `qswift` — the command-line entry point.
+//! `tswift` — the command-line entry point.
 //!
 //! Usage:
-//!   qswift run <file.swift> [more.swift ...]
-//!   qswift dump [--json] <file.swift>
+//!   tswift run <file.swift> [more.swift ...]
+//!   tswift dump [--json] <file.swift>
 //!
-//! `run` analyzes a Swift source file and evaluates it through the qswift
+//! `run` analyzes a Swift source file and evaluates it through the tswift
 //! runtime, streaming program output to stdout. `dump` prints the typed AST
 //! (kind, text, line, resolved type, modifiers) for inspecting how the frontend
 //! parses a construct — the fast path when adding a language feature.
@@ -24,7 +24,7 @@ fn main() -> ExitCode {
             let paths: Vec<String> = args.collect();
             if paths.is_empty() {
                 eprintln!(
-                    "error: `run` requires a file path\n\nusage: qswift run <file.swift> [more.swift ...]"
+                    "error: `run` requires a file path\n\nusage: tswift run <file.swift> [more.swift ...]"
                 );
                 ExitCode::FAILURE
             } else {
@@ -38,7 +38,7 @@ fn main() -> ExitCode {
                 Some(path) => dump(path, json),
                 None => {
                     eprintln!(
-                        "error: `dump` requires a file path\n\nusage: qswift dump [--json] <file.swift>"
+                        "error: `dump` requires a file path\n\nusage: tswift dump [--json] <file.swift>"
                     );
                     ExitCode::FAILURE
                 }
@@ -46,13 +46,13 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             eprintln!(
-                "error: unknown command `{other}`\n\nusage: qswift run <file.swift> | qswift dump [--json] <file.swift>"
+                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift dump [--json] <file.swift>"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!(
-                "usage: qswift run <file.swift> [more.swift ...]\n       qswift dump [--json] <file.swift>"
+                "usage: tswift run <file.swift> [more.swift ...]\n       tswift dump [--json] <file.swift>"
             );
             ExitCode::FAILURE
         }

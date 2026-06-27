@@ -5,7 +5,7 @@
 //! evidence the bytecode-VM go/no-go decision depends on, and the yardstick a
 //! future VM's "measurable speedup" must beat.
 //!
-//! Run with: `cargo bench -p quick-swift-cli --bench tree_walker`
+//! Run with: `cargo bench -p tswift-cli --bench tree_walker`
 //!
 //! ## Phases
 //!

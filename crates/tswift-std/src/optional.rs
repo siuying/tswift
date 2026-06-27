@@ -1,6 +1,6 @@
 //! `Optional` method intrinsics (`map`, `flatMap`).
 //!
-//! quick-swift models `Optional` with a flattened value: an absent optional is
+//! tswift models `Optional` with a flattened value: an absent optional is
 //! [`SwiftValue::Nil`]; a present one *is* its wrapped value. So `Optional.map`
 //! is dispatched on the wrapped value's receiver kind. The scalar kinds
 //! (`Int`/`Double`/`Bool`/`String`) have no other `map`, so registering it there

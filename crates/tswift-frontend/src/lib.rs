@@ -1,4 +1,4 @@
-//! The qswift frontend: a pure-Rust Swift frontend.
+//! The tswift frontend: a pure-Rust Swift frontend.
 //!
 //! This crate is the **only** runtime-facing seam onto the Swift frontend. It
 //! drives the pure-Rust pipeline (`tswift-lexer` → `tswift-parser` → `tswift-sema`)
@@ -276,7 +276,7 @@ impl<'a> Node<'a> {
 
     /// A recursive, human-readable dump of this subtree: kind, token text, line,
     /// resolved type, and decoded modifiers. This is the AST-inspection format
-    /// behind `qswift dump`.
+    /// behind `tswift dump`.
     pub fn dump(&self) -> String {
         let mut out = String::new();
         self.dump_into(&mut out, 0);

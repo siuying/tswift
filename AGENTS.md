@@ -4,7 +4,7 @@ This project aimed to build a end-to-end, lightweight Swift compiler and runtime
 
 ## Folder Structure
 
-- `creates` - quick-swift rust packages.
+- `crates` - tswift rust packages.
 - `crates/tswift-lexer`, `crates/tswift-ast`, `crates/tswift-parser`, `crates/tswift-sema` - the **pure-Rust Swift frontend** pipeline. `crates/tswift-frontend` drives it and exposes the runtime-facing typed AST (`Analysis`/`Node`/`NodeKind`) via the compatibility lowerer in `src/compat.rs`. No C, no LLVM, no codegen — just the frontend. (The former vendored `msf` C frontend has been decommissioned; see `docs/plan/rust-frontend-compat-bridge.md`.)
 
 ## Notable Documents

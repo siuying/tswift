@@ -1,6 +1,6 @@
 //! A small, self-contained regular-expression engine.
 //!
-//! quick-swift builds offline with no access to crates.io (see
+//! tswift builds offline with no access to crates.io (see
 //! `docs/agents/environment.md`), so Swift's `Regex` is backed by this
 //! hand-written engine rather than the `regex` crate. It parses a pattern into
 //! an AST, compiles it to a backtracking byte-code program ([`Inst`]), and

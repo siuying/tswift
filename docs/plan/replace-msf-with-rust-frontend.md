@@ -1,7 +1,7 @@
 # Plan — Replace `msf` (C) with a Rust Swift Frontend
 
 **Status:** proposed
-**Author:** quick-swift
+**Author:** tswift
 **Date:** 2026-06-25
 **Supersedes the FFI sections of:** `docs/plan/swift-runtime-implementation-plan.md` §1.2, §3.1
 **Reads-with:**
@@ -17,7 +17,7 @@ Replace the vendored C library **msf** (lexer → parser → 3-pass sema, reache
 `bindgen`/`cc` FFI in `crates/msf-sys`) with our **own Swift frontend written in safe
 Rust**. After this work:
 
-- `qswift` builds with **no C toolchain, no `cc`, no `bindgen`, no `make`** — pure
+- `tswift` builds with **no C toolchain, no `cc`, no `bindgen`, no `make`** — pure
   Rust, trivially cross-compilable (incl. `wasm32`) and `cargo`-cacheable.
 - The frontend is **debuggable, Miri-clean, and editable in one language**.
 - We control the AST and diagnostics end-to-end (fix "FE gap" rows in the checklist
@@ -39,7 +39,7 @@ frontend (§3 makes that the hard contract).
 The runtime never touches msf's C ABI. Today it depends only on the **safe `msf` crate**
 (`crates/msf`). That crate's public surface is the entire contract our Rust frontend
 must satisfy. As part of this work the crate is **renamed `tswift-frontend`**
-(matching the `quick-swift-*` workspace convention) so nothing in the tree is called
+(matching the `tswift-*` workspace convention) so nothing in the tree is called
 `msf` once the C library is gone — no name collision with the thing we replaced.
 
 > **Rename impact:** the runtime's `use msf::{Analysis, Node, NodeKind}` becomes
@@ -122,7 +122,7 @@ Replace `msf-sys` (FFI) with native Rust crates; rename `crates/msf` →
 
 > Naming: the old `msf` safe-wrapper crate and the throwaway `swift-frontend` façade
 > idea are **merged into one** crate, `tswift-frontend`. Internal pipeline crates
-> stay `swift-*` (engine), the public crate carries the `quick-swift-*` prefix (product).
+> stay `swift-*` (engine), the public crate carries the `tswift-*` prefix (product).
 > This removes every `msf` name from the workspace once the C lib is decommissioned (§8).
 
 ### 3.2 AST representation

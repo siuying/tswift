@@ -12,7 +12,7 @@ use crate::regex::Regex;
 
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
 /// width integer family. `Int`/`UInt` map to the 64-bit arms on the platforms
-/// quick-swift targets.
+/// tswift targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntWidth {
     I8,
@@ -170,7 +170,7 @@ pub enum SwiftValue {
     /// assignment shares the `Rc`; a mutation calls [`Rc::make_mut`] to clone
     /// only when the instance is aliased.
     Struct(Rc<StructObj>),
-    /// The absent optional, `nil`. quick-swift models `Optional` with this
+    /// The absent optional, `nil`. tswift models `Optional` with this
     /// sentinel: a present optional is simply its wrapped value.
     Nil,
     /// An enum case value, with any associated values.

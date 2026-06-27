@@ -35,7 +35,7 @@ all cost time to rediscover.
   `newText2`; it's rejected. Merge nearby changes into one edit instead.
 - `request-code-review` is not installed; do a self-review against
   `scripts/presubmit` and the feature checklist.
-- To inspect how msf parses a construct, use `qswift dump <file>` rather
+- To inspect how msf parses a construct, use `tswift dump <file>` rather
   than writing throwaway AST-walker test modules. See
   `docs/research/msf-ast-cheatsheet.md`.
 

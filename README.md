@@ -1,8 +1,8 @@
-# quick-swift
+# tswift
 
 A lightweight **Swift runtime** written in Rust.
 
-`qswift` runs Swift source code without a Swift toolchain, LLVM, codegen, or
+`tswift` runs Swift source code without a Swift toolchain, LLVM, codegen, or
 any C dependency. It parses Swift with a **frontend** (`tswift-lexer` →
 `tswift-parser` → `tswift-sema`) and implements **runtime** (language
 semantics *and* the standard library) in safe Rust on top of that AST.
@@ -22,7 +22,7 @@ A tree-walking interpreter for Swift. The split of responsibilities is deliberat
   → `tswift-ast` → `tswift-parser` → `tswift-sema`. Results are lowered through
   `tswift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
   `Node` / `NodeKind`). No C, no LLVM, no `unsafe`.
-- **quick-swift** owns the *runtime*:
+- **tswift** owns the *runtime*:
   - **(a) Language features** — the evaluator/semantics: values, control flow, types,
     generics, ARC, closures, errors, concurrency, …
   - **(b) Standard library** — the *behaviour* of `Int` / `String` / `Array` /
@@ -74,7 +74,7 @@ in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
                  │ Analysis / Node / NodeKind
                  ▼
 ┌────────────────────────────────┐
-│ Runtime (quick-swift)          │
+│ Runtime (tswift)               │
 │  core → std → cli              │
 │  language features +           │
 │  standard library              │
@@ -100,7 +100,7 @@ in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 | [`crates/tswift-frontend`](crates/tswift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime |
 | [`crates/tswift-core`](crates/tswift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam |
 | [`crates/tswift-std`](crates/tswift-std) | Native standard library builtins (e.g. `print`) |
-| [`crates/tswift-cli`](crates/tswift-cli) | The `qswift` binary |
+| [`crates/tswift-cli`](crates/tswift-cli) | The `tswift` binary |
 
 ---
 
@@ -115,8 +115,8 @@ No C compiler, no `libclang`, no submodules required.
 ### Build
 
 ```sh
-git clone https://github.com/siuying/quick-swift
-cd quick-swift
+git clone https://github.com/siuying/tswift
+cd tswift
 cargo build
 ```
 
@@ -134,7 +134,7 @@ Or install the binary and call it directly:
 
 ```sh
 cargo install --path crates/tswift-cli
-qswift run hello.swift
+tswift run hello.swift
 ```
 
 ---

@@ -1,7 +1,7 @@
 //! A small, self-contained JSON layer for `Codable` round-trips.
 //!
 //! The plan calls for `serde_json`; to keep the crate dependency-free and
-//! offline-buildable, this module implements just the slice of JSON quick-swift
+//! offline-buildable, this module implements just the slice of JSON tswift
 //! needs: serialize the runtime values produced by `Codable` types, and parse a
 //! JSON document into a generic [`Json`] tree that the interpreter maps back
 //! onto a struct's fields.

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Semantic analysis (type resolution) for the qswift frontend pipeline."
+description = "Semantic analysis (type resolution) for the tswift frontend pipeline."
 
 [dependencies]
 tswift-ast = { path = "../tswift-ast" }

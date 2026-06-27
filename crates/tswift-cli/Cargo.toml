@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "qswift command-line interface."
+description = "tswift command-line interface."
 
 [[bin]]
-name = "qswift"
+name = "tswift"
 path = "src/main.rs"
 
 [dependencies]

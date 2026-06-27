@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Browser/Wasm bindings for running qswift in-process."
+description = "Browser/Wasm bindings for running tswift in-process."
 
 [lib]
 # `rlib` lets the native unit tests link a test harness; `cdylib` is the wasm artifact.

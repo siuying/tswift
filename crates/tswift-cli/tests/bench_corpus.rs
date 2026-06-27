@@ -16,14 +16,14 @@ use std::process::Command;
 mod corpus;
 
 fn run_cli(swift_path: &Path) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_qswift"))
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
         .arg("run")
         .arg(swift_path)
         .output()
-        .expect("failed to spawn qswift");
+        .expect("failed to spawn tswift");
     assert!(
         output.status.success(),
-        "qswift failed on {}\nstderr:\n{}",
+        "tswift failed on {}\nstderr:\n{}",
         swift_path.display(),
         String::from_utf8_lossy(&output.stderr)
     );

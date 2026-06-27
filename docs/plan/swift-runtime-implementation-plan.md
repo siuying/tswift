@@ -50,7 +50,7 @@ A typed tree-walking interpreter (R0–R5) before any bytecode VM (R6).
                  │ Analysis / Node / NodeKind
                  ▼
 ┌────────────────────────────────┐
-│ Rust runtime (quick-swift)     │
+│ Rust runtime (tswift)          │
 │  core → std → cli              │
 │  language features +           │
 │  standard library              │
@@ -64,7 +64,7 @@ The frontend is a black box behind the `Analysis` / `Node` / `NodeKind` API. All
 ### 1.1 Cargo workspace layout
 
 ```
-quick-swift/                       # cargo workspace
+tswift/                            # cargo workspace
 ├── Cargo.toml                     # [workspace] members
 ├── crates/
 │   ├── tswift-lexer/               # tokenizer for Swift source
@@ -87,7 +87,7 @@ quick-swift/                       # cargo workspace
 │   ├── tswift-std/           # STANDARD LIBRARY (native Rust builtins)
 │   │   └── src/
 │   │       └── lib.rs             # print, numeric, string, collection, optional, …
-│   └── tswift-cli/           # binary: qswift run file.swift
+│   └── tswift-cli/           # binary: tswift run file.swift
 │       └── tests/fixtures/        # *.swift + *.expected golden tests (53+)
 ```
 
@@ -223,7 +223,7 @@ behaviour, and **record the exact compatibility gap** in a per-feature note + fi
 **Scope:** pure-Rust frontend + Tier 0/1a + `print`.
 **Status:** complete. `Analysis::analyze` drives the full pipeline; `SwiftValue` + `Rc`
 plumbing; `env`/`interp`/`frame` spine; `numeric.rs` (widths, overflow trap, `&+` wrap); CLI.
-**Exit verified:** `qswift run sample.swift` prints correct output; arithmetic / `let` /
+**Exit verified:** `tswift run sample.swift` prints correct output; arithmetic / `let` /
 `var` / string / overflow fixtures pass.
 
 ### ✅ R1 — Functions & control flow
@@ -340,7 +340,7 @@ structured concurrency; Tier 6 (VM) makes it fast if benchmarks justify the cost
 Tier 8 completes macros.
 
 ```
-quick-swift: Swift source
+tswift: Swift source
   → [pure-Rust frontend: lex/parse/sema]
   → typed AST (Analysis/Node/NodeKind)
   → [Rust runtime: language features + standard library]

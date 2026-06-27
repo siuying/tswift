@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Recursive-descent + Pratt Swift parser for the qswift frontend pipeline."
+description = "Recursive-descent + Pratt Swift parser for the tswift frontend pipeline."
 
 [dependencies]
 tswift-lexer = { path = "../tswift-lexer" }

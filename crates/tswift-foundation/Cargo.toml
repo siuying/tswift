@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "qswift Foundation runtime: native Rust implementations of selected Foundation values."
+description = "tswift Foundation runtime: native Rust implementations of selected Foundation values."
 
 [dependencies]
 tswift-core.workspace = true

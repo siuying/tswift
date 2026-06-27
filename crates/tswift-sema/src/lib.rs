@@ -1,4 +1,4 @@
-//! Semantic analysis for the qswift frontend.
+//! Semantic analysis for the tswift frontend.
 //!
 //! [`resolve`] walks a parsed [`tswift_ast::Ast`], infers and records a [`Type`]
 //! on each expression node, and returns any [`Diagnostic`]s. Coverage today is

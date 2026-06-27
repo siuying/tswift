@@ -1,4 +1,4 @@
-//! The owned Swift AST for the quick-swift frontend.
+//! The owned Swift AST for the tswift frontend.
 //!
 //! Nodes live in a flat arena ([`Ast`]) addressed by [`NodeId`]; a [`Node`]
 //! cursor borrows the arena to walk it ergonomically. This is the pure-Rust

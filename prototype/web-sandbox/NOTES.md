@@ -1,6 +1,6 @@
-# qswift web sandbox prototype
+# tswift web sandbox prototype
 
-Question: can a throwaway Astro app make qswift feel like a tiny CodeSandbox for one Swift file, with compile/run happening entirely in the browser?
+Question: can a throwaway Astro app make tswift feel like a tiny CodeSandbox for one Swift file, with compile/run happening entirely in the browser?
 
 Run locally:
 

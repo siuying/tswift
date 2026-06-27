@@ -1,7 +1,7 @@
 # Runtime golden fixtures
 
-Repo-owned Swift programs that specify what the quick-swift **runtime** (the
-`tswift-core` evaluator + `tswift-std` builtins, driven by `qswift run`) must
+Repo-owned Swift programs that specify what the tswift **runtime** (the
+`tswift-core` evaluator + `tswift-std` builtins, driven by `tswift run`) must
 *produce when executed*. The harness is `crates/tswift-cli/tests/golden.rs`.
 
 This is the runtime counterpart to the **frontend** golden corpus in
@@ -20,9 +20,9 @@ a runtime fixture for the evaluated result.
 
 | Shape | What it is | Asserted against |
 |---|---|---|
-| `<name>.swift` + `<name>.expected` | A single program | `qswift run <name>.swift` stdout matches `.expected`, byte-for-byte |
-| `multifile/<case>/*.swift` + `expected.txt` | A multi-file module | All `.swift` files (sorted) passed to one `qswift run`; stdout matches `expected.txt` |
-| `ast/<name>.swift` + `<name>.ast` | An AST snapshot | `qswift dump <name>.swift` stdout matches `.ast`, byte-for-byte |
+| `<name>.swift` + `<name>.expected` | A single program | `tswift run <name>.swift` stdout matches `.expected`, byte-for-byte |
+| `multifile/<case>/*.swift` + `expected.txt` | A multi-file module | All `.swift` files (sorted) passed to one `tswift run`; stdout matches `expected.txt` |
+| `ast/<name>.swift` + `<name>.ast` | An AST snapshot | `tswift dump <name>.swift` stdout matches `.ast`, byte-for-byte |
 
 ## Adding a fixture
 

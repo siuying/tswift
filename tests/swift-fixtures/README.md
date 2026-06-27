@@ -1,6 +1,6 @@
 # Swift frontend golden fixtures
 
-Repo-owned Swift source fixtures that specify what the quick-swift frontend
+Repo-owned Swift source fixtures that specify what the tswift frontend
 (`tswift-lexer` → `tswift-ast` → `tswift-parser` → `tswift-sema`, exposed through
 `tswift-frontend`) must accept, reject, and how it must diagnose.
 
@@ -17,7 +17,7 @@ layers of the pipeline — don't confuse them:
 |---|---|---|
 | Location | `tests/swift-fixtures/` | `crates/tswift-cli/tests/fixtures/` |
 | Harness | `tswift-frontend/tests/golden_fixtures.rs` | `tswift-cli/tests/golden.rs` |
-| What runs | `Analysis::analyze()` — lex → parse → sema only | `qswift run` — the full evaluator (`tswift-core` + `tswift-std`) |
+| What runs | `Analysis::analyze()` — lex → parse → sema only | `tswift run` — the full evaluator (`tswift-core` + `tswift-std`) |
 | What's asserted | **Diagnostics** match inline directives | Program **stdout** matches a `.expected` sibling, byte-for-byte |
 | Executes code? | No | Yes |
 | Add a case by | Dropping in a `.swift` with directives | Dropping in a `.swift` + `.expected` pair |
@@ -38,7 +38,7 @@ handled by the evaluator is exactly the gap a runtime fixture catches.
 The runtime corpus also has two extra flavors (see
 `crates/tswift-cli/tests/golden.rs`): `fixtures/multifile/<case>/` directories
 for cross-file modules, and `fixtures/ast/<name>.swift` + `.ast` snapshots that
-pin the typed-AST shape via `qswift dump`.
+pin the typed-AST shape via `tswift dump`.
 
 ## Layout
 
