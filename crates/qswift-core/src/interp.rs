@@ -275,6 +275,10 @@ pub struct Interpreter<'w> {
     protocol_aliases: HashMap<String, Vec<String>>,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
+    /// Stack of type names for the `static` methods currently executing, so an
+    /// unqualified reference inside a `static func` resolves to a type-level
+    /// (static) property of that type.
+    static_ctx: Vec<String>,
     /// Stack of class names for the methods currently executing (for `super`).
     class_ctx: Vec<String>,
     /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
@@ -359,6 +363,7 @@ impl<'w> Interpreter<'w> {
             protocol_aliases: HashMap::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
+            static_ctx: Vec::new(),
             class_ctx: Vec::new(),
             defer_stack: Vec::new(),
             main_type: None,
@@ -1125,6 +1130,7 @@ impl<'w> Interpreter<'w> {
         let mut init = None;
         let mut deinit = None;
         let mut static_subscript = None;
+        let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
         for member in body.children() {
             match member.kind() {
@@ -1175,6 +1181,13 @@ impl<'w> Interpreter<'w> {
                                 setter_param: acc.setter_param,
                             },
                         );
+                    } else if member.modifiers() & MOD_STATIC != 0 {
+                        // A `static` stored property is type-level storage; defer
+                        // its initializer until the class is registered so it can
+                        // reference its own type.
+                        if let Some(def) = member.children().find(|c| is_value_node(c)) {
+                            static_inits.push((pname.clone(), def));
+                        }
                     } else {
                         if member.modifiers() & MOD_WEAK != 0
                             || member.ownership().as_deref() == Some("weak")
@@ -1212,7 +1225,7 @@ impl<'w> Interpreter<'w> {
             }
         }
         self.classes.insert(
-            name,
+            name.clone(),
             ClassDef {
                 superclass,
                 stored,
@@ -1224,6 +1237,12 @@ impl<'w> Interpreter<'w> {
                 static_subscript,
             },
         );
+        // Evaluate static stored-property initializers now the class exists.
+        for (pname, def) in static_inits {
+            if let Ok(v) = self.eval(&def) {
+                self.statics.insert(format!("{name}.{pname}"), v);
+            }
+        }
     }
 
     /// Register a struct type from its declaration.
@@ -1547,6 +1566,11 @@ impl<'w> Interpreter<'w> {
         if let Some(v) = self.implicit_self_member(&name)? {
             return Ok(v);
         }
+        // Inside a `static` method, an unqualified name may be a static property
+        // of the enclosing type.
+        if let Some(v) = self.implicit_static_member(&name) {
+            return Ok(v);
+        }
         // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
         // synthesize an operator-function closure the standard-library
         // algorithms can call back into.
@@ -1556,6 +1580,21 @@ impl<'w> Interpreter<'w> {
             return Ok(SwiftValue::Closure(id));
         }
         Err(EvalError::UnknownVariable(name).into())
+    }
+
+    /// If executing inside a `static` method, read `name` as a static property
+    /// of the enclosing type (`Type.name`), if such a static exists.
+    fn implicit_static_member(&self, name: &str) -> Option<SwiftValue> {
+        let ty = self.static_ctx.last()?;
+        self.statics.get(&format!("{ty}.{name}")).cloned()
+    }
+
+    /// The `statics` key for an unqualified `name` referencing a static property
+    /// of the enclosing `static` method's type, when one exists.
+    fn implicit_static_key(&self, name: &str) -> Option<String> {
+        let ty = self.static_ctx.last()?;
+        let key = format!("{ty}.{name}");
+        self.statics.contains_key(&key).then_some(key)
     }
 
     /// If `name` is a property of the current `self`, read it. Covers struct
@@ -3801,6 +3840,23 @@ impl<'w> Interpreter<'w> {
                 .children()
                 .next()
                 .ok_or_else(|| EvalError::Unsupported("member assignment without a base".into()))?;
+            // `Type.prop = value` — assign a type-level (static) stored property.
+            if base.kind() == NodeKind::IdentExpr {
+                if let Some(tn) = base.text() {
+                    let key = format!("{tn}.{field}");
+                    if self.env.get(&tn).is_none() && self.statics.contains_key(&key) {
+                        let new_value = if op == "=" {
+                            self.eval(&rhs)?
+                        } else {
+                            let current = self.statics[&key].clone();
+                            let r = self.eval(&rhs)?;
+                            ops::binary(op.trim_end_matches('='), &current, &r).map_err(trap)?
+                        };
+                        self.statics.insert(key, new_value);
+                        return Ok(SwiftValue::Void);
+                    }
+                }
+            }
             let base_value = self.eval(&base)?;
             if let SwiftValue::Object(obj) = &base_value {
                 let new_value = if op == "=" {
@@ -3819,6 +3875,25 @@ impl<'w> Interpreter<'w> {
         // Subscript assignment `a[i] = v` over an array variable.
         if target.kind() == NodeKind::SubscriptExpr {
             return self.assign_subscript(&target, &rhs, &op);
+        }
+
+        // An unqualified static-property write inside a `static` method.
+        if target.kind() == NodeKind::IdentExpr {
+            if let Some(n) = target.text() {
+                if self.env.get(&n).is_none() {
+                    if let Some(key) = self.implicit_static_key(&n) {
+                        let new_value = if op == "=" {
+                            self.eval(&rhs)?
+                        } else {
+                            let current = self.statics[&key].clone();
+                            let r = self.eval(&rhs)?;
+                            ops::binary(op.trim_end_matches('='), &current, &r).map_err(trap)?
+                        };
+                        self.statics.insert(key, new_value);
+                        return Ok(SwiftValue::Void);
+                    }
+                }
+            }
         }
 
         // `self.<name>` where `self` is a class instance.
@@ -3881,6 +3956,7 @@ impl<'w> Interpreter<'w> {
         let mut value = self
             .env
             .get(&place.root)
+            .or_else(|| self.statics.get(&place.root).cloned())
             .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
         for field in &place.path {
             value = self.read_struct_member(&value, field)?;
@@ -3938,8 +4014,9 @@ impl<'w> Interpreter<'w> {
                             }
                         };
                     }
-                    // Static property of a struct type: `Type.prop`.
-                    if self.structs.contains_key(&type_name) {
+                    // Static property of a struct or class type: `Type.prop`.
+                    if self.structs.contains_key(&type_name) || self.classes.contains_key(&type_name)
+                    {
                         if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
                             return Ok(v.clone());
                         }
@@ -4427,8 +4504,15 @@ impl<'w> Interpreter<'w> {
                         return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
                     }
                     if self.structs.contains_key(&tn) {
-                        let args = self.eval_args(arg_nodes)?;
+                        let params = self.user_method_params(&tn, &method);
+                        let args = self.eval_args_with(arg_nodes, params.as_deref())?;
                         return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
+                    }
+                    // `Type.method(...)` — a static method on a class.
+                    if self.classes.contains_key(&tn) && self.lookup_method(&tn, &method).is_some() {
+                        let params = self.user_method_params(&tn, &method);
+                        let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+                        return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
                     }
                 }
             }
@@ -4607,6 +4691,11 @@ impl<'w> Interpreter<'w> {
                 (p, b, from_class.to_string())
             }
         };
+        // A type-level (`static`/`class`) method has no instance `self`.
+        let is_static_call = matches!(this, SwiftValue::Void);
+        if is_static_call {
+            self.static_ctx.push(from_class.to_string());
+        }
         self.class_ctx.push(owner);
         self.env.push();
         self.env.declare("self", this, false);
@@ -4620,6 +4709,9 @@ impl<'w> Interpreter<'w> {
         };
         self.env.pop();
         self.class_ctx.pop();
+        if is_static_call {
+            self.static_ctx.pop();
+        }
         match result {
             Ok(v) => Ok(v),
             Err(Signal::Return(v)) => Ok(v),
@@ -4687,6 +4779,12 @@ impl<'w> Interpreter<'w> {
                 })?,
         };
 
+        // A `static`/type method has no instance `self`; record the type so an
+        // unqualified static-property reference inside it resolves.
+        let is_static_call = matches!(this, SwiftValue::Void);
+        if is_static_call {
+            self.static_ctx.push(type_name.to_string());
+        }
         self.env.push();
         self.env.declare("self", this, true);
         let inout_binds = self.bind_params(&params, args);
@@ -4703,6 +4801,9 @@ impl<'w> Interpreter<'w> {
         };
         let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
         self.env.pop();
+        if is_static_call {
+            self.static_ctx.pop();
+        }
 
         let ret = match outcome {
             Ok(v) => v,
@@ -5002,11 +5103,22 @@ impl<'w> Interpreter<'w> {
                 // A bare identifier that is not a local binding but names a
                 // member of the enclosing `self` resolves as an implicit
                 // `self.<name>` place, so mutating-method writes flow back.
-                if self.env.get(&root).is_none() && self.is_self_member(&root) {
-                    return Some(Place {
-                        root: "self".into(),
-                        path: vec![root],
-                    });
+                if self.env.get(&root).is_none() {
+                    if self.is_self_member(&root) {
+                        return Some(Place {
+                            root: "self".into(),
+                            path: vec![root],
+                        });
+                    }
+                    // An unqualified static property inside a `static` method
+                    // becomes a place rooted at its `Type.name` static key, so
+                    // mutating-method writes flow back to the static storage.
+                    if let Some(key) = self.implicit_static_key(&root) {
+                        return Some(Place {
+                            root: key,
+                            path: Vec::new(),
+                        });
+                    }
                 }
                 Some(Place {
                     root,
@@ -5029,6 +5141,11 @@ impl<'w> Interpreter<'w> {
     /// any property observers at the leaf.
     fn write_place(&mut self, place: &Place, value: SwiftValue) -> Result<(), Signal> {
         if place.path.is_empty() {
+            // A static-property place is rooted at its `Type.name` key.
+            if self.env.get(&place.root).is_none() && self.statics.contains_key(&place.root) {
+                self.statics.insert(place.root.clone(), value);
+                return Ok(());
+            }
             return match self.env.assign(&place.root, value) {
                 Ok(()) => Ok(()),
                 Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
@@ -5038,7 +5155,13 @@ impl<'w> Interpreter<'w> {
         let root_val = self
             .env
             .get(&place.root)
+            .or_else(|| self.statics.get(&place.root).cloned())
             .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
+        if self.env.get(&place.root).is_none() && self.statics.contains_key(&place.root) {
+            let updated = self.set_in(root_val, &place.path, value)?;
+            self.statics.insert(place.root.clone(), updated);
+            return Ok(());
+        }
         let updated = self.set_in(root_val, &place.path, value)?;
         match self.env.assign(&place.root, updated) {
             Ok(()) => Ok(()),
