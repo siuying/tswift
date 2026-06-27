@@ -75,7 +75,7 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
         return;
     };
     let stmts = child_ids(ast, body);
-    if !stmts.iter().all(|&s| is_handleable(ast, s)) {
+    if !stmts.iter().all(|&s| is_handleable(ast, methods, s)) {
         return; // contains a construct a later slice will lower; defer.
     }
 
@@ -94,22 +94,34 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
 }
 
 /// Whether the transform can lower statement `stmt` (recursively): a declaration
-/// (kept in place), a bare expression statement (a component), or an `if` whose
-/// branches are themselves handleable. Other control flow is deferred to later
-/// slices, deferring the whole function to the runtime path.
-fn is_handleable(ast: &Ast, stmt: NodeId) -> bool {
+/// (kept in place), a bare expression statement (a component), an `if` whose
+/// branches are handleable (and whose builder declares the needed `buildEither`/
+/// `buildOptional`), or a `for` whose builder declares `buildArray`. Other
+/// control flow defers the whole function to the runtime path.
+fn is_handleable(ast: &Ast, methods: &BuilderMethods, stmt: NodeId) -> bool {
     match ast.node(stmt).kind() {
         NodeKind::ExprStmt | NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::FuncDecl => true,
         NodeKind::IfStmt => {
-            child_ids(ast, stmt)
-                .into_iter()
-                .all(|c| match ast.node(c).kind() {
-                    // Each nested then/else block must be fully handleable.
-                    NodeKind::Block => child_ids(ast, c).iter().all(|&s| is_handleable(ast, s)),
-                    // An `else if` chain.
-                    NodeKind::IfStmt => is_handleable(ast, c),
-                    // Conditions (expressions / `let` bindings) are always fine.
-                    _ => true,
+            // A conditional needs at least one of the selection methods; without
+            // them the body is invalid Swift, so leave it to the runtime path.
+            (methods.has("buildEither") || methods.has("buildOptional"))
+                && child_ids(ast, stmt)
+                    .into_iter()
+                    .all(|c| match ast.node(c).kind() {
+                        NodeKind::Block => child_ids(ast, c)
+                            .iter()
+                            .all(|&s| is_handleable(ast, methods, s)),
+                        NodeKind::IfStmt => is_handleable(ast, methods, c),
+                        _ => true,
+                    })
+        }
+        NodeKind::ForStmt => {
+            methods.has("buildArray")
+                && child_ids(ast, stmt).into_iter().all(|c| {
+                    ast.node(c).kind() != NodeKind::Block
+                        || child_ids(ast, c)
+                            .iter()
+                            .all(|&s| is_handleable(ast, methods, s))
                 })
         }
         _ => false,
@@ -163,6 +175,11 @@ impl Lowering<'_> {
                 }
                 NodeKind::IfStmt => {
                     let (stmts, name) = self.lower_if(stmt);
+                    out.extend(stmts);
+                    components.push(name);
+                }
+                NodeKind::ForStmt => {
+                    let (stmts, name) = self.lower_for(stmt);
                     out.extend(stmts);
                     components.push(name);
                 }
@@ -263,6 +280,57 @@ impl Lowering<'_> {
 
         let var = astbuild::var_decl(self.ast, &comp, line, col);
         (vec![var, new_if], comp)
+    }
+
+    /// Lower a `for` to an accumulator-array fold. Returns
+    /// `(var $arr = []; for … { …; $arr.append(v) }; let $c = buildArray($arr),
+    /// component-name $c)`. The loop stays a real statement, so pattern
+    /// bindings, `where`, `break`/`continue`, and labels are all preserved.
+    fn lower_for(&mut self, for_node: NodeId) -> (Vec<NodeId>, String) {
+        let acc = self.fresh();
+        let comp = self.fresh();
+        let (line, col) = (
+            self.ast.node(for_node).line(),
+            self.ast.node(for_node).col(),
+        );
+        let label = self.ast.node(for_node).text().map(str::to_string);
+        let kids = child_ids(self.ast, for_node);
+        // The body is the last `Block`; everything before it (pattern, iterable,
+        // optional `where`) is preserved verbatim.
+        let body_idx = kids
+            .iter()
+            .rposition(|&c| self.ast.node(c).kind() == NodeKind::Block)
+            .expect("for has a body block");
+        let preserved = kids[..body_idx].to_vec();
+        let body_block = kids[body_idx];
+
+        // Lower the body, then append its folded value to the accumulator.
+        let body_stmts = child_ids(self.ast, body_block);
+        let (mut bstmts, bvalue) = self.lower_block(&body_stmts, line, col);
+        let acc_ref = astbuild::ident(self.ast, &acc, line, col);
+        let append = astbuild::method_call(self.ast, acc_ref, "append", vec![bvalue], line, col);
+        bstmts.push(append);
+        let new_body = astbuild::block(self.ast, bstmts, line, col);
+
+        let new_for = self.ast.add(NodeKind::ForStmt, label.as_deref(), line, col);
+        for c in preserved {
+            self.ast.append_child(new_for, c);
+        }
+        self.ast.append_child(new_for, new_body);
+
+        let empty = astbuild::empty_array(self.ast, line, col);
+        let acc_decl = astbuild::var_decl_init(self.ast, &acc, empty, line, col);
+        let acc_ident = astbuild::ident(self.ast, &acc, line, col);
+        let build_array = astbuild::static_call(
+            self.ast,
+            self.builder,
+            "buildArray",
+            vec![(None, acc_ident)],
+            line,
+            col,
+        );
+        let comp_decl = astbuild::fresh_let(self.ast, &comp, build_array, line, col);
+        (vec![acc_decl, new_for, comp_decl], comp)
     }
 
     /// `Builder.buildOptional(value)` when the builder declares it; otherwise the
@@ -549,6 +617,83 @@ mod tests {
         let call = assign.children().nth(1).unwrap();
         assert_eq!(call_method(call), Some("buildEither"));
         assert_eq!(call.children().nth(1).unwrap().arg_label(), Some("second"));
+    }
+
+    const FOR_BUILDER: &str = "@resultBuilder\nstruct B {\n\
+        static func buildExpression(_ v: String) -> String { v }\n\
+        static func buildBlock(_ parts: String...) -> String { \"\" }\n\
+        static func buildArray(_ parts: [String]) -> String { \"\" }\n}\n";
+
+    #[test]
+    fn for_lowers_to_accumulator_and_build_array() {
+        let mut ast = parse(&format!(
+            "{FOR_BUILDER}@B\nfunc g() -> String {{\n for x in [\"a\"] {{ x }}\n}}"
+        ))
+        .expect("parse ok");
+        let diags = analyze(&mut ast);
+        assert!(diags.is_empty(), "{diags:?}");
+        let body = func_body(&ast, "g");
+        // var $acc = [] ; for ... { ...; $acc.append(...) } ; let $c = buildArray($acc) ; return buildBlock($c)
+        let kids: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![
+                NodeKind::VarDecl,
+                NodeKind::ForStmt,
+                NodeKind::LetDecl,
+                NodeKind::ReturnStmt
+            ]
+        );
+        // The accumulator var is initialized to an array literal.
+        let acc = body.children().next().unwrap();
+        assert_eq!(
+            acc.children().nth(1).unwrap().kind(),
+            NodeKind::ArrayLiteral
+        );
+        // The rewritten loop body ends in `$acc.append(...)`.
+        let for_stmt = body.children().nth(1).unwrap();
+        let loop_body = for_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let append = loop_body.children().last().unwrap();
+        assert_eq!(append.kind(), NodeKind::CallExpr);
+        assert_eq!(
+            append.children().next().unwrap().text(),
+            Some("append"),
+            "loop appends each component to the accumulator"
+        );
+        // The component is `B.buildArray($acc)`.
+        let comp = body.children().nth(2).unwrap();
+        let call = comp.children().nth(1).unwrap();
+        assert_eq!(call.children().next().unwrap().text(), Some("buildArray"));
+    }
+
+    #[test]
+    fn for_preserves_pattern_where_and_label() {
+        let mut ast = parse(&format!(
+            "{FOR_BUILDER}@B\nfunc g() -> String {{\n loop: for (k, v) in xs where k {{ v }}\n}}"
+        ))
+        .expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let for_stmt = body.children().nth(1).unwrap();
+        assert_eq!(for_stmt.text(), Some("loop"), "loop label is preserved");
+        // The original tuple pattern and where guard survive as for children.
+        assert!(for_stmt
+            .children()
+            .any(|c| c.kind() == NodeKind::TuplePattern));
+        assert!(for_stmt
+            .children()
+            .any(|c| c.kind() == NodeKind::BinaryExpr || c.kind() == NodeKind::IdentExpr));
+    }
+
+    #[test]
+    fn for_without_build_array_is_left_for_the_runtime_path() {
+        // The builder lacks buildArray, so a `for` body is not handleable.
+        let ast = analyzed("@B\nfunc g() -> String {\n for x in [\"a\"] { x }\n}");
+        let body = func_body(&ast, "g");
+        assert!(body.children().any(|c| c.kind() == NodeKind::ForStmt));
     }
 
     #[test]
