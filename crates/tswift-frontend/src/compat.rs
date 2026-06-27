@@ -499,7 +499,7 @@ impl RuntimeAst {
         const MOD_AUTOCLOSURE: u32 = 1 << 27;
         let bits = self.node(id).modifier_bits;
         ParamInfo {
-            label: None,
+            label: self.node(id).arg_label.clone(),
             name: self.text(id).unwrap_or_default(),
             variadic: bits & MOD_VARIADIC != 0,
             autoclosure: bits & MOD_AUTOCLOSURE != 0,

@@ -1,0 +1,6 @@
+[Hello] first=[World!] none [Swift],[Rust]
+[Hello] second=[World] none [Swift],[Rust]
+wrapped([one] [two])
+last
+wrapped([plain] [last])
+last

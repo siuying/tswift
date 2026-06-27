@@ -641,22 +641,38 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `[externalLabel] name: [inout] Type [...] [= default]`.
+    /// `[attributes] [externalLabel] name: [inout] Type [...] [= default]`.
     fn parse_param(&mut self) -> Result<NodeId, ParseError> {
+        let mut attrs = Vec::new();
+        while self.peek().kind == TokenKind::Attribute {
+            let t = self.bump();
+            attrs.push((t.text.trim_start_matches('@').to_string(), t.line, t.col));
+        }
+
         let first = self.peek();
         if first.kind != TokenKind::Identifier {
             return self.error(format!("expected a parameter name, found {:?}", first.kind));
         }
         self.bump();
-        // A second identifier before the colon means `first` was the label.
-        let name = if self.peek().kind == TokenKind::Identifier {
-            self.bump().text
+        // A second identifier before the colon means `first` was the external
+        // label and the second token is the local binding name.
+        let (label, name) = if self.peek().kind == TokenKind::Identifier {
+            (Some(first.text), self.bump().text)
         } else {
-            first.text
+            (None, first.text)
         };
         let param = self
             .ast
             .add(NodeKind::Param, Some(name), first.line, first.col);
+        if let Some(label) = label {
+            if label != "_" {
+                self.ast.set_arg_label(param, label);
+            }
+        }
+        for (name, line, col) in attrs {
+            let attr = self.ast.add(NodeKind::Attribute, Some(&name), line, col);
+            self.ast.append_child(param, attr);
+        }
         self.expect(TokenKind::Colon)?;
         if self.at_keyword("inout") {
             self.bump();
@@ -4588,5 +4604,20 @@ mod tests {
         assert!(param.modifiers().iter().any(|m| m == "autoclosure"));
         let ty = param.children().next().unwrap();
         assert_eq!(ty.text(), Some("() -> Bool"));
+    }
+
+    #[test]
+    fn result_builder_attribute_is_recorded_on_parameter() {
+        let ast = ast_of("func wrap(@StringBuilder _ content: () -> String) { }");
+        let param = first_stmt(&ast)
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .unwrap();
+        assert_eq!(param.text(), Some("content"));
+        let attr = param
+            .children()
+            .find(|c| c.kind() == NodeKind::Attribute)
+            .unwrap();
+        assert_eq!(attr.text(), Some("StringBuilder"));
     }
 }
