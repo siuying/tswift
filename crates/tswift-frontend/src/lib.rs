@@ -500,9 +500,6 @@ mod tests {
             .next()
             .unwrap()
             .children()
-            .find(|c| c.kind() == NodeKind::Block)
-            .unwrap()
-            .children()
             .find(|c| c.kind() == NodeKind::FuncDecl)
             .expect("func decl");
         let mods = func.modifier_names();
@@ -528,8 +525,8 @@ mod tests {
     }
 
     /// Nominal declarations lower into the runtime-facing shape: name as text,
-    /// inherited types as plain `TypeIdent` children, members in a
-    /// `Block`.
+    /// inherited types as plain `TypeIdent` children, members as direct
+    /// children in source order.
     #[test]
     fn lowers_struct_codable_shape() {
         let a = Analysis::analyze(
@@ -540,16 +537,7 @@ mod tests {
         assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
         assert_eq!(
             a.root().dump(),
-            "SourceFile L1\n  \
-               StructDecl \"User\" L1\n    \
-                   TypeIdent \"Codable\" L1\n    \
-                 Block \"{\" L1\n      \
-                   LetDecl L2 :String\n        \
-                     PatternValueBinding \"name\" L2 :String\n        \
-                     TypeIdent \"String\" L2\n      \
-                   VarDecl L3 :Int\n        \
-                     PatternValueBinding \"age\" L3 :Int\n        \
-                     TypeIdent \"Int\" L3\n"
+            "SourceFile L1\n  StructDecl \"User\" L1\n    TypeIdent \"Codable\" L1\n    LetDecl L2 :String\n      PatternValueBinding \"name\" L2 :String\n      TypeIdent \"String\" L2\n    VarDecl L3 :Int\n      PatternValueBinding \"age\" L3 :Int\n      TypeIdent \"Int\" L3\n"
         );
     }
 
@@ -570,10 +558,8 @@ mod tests {
         assert!(app
             .children()
             .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main")));
-        let body = app
-            .children()
-            .find(|c| c.kind() == NodeKind::Block)
-            .unwrap();
+        // Members are direct children of the nominal decl.
+        let body = app;
         let member = |name: &str| {
             body.children()
                 .find(|c| c.decl_name().as_deref() == Some(name))
@@ -616,8 +602,10 @@ mod tests {
             .children()
             .find(|c| c.kind() == NodeKind::EnumDecl)
             .unwrap();
-        let block = e.children().find(|c| c.kind() == NodeKind::Block).unwrap();
-        let case = block.children().next().unwrap();
+        let case = e
+            .children()
+            .find(|c| c.kind() == NodeKind::EnumCaseDecl)
+            .unwrap();
         assert_eq!(case.kind(), NodeKind::EnumCaseDecl);
         let element = case.children().next().unwrap();
         assert_eq!(element.kind(), NodeKind::EnumElementDecl);
@@ -702,9 +690,6 @@ mod tests {
         let body = root
             .children()
             .find(|c| c.kind() == NodeKind::StructDecl)
-            .unwrap()
-            .children()
-            .find(|c| c.kind() == NodeKind::Block)
             .unwrap();
         let first = body
             .children()

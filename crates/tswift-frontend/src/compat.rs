@@ -168,37 +168,15 @@ impl RuntimeAst {
     }
 
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
-    /// the runtime-facing shape: name as text, inherited types as plain
-    /// `TypeIdent` children, attributes as `Attribute` children, and members
-    /// wrapped in a `Block`. This is the shape `tswift-core`'s `register_*`
-    /// expects.
+    /// the runtime-facing shape: name as text; inherited types (`TypeIdent`),
+    /// attributes, generic parameters, and members all stay as direct children
+    /// in source order. This is the shape `tswift-core`'s `register_*` expects.
     fn lower_nominal(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        use tswift_ast::NodeKind as K;
         let kind = map_kind(node.kind());
         let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
-
-        let mut children: Vec<NodeId> = Vec::new();
-        let mut members: Vec<NodeId> = Vec::new();
-        let line = node.line();
-        for child in node.children() {
-            match child.kind() {
-                // Attributes (`@main`, …) stay as direct children of the decl.
-                K::Attribute => children.push(self.lower_node(child)),
-                // Generic parameters stay as direct children.
-                K::GenericParam => children.push(self.lower_node(child)),
-                // Inherited protocols / superclass / raw type stay as plain
-                // `TypeIdent` children the runtime reads directly via
-                // `record_conformances`.
-                K::TypeRef => children.push(self.lower_node(child)),
-                // Everything else is a member of the type body.
-                _ => members.push(self.lower_node(child)),
-            }
-        }
-        let block = self.alloc(NodeKind::Block, Some("{".to_string()), line);
-        self.set_children(block, members);
-        children.push(block);
+        let children = self.lower_child_list(node.children());
         self.set_children(id, children);
         id
     }

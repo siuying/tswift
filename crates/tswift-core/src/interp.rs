@@ -850,9 +850,10 @@ impl<'w> Interpreter<'w> {
     /// Register type declarations nested inside a type body so they resolve by
     /// their simple name (e.g. `B` referenced inside `A`, or `A.B` qualified).
     fn register_nested_types(&mut self, node: &Node<'static>) {
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         for member in body.children() {
             match member.kind() {
                 NodeKind::StructDecl => {
@@ -933,9 +934,10 @@ impl<'w> Interpreter<'w> {
     fn register_extension(&mut self, node: &Node<'static>) {
         let Some(target) = node.text() else { return };
         self.record_conformances(&target, node);
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut methods = std::collections::HashMap::new();
         let mut computed = std::collections::HashMap::new();
         for member in body.children() {
@@ -1152,9 +1154,10 @@ impl<'w> Interpreter<'w> {
             return;
         }
         self.record_conformances(&name, node);
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         // Determine the raw-value backing type from the inherited-type list.
         let raw_kind = node
             .children()
@@ -1266,9 +1269,10 @@ impl<'w> Interpreter<'w> {
             .children()
             .find(|c| c.kind() == NodeKind::TypeIdent)
             .and_then(|c| c.text());
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut stored = Vec::new();
         let mut weak_fields = Vec::new();
         let mut computed = std::collections::HashMap::new();
@@ -1426,9 +1430,10 @@ impl<'w> Interpreter<'w> {
         let dynamic_callable = node.children().any(|c| {
             c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicCallable")
         });
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
