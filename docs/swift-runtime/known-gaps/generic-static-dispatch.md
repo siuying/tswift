@@ -20,8 +20,3 @@ from argument values, scoped to the function's declared generic parameters
 3. **Inconsistent same-placeholder bindings.** When several arguments share a
    placeholder, the first binding wins (`or_insert_with`); ill-typed programs
    with heterogeneous values are not diagnosed.
-
-4. **Computed static properties** (`static var defaultValue: Self { … }`) are a
-   separate, pre-existing gap: they are not resolved even through a concrete
-   type name, so `T.defaultValue` also fails. Stored statics (`static let`)
-   work.

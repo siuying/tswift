@@ -154,6 +154,8 @@ struct ComputedProp {
     getter: Option<Node<'static>>,
     setter: Option<Node<'static>>,
     setter_param: Option<String>,
+    /// `static`/`class` (type-level) computed property, read as `Type.prop`.
+    is_static: bool,
 }
 
 /// A method of a struct.
@@ -911,6 +913,7 @@ impl<'w> Interpreter<'w> {
                                     getter: acc.getter_body,
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
+                                    is_static: member.modifiers() & MOD_STATIC != 0,
                                 },
                             );
                         }
@@ -1114,6 +1117,7 @@ impl<'w> Interpreter<'w> {
                                     getter: acc.getter_body,
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
+                                    is_static: member.modifiers() & MOD_STATIC != 0,
                                 },
                             );
                         }
@@ -1205,6 +1209,7 @@ impl<'w> Interpreter<'w> {
                                 getter: acc.getter_body,
                                 setter: acc.setter_body,
                                 setter_param: acc.setter_param,
+                                is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
                     } else if member.modifiers() & MOD_STATIC != 0 {
@@ -1358,6 +1363,7 @@ impl<'w> Interpreter<'w> {
                                 getter: acc.getter_body,
                                 setter: acc.setter_body,
                                 setter_param: acc.setter_param,
+                                is_static,
                             },
                         );
                     } else {
@@ -1604,9 +1610,14 @@ impl<'w> Interpreter<'w> {
             return Ok(v);
         }
         // Inside a `static` method, an unqualified name may be a static property
-        // of the enclosing type.
+        // of the enclosing type (stored, then computed).
         if let Some(v) = self.implicit_static_member(&name) {
             return Ok(v);
+        }
+        if let Some(ty) = self.static_ctx.last().cloned() {
+            if let Some(v) = self.read_static_computed(&ty, &name)? {
+                return Ok(v);
+            }
         }
         // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
         // synthesize an operator-function closure the standard-library
@@ -1868,6 +1879,51 @@ impl<'w> Interpreter<'w> {
         Ok(SwiftValue::Array(Rc::new(items)))
     }
 
+    /// Read a `static`/`class` computed property `Type.prop`, running its getter
+    /// with no instance `self` and the type recorded as the static context.
+    fn read_static_computed(
+        &mut self,
+        type_name: &str,
+        member: &str,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let getter = self
+            .structs
+            .get(type_name)
+            .map(|d| &d.computed)
+            .or_else(|| self.classes.get(type_name).map(|d| &d.computed))
+            .or_else(|| self.enums.get(type_name).map(|d| &d.computed))
+            .and_then(|c| c.get(member))
+            .filter(|c| c.is_static)
+            .and_then(|c| c.getter);
+        let Some(body) = getter else {
+            return Ok(None);
+        };
+        // Guard against unbounded recursion (e.g. `static var x: Int { x }`),
+        // which would otherwise overflow the native stack with no interpreter
+        // trap.
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap(
+                "stack overflow: recursion exceeded the maximum call depth".into(),
+            ));
+        }
+        self.static_ctx.push(type_name.to_string());
+        self.env.push();
+        // A type-level getter has no instance `self`; shadow any enclosing one
+        // so unqualified names resolve against the type, not a caller instance.
+        self.env.declare("self", SwiftValue::Void, false);
+        let result = self.eval(&body);
+        self.env.pop();
+        self.static_ctx.pop();
+        self.depth -= 1;
+        match result {
+            Ok(v) => Ok(Some(v)),
+            Err(Signal::Return(v)) => Ok(Some(v)),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Read a computed property off an enum value, if declared.
     fn read_enum_computed(
         &mut self,
@@ -1881,6 +1937,7 @@ impl<'w> Interpreter<'w> {
             .enums
             .get(&e.type_name)
             .and_then(|d| d.computed.get(name))
+            .filter(|c| !c.is_static)
             .and_then(|c| c.getter);
         match getter {
             Some(body) => self
@@ -2023,7 +2080,7 @@ impl<'w> Interpreter<'w> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
             let def = self.classes.get(&cls)?;
-            if let Some(c) = def.computed.get(name) {
+            if let Some(c) = def.computed.get(name).filter(|c| !c.is_static) {
                 return c.getter;
             }
             current = def.superclass.clone();
@@ -3064,6 +3121,7 @@ impl<'w> Interpreter<'w> {
             .structs
             .get(&obj.type_name)
             .and_then(|d| d.computed.get(name))
+            .filter(|c| !c.is_static)
             .and_then(|c| c.getter)
             .or_else(|| self.protocol_default_getter(&obj.type_name, name));
         if let Some(body) = getter {
@@ -4278,6 +4336,10 @@ impl<'w> Interpreter<'w> {
                         if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
                             return Ok(v.clone());
                         }
+                    }
+                    // Static computed property: `static var prop { … }`.
+                    if let Some(v) = self.read_static_computed(&type_name, &member)? {
+                        return Ok(v);
                     }
                     // Enum case (no associated values) or `allCases`.
                     if self.enums.contains_key(&type_name) {
