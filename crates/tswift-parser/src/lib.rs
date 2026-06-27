@@ -2904,6 +2904,11 @@ fn is_decl_keyword(w: &str) -> bool {
             | "typealias"
             | "associatedtype"
             | "deinit"
+            // `actor` is a contextual keyword; `import` introduces a module
+            // declaration. Both may carry leading attributes
+            // (`@globalActor actor …`, `@preconcurrency import …`).
+            | "actor"
+            | "import"
     )
 }
 
