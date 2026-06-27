@@ -1006,6 +1006,12 @@ impl<'w> Interpreter<'w> {
         let params = clone_params(&def.params);
         let body = def.body;
         let mutating = def.mutating;
+        if mutating && place.is_none() {
+            return Some(Err(EvalError::Type(format!(
+                "mutating method `{method}` requires an lvalue receiver"
+            ))
+            .into()));
+        }
         let saved_env = self.env.enter_isolated();
         self.env.declare("self", receiver, true);
         let outcome = match self.bind_params(&params, args) {
@@ -6049,6 +6055,33 @@ impl<'w> Interpreter<'w> {
             return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
         }
 
+        // User extension method on a builtin type (`extension Int { … }`).
+        // User declarations are consulted before the stdlib seam so a program's
+        // extension can shadow an otherwise-available intrinsic/algorithm.
+        let builtin_name = base_value.type_name();
+        if self
+            .builtin_ext_methods
+            .get(&builtin_name)
+            .is_some_and(|m| m.contains_key(&method))
+        {
+            let params = self
+                .builtin_ext_methods
+                .get(&builtin_name)
+                .and_then(|m| m.get(&method))
+                .map(|def| clone_params(&def.params));
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            let place = self.resolve_place(&base);
+            if let Some(result) = self.call_builtin_ext_method(
+                base_value.clone(),
+                &builtin_name,
+                &method,
+                args,
+                place,
+            ) {
+                return result;
+            }
+        }
+
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
@@ -6125,21 +6158,7 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        // User extension method on a builtin type (`extension Int { … }`).
         let builtin_name = base_value.type_name();
-        if self
-            .builtin_ext_methods
-            .get(&builtin_name)
-            .is_some_and(|m| m.contains_key(&method))
-        {
-            let place = self.resolve_place(&base);
-            if let Some(result) =
-                self.call_builtin_ext_method(base_value, &builtin_name, &method, args, place)
-            {
-                return result;
-            }
-        }
-
         Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
     }
 
