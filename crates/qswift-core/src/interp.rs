@@ -2613,6 +2613,11 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("subscript without an index".into()))?;
         let index_value = self.eval(&index_node)?;
+        // Trailing subscript arguments, e.g. the `default:` of
+        // `dict[key, default: 0]`, must still be evaluated and honored.
+        let extra_indices: Vec<SwiftValue> = kids
+            .map(|n| self.eval(&n))
+            .collect::<Result<_, _>>()?;
         let Some(place) = self.resolve_place(&base) else {
             return Err(EvalError::Unsupported("subscript target is not assignable".into()).into());
         };
@@ -2624,9 +2629,11 @@ impl<'w> Interpreter<'w> {
             let new_value = if op == "=" {
                 self.eval(rhs)?
             } else {
-                let cur = existing
-                    .map(|i| new_pairs[i].1.clone())
-                    .unwrap_or(SwiftValue::Nil);
+                // For `dict[key, default: d] += r`, a missing key reads the
+                // default `d` rather than `nil` before applying the operator.
+                let cur = existing.map(|i| new_pairs[i].1.clone()).unwrap_or_else(|| {
+                    extra_indices.first().cloned().unwrap_or(SwiftValue::Nil)
+                });
                 let r = self.eval(rhs)?;
                 ops::binary(op.trim_end_matches('='), &cur, &r).map_err(trap)?
             };
