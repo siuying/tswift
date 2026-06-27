@@ -227,7 +227,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Associated-type constraints | ✅ | ★★★ | R4 |
 | [ ] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
-| [ ] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
+| [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Integer generic parameters (`let N: Int`) | ⚠️ | ★★★ | R6+ |
 | [ ] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
@@ -236,7 +236,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [x] | Extend struct/class/enum/protocol | ✅ | ★★ | R4 |
-| [~] | Add methods/computed props/inits/subscripts | ✅ | ★★ | R4 |
+| [x] | Add methods/computed props/inits/subscripts | ✅ | ★★ | R4 |
 | [x] | Add protocol conformance via extension | ✅ | ★★★ | R4 |
 | [x] | Conditional extensions (`where`) | ✅ | ★★★ | R4 |
 | [x] | Extensions on generic types | ✅ | ★★★ | R4 |

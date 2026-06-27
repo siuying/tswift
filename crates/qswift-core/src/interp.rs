@@ -303,6 +303,11 @@ pub struct Interpreter<'w> {
     /// executing, so a static reference through a generic placeholder
     /// (`T.zero()` where `T == Vec2`) resolves to the concrete type.
     type_bindings: Vec<HashMap<String, String>>,
+    /// User extension methods declared on builtin types (`extension Int`,
+    /// `extension Array`, …), keyed by the builtin type name then method name.
+    builtin_ext_methods: HashMap<String, HashMap<String, MethodDef>>,
+    /// User extension computed properties on builtin types, keyed the same way.
+    builtin_ext_computed: HashMap<String, HashMap<String, ComputedProp>>,
     /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
@@ -377,6 +382,8 @@ impl<'w> Interpreter<'w> {
             algorithms: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
+            builtin_ext_methods: HashMap::new(),
+            builtin_ext_computed: HashMap::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
@@ -934,7 +941,63 @@ impl<'w> Interpreter<'w> {
         } else if let Some(def) = self.classes.get_mut(&target) {
             def.methods.extend(methods);
             def.computed.extend(computed);
+        } else {
+            // Extension on a builtin type (`extension Int`, `extension Array`,
+            // `extension String`, …). Store the members so value-typed
+            // receivers can dispatch to them.
+            self.builtin_ext_methods
+                .entry(target.clone())
+                .or_default()
+                .extend(methods);
+            self.builtin_ext_computed
+                .entry(target)
+                .or_default()
+                .extend(computed);
         }
+    }
+
+    /// Run a user extension method declared on a builtin type, binding `self`
+    /// to the receiver and writing it back through `place` for a `mutating`
+    /// method.
+    fn call_builtin_ext_method(
+        &mut self,
+        receiver: SwiftValue,
+        type_name: &str,
+        method: &str,
+        args: Vec<CallArg>,
+        place: Option<Place>,
+    ) -> Option<Eval> {
+        let def = self.builtin_ext_methods.get(type_name)?.get(method)?;
+        let params = clone_params(&def.params);
+        let body = def.body;
+        let mutating = def.mutating;
+        self.env.push();
+        self.env.declare("self", receiver, true);
+        let outcome = match self.bind_params(&params, args) {
+            Ok(_) => match body {
+                Some(b) => self.eval(&b),
+                None => Ok(SwiftValue::Void),
+            },
+            Err(e) => Err(e),
+        };
+        let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
+        self.env.pop();
+        let result = match outcome {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(e) => Err(e),
+        };
+        // A `mutating` method copies the updated receiver back, including when
+        // it throws (Swift writes `inout self` back on a caught error); only a
+        // fatal interpreter trap skips the copy-out.
+        if mutating && !matches!(result, Err(Signal::Error(_))) {
+            if let Some(place) = place {
+                if let Err(e) = self.write_place(&place, updated_self) {
+                    return Some(Err(e));
+                }
+            }
+        }
+        Some(result)
     }
 
     /// All protocols a type conforms to, transitively (including protocol
@@ -1673,7 +1736,28 @@ impl<'w> Interpreter<'w> {
                 }
                 self.read_enum_computed(&this, name)
             }
-            _ => Ok(None),
+            // A builtin self (`extension Array { … self.count … }`): resolve an
+            // unqualified property name through the builtin property registry,
+            // then any user extension computed property on that type.
+            _ => {
+                if let Some(kind) = BuiltinReceiver::of(&this) {
+                    if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
+                        return func(this).map(Some).map_err(Self::std_error_to_signal);
+                    }
+                }
+                let tn = this.type_name();
+                if let Some(body) = self
+                    .builtin_ext_computed
+                    .get(&tn)
+                    .and_then(|m| m.get(name))
+                    .and_then(|c| c.getter)
+                {
+                    return self
+                        .run_with_self(this.clone(), |me| me.eval(&body))
+                        .map(|(v, _)| Some(v));
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -4424,9 +4508,22 @@ impl<'w> Interpreter<'w> {
                 let i = SwiftValue::tuple_label_index(labels, name).unwrap();
                 Ok(items[i].clone())
             }
-            _ => Err(
-                EvalError::Unsupported(format!("member .{member} on {}", value.type_name())).into(),
-            ),
+            _ => {
+                // User extension computed property on a builtin type
+                // (`extension Int { var isEven: Bool { … } }`).
+                let tn = value.type_name();
+                if let Some(body) = self
+                    .builtin_ext_computed
+                    .get(&tn)
+                    .and_then(|m| m.get(member.as_str()))
+                    .and_then(|c| c.getter)
+                {
+                    return self
+                        .run_with_self(value.clone(), |me| me.eval(&body))
+                        .map(|(v, _)| v);
+                }
+                Err(EvalError::Unsupported(format!("member .{member} on {tn}")).into())
+            }
         }
     }
 
@@ -4958,10 +5055,22 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        Err(
-            EvalError::Unsupported(format!("method .{method}() on {}", base_value.type_name()))
-                .into(),
-        )
+        // User extension method on a builtin type (`extension Int { … }`).
+        let builtin_name = base_value.type_name();
+        if self
+            .builtin_ext_methods
+            .get(&builtin_name)
+            .is_some_and(|m| m.contains_key(&method))
+        {
+            let place = self.resolve_place(&base);
+            if let Some(result) =
+                self.call_builtin_ext_method(base_value, &builtin_name, &method, args, place)
+            {
+                return result;
+            }
+        }
+
+        Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
     }
 
     /// Run the initializer declared at or above `start_class` for `this`.
@@ -6627,15 +6736,17 @@ mod tests {
 
     #[test]
     fn extension_adds_methods() {
+        // Extensions on a user type add methods.
+        let out = run("struct V { let n: Int }\nextension V { func doubled() -> Int { return n * 2 } }\nprint(V(n: 21).doubled())\n")
+            .unwrap();
+        assert_eq!(out, "42\n");
+        // Extensions on a builtin type also add methods, dispatched on the
+        // value-typed receiver.
         let out = run(
             "extension Int { func squared() -> Int { return self * self } }\nprint(5.squared())\n",
-        );
-        // Extensions on built-in `Int` may be unsupported; a user type must work.
-        let out = out.or_else(|_| {
-            run("struct V { let n: Int }\nextension V { func doubled() -> Int { return n * 2 } }\nprint(V(n: 21).doubled())\n")
-        })
+        )
         .unwrap();
-        assert_eq!(out, "42\n");
+        assert_eq!(out, "25\n");
     }
 
     #[test]
