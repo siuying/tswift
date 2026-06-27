@@ -22,25 +22,12 @@ This project aimed to build a end-to-end, lightweight Swift compiler and runtime
 - **Git Commits**: Use conventional format: <type>(<scope>): <subject> where type = feat|fix|docs|style|refactor|test|chore|perf. Subject: 50 chars max, imperative mood ("add" not "added"), no period. For small changes: one-line commit only. For complex changes: add body explaining what/why (72-char lines) and reference issues. Keep commits atomic (one logical change) and self-explanatory. Split into multiple commits if addressing different concerns.
 - No "Co-Authored-By: Claude" or "Generated with" line.
 
-## Feature Checklist
-
-Read `docs/swift-runtime/feature-checklist.md`. It is the feature checklist. 
-
-When a feature is partially or fully implemented and fully verified, update the checklist item.
-
-Every feature have a corresponding **Golden fixture** (`tests/swift-fixtures/*.swift`) in Swift, validated against the Rust frontend by `tswift-frontend`'s `golden_fixtures` test.
-
-Every rust change should be fully covered in tests.
-
 ## Coverage
 
 ### Stdlib coverage
 
 To measure how much of the Swift stdlib the runtime implements (overall and
-per section), use the **`stdlib-coverage`** skill
-(`.agents/skills/stdlib-coverage/SKILL.md`). It walks the top-down workflow:
-refresh the registry snapshot, check overall coverage, then drill into a
-section. Tooling details live in `tools/stdlib-inventory/README.md`.
+per section), use the **`stdlib-coverage`** skill.
 
 ## Agent skills
 
