@@ -36,11 +36,8 @@ impl Pass for BuilderTransform {
 
         let mut targets = Vec::new();
         collect_targets(ast, ast.root(), symbols, &mut targets);
-        for (decl, _builder) in &targets {
-            validate_body(ast, *decl, &mut diags);
-        }
         for (decl, builder) in targets {
-            transform_func(ast, decl, &builder, symbols);
+            transform_func(ast, decl, &builder, symbols, &mut diags);
         }
 
         // Contextual builders: a closure literal passed to a `@Builder`
@@ -48,7 +45,7 @@ impl Pass for BuilderTransform {
         let mut closure_targets = Vec::new();
         collect_closure_targets(ast, ast.root(), symbols, &mut closure_targets);
         for (closure, builder) in closure_targets {
-            transform_closure(ast, closure, &builder, symbols);
+            transform_closure(ast, closure, &builder, symbols, &mut diags);
         }
         diags
     }
@@ -88,7 +85,13 @@ fn collect_closure_targets(
 /// list are preserved; the statement children become the lowered build calls.
 /// The function parameter keeps its builder attribute so the interpreter still
 /// transforms *non-literal* closure arguments (a closure passed by name).
-fn transform_closure(ast: &mut Ast, closure: NodeId, builder: &str, symbols: &Symbols) {
+fn transform_closure(
+    ast: &mut Ast,
+    closure: NodeId,
+    builder: &str,
+    symbols: &Symbols,
+    diags: &mut Vec<Diagnostic>,
+) {
     let Some(methods) = symbols.result_builder(builder) else {
         return;
     };
@@ -109,7 +112,9 @@ fn transform_closure(ast: &mut Ast, closure: NodeId, builder: &str, symbols: &Sy
     if stmts.len() == 1 && ast.node(stmts[0]).kind() == NodeKind::ReturnStmt {
         return;
     }
-    if !stmts.iter().all(|&s| is_handleable(ast, methods, s)) {
+    // Diagnose any unsupported construct; an invalid body is not lowered (the
+    // diagnostic stops the run — there is no runtime fallback).
+    if validate_builder_body(ast, &stmts, methods, diags) > 0 {
         return;
     }
     let (line, col) = (ast.node(closure).line(), ast.node(closure).col());
@@ -175,6 +180,19 @@ fn validate(ast: &Ast, parent: NodeId, symbols: &Symbols, diags: &mut Vec<Diagno
 /// pair), and each build method must be `static` with a valid signature.
 fn validate_builder_type(ast: &Ast, decl: NodeId, symbols: &Symbols, diags: &mut Vec<Diagnostic>) {
     let name = ast.node(decl).text().unwrap_or("");
+    // The interpreter dispatches static build methods only on `struct`/`class`
+    // types; an `enum`/`actor` builder would lower to calls it cannot execute,
+    // so reject it up front rather than miscompiling.
+    if matches!(
+        ast.node(decl).kind(),
+        NodeKind::EnumDecl | NodeKind::ActorDecl
+    ) {
+        diags.push(diag(
+            ast,
+            decl,
+            format!("result builder '{name}' must be a 'struct' or 'class' type"),
+        ));
+    }
     if let Some(methods) = symbols.result_builder(name) {
         let has_fold = methods.has("buildBlock")
             || (methods.has_arity("buildPartialBlock", 1)
@@ -331,23 +349,25 @@ fn validate_param_builder_attr(
     }
 }
 
-/// A builder body may not contain `while`/`repeat` loops, and may not mix an
-/// explicit `return` with other components (a sole `return` is allowed).
-fn validate_body(ast: &Ast, decl: NodeId, diags: &mut Vec<Diagnostic>) {
-    let Some(body) = decl_body_block(ast, decl) else {
-        return;
-    };
-    let stmts = child_ids(ast, body);
+/// Validate a builder body's statements, emitting a diagnostic for anything the
+/// transform cannot lower. Since the runtime fallback is gone, every unsupported
+/// construct must surface as an error here rather than silently evaluating as an
+/// ordinary body. Returns the number of diagnostics added for this body, so the
+/// caller can skip lowering an invalid body.
+fn validate_builder_body(
+    ast: &Ast,
+    stmts: &[NodeId],
+    methods: &BuilderMethods,
+    diags: &mut Vec<Diagnostic>,
+) -> usize {
+    let before = diags.len();
+    // An explicit `return` is only legal as the sole statement of the body.
     let returns: Vec<NodeId> = stmts
         .iter()
         .copied()
         .filter(|&s| ast.node(s).kind() == NodeKind::ReturnStmt)
         .collect();
-    let components = stmts
-        .iter()
-        .filter(|&&s| is_component_stmt(ast.node(s).kind()))
-        .count();
-    if !returns.is_empty() && (components > 0 || returns.len() > 1) {
+    if !returns.is_empty() && stmts.len() > 1 {
         diags.push(diag(
             ast,
             returns[0],
@@ -355,36 +375,124 @@ fn validate_body(ast: &Ast, decl: NodeId, diags: &mut Vec<Diagnostic>) {
                 .to_string(),
         ));
     }
-    // `while`/`repeat` anywhere in the body (including nested blocks).
-    collect_unsupported_loops(ast, body, diags);
+    for &stmt in stmts {
+        validate_builder_stmt(ast, stmt, methods, diags);
+    }
+    diags.len() - before
 }
 
-fn is_component_stmt(kind: NodeKind) -> bool {
-    matches!(
-        kind,
+/// Validate one builder-body statement and (recursively) its nested blocks.
+fn validate_builder_stmt(
+    ast: &Ast,
+    stmt: NodeId,
+    methods: &BuilderMethods,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match ast.node(stmt).kind() {
+        // Components and pass-through statements the lowering handles directly.
         NodeKind::ExprStmt
-            | NodeKind::IfStmt
-            | NodeKind::ForStmt
-            | NodeKind::SwitchStmt
-            | NodeKind::WhileStmt
-            | NodeKind::RepeatStmt
-    )
-}
-
-fn collect_unsupported_loops(ast: &Ast, node: NodeId, diags: &mut Vec<Diagnostic>) {
-    for child in child_ids(ast, node) {
-        match ast.node(child).kind() {
-            NodeKind::WhileStmt | NodeKind::RepeatStmt => {
+        | NodeKind::ReturnStmt
+        | NodeKind::GuardStmt
+        | NodeKind::DeferStmt
+        | NodeKind::LetDecl
+        | NodeKind::VarDecl
+        | NodeKind::FuncDecl
+        | NodeKind::StructDecl
+        | NodeKind::EnumDecl
+        | NodeKind::ClassDecl
+        | NodeKind::ActorDecl
+        | NodeKind::ProtocolDecl
+        | NodeKind::TypeAliasDecl => {}
+        NodeKind::IfStmt => {
+            let has_else = if_has_else(ast, stmt);
+            if has_else && !methods.has("buildEither") {
                 diags.push(diag(
                     ast,
-                    child,
-                    "'while'/'repeat' loops are not supported in a result-builder body".to_string(),
+                    stmt,
+                    "'if'/'else' in a result-builder body requires the builder to declare 'buildEither(first:)' and 'buildEither(second:)'".to_string(),
                 ));
             }
-            _ => {}
+            if !has_else && !methods.has("buildOptional") {
+                diags.push(diag(
+                    ast,
+                    stmt,
+                    "'if' without 'else' in a result-builder body requires the builder to declare 'buildOptional'".to_string(),
+                ));
+            }
+            for c in child_ids(ast, stmt) {
+                match ast.node(c).kind() {
+                    NodeKind::Block => {
+                        validate_builder_body(ast, &child_ids(ast, c), methods, diags);
+                    }
+                    NodeKind::IfStmt => validate_builder_stmt(ast, c, methods, diags),
+                    _ => {}
+                }
+            }
         }
-        collect_unsupported_loops(ast, child, diags);
+        NodeKind::ForStmt => {
+            if !methods.has("buildArray") {
+                diags.push(diag(
+                    ast,
+                    stmt,
+                    "'for' in a result-builder body requires the builder to declare 'buildArray'"
+                        .to_string(),
+                ));
+            }
+            for c in child_ids(ast, stmt) {
+                if ast.node(c).kind() == NodeKind::Block {
+                    validate_builder_body(ast, &child_ids(ast, c), methods, diags);
+                }
+            }
+        }
+        NodeKind::SwitchStmt => {
+            if !methods.has("buildEither") {
+                diags.push(diag(
+                    ast,
+                    stmt,
+                    "'switch' in a result-builder body requires the builder to declare 'buildEither'"
+                        .to_string(),
+                ));
+            }
+            for clause in child_ids(ast, stmt) {
+                if ast.node(clause).kind() == NodeKind::CaseClause {
+                    for c in child_ids(ast, clause) {
+                        if ast.node(c).kind() == NodeKind::Block {
+                            validate_builder_body(ast, &child_ids(ast, c), methods, diags);
+                        }
+                    }
+                }
+            }
+        }
+        NodeKind::WhileStmt | NodeKind::RepeatStmt => {
+            diags.push(diag(
+                ast,
+                stmt,
+                "'while'/'repeat' loops are not supported in a result-builder body".to_string(),
+            ));
+        }
+        other => {
+            diags.push(diag(
+                ast,
+                stmt,
+                format!(
+                    "'{}' is not supported in a result-builder body",
+                    other.name()
+                ),
+            ));
+        }
     }
+}
+
+/// Whether an `if` has an `else` arm (a second `Block`, or an `else if`).
+fn if_has_else(ast: &Ast, if_stmt: NodeId) -> bool {
+    let kids = child_ids(ast, if_stmt);
+    let Some(then_idx) = kids
+        .iter()
+        .position(|&c| ast.node(c).kind() == NodeKind::Block)
+    else {
+        return false;
+    };
+    kids.get(then_idx + 1).is_some()
 }
 
 /// Find every `FuncDecl` carrying a result-builder attribute, paired with the
@@ -442,7 +550,13 @@ fn builder_attr(ast: &Ast, func: NodeId, symbols: &Symbols) -> Option<String> {
 /// Transform `decl`'s body if it is fully handleable; otherwise leave it (and
 /// its attribute) untouched for the legacy runtime transform. Applies to
 /// `@Builder func`, computed-property getters, and subscript getters alike.
-fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols) {
+fn transform_func(
+    ast: &mut Ast,
+    decl: NodeId,
+    builder: &str,
+    symbols: &Symbols,
+    diags: &mut Vec<Diagnostic>,
+) {
     let Some(methods) = symbols.result_builder(builder) else {
         return;
     };
@@ -463,8 +577,10 @@ fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols)
         erase_attribute(ast, decl, builder);
         return;
     }
-    if !stmts.iter().all(|&s| is_handleable(ast, methods, s)) {
-        return; // contains a construct a later slice will lower; defer.
+    // Diagnose any unsupported construct; an invalid body is not lowered (the
+    // diagnostic stops the run — there is no runtime fallback).
+    if validate_builder_body(ast, &stmts, methods, diags) > 0 {
+        return;
     }
 
     let (line, col) = (ast.node(body).line(), ast.node(body).col());
@@ -482,58 +598,6 @@ fn transform_func(ast: &mut Ast, decl: NodeId, builder: &str, symbols: &Symbols)
     new_body.push(ret);
     ast.set_children(body, new_body);
     erase_attribute(ast, decl, builder);
-}
-
-/// Whether the transform can lower statement `stmt` (recursively): a declaration
-/// (kept in place), a bare expression statement (a component), an `if` whose
-/// branches are handleable (and whose builder declares the needed `buildEither`/
-/// `buildOptional`), or a `for` whose builder declares `buildArray`. Other
-/// control flow defers the whole function to the runtime path.
-fn is_handleable(ast: &Ast, methods: &BuilderMethods, stmt: NodeId) -> bool {
-    match ast.node(stmt).kind() {
-        NodeKind::ExprStmt | NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::FuncDecl => true,
-        // `guard` is not a component (SE-0289): it stays as control flow and is
-        // passed through unchanged, so its early-exit body is irrelevant here.
-        NodeKind::GuardStmt => true,
-        NodeKind::IfStmt => {
-            // A conditional needs at least one of the selection methods; without
-            // them the body is invalid Swift, so leave it to the runtime path.
-            (methods.has("buildEither") || methods.has("buildOptional"))
-                && child_ids(ast, stmt)
-                    .into_iter()
-                    .all(|c| match ast.node(c).kind() {
-                        NodeKind::Block => child_ids(ast, c)
-                            .iter()
-                            .all(|&s| is_handleable(ast, methods, s)),
-                        NodeKind::IfStmt => is_handleable(ast, methods, c),
-                        _ => true,
-                    })
-        }
-        NodeKind::ForStmt => {
-            methods.has("buildArray")
-                && child_ids(ast, stmt).into_iter().all(|c| {
-                    ast.node(c).kind() != NodeKind::Block
-                        || child_ids(ast, c)
-                            .iter()
-                            .all(|&s| is_handleable(ast, methods, s))
-                })
-        }
-        NodeKind::SwitchStmt => {
-            // A switch lowers to a buildEither tree, so the builder must declare
-            // buildEither and every case body must be handleable.
-            methods.has("buildEither")
-                && child_ids(ast, stmt).into_iter().all(|c| {
-                    ast.node(c).kind() != NodeKind::CaseClause
-                        || child_ids(ast, c).into_iter().all(|cc| {
-                            ast.node(cc).kind() != NodeKind::Block
-                                || child_ids(ast, cc)
-                                    .iter()
-                                    .all(|&s| is_handleable(ast, methods, s))
-                        })
-                })
-        }
-        _ => false,
-    }
 }
 
 /// Whether an `if`'s conditions include an availability check
@@ -1278,11 +1342,18 @@ mod tests {
     }
 
     #[test]
-    fn for_without_build_array_is_left_for_the_runtime_path() {
-        // The builder lacks buildArray, so a `for` body is not handleable.
-        let ast = analyzed("@B\nfunc g() -> String {\n for x in [\"a\"] { x }\n}");
-        let body = func_body(&ast, "g");
-        assert!(body.children().any(|c| c.kind() == NodeKind::ForStmt));
+    fn for_without_build_array_is_diagnosed() {
+        // The builder lacks buildArray: a `for` body can no longer be lowered
+        // (the runtime fallback is gone), so it must be diagnosed.
+        let diags = diags_of(&format!(
+            "{STRING_BUILDER}@B\nfunc g() -> String {{\n for x in [\"a\"] {{ x }}\n}}"
+        ));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("'for'") && d.message.contains("buildArray")),
+            "{diags:?}"
+        );
     }
 
     #[test]
@@ -1861,29 +1932,76 @@ mod tests {
     }
 
     #[test]
-    fn control_flow_body_is_left_for_the_runtime_path() {
-        // A `for` is not yet handled, so the body and its attribute are intact.
-        let ast = analyzed("@B\nfunc g() -> String {\n \"a\"\n for w in [\"x\"] { w }\n}");
-        fn find_func(ast: &Ast, parent: NodeId) -> Option<NodeId> {
-            for c in child_ids(ast, parent) {
-                if ast.node(c).kind() == NodeKind::FuncDecl && ast.node(c).text() == Some("g") {
-                    return Some(c);
-                }
-                if let Some(f) = find_func(ast, c) {
-                    return Some(f);
-                }
-            }
-            None
-        }
-        let func = find_func(&ast, ast.root()).unwrap();
+    fn unsupported_construct_in_builder_body_is_diagnosed() {
+        // A `do` block is not a builder component and cannot be lowered; with no
+        // runtime fallback it must surface as a diagnostic, never run silently.
+        let diags = diags_of(&format!(
+            "{STRING_BUILDER}@B\nfunc g() -> String {{\n \"a\"\n do {{ }}\n}}"
+        ));
         assert!(
-            ast.node(func)
-                .children()
-                .any(|c| c.kind() == NodeKind::Attribute),
-            "unhandled body keeps its builder attribute"
+            diags
+                .iter()
+                .any(|d| d.message.contains("not supported in a result-builder body")),
+            "{diags:?}"
         );
-        // Body still has the original `for` statement.
-        let body = func_body(&ast, "g");
-        assert!(body.children().any(|c| c.kind() == NodeKind::ForStmt));
+    }
+
+    #[test]
+    fn unsupported_construct_in_contextual_closure_is_diagnosed() {
+        // The contextual-closure path must validate too: a `while` inside a
+        // closure passed to a @Builder parameter must be diagnosed, not run as a
+        // plain closure.
+        let diags = diags_of(&format!(
+            "{STRING_BUILDER}func wrap(@B _ c: () -> String) -> String {{ c() }}\n\
+             let r = wrap {{ \"a\"\n while false {{ \"x\" }}\n \"b\" }}"
+        ));
+        assert!(
+            diags.iter().any(|d| d.message.contains("'while'/'repeat'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn bare_if_without_build_optional_is_diagnosed() {
+        // COND_BUILDER-without-buildOptional: a bare `if` needs buildOptional.
+        let src = "@resultBuilder\nstruct B {\n\
+            static func buildExpression(_ v: String) -> String { v }\n\
+            static func buildBlock(_ p: String...) -> String { \"\" }\n\
+            static func buildEither(first: String) -> String { first }\n\
+            static func buildEither(second: String) -> String { second }\n}\n\
+            @B\nfunc g(_ b: Bool) -> String {\n if b { \"x\" }\n}";
+        let diags = diags_of(src);
+        assert!(
+            diags.iter().any(|d| d.message.contains("buildOptional")),
+            "bare if without buildOptional should be diagnosed: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn if_else_without_build_either_is_diagnosed() {
+        // A builder with buildOptional but no buildEither cannot lower if/else.
+        let src = "@resultBuilder\nstruct B {\n\
+            static func buildExpression(_ v: String) -> String { v }\n\
+            static func buildBlock(_ p: String...) -> String { \"\" }\n\
+            static func buildOptional(_ p: String?) -> String { p ?? \"\" }\n}\n\
+            @B\nfunc g(_ b: Bool) -> String {\n if b { \"x\" } else { \"y\" }\n}";
+        let diags = diags_of(src);
+        assert!(
+            diags.iter().any(|d| d.message.contains("buildEither")),
+            "if/else without buildEither should be diagnosed: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn enum_result_builder_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nenum B {\n static func buildBlock(_ p: String...) -> String { \"\" } }",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("must be a 'struct' or 'class'")),
+            "{diags:?}"
+        );
     }
 }
