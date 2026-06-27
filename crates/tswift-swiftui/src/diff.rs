@@ -152,13 +152,24 @@ fn diff_node(old: &SwiftValue, new: &SwiftValue, id: &str, patches: &mut Vec<Pat
         });
     }
 
-    // Children: keyed reconciliation for `ForEach`, positional otherwise.
+    // Children: keyed reconciliation when the rows carry stable identity keys
+    // (`ForEach`, and the `List(_:id:)` shorthand), positional otherwise. Both
+    // sides must be fully keyed so a real key (e.g. `"0"`) can never be matched
+    // against an unkeyed child's structural index of the same spelling — a
+    // `List` toggling between static and data-driven forms falls to positional.
     let (old_children, new_children) = (children(old), children(new));
-    if kind(new) == "ForEach" {
+    if all_keyed(&old_children) && all_keyed(&new_children) {
         diff_keyed_children(&old_children, &new_children, id, patches);
     } else {
         diff_positional_children(&old_children, &new_children, id, patches);
     }
+}
+
+/// Whether every child carries a stable identity key (vacuously true for an
+/// empty list, so an emptied or freshly populated keyed list stays on the
+/// keyed path).
+fn all_keyed(children: &[SwiftValue]) -> bool {
+    children.iter().all(|c| key_of(c).is_some())
 }
 
 /// Positional child diff: match children index-for-index, then insert/remove the
@@ -472,6 +483,43 @@ struct CounterView: View {
         assert!(
             json.contains(r#""op":"insert","parentId":"0","index":1,"node":{"id":"0.b""#),
             "insert subtree must use the keyed id: {json}"
+        );
+    }
+
+    /// Render `List(items, id: \.self) { Text($0) }` for the given items.
+    fn render_list(items: &[&str]) -> SwiftValue {
+        let literal = items
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let src = format!(
+            "{PRELUDE}\nstruct V: View {{ var body: some View {{ \
+             List([{literal}], id: \\.self) {{ name in Text(name) }} }} }}\n"
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        crate::render_root(&mut interp, "V").expect("render")
+    }
+
+    #[test]
+    fn list_data_shorthand_reorder_emits_moves() {
+        // The generalized keyed diff must also `move` rows for `List(_:id:)`,
+        // whose keyed children are direct (no wrapping `ForEach` node).
+        let before = render_list(&["a", "b", "c"]);
+        let after = render_list(&["c", "a", "b"]);
+        let patches = diff(&before, &after);
+        assert_eq!(
+            patches,
+            vec![Patch::Move {
+                parent: "0".into(),
+                id: "0.c".into(),
+                index: 0,
+            }]
         );
     }
 

@@ -179,6 +179,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("HStack", hstack_init);
     interp.register_free_fn("ZStack", zstack_init);
     interp.register_free_fn("ForEach", foreach_init);
+    interp.register_free_fn("List", list_init);
+    interp.register_free_fn("Section", section_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
@@ -219,10 +221,9 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| match key.as_str() {
-            "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "Spacer" | "Button"
-            | "Toggle" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
-                Some(format!("{key}.init"))
-            }
+            "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
+            | "Button" | "Toggle" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule"
+            | "Ellipse" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -293,13 +294,26 @@ fn zstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// (e.g. `\.self` or `\.name`), else the element's `id` member (an
 /// `Identifiable` model), else the element's display string.
 fn foreach_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let children = keyed_rows(ctx, args, "ForEach")?;
+    Ok(container_value("ForEach", children))
+}
+
+/// Build the keyed child rows shared by `ForEach(_:id:content:)` and the
+/// `List(_:id:rowContent:)` shorthand: materialize the data sequence, run the
+/// content `@ViewBuilder` per element, and tag each produced view with a stable
+/// identity key. `who` names the caller for error messages.
+fn keyed_rows(
+    ctx: &mut dyn StdContext,
+    args: Vec<Arg>,
+    who: &str,
+) -> Result<Vec<SwiftValue>, StdError> {
     let mut data: Option<SwiftValue> = None;
     let mut id_keypath: Option<SwiftValue> = None;
     let mut content: Option<SwiftValue> = None;
     for arg in args {
         match arg.label.as_deref() {
             Some("id") => id_keypath = Some(arg.value),
-            Some("content") => content = Some(arg.value),
+            Some("content") | Some("rowContent") => content = Some(arg.value),
             _ => match arg.value {
                 v @ SwiftValue::Closure(_) if content.is_none() => content = Some(v),
                 v if data.is_none() => data = Some(v),
@@ -308,12 +322,12 @@ fn foreach_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         }
     }
     let (Some(data), Some(SwiftValue::Closure(content))) = (data, content) else {
-        return Err(type_error(
-            "ForEach requires a data sequence and a content closure",
-        ));
+        return Err(type_error(format!(
+            "{who} requires a data sequence and a content closure"
+        )));
     };
     let items = sequence_items(&data)
-        .ok_or_else(|| type_error("ForEach data is not a sequence (array or range)"))?;
+        .ok_or_else(|| type_error(format!("{who} data is not a sequence (array or range)")))?;
 
     let mut children = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -342,7 +356,45 @@ fn foreach_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             children.push(with_key(row, key));
         }
     }
-    Ok(container_value("ForEach", children))
+    Ok(children)
+}
+
+/// `List { ... }` — a vertically scrolling container. Two forms: a static
+/// `@ViewBuilder` content closure, or the `List(_ data, id:, rowContent:)`
+/// shorthand that is sugar for a `List` wrapping a keyed `ForEach`.
+fn list_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    // The data-driven shorthand has a leading non-closure positional argument.
+    let data_driven = args
+        .iter()
+        .any(|a| a.label.is_none() && !matches!(a.value, SwiftValue::Closure(_)));
+    let children = if data_driven {
+        keyed_rows(ctx, args, "List")?
+    } else {
+        collect_children(ctx, args)?
+    };
+    Ok(container_value("List", children))
+}
+
+/// `Section { ... }` — a titled group within a `List`. Supports the bare
+/// content form and `Section(_ title) { ... }`; the title is recorded as a
+/// visible `header` arg the host renders above the rows.
+fn section_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut header: Option<String> = None;
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match (&arg.label, &arg.value) {
+            (Some(label), SwiftValue::Str(s)) if label == "header" => header = Some(s.clone()),
+            (None, SwiftValue::Str(s)) if header.is_none() => header = Some(s.clone()),
+            _ => content_args.push(arg),
+        }
+    }
+    let children = collect_children(ctx, content_args)?;
+    let mut fields = Vec::new();
+    if let Some(title) = header {
+        fields.push(("header".into(), SwiftValue::Str(title)));
+    }
+    fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    Ok(view_value("Section", fields))
 }
 
 /// Materialize a ForEach data argument into an ordered element list. Supports
@@ -709,8 +761,10 @@ mod tests {
                 "Ellipse.init",
                 "ForEach.init",
                 "HStack.init",
+                "List.init",
                 "Rectangle.init",
                 "RoundedRectangle.init",
+                "Section.init",
                 "Spacer.init",
                 "Text.init",
                 "Toggle.init",
@@ -988,6 +1042,55 @@ struct V: View {
             keys,
             vec![Some("a_0"), Some("a_1"), Some("b_0"), Some("b_1")]
         );
+    }
+
+    #[test]
+    fn list_with_sections_serializes_headers_and_children() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        List {
+            Section("A") { Text("one") }
+            Section("B") { Text("two") }
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("List"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(sections)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children");
+        };
+        assert_eq!(sections.len(), 2);
+        let SwiftValue::Struct(sec0) = &sections[0] else {
+            panic!("expected section");
+        };
+        assert_eq!(sec0.type_name, "Section");
+        assert_eq!(sec0.get("header"), Some(&SwiftValue::Str("A".into())));
+    }
+
+    #[test]
+    fn list_data_shorthand_builds_keyed_rows() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        List(["x", "y"], id: \.self) { item in Text(item) }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("List"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(rows)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children");
+        };
+        let keys: Vec<Option<&str>> = rows.iter().map(key_of).collect();
+        assert_eq!(keys, vec![Some("x"), Some("y")]);
     }
 
     #[test]

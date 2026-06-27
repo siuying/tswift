@@ -60,8 +60,7 @@ export class PatchApplier {
         const el = this.build(patch.node);
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
-        const ref = parent.children[patch.index] ?? null;
-        parent.insertBefore(el, ref);
+        parent.insertBefore(el, patchRef(parent, patch.index));
         break;
       }
       case "remove": {
@@ -78,8 +77,7 @@ export class PatchApplier {
         const parent = this.nodes.get(patch.parentId);
         const el = this.nodes.get(patch.id);
         if (!parent || !el) return;
-        const others = Array.from(parent.children).filter((c) => c !== el);
-        const ref = others[patch.index] ?? null;
+        const ref = patchRef(parent, patch.index, el);
         if (ref !== el) parent.insertBefore(el, ref);
         break;
       }
@@ -172,6 +170,19 @@ export class PatchApplier {
         el.style.cssText = "display:contents;";
         return el;
       }
+      case "List": {
+        // A vertically scrolling list of rows.
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:flex;flex-direction:column;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;";
+        return el;
+      }
+      case "Section": {
+        // A grouped block; its `header` arg renders as a caption above rows.
+        const el = document.createElement("div");
+        el.style.cssText = "display:flex;flex-direction:column;";
+        return el;
+      }
       case "Circle":
       case "Ellipse":
       case "Rectangle":
@@ -216,6 +227,23 @@ export class PatchApplier {
       el.textContent = args.title;
     } else if (kind === "RoundedRectangle" && typeof args.cornerRadius === "number") {
       el.style.borderRadius = `${args.cornerRadius}px`;
+    } else if (kind === "Section") {
+      // The header caption is a synthetic child, kept out of the patch-addressed
+      // child list (see `patchRef`). Add/update it, or remove it if the arg is
+      // gone, without disturbing row positions.
+      let head = el.querySelector(":scope > .section-header") as HTMLElement | null;
+      if (typeof args.header === "string") {
+        if (!head) {
+          head = document.createElement("div");
+          head.className = "section-header";
+          head.style.cssText =
+            "font-size:13px;font-weight:600;text-transform:uppercase;color:#6b6b6b;padding:8px 12px;";
+          el.prepend(head);
+        }
+        head.textContent = args.header;
+      } else {
+        head?.remove();
+      }
     } else if (kind === "Toggle") {
       const input = el.querySelector("input");
       const label = el.querySelector("span");
@@ -227,6 +255,23 @@ export class PatchApplier {
       }
     }
   }
+}
+
+/**
+ * The DOM node before which a positional `insert`/`move` at logical `index`
+ * should land, addressing only patch-managed children and skipping synthetic
+ * nodes (a `Section`'s `.section-header`) and an optionally excluded element
+ * (the node being moved). Returns `null` to append at the end.
+ */
+function patchRef(
+  parent: HTMLElement,
+  index: number,
+  exclude?: Element,
+): Node | null {
+  const addressable = Array.from(parent.children).filter(
+    (c) => c !== exclude && !c.classList.contains("section-header"),
+  );
+  return addressable[index] ?? null;
 }
 
 /** The intrinsic corner radius for a shape primitive, as a CSS declaration. */

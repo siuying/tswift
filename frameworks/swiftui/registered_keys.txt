@@ -4,8 +4,10 @@ Circle.init
 Ellipse.init
 ForEach.init
 HStack.init
+List.init
 Rectangle.init
 RoundedRectangle.init
+Section.init
 Spacer.init
 Text.init
 Toggle.init
