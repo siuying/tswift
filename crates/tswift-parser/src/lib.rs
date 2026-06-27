@@ -2010,8 +2010,20 @@ impl<'a> Parser<'a> {
     /// accessors, or a read-only getter written as a bare statement block.
     fn parse_accessor_block(&mut self, parent: NodeId) -> Result<(), ParseError> {
         let open = self.expect(TokenKind::LBrace)?;
-        if is_accessor_kw(self.peek().text) {
-            while is_accessor_kw(self.peek().text) {
+        if is_accessor_start(self.peek().text) {
+            while is_accessor_start(self.peek().text) {
+                // An optional `mutating`/`nonmutating` modifier precedes the
+                // accessor keyword (`nonmutating set` on a `Binding`-style
+                // setter that writes through a reference).
+                let mut mutation: Option<&'static str> = None;
+                if matches!(self.peek().text, "mutating" | "nonmutating") {
+                    mutation = Some(if self.peek().text == "nonmutating" {
+                        "nonmutating"
+                    } else {
+                        "mutating"
+                    });
+                    self.bump();
+                }
                 let kw = self.bump();
                 let acc = self
                     .ast
@@ -2025,6 +2037,9 @@ impl<'a> Parser<'a> {
                             .add(NodeKind::Param, Some(pname.text), pname.line, pname.col);
                     self.ast.append_child(acc, param);
                     self.expect(TokenKind::RParen)?;
+                }
+                if let Some(m) = mutation {
+                    self.ast.add_modifier(acc, m);
                 }
                 self.skip_effects(); // `get throws`, `get async` in protocols
                                      // Protocol accessor requirements (`{ get set }`) have no body.
@@ -3058,6 +3073,12 @@ fn is_accessor_kw(w: &str) -> bool {
     matches!(w, "get" | "set" | "willSet" | "didSet")
 }
 
+/// An accessor block entry may start with a `mutating`/`nonmutating` modifier
+/// before the accessor keyword.
+fn is_accessor_start(w: &str) -> bool {
+    is_accessor_kw(w) || matches!(w, "mutating" | "nonmutating")
+}
+
 /// Declaration kinds that may follow `import` to import a single symbol.
 fn is_import_kind(w: &str) -> bool {
     matches!(
@@ -3108,6 +3129,33 @@ mod tests {
     /// The first statement under the source file.
     fn first_stmt(ast: &Ast) -> tswift_ast::Node<'_> {
         ast.node(ast.root()).children().next().unwrap()
+    }
+
+    #[test]
+    fn parses_nonmutating_accessor_modifier() {
+        // `nonmutating set` parses and the modifier lands on the Accessor node.
+        let ast = ast_of(
+            "struct B { let box: Box \n var v: Int { get { box.value } nonmutating set { box.value = newValue } } }",
+        );
+        fn has_nonmutating_setter(node: tswift_ast::Node<'_>) -> bool {
+            if node.kind() == NodeKind::Accessor
+                && node.text().as_deref() == Some("set")
+                && node.modifiers().iter().any(|m| m == "nonmutating")
+            {
+                return true;
+            }
+            node.children().any(has_nonmutating_setter)
+        }
+        assert!(
+            has_nonmutating_setter(ast.node(ast.root())),
+            "set accessor should record the nonmutating modifier"
+        );
+    }
+
+    #[test]
+    fn parses_mutating_accessor_modifier() {
+        // `mutating set` is also accepted (and distinguishable).
+        ast_of("struct B { var v: Int { get { 0 } mutating set { } } }");
     }
 
     #[test]

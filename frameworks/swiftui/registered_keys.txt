@@ -2,6 +2,7 @@ Button.init
 HStack.init
 Spacer.init
 Text.init
+Toggle.init
 VStack.init
 View.background
 View.cornerRadius

@@ -1,0 +1,1 @@
+{"id":"0","kind":"VStack","args":{},"modifiers":[{"name":"padding","value":null}],"children":[{"id":"0.0","kind":"Toggle","args":{"title":"Use formal greeting","isOn":true},"modifiers":[],"children":[]},{"id":"0.1","kind":"Text","args":{"verbatim":"Good evening."},"modifiers":[{"name":"font","value":{"$":"textStyle","name":"title"}}],"children":[]}]}

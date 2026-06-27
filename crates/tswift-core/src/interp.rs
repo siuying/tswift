@@ -177,6 +177,9 @@ struct ComputedProp {
     getter: Option<Node<'static>>,
     setter: Option<Node<'static>>,
     setter_param: Option<String>,
+    /// The setter is `nonmutating` (writes through a reference), so it may run
+    /// on an immutable value-type binding without a writeback.
+    setter_nonmutating: bool,
     /// `static`/`class` (type-level) computed property, read as `Type.prop`.
     is_static: bool,
 }
@@ -541,6 +544,20 @@ impl<'w> Interpreter<'w> {
     /// render host driving `body` evaluation.
     pub fn get_member(&mut self, value: &SwiftValue, name: &str) -> Result<SwiftValue, EvalError> {
         self.read_struct_member(value, name).map_err(signal_eval)
+    }
+
+    /// Write `new` to `name` on struct `value`, running a computed setter when
+    /// one exists. A render host uses this to push a control's new value through
+    /// a `Binding` (whose `nonmutating set` stores into a shared reference box),
+    /// so the bound `@State` updates. Returns the (possibly rebuilt) value.
+    pub fn set_member(
+        &mut self,
+        value: &SwiftValue,
+        name: &str,
+        new: SwiftValue,
+    ) -> Result<SwiftValue, EvalError> {
+        self.set_struct_field(value.clone(), name, new)
+            .map_err(signal_eval)
     }
 
     /// Invoke the closure value with table id `id` and already-evaluated `args`,
@@ -1019,6 +1036,7 @@ impl<'w> Interpreter<'w> {
                                     getter: acc.getter_body,
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
+                                    setter_nonmutating: acc.setter_nonmutating,
                                     is_static: member.modifiers() & MOD_STATIC != 0,
                                 },
                             );
@@ -1286,6 +1304,7 @@ impl<'w> Interpreter<'w> {
                                     getter: acc.getter_body,
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
+                                    setter_nonmutating: acc.setter_nonmutating,
                                     is_static: member.modifiers() & MOD_STATIC != 0,
                                 },
                             );
@@ -1385,6 +1404,7 @@ impl<'w> Interpreter<'w> {
                                 getter: acc.getter_body,
                                 setter: acc.setter_body,
                                 setter_param: acc.setter_param,
+                                setter_nonmutating: acc.setter_nonmutating,
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1565,6 +1585,7 @@ impl<'w> Interpreter<'w> {
                                 getter: acc.getter_body,
                                 setter: acc.setter_body,
                                 setter_param: acc.setter_param,
+                                setter_nonmutating: acc.setter_nonmutating,
                                 is_static,
                             },
                         );
@@ -1985,6 +2006,14 @@ impl<'w> Interpreter<'w> {
         };
         match &this {
             SwiftValue::Struct(obj) => {
+                // A bare projected reference `$name` inside a method resolves to
+                // the wrapped property's `projectedValue` (e.g. `$flag` for a
+                // `@State var flag`).
+                if let Some(stripped) = name.strip_prefix('$') {
+                    if self.wrapped_field(&obj.type_name, stripped) {
+                        return Ok(Some(self.read_struct_member(&this, name)?));
+                    }
+                }
                 if obj.get(name).is_some() || self.struct_has_member(&obj.type_name, name) {
                     Ok(Some(self.read_struct_member(&this, name)?))
                 } else {
@@ -6928,6 +6957,31 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Whether the leaf member written by `path` resolves to a `nonmutating`
+    /// computed setter on its containing struct. Used to decide that an
+    /// immutable value-type root need not (and must not) be reassigned after the
+    /// write, because the effect landed through a reference.
+    fn leaf_setter_nonmutating(&mut self, root: &SwiftValue, path: &[String]) -> bool {
+        let Some((leaf, parents)) = path.split_last() else {
+            return false;
+        };
+        // Descend to the struct that directly holds the leaf member.
+        let mut container = root.clone();
+        for seg in parents {
+            match self.read_struct_member(&container, seg) {
+                Ok(v) => container = v,
+                Err(_) => return false,
+            }
+        }
+        let SwiftValue::Struct(obj) = &container else {
+            return false;
+        };
+        self.structs
+            .get(&obj.type_name)
+            .and_then(|d| d.computed.get(leaf))
+            .is_some_and(|c| c.setter_nonmutating)
+    }
+
     /// Write `value` to the storage named by `place`, applying copy-on-write and
     /// any property observers at the leaf.
     fn write_place(&mut self, place: &Place, value: SwiftValue) -> Result<(), Signal> {
@@ -6957,8 +7011,13 @@ impl<'w> Interpreter<'w> {
         // the root binding need not (and, for an immutable `self`, must not) be
         // reassigned — its identity is unchanged.
         let root_is_object = matches!(root_val, SwiftValue::Object(_));
+        // A `nonmutating` computed setter at the leaf writes through a reference
+        // (e.g. `Binding.wrappedValue` storing into a shared `_StateBox`),
+        // leaving the value-type root unchanged — so there is nothing to write
+        // back, and a `let` root must not be treated as an illegal mutation.
+        let leaf_nonmutating = self.leaf_setter_nonmutating(&root_val, &place.path);
         let updated = self.set_in(root_val, &place.path, value)?;
-        if root_is_object {
+        if root_is_object || leaf_nonmutating {
             return Ok(());
         }
         match self.env.assign(&place.root, updated) {
@@ -7913,6 +7972,41 @@ mod tests {
             interp.run(analysis).expect("run");
         }
         assert_eq!(String::from_utf8(buf).unwrap(), "3\n");
+    }
+
+    #[test]
+    fn nonmutating_setter_writes_through_a_let_binding() {
+        // A `nonmutating set` writes through a shared reference, so assigning
+        // through a `let` value-type binding is allowed and the effect lands.
+        let out = run("class Box { var v: Int; init(_ n: Int) { v = n } }
+\
+struct Ref {
+  let box: Box
+  var value: Int { get { box.value } nonmutating set { box.value = newValue } }
+}
+let bx = Box(7)
+let r = Ref(box: bx)
+r.value = 9
+print(bx.value)
+")
+        .expect("nonmutating set through a let binding is allowed");
+        assert_eq!(out, "9\n");
+    }
+
+    #[test]
+    fn assigning_a_mutating_member_through_a_let_root_still_errors() {
+        // The `nonmutating` allowance must not loosen ordinary value semantics:
+        // writing a stored property of a `let` struct is still illegal even when
+        // the new value equals the old.
+        let err = run("struct S { var x: Int }
+let s = S(x: 1)
+s.x = 1
+")
+        .expect_err("assigning a let struct's stored property must error");
+        assert!(
+            matches!(err, EvalError::Immutable(_)),
+            "expected immutability error, got {err:?}"
+        );
     }
 
     #[test]

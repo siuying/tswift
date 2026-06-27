@@ -80,6 +80,16 @@ class _StateBox<Value> {
     var value: Value
     init(_ v: Value) { value = v }
 }
+// A two-way connection to a `_StateBox`. Its setter is `nonmutating` because it
+// writes through the shared reference box, so a `let` binding (as stored inside
+// a control) can still drive the source `@State`.
+struct Binding<Value> {
+    let box: _StateBox<Value>
+    var wrappedValue: Value {
+        get { box.value }
+        nonmutating set { box.value = newValue }
+    }
+}
 @propertyWrapper
 struct State<Value> {
     let box: _StateBox<Value>
@@ -87,6 +97,8 @@ struct State<Value> {
         get { box.value }
         set { box.value = newValue }
     }
+    // `$flag` yields a `Binding` onto the same box (two-way data flow).
+    var projectedValue: Binding<Value> { Binding(box: box) }
     init(wrappedValue: Value) { box = _StateBox(wrappedValue) }
 }
 struct Color {
@@ -161,6 +173,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("HStack", hstack_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
+    interp.register_free_fn("Toggle", toggle_init);
 
     for (name, func) in MODIFIER_FNS {
         interp.register_struct_method(name, *func);
@@ -193,7 +206,9 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| match key.as_str() {
-            "Text" | "VStack" | "HStack" | "Spacer" | "Button" => Some(format!("{key}.init")),
+            "Text" | "VStack" | "HStack" | "Spacer" | "Button" | "Toggle" => {
+                Some(format!("{key}.init"))
+            }
             _ => None,
         })
         .collect();
@@ -255,6 +270,42 @@ fn hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// `Spacer()` — flexible empty space.
 fn spacer_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Spacer", Vec::new()))
+}
+
+/// Internal field on a `Toggle`: the `Binding<Bool>` its `set` event writes to.
+pub const BINDING_FIELD: &str = "_binding";
+
+/// `Toggle(_ title: String, isOn: Binding<Bool>)` — a labelled on/off control.
+/// The current `isOn` bool is read from the binding for rendering; the binding
+/// itself is stashed internally so the dispatch loop can write a new value
+/// through it (`set` event) to drive the bound `@State`.
+fn toggle_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut title = String::new();
+    let mut binding: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("isOn") => binding = Some(arg.value),
+            _ => {
+                if let SwiftValue::Str(s) = &arg.value {
+                    if title.is_empty() {
+                        title = s.clone();
+                    }
+                }
+            }
+        }
+    }
+    let is_on = match &binding {
+        Some(b) => matches!(ctx.get_member(b, "wrappedValue")?, SwiftValue::Bool(true)),
+        None => false,
+    };
+    let mut fields = vec![
+        ("title".into(), SwiftValue::Str(title)),
+        ("isOn".into(), SwiftValue::Bool(is_on)),
+    ];
+    if let Some(b) = binding {
+        fields.push((BINDING_FIELD.into(), b));
+    }
+    Ok(view_value("Toggle", fields))
 }
 
 /// `Button(_ title) { action }` — a titled button. The leading positional is
@@ -456,6 +507,7 @@ mod tests {
                 "HStack.init",
                 "Spacer.init",
                 "Text.init",
+                "Toggle.init",
                 "VStack.init",
                 "View.background",
                 "View.cornerRadius",

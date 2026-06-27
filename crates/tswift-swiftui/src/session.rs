@@ -11,7 +11,7 @@
 
 use tswift_core::{EvalError, Interpreter, SwiftValue};
 
-use crate::{ACTION_FIELD, CHILDREN_FIELD};
+use crate::{ACTION_FIELD, BINDING_FIELD, CHILDREN_FIELD};
 
 /// A discrete host→runtime event (plan §3.3): a node `id`, an event name, and
 /// an optional payload value (e.g. a text field's new string).
@@ -65,10 +65,25 @@ impl<'i, 'w> Session<'i, 'w> {
             Some(tree) => tree.clone(),
             None => self.render()?,
         };
-        if event.event == "tap" {
-            if let Some(closure_id) = find_action(&tree, &event.id) {
-                self.interp.invoke_closure(closure_id, Vec::new())?;
+        match event.event.as_str() {
+            "tap" => {
+                if let Some(closure_id) = find_action(&tree, &event.id) {
+                    self.interp.invoke_closure(closure_id, Vec::new())?;
+                }
             }
+            // A control's new boolean value (e.g. a `Toggle`) written through
+            // its `Binding`, so the bound `@State` updates before re-render. A
+            // missing or non-bool payload is ignored rather than corrupting the
+            // `Binding<Bool>`.
+            "set" => {
+                if let (Some(binding), Some(SwiftValue::Bool(b))) =
+                    (find_binding(&tree, &event.id), event.value.as_ref())
+                {
+                    self.interp
+                        .set_member(&binding, "wrappedValue", SwiftValue::Bool(*b))?;
+                }
+            }
+            _ => {}
         }
         self.render()
     }
@@ -88,6 +103,32 @@ pub fn find_action(tree: &SwiftValue, target: &str) -> Option<usize> {
             };
         }
         // Only descend when `target` lies under this node's subtree.
+        let prefix = format!("{id}.");
+        if !target.starts_with(&prefix) {
+            return None;
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                if let Some(found) = walk(child, &format!("{id}.{i}"), target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(tree, "0", target)
+}
+
+/// Find the `Binding` value stashed on the control node at structural path
+/// `target` (the `_binding` field a `Toggle`/input writes through).
+pub fn find_binding(tree: &SwiftValue, target: &str) -> Option<SwiftValue> {
+    fn walk(node: &SwiftValue, id: &str, target: &str) -> Option<SwiftValue> {
+        let SwiftValue::Struct(obj) = node else {
+            return None;
+        };
+        if id == target {
+            return obj.get(BINDING_FIELD).cloned();
+        }
         let prefix = format!("{id}.");
         if !target.starts_with(&prefix) {
             return None;
@@ -157,5 +198,72 @@ struct CounterView: View {
 
         let after2 = session.dispatch(&tap).expect("dispatch");
         assert!(uiir::to_json(&after2).contains(r#""verbatim":"2""#));
+    }
+
+    fn greeting_interp() -> Interpreter<'static> {
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct GreetingView: View {
+    @State private var formal = true
+    var body: some View {
+        VStack {
+            Toggle("Formal", isOn: $formal)
+            Text(formal ? "Good evening." : "Hey!")
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn toggle_set_writes_through_binding_and_rerenders() {
+        let mut interp = greeting_interp();
+        let mut session = Session::new(&mut interp, "GreetingView").expect("session");
+
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        assert!(json.contains(r#""isOn":true"#), "{json}");
+        assert!(json.contains("Good evening."), "{json}");
+
+        // Flip the Toggle (id "0.0") off via a `set` event carrying `false`.
+        let off = Event {
+            id: "0.0".into(),
+            event: "set".into(),
+            value: Some(SwiftValue::Bool(false)),
+        };
+        let after = session.dispatch(&off).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(json.contains(r#""isOn":false"#), "{json}");
+        assert!(
+            json.contains("Hey!"),
+            "toggling should switch the greeting: {json}"
+        );
+    }
+
+    #[test]
+    fn malformed_set_event_is_ignored() {
+        let mut interp = greeting_interp();
+        let mut session = Session::new(&mut interp, "GreetingView").expect("session");
+        session.render().expect("render");
+
+        // A `set` carrying a non-bool payload must not corrupt the Bool binding.
+        let bad = Event {
+            id: "0.0".into(),
+            event: "set".into(),
+            value: Some(SwiftValue::Str("nope".into())),
+        };
+        let after = session.dispatch(&bad).expect("dispatch stays Ok");
+        let json = uiir::to_json(&after);
+        assert!(json.contains(r#""isOn":true"#), "state unchanged: {json}");
+        assert!(json.contains("Good evening."), "{json}");
     }
 }

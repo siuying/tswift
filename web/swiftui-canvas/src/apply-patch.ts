@@ -139,18 +139,38 @@ export class PatchApplier {
         el.addEventListener("click", () => this.emit(node.id, "tap", null));
         return el;
       }
+      case "Toggle": {
+        // A labelled switch: a checkbox emits `set` with its new boolean.
+        const el = document.createElement("label");
+        el.style.cssText = "display:flex;flex-direction:row;align-items:center;gap:8px;";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.addEventListener("change", () => this.emit(node.id, "set", input.checked));
+        const text = document.createElement("span");
+        el.append(input, text);
+        return el;
+      }
       case "Text":
       default:
         return document.createElement("span");
     }
   }
 
-  /** Reflect constructor args onto the host node (text/title). */
+  /** Reflect constructor args onto the host node (text/title/checked state). */
   private applyArgs(el: HTMLElement, kind: string, args: Record<string, unknown>): void {
     if (kind === "Text" && typeof args.verbatim === "string") {
       el.textContent = args.verbatim;
     } else if (kind === "Button" && typeof args.title === "string") {
       el.textContent = args.title;
+    } else if (kind === "Toggle") {
+      const input = el.querySelector("input");
+      const label = el.querySelector("span");
+      if (input instanceof HTMLInputElement && typeof args.isOn === "boolean") {
+        input.checked = args.isOn;
+      }
+      if (label && typeof args.title === "string") {
+        label.textContent = args.title;
+      }
     }
   }
 }

@@ -261,6 +261,7 @@ impl<'a> Node<'a> {
         let mut acc = VarAccessors {
             is_computed: false,
             has_setter: false,
+            setter_nonmutating: false,
             getter_body: None,
             setter_body: None,
             will_set_body: None,
@@ -287,6 +288,7 @@ impl<'a> Node<'a> {
                     acc.has_setter = true;
                     acc.setter_body = body;
                     acc.setter_param = param;
+                    acc.setter_nonmutating = child.modifier_names().contains(&"nonmutating");
                 }
                 Some("willSet") => {
                     acc.will_set_body = body;
@@ -477,6 +479,9 @@ pub struct ParamInfo {
 pub struct VarAccessors<'a> {
     pub is_computed: bool,
     pub has_setter: bool,
+    /// The `set` accessor carries the `nonmutating` modifier (writes through a
+    /// reference, so it may run on an immutable value-type binding).
+    pub setter_nonmutating: bool,
     pub getter_body: Option<Node<'a>>,
     pub setter_body: Option<Node<'a>>,
     pub will_set_body: Option<Node<'a>>,
