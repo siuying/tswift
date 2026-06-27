@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Swift Runtime Feature Autoloop Report — 2026-06-27</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #1f2937; line-height: 1.45; }
+    h1, h2 { color: #111827; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #d1d5db; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #f3f4f6; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    .pass { color: #047857; font-weight: 600; }
+    .partial { color: #b45309; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Swift Runtime Feature Autoloop Report</h1>
+  <p><strong>Date:</strong> 2026-06-27</p>
+  <p><strong>Branch:</strong> <code>main</code></p>
+  <p><strong>Remote:</strong> <code>origin/main</code></p>
+  <p><strong>Verification signal:</strong> <code>./scripts/presubmit &gt; run.log 2&gt;&amp;1</code></p>
+
+  <h2>Summary</h2>
+  <table>
+    <tr><th>Iterations</th><th>Kept</th><th>Discarded</th><th>Crashed</th><th>Best metric</th></tr>
+    <tr><td>3</td><td>3</td><td>0</td><td>0</td><td class="pass">presubmit passed</td></tr>
+  </table>
+
+  <h2>Kept Commits</h2>
+  <table>
+    <tr><th>#</th><th>Commit</th><th>Status</th><th>What changed</th><th>Verification</th></tr>
+    <tr>
+      <td>1</td>
+      <td><code>dc117fa</code></td>
+      <td class="partial">partial feature</td>
+      <td>Accepted targeted <code>@objc optional</code> protocol requirement syntax for funcs, vars, and subscripts; added parser/frontend/runtime fixtures; marked checklist item in-progress.</td>
+      <td class="pass">presubmit passed; pushed</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code>a7417eb</code></td>
+      <td class="partial">partial feature</td>
+      <td>Added Foundation <code>IndexPath</code>/<code>IndexSet</code> runtime slice with constructors, counts, emptiness, mutation, membership, and registry coverage; added frontend/runtime fixtures; marked F1 remainder in-progress.</td>
+      <td class="pass">presubmit passed; pushed</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><code>fe45eb8</code></td>
+      <td class="pass">checklist accuracy</td>
+      <td>Reconciled Tier 9c attribute statuses for already verified <code>@discardableResult</code>, <code>@propertyWrapper</code>, and partial <code>@autoclosure</code>/<code>@escaping</code>/<code>@convention</code>.</td>
+      <td class="pass">presubmit passed; pushed</td>
+    </tr>
+  </table>
+
+  <h2>Review Notes</h2>
+  <ul>
+    <li>All implementation iterations were reviewed with a subagent using provider <code>openai-codex</code> and model <code>gpt-5.5</code>.</li>
+    <li>Important review findings were addressed before commits: scoped <code>optional</code> modifier parsing, avoided checklist overclaiming, added subscript coverage, fixed Foundation argument-label/arity over-acceptance, and expanded fixtures.</li>
+  </ul>
+
+  <h2>Files of Interest</h2>
+  <ul>
+    <li><code>docs/swift-runtime/feature-checklist.md</code></li>
+    <li><code>crates/tswift-parser/src/lib.rs</code></li>
+    <li><code>crates/tswift-core/src/interp.rs</code></li>
+    <li><code>crates/tswift-core/src/stdlib.rs</code></li>
+    <li><code>crates/tswift-foundation/src/lib.rs</code></li>
+    <li><code>frameworks/foundation/registered_keys.txt</code></li>
+    <li><code>crates/tswift-cli/tests/fixtures/*optional_protocol*</code></li>
+    <li><code>crates/tswift-cli/tests/fixtures/foundation_index_values.*</code></li>
+    <li><code>tests/swift-fixtures/tier4-protocols-generics/optional-requirements.swift</code></li>
+    <li><code>tests/swift-fixtures/tier11-frameworks/foundation-index-values.swift</code></li>
+  </ul>
+
+  <h2>Remaining Gaps</h2>
+  <ul>
+    <li><code>@objc optional</code> is syntax/partial runtime coverage only; full optional existential dispatch remains future work.</li>
+    <li>Foundation <code>IndexPath</code>/<code>IndexSet</code> support covers a useful F1 slice, not the full inventoried member surface.</li>
+    <li><code>@convention</code> remains unverified, so the combined attribute checklist row remains in-progress.</li>
+  </ul>
+</body>
+</html>
