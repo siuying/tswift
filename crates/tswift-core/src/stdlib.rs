@@ -110,6 +110,8 @@ pub enum BuiltinReceiver {
     Range,
     Data,
     UUID,
+    IndexPath,
+    IndexSet,
 }
 
 impl BuiltinReceiver {
@@ -128,6 +130,8 @@ impl BuiltinReceiver {
             BuiltinReceiver::Range => "Range",
             BuiltinReceiver::Data => "Data",
             BuiltinReceiver::UUID => "UUID",
+            BuiltinReceiver::IndexPath => "IndexPath",
+            BuiltinReceiver::IndexSet => "IndexSet",
         }
     }
 
@@ -146,6 +150,8 @@ impl BuiltinReceiver {
             "Range" => BuiltinReceiver::Range,
             "Data" => BuiltinReceiver::Data,
             "UUID" => BuiltinReceiver::UUID,
+            "IndexPath" => BuiltinReceiver::IndexPath,
+            "IndexSet" => BuiltinReceiver::IndexSet,
             _ => return None,
         })
     }
@@ -164,6 +170,8 @@ impl BuiltinReceiver {
             SwiftValue::Nil => BuiltinReceiver::Optional,
             SwiftValue::Struct(obj) if obj.type_name == "Data" => BuiltinReceiver::Data,
             SwiftValue::Struct(obj) if obj.type_name == "UUID" => BuiltinReceiver::UUID,
+            SwiftValue::Struct(obj) if obj.type_name == "IndexPath" => BuiltinReceiver::IndexPath,
+            SwiftValue::Struct(obj) if obj.type_name == "IndexSet" => BuiltinReceiver::IndexSet,
             _ => return None,
         })
     }

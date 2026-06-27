@@ -211,7 +211,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
 | [x] | `Self` requirements | ✅ | ★★★ | R4 |
 | [x] | Protocol witness for operators | ✅ | ★★ | R4 |
-| [ ] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
+| [~] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [x] | Conditional conformance | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
@@ -230,7 +230,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Integer generic parameters (`let N: Int`) | ⚠️ | ★★★ | R6+ |
-| [ ] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
+| [x] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
 
 ### 4c. Extensions
 | ✓ | Feature | FE | RT | Phase |
@@ -271,12 +271,12 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Key paths `\Root.path` | ✅ | ★★★ | R6+ |
 | [x] | Key-path expressions as functions | ⚠️ | ★★★ | R6+ |
 | [x] | `@dynamicMemberLookup` | ✅ | ★★★ | R6+ |
-| [ ] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
-| [ ] | `#selector` / `#keyPath` | ⚠️ | ★★ | R6+ |
+| [x] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
+| [x] | `#selector` / `#keyPath` | ⚠️ | ★★ | R6+ |
 | [x] | Self type | ✅ | ★★ | R4 |
 | [x] | Implicit member expr `.foo` | ✅ | ★★ | R2 |
-| [ ] | `consume` / `borrow` operators (ownership) | ✅ | ★★★★ | R6+ |
-| [ ] | `discard self` | ✅ | ★★★ | R6+ |
+| [x] | `consume` / `borrow` operators (ownership) | ✅ | ★★★★ | R6+ |
+| [x] | `discard self` | ✅ | ★★★ | R6+ |
 
 ---
 
@@ -357,29 +357,29 @@ needs a macro-expansion engine over the AST before evaluation.*
 ### 9c. Attributes (34 declaration/type attributes)
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `@available` (+ availability conditions `#available`) | ✅ | ★★ | R5 |
-| [ ] | `@objc` / `@nonobjc` / `@objcMembers` | ⚠️ | ★★ | R6+ |
+| [x] | `@available` (+ availability conditions `#available`) | ✅ | ★★ | R5 |
+| [x] | `@objc` / `@nonobjc` / `@objcMembers` | ⚠️ | ★★ | R6+ |
 | [x] | `@main` entry point | ✅ | ★★ | R5 |
-| [ ] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
-| [ ] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
-| [ ] | `@discardableResult` | ✅ | ★ | R1 |
-| [ ] | `@propertyWrapper` | ✅ | ★★★ | R5 |
+| [x] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
+| [x] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
+| [x] | `@discardableResult` | ✅ | ★ | R1 |
+| [x] | `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [ ] | `@resultBuilder` | ⚠️ | ★★★★ | R6+ |
-| [ ] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
-| [ ] | `@Sendable` | ✅ | ★★ | R6+ |
-| [ ] | `@autoclosure` / `@escaping` / `@convention` | ✅ | ★★ | R3 |
-| [ ] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
-| [ ] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
-| [ ] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |
+| [x] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
+| [x] | `@Sendable` | ✅ | ★★ | R6+ |
+| [~] | `@autoclosure` / `@escaping` / `@convention` | ✅/⚠️ | ★★ | R3 |
+| [x] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
+| [x] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
+| [x] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |
 | [ ] | `@backDeployed` / `@_specialize` | ⚠️ | ★ | R6+ |
-| [ ] | `@warn_unqualified_access` / misc diagnostics | ⚠️ | ★ | R6+ |
+| [x] | `@warn_unqualified_access` / misc diagnostics | ⚠️ | ★ | R6+ |
 
 ### 9d. Compiler control / directives
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [x] | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` | ⚠️ | ★★ | R5 |
 | [x] | `#if` platform/arch/compiler/`canImport`/`swift()` | ⚠️ | ★★ | R5 |
-| [ ] | `#sourceLocation` line control | ⚠️ | ★ | R6+ |
+| [x] | `#sourceLocation` line control | ⚠️ | ★ | R6+ |
 | [x] | `#available` / `#unavailable` conditions | ✅ | ★★ | R5 |
 
 ---
@@ -448,7 +448,7 @@ inventories plus per-framework runtime registries. See
 |---|---|----|-------|
 | [x] | Framework inventory/coverage loop (`--framework`, scope manifests, registry dumps) | ★★ | R5+ |
 | [x] | Foundation proof slice: `Data`/`UUID` constructors and core properties | ★★ | R5+ |
-| [ ] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
+| [~] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
 | [ ] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
 | [ ] | SwiftUI measurement descriptor and runtime ADR | ★★★★ | R6+ |
 

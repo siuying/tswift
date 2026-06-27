@@ -4,7 +4,7 @@
 //! interpreter, expose live `registered_keys()` for coverage tooling, and keep
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
-use std::rc::Rc;
+use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
     Arg, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
@@ -27,6 +27,48 @@ pub fn install(interp: &mut Interpreter<'_>) {
 
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
+
+    interp.register_free_fn("IndexPath", index_path_init);
+    interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
+    interp.register_property(BuiltinReceiver::IndexPath, "isEmpty", index_path_is_empty);
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexPath,
+        "append",
+        MethodEntry {
+            mutating: true,
+            func: index_path_append,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexPath,
+        "appending",
+        MethodEntry {
+            mutating: false,
+            func: index_path_appending,
+        },
+    );
+
+    interp.register_free_fn("IndexSet", index_set_init);
+    interp.register_property(BuiltinReceiver::IndexSet, "count", index_set_count);
+    interp.register_property(BuiltinReceiver::IndexSet, "isEmpty", index_set_is_empty);
+    interp.register_property(BuiltinReceiver::IndexSet, "first", index_set_first);
+    interp.register_property(BuiltinReceiver::IndexSet, "last", index_set_last);
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "contains",
+        MethodEntry {
+            mutating: false,
+            func: index_set_contains,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "insert",
+        MethodEntry {
+            mutating: true,
+            func: index_set_insert,
+        },
+    );
 }
 
 /// Every Foundation entry registered by [`install`], as coverage keys.
@@ -40,7 +82,14 @@ pub fn registered_keys() -> Vec<String> {
         .filter_map(|key| match key.as_str() {
             "Data" => Some("Data.init".to_string()),
             "UUID" => Some("UUID.init".to_string()),
-            other if other.starts_with("Data.") || other.starts_with("UUID.") => {
+            "IndexPath" => Some("IndexPath.init".to_string()),
+            "IndexSet" => Some("IndexSet.init".to_string()),
+            other
+                if other.starts_with("Data.")
+                    || other.starts_with("UUID.")
+                    || other.starts_with("IndexPath.")
+                    || other.starts_with("IndexSet.") =>
+            {
                 Some(other.to_string())
             }
             _ => None,
@@ -214,6 +263,262 @@ fn random_uuid(ctx: &mut dyn StdContext) -> String {
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
     )
+}
+
+fn int_arg(value: &SwiftValue, context: &str) -> Result<i128, StdError> {
+    match value {
+        SwiftValue::Int(i) => Ok(i.raw),
+        other => Err(type_error(format!(
+            "{context} expects Int, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn int_array_arg(value: &SwiftValue, context: &str) -> Result<Vec<i128>, StdError> {
+    match value {
+        SwiftValue::Array(items) => items
+            .iter()
+            .map(|item| int_arg(item, context))
+            .collect::<Result<Vec<_>, _>>(),
+        other => Err(type_error(format!(
+            "{context} expects [Int], got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn index_path_value(indexes: Vec<i128>) -> SwiftValue {
+    let items = indexes.into_iter().map(SwiftValue::int).collect();
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "IndexPath".into(),
+        fields: vec![("_indexes".into(), SwiftValue::Array(Rc::new(items)))],
+    }))
+}
+
+fn index_path_indexes(value: &SwiftValue) -> Result<Vec<i128>, StdError> {
+    let SwiftValue::Struct(obj) = value else {
+        return Err(type_error(format!(
+            "expected IndexPath, got {}",
+            value.type_name()
+        )));
+    };
+    if obj.type_name != "IndexPath" {
+        return Err(type_error(format!(
+            "expected IndexPath, got {}",
+            obj.type_name
+        )));
+    }
+    let Some(indexes) = obj.get("_indexes") else {
+        return Err(type_error("malformed IndexPath value"));
+    };
+    int_array_arg(indexes, "IndexPath")
+}
+
+fn index_path_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if args.is_empty() {
+        return Ok(index_path_value(Vec::new()));
+    }
+    if args.len() != 1 {
+        return Err(type_error("IndexPath expects zero or one argument"));
+    }
+    match args[0].label.as_deref() {
+        Some("indexes") => Ok(index_path_value(int_array_arg(
+            &args[0].value,
+            "IndexPath(indexes:) ",
+        )?)),
+        Some("index") => Ok(index_path_value(vec![int_arg(
+            &args[0].value,
+            "IndexPath(index:) ",
+        )?])),
+        Some(label) => Err(type_error(format!(
+            "unsupported IndexPath argument {label}:"
+        ))),
+        None => Err(type_error("IndexPath argument needs a label")),
+    }
+}
+
+fn index_path_count(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(index_path_indexes(&recv)?.len() as i128))
+}
+
+fn index_path_is_empty(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(index_path_indexes(&recv)?.is_empty()))
+}
+
+fn index_path_append(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexPath.append expects one argument"));
+    }
+    let mut indexes = index_path_indexes(&recv)?;
+    for arg in args {
+        match arg {
+            SwiftValue::Struct(obj) if obj.type_name == "IndexPath" => {
+                indexes.extend(index_path_indexes(&SwiftValue::Struct(obj))?);
+            }
+            SwiftValue::Array(_) => indexes.extend(int_array_arg(&arg, "IndexPath.append")?),
+            _ => indexes.push(int_arg(&arg, "IndexPath.append")?),
+        }
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_path_value(indexes),
+    })
+}
+
+fn index_path_appending(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexPath.appending expects one argument"));
+    }
+    let mut indexes = index_path_indexes(&recv)?;
+    for arg in args {
+        match arg {
+            SwiftValue::Struct(obj) if obj.type_name == "IndexPath" => {
+                indexes.extend(index_path_indexes(&SwiftValue::Struct(obj))?);
+            }
+            SwiftValue::Array(_) => indexes.extend(int_array_arg(&arg, "IndexPath.appending")?),
+            _ => indexes.push(int_arg(&arg, "IndexPath.appending")?),
+        }
+    }
+    Ok(Outcome {
+        result: index_path_value(indexes),
+        receiver: recv,
+    })
+}
+
+fn index_set_value(values: BTreeSet<i128>) -> SwiftValue {
+    let items = values.into_iter().map(SwiftValue::int).collect();
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "IndexSet".into(),
+        fields: vec![("_values".into(), SwiftValue::Array(Rc::new(items)))],
+    }))
+}
+
+fn index_set_values(value: &SwiftValue) -> Result<BTreeSet<i128>, StdError> {
+    let SwiftValue::Struct(obj) = value else {
+        return Err(type_error(format!(
+            "expected IndexSet, got {}",
+            value.type_name()
+        )));
+    };
+    if obj.type_name != "IndexSet" {
+        return Err(type_error(format!(
+            "expected IndexSet, got {}",
+            obj.type_name
+        )));
+    }
+    let Some(values) = obj.get("_values") else {
+        return Err(type_error("malformed IndexSet value"));
+    };
+    Ok(int_array_arg(values, "IndexSet")?.into_iter().collect())
+}
+
+fn ints_in_range(value: &SwiftValue, context: &str) -> Result<Vec<i128>, StdError> {
+    match value {
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive {
+                hi.saturating_add(1)
+            } else {
+                *hi
+            };
+            Ok((*lo..end).collect())
+        }
+        other => Err(type_error(format!(
+            "{context} expects Range<Int>, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn index_set_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if args.is_empty() {
+        return Ok(index_set_value(BTreeSet::new()));
+    }
+    if args.len() != 1 {
+        return Err(type_error("IndexSet expects zero or one argument"));
+    }
+    let values = match args[0].label.as_deref() {
+        Some("integer") => [int_arg(&args[0].value, "IndexSet(integer:) ")?]
+            .into_iter()
+            .collect(),
+        Some("integersIn") => ints_in_range(&args[0].value, "IndexSet(integersIn:) ")?
+            .into_iter()
+            .collect(),
+        Some(label) => {
+            return Err(type_error(format!(
+                "unsupported IndexSet argument {label}:"
+            )))
+        }
+        None => return Err(type_error("IndexSet argument needs a label")),
+    };
+    Ok(index_set_value(values))
+}
+
+fn index_set_count(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(index_set_values(&recv)?.len() as i128))
+}
+
+fn index_set_is_empty(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(index_set_values(&recv)?.is_empty()))
+}
+
+fn index_set_first(recv: SwiftValue) -> StdResult {
+    Ok(index_set_values(&recv)?
+        .first()
+        .copied()
+        .map(SwiftValue::int)
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn index_set_last(recv: SwiftValue) -> StdResult {
+    Ok(index_set_values(&recv)?
+        .last()
+        .copied()
+        .map(SwiftValue::int)
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn index_set_contains(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.contains expects one Int"));
+    }
+    let value = int_arg(&args[0], "IndexSet.contains")?;
+    Ok(Outcome {
+        result: SwiftValue::Bool(index_set_values(&recv)?.contains(&value)),
+        receiver: recv,
+    })
+}
+
+fn index_set_insert(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.insert expects one Int"));
+    }
+    let value = int_arg(&args[0], "IndexSet.insert")?;
+    let mut values = index_set_values(&recv)?;
+    let inserted = values.insert(value);
+    Ok(Outcome {
+        result: SwiftValue::tuple_labeled(
+            vec![SwiftValue::Bool(inserted), SwiftValue::int(value)],
+            vec![Some("inserted".into()), Some("memberAfterInsert".into())],
+        ),
+        receiver: index_set_value(values),
+    })
 }
 
 #[cfg(test)]

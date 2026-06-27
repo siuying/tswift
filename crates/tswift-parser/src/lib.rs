@@ -320,6 +320,21 @@ impl<'a> Parser<'a> {
             if w == "actor" && self.tokens[self.pos + 1].kind == TokenKind::Identifier {
                 return self.parse_nominal(NodeKind::ActorDecl);
             }
+            // `discard self` / `discard expr` — ends a value's lifetime without
+            // running its deinit. A no-op in the tree-walker: parse the operand
+            // as a discarded expression statement so it is evaluated and dropped.
+            if w == "discard"
+                && !self.tokens[self.pos + 1].leading_newline
+                && (self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                    || (self.tokens[self.pos + 1].kind == TokenKind::Keyword
+                        && self.tokens[self.pos + 1].text == "self"))
+            {
+                let kw = self.bump();
+                let operand = self.parse_expr(0)?;
+                let stmt = self.ast.add(NodeKind::ExprStmt, None, kw.line, kw.col);
+                self.ast.append_child(stmt, operand);
+                return Ok(stmt);
+            }
         }
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
@@ -646,6 +661,16 @@ impl<'a> Parser<'a> {
         if self.at_keyword("inout") {
             self.bump();
             self.ast.add_modifier(param, "inout");
+        }
+        // Ownership parameter modifiers (`borrowing`/`consuming`, and the older
+        // `__shared`/`__owned`). They do not change tree-walk evaluation, so
+        // accept and discard them before the parameter type.
+        while matches!(
+            self.peek().text,
+            "borrowing" | "consuming" | "__shared" | "__owned"
+        ) && self.peek().kind == TokenKind::Identifier
+        {
+            self.bump();
         }
         // Type attributes on the parameter type (`@autoclosure`, `@escaping`).
         // They are recorded as modifiers on the parameter so the runtime can
@@ -1078,16 +1103,22 @@ impl<'a> Parser<'a> {
         // old `skip_modifiers` guard), so a bare `weak`/`@x` used elsewhere is
         // not mistaken for a modifier run.
         let mut i = self.pos;
+        let mut saw_objc_attr = false;
         loop {
             let t = self.tokens[i];
             // `class` is a modifier (`class func`) only before another token; a
             // following identifier means it is the `class Name` declaration keyword.
             let is_mod = if t.text == "class" {
                 self.tokens[i + 1].kind != TokenKind::Identifier
+            } else if t.text == "optional" {
+                saw_objc_attr && matches!(self.tokens[i + 1].text, "func" | "var" | "subscript")
             } else {
                 is_modifier_word(t.text)
             };
             if t.kind == TokenKind::Attribute || is_mod {
+                if t.kind == TokenKind::Attribute && t.text == "@objc" {
+                    saw_objc_attr = true;
+                }
                 i += 1;
                 // Argumented attribute/modifier such as `@available(...)` or
                 // `private(set)`.
@@ -1274,6 +1305,16 @@ impl<'a> Parser<'a> {
             dir.line,
             dir.col,
         );
+        // `#sourceLocation(file:line:)` / `#sourceLocation()` controls the
+        // reported source position. Its arguments are labelled, not an
+        // expression, and it is a no-op for the tree-walker, so skip the whole
+        // balanced argument list.
+        if dir.text == "#sourceLocation" {
+            if self.peek().kind == TokenKind::LParen {
+                self.skip_balanced_parens();
+            }
+            return Ok(node);
+        }
         if self.peek().kind == TokenKind::LParen {
             self.bump();
             if self.peek().kind != TokenKind::RParen {
@@ -2041,6 +2082,14 @@ impl<'a> Parser<'a> {
         while self.peek().kind == TokenKind::Attribute {
             self.bump();
         }
+        // Suppressed constraint `~Copyable` / `~Escapable`: a tilde prefix that
+        // removes an implicit conformance. It is a no-op for the tree-walker, so
+        // keep the marker in the type text and let the runtime ignore it.
+        if self.at_oper("~") {
+            self.bump();
+            let rest = self.parse_type_text()?;
+            return Ok(format!("~{rest}"));
+        }
         // Existential / opaque prefixes: `any P`, `some P`, `inout T`.
         if (self.at_keyword("any") || self.at_keyword("some") || self.at_keyword("inout"))
             && self.tokens[self.pos + 1].kind != TokenKind::Eof
@@ -2244,6 +2293,24 @@ impl<'a> Parser<'a> {
             self.ast.append_child(node, operand);
             return Ok(node);
         }
+        // Ownership prefix operators `consume`/`copy`/`borrow expr`. They are
+        // contextual keywords; treat them as a transparent prefix only when an
+        // expression follows (otherwise the word is an ordinary identifier).
+        if t.kind == TokenKind::Identifier
+            && matches!(t.text, "consume" | "copy" | "borrow")
+            && !self.tokens[self.pos + 1].leading_newline
+            && (self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                || (self.tokens[self.pos + 1].kind == TokenKind::Keyword
+                    && self.tokens[self.pos + 1].text == "self"))
+        {
+            self.bump();
+            let operand = self.parse_prefix()?;
+            let node = self
+                .ast
+                .add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
+        }
         // `&place` — an inout argument (write-back location at a call site).
         if t.kind == TokenKind::Oper && t.text == "&" {
             self.bump();
@@ -2376,7 +2443,46 @@ impl<'a> Parser<'a> {
                 let node = self
                     .ast
                     .add(NodeKind::CompilerDirective, Some(t.text), t.line, t.col);
-                if self.peek().kind == TokenKind::LParen {
+                // `#selector(Type.member)` / `#keyPath(Type.path)` reference a
+                // member; keep the operand as a child so the runtime can read
+                // its name. An optional `getter:`/`setter:` label is skipped.
+                if matches!(t.text, "#selector" | "#keyPath")
+                    && self.peek().kind == TokenKind::LParen
+                {
+                    self.bump(); // `(`
+                    if self.peek().kind == TokenKind::Identifier
+                        && matches!(self.peek().text, "getter" | "setter")
+                        && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                    {
+                        self.bump(); // label
+                        self.bump(); // `:`
+                    }
+                    // Parse a dotted member path `Root.a.b` directly (rather than
+                    // a general expression) so a selector signature suffix like
+                    // `update(_:)` does not confuse the expression grammar.
+                    let root = self.expect(TokenKind::Identifier)?;
+                    let mut path =
+                        self.ast
+                            .add(NodeKind::IdentExpr, Some(root.text), root.line, root.col);
+                    while self.peek().kind == TokenKind::Dot {
+                        self.bump();
+                        let name = self.expect(TokenKind::Identifier)?;
+                        let member = self.ast.add(
+                            NodeKind::MemberExpr,
+                            Some(name.text),
+                            name.line,
+                            name.col,
+                        );
+                        self.ast.append_child(member, path);
+                        path = member;
+                    }
+                    // Skip a trailing selector signature `(_:)` / `(label:)`.
+                    if self.peek().kind == TokenKind::LParen {
+                        self.skip_balanced_parens();
+                    }
+                    self.ast.append_child(node, path);
+                    self.expect(TokenKind::RParen)?;
+                } else if self.peek().kind == TokenKind::LParen {
                     self.skip_balanced_parens();
                 }
                 node
@@ -2873,6 +2979,9 @@ fn is_modifier_word(w: &str) -> bool {
             | "unowned"
             | "indirect"
             | "dynamic"
+            // Ownership method modifiers (`consuming func`, `borrowing func`).
+            | "consuming"
+            | "borrowing"
             // Operator fixity words form a modifier run before `func` (`prefix
             // func -`); a bare `prefix operator …` is handled separately and is
             // not treated as a modifier because `operator` is not a decl keyword.
@@ -2904,6 +3013,11 @@ fn is_decl_keyword(w: &str) -> bool {
             | "typealias"
             | "associatedtype"
             | "deinit"
+            // `actor` is a contextual keyword; `import` introduces a module
+            // declaration. Both may carry leading attributes
+            // (`@globalActor actor …`, `@preconcurrency import …`).
+            | "actor"
+            | "import"
     )
 }
 
@@ -3382,6 +3496,40 @@ mod tests {
     }
 
     // --- Tier 2: value & nominal types ---
+
+    #[test]
+    fn objc_optional_protocol_requirements_parse() {
+        let src = "@objc protocol Delegate {\n  @objc optional func willLoad()\n  @objc optional var badge: Int { get }\n  @objc optional subscript(i: Int) -> Int { get }\n}";
+        let ast = ast_of(src);
+        let proto = first_stmt(&ast);
+        assert_eq!(proto.kind(), NodeKind::ProtocolDecl);
+        let members: Vec<_> = proto
+            .children()
+            .filter(|node| {
+                matches!(
+                    node.kind(),
+                    NodeKind::FuncDecl | NodeKind::VarDecl | NodeKind::SubscriptDecl
+                )
+            })
+            .collect();
+        assert_eq!(members[0].kind(), NodeKind::FuncDecl);
+        assert!(members[0].modifiers().iter().any(|m| m == "optional"));
+        assert_eq!(members[1].kind(), NodeKind::VarDecl);
+        assert!(members[1].modifiers().iter().any(|m| m == "optional"));
+        assert_eq!(members[2].kind(), NodeKind::SubscriptDecl);
+        assert!(members[2].modifiers().iter().any(|m| m == "optional"));
+    }
+
+    #[test]
+    fn optional_without_objc_stays_an_identifier() {
+        assert!(parse("optional func f() {}").is_err());
+        assert!(parse("protocol P { optional func f() }").is_err());
+        assert!(parse("@objc optional let x = 1").is_err());
+        let ast = ast_of("func optional() {}\nvar optional = 1");
+        let stmts: Vec<_> = ast.node(ast.root()).children().collect();
+        assert_eq!(stmts[0].text(), Some("optional"));
+        assert_eq!(stmts[1].children().next().unwrap().text(), Some("optional"));
+    }
 
     #[test]
     fn struct_with_members() {

@@ -197,6 +197,9 @@ struct StructDef {
     /// `@dynamicMemberLookup`: an unresolved member name routes through the
     /// type's `subscript(dynamicMember:)`.
     dynamic_member_lookup: bool,
+    /// `@dynamicCallable`: calling an instance routes through the type's
+    /// `dynamicallyCall(withArguments:)` / `dynamicallyCall(withKeywordArguments:)`.
+    dynamic_callable: bool,
 }
 
 /// One case of an enum.
@@ -1371,6 +1374,11 @@ impl<'w> Interpreter<'w> {
         let dynamic_member_lookup = node.children().any(|c| {
             c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicMemberLookup")
         });
+        // `@dynamicCallable` routes call syntax through the type's
+        // `dynamicallyCall(...)` method.
+        let dynamic_callable = node.children().any(|c| {
+            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicCallable")
+        });
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -1505,6 +1513,7 @@ impl<'w> Interpreter<'w> {
                 init,
                 wrappers,
                 dynamic_member_lookup,
+                dynamic_callable,
             },
         );
         // Now that the struct is registered, evaluate its static initializers
@@ -1580,12 +1589,17 @@ impl<'w> Interpreter<'w> {
     fn eval_decl(&mut self, node: &Node<'static>, mutable: bool) -> Eval {
         let children: Vec<Node<'static>> = node.children().collect();
 
+        // The initializer is the last value child. A trailing declaration
+        // `Attribute` (e.g. `@usableFromInline let g = 5`) is not a value, so
+        // search from the end for the actual expression.
+        let init_expr = children.iter().rev().find(|c| is_expr(c)).copied();
+
         // Tuple-pattern binding: `let (a, b) = expr`.
         if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::PatternTuple) {
-            let init = children.last().filter(|c| is_expr(c)).ok_or_else(|| {
+            let init = init_expr.ok_or_else(|| {
                 EvalError::Unsupported("tuple binding without initializer".into())
             })?;
-            let value = self.eval(init)?;
+            let value = self.eval(&init)?;
             self.bind_tuple_pattern(pat, &value, mutable)?;
             return Ok(SwiftValue::Void);
         }
@@ -1597,20 +1611,20 @@ impl<'w> Interpreter<'w> {
         // `async let name = expr` spawns a child task; the binding holds its
         // handle and `await name` later retrieves the result (ADR-0005).
         if node.is_async_let() {
-            if let Some(init) = children.last().filter(|c| is_expr(c)) {
-                let id = self.spawn_expr_task(*init);
+            if let Some(init) = init_expr {
+                let id = self.spawn_expr_task(init);
                 self.env.declare(&name, SwiftValue::Task(id), mutable);
                 return Ok(SwiftValue::Void);
             }
         }
 
-        let value = match children.last() {
-            Some(init) if is_expr(init) => {
-                let v = self.eval(init)?;
+        let value = match init_expr {
+            Some(init) => {
+                let v = self.eval(&init)?;
                 let v = self.coerce_to_literal_type(node, v)?;
                 self.coerce_to_decl_type(node, v)
             }
-            _ => SwiftValue::Void,
+            None => SwiftValue::Void,
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
@@ -2849,6 +2863,26 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// The member chain of a `#selector`/`#keyPath` operand, dropping the
+    /// leading type root: `C.a.b` → `["a", "b"]`. The names are collected
+    /// outer-to-inner then reversed into source order.
+    fn member_chain(node: &Node<'static>) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut cur = Some(*node);
+        while let Some(n) = cur {
+            if n.kind() == NodeKind::MemberExpr {
+                if let Some(name) = n.text() {
+                    names.push(name);
+                }
+                cur = n.children().next();
+            } else {
+                break;
+            }
+        }
+        names.reverse();
+        names
+    }
+
     /// Magic literals: `#file`, `#line`, `#function`, `#column`.
     fn eval_macro(&mut self, node: &Node<'static>) -> Eval {
         let which = node.text().unwrap_or_default();
@@ -2856,6 +2890,23 @@ impl<'w> Interpreter<'w> {
             "file" | "filePath" | "fileID" => Ok(SwiftValue::Str(self.filename.clone())),
             "line" => Ok(SwiftValue::int(node.line() as i128)),
             "column" => Ok(SwiftValue::int(0)),
+            // `#selector(Type.method)` yields the method name (Swift prints a
+            // selector as its name); `#keyPath(Type.a.b)` yields the dotted key
+            // path string relative to the root type.
+            "selector" => {
+                let chain = node.children().next().map(|c| Self::member_chain(&c));
+                Ok(SwiftValue::Str(
+                    chain.and_then(|c| c.last().cloned()).unwrap_or_default(),
+                ))
+            }
+            "keyPath" => {
+                let chain = node
+                    .children()
+                    .next()
+                    .map(|c| Self::member_chain(&c))
+                    .unwrap_or_default();
+                Ok(SwiftValue::Str(chain.join(".")))
+            }
             "function" => Ok(SwiftValue::Str(
                 self.class_ctx.last().cloned().unwrap_or_default(),
             )),
@@ -3424,6 +3475,53 @@ impl<'w> Interpreter<'w> {
             Ok(v) | Err(Signal::Return(v)) => Ok(Some(v)),
             Err(e) => Err(e),
         }
+    }
+
+    /// Whether `value` is an instance of a `@dynamicCallable` struct type.
+    fn is_dynamic_callable(&self, value: &SwiftValue) -> bool {
+        matches!(value, SwiftValue::Struct(obj)
+            if self.structs.get(&obj.type_name).is_some_and(|d| d.dynamic_callable))
+    }
+
+    /// `@dynamicCallable`: route call syntax on a struct instance through its
+    /// `dynamicallyCall(withArguments:)` (all positional) or
+    /// `dynamicallyCall(withKeywordArguments:)` (any labelled) method.
+    fn dynamic_call(&mut self, receiver: SwiftValue, args: Vec<CallArg>) -> Eval {
+        let SwiftValue::Struct(obj) = &receiver else {
+            return Err(EvalError::Type("dynamicallyCall on a non-struct".into()).into());
+        };
+        let type_name = obj.type_name.clone();
+        // The declared `dynamicallyCall` parameter type decides the packing
+        // form: a dictionary parameter (`[Key: Value]`) is the keyword form,
+        // anything else is the positional array form. Fall back to the call
+        // site's labels when the type is not introspectable.
+        let keyword_param = self
+            .structs
+            .get(&type_name)
+            .and_then(|d| d.methods.get("dynamicallyCall"))
+            .and_then(|m| m.params.first())
+            .and_then(|p| p.ty.as_deref())
+            .map(|ty| ty.contains(':'));
+        let use_keyword = keyword_param.unwrap_or_else(|| args.iter().any(|a| a.label.is_some()));
+        // `withKeywordArguments:` receives the call's (label, value) pairs as a
+        // dictionary keyed by the argument label (unlabelled → empty string);
+        // `withArguments:` receives the positional values as an array.
+        let (label, packed) = if use_keyword {
+            let pairs: Vec<(SwiftValue, SwiftValue)> = args
+                .into_iter()
+                .map(|a| (SwiftValue::Str(a.label.unwrap_or_default()), a.value))
+                .collect();
+            ("withKeywordArguments", SwiftValue::Dict(Rc::new(pairs)))
+        } else {
+            let items: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+            ("withArguments", SwiftValue::Array(Rc::new(items)))
+        };
+        let call_args = vec![CallArg {
+            label: Some(label.to_string()),
+            value: packed,
+            place: None,
+        }];
+        self.call_struct_method(receiver, &type_name, "dynamicallyCall", call_args, None)
     }
 
     /// Build a struct instance from a memberwise initializer call.
@@ -4601,6 +4699,11 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("unary without operand".into()))?;
         let v = self.eval(&operand)?;
+        // Ownership operators are transparent in the tree-walker: `consume x`,
+        // `copy x`, and `borrow x` evaluate to the operand's value.
+        if matches!(op.as_str(), "consume" | "copy" | "borrow") {
+            return Ok(v);
+        }
         ops::unary(&op, &v).map_err(trap)
     }
 
@@ -4786,9 +4889,7 @@ impl<'w> Interpreter<'w> {
             "stride" => stride,
             "alignment" => alignment,
             other => {
-                return Err(
-                    EvalError::Unsupported(format!("MemoryLayout<{ty}>.{other}")).into(),
-                )
+                return Err(EvalError::Unsupported(format!("MemoryLayout<{ty}>.{other}")).into())
             }
         };
         Ok(SwiftValue::Int(IntValue::new(pick as i128, IntWidth::I64)))
@@ -5090,11 +5191,10 @@ impl<'w> Interpreter<'w> {
                 if let Some(v) = self.read_enum_computed(&value, name)? {
                     return Ok(v);
                 }
-                Err(EvalError::Unsupported(format!(
-                    "key-path member .{name} on {}",
-                    e.type_name
-                ))
-                .into())
+                Err(
+                    EvalError::Unsupported(format!("key-path member .{name} on {}", e.type_name))
+                        .into(),
+                )
             }
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&value) {
@@ -5257,6 +5357,13 @@ impl<'w> Interpreter<'w> {
                     .map(|a| (a.label.clone(), a.value.clone()))
                     .collect();
                 return self.instantiate_struct(&name, &simple);
+            }
+            // `@dynamicCallable`: calling a struct instance routes through its
+            // `dynamicallyCall(...)` method.
+            if let Some(value @ SwiftValue::Struct(_)) = self.env.get(&name) {
+                if self.is_dynamic_callable(&value) {
+                    return self.dynamic_call(value, args);
+                }
             }
             // A bound function or closure value (incl. recursion).
             match self.env.get(&name) {
@@ -5644,6 +5751,16 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
+                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet)
+                    && args.iter().any(|arg| arg.label.is_some())
+                {
+                    return Err(EvalError::Type(format!(
+                        "{}.{} does not accept argument labels",
+                        kind.type_name(),
+                        method
+                    ))
+                    .into());
+                }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
                 if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
@@ -6341,7 +6458,14 @@ impl<'w> Interpreter<'w> {
             self.statics.insert(place.root.clone(), updated);
             return Ok(());
         }
+        // A class instance is mutated in place through its shared storage, so
+        // the root binding need not (and, for an immutable `self`, must not) be
+        // reassigned — its identity is unchanged.
+        let root_is_object = matches!(root_val, SwiftValue::Object(_));
         let updated = self.set_in(root_val, &place.path, value)?;
+        if root_is_object {
+            return Ok(());
+        }
         match self.env.assign(&place.root, updated) {
             Ok(()) => Ok(()),
             Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
@@ -6353,6 +6477,20 @@ impl<'w> Interpreter<'w> {
     /// observers/computed setters at each struct level.
     fn set_in(&mut self, container: SwiftValue, path: &[String], value: SwiftValue) -> Eval {
         let (head, rest) = path.split_first().expect("non-empty path");
+        // A class instance is mutated in place through its shared storage (its
+        // identity is preserved), so writing a field — possibly nested through a
+        // value member — does not rebuild the object.
+        if let SwiftValue::Object(obj) = &container {
+            let obj = obj.clone();
+            if rest.is_empty() {
+                self.set_object_field(&obj, head, value);
+            } else {
+                let sub = self.read_object_member(&container, head)?;
+                let new_sub = self.set_in(sub, rest, value)?;
+                self.set_object_field(&obj, head, new_sub);
+            }
+            return Ok(container);
+        }
         if rest.is_empty() {
             return self.set_struct_field(container, head, value);
         }
@@ -6830,6 +6968,7 @@ fn is_value_node(node: &Node) -> bool {
             | NodeKind::AccessorDecl
             | NodeKind::Conformance
             | NodeKind::TypeFunc
+            | NodeKind::Attribute
     )
 }
 
@@ -7049,8 +7188,7 @@ mod tests {
 
     #[test]
     fn key_paths_read_write_and_function() {
-        let out = run(
-            "struct Address { var city: String }\n\
+        let out = run("struct Address { var city: String }\n\
              struct Person { var name: String; var address: Address }\n\
              var p = Person(name: \"Ada\", address: Address(city: \"London\"))\n\
              print(p[keyPath: \\Person.name])\n\
@@ -7058,8 +7196,7 @@ mod tests {
              p[keyPath: \\Person.address.city] = \"Paris\"\n\
              print(p.address.city)\n\
              print([\"a\", \"bb\"].map(\\.count))\n\
-             print([1, 2, 3].map(\\.self))\n",
-        )
+             print([1, 2, 3].map(\\.self))\n")
         .unwrap();
         assert_eq!(out, "Ada\nLondon\nParis\n[1, 2]\n[1, 2, 3]\n");
     }
@@ -7068,12 +7205,10 @@ mod tests {
     fn key_path_writes_through_let_class_reference() {
         // A class is a reference type: a writable key path mutates it in place
         // even when it is held in a `let` binding.
-        let out = run(
-            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+        let out = run("class Box { var n: Int; init(_ v: Int) { n = v } }\n\
              let b = Box(1)\n\
              b[keyPath: \\Box.n] = 9\n\
-             print(b.n)\n",
-        )
+             print(b.n)\n")
         .unwrap();
         assert_eq!(out, "9\n");
     }
@@ -7082,14 +7217,12 @@ mod tests {
     fn key_path_identity_replacement_on_var_class() {
         // `obj[keyPath: \.self] = other` replaces the whole reference (a
         // different instance), so the `var` binding is rebound.
-        let out = run(
-            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+        let out = run("class Box { var n: Int; init(_ v: Int) { n = v } }\n\
              var b = Box(1)\n\
              b[keyPath: \\Box.n] = 5\n\
              print(b.n)\n\
              b[keyPath: \\Box.self] = Box(99)\n\
-             print(b.n)\n",
-        )
+             print(b.n)\n")
         .unwrap();
         assert_eq!(out, "5\n99\n");
     }
