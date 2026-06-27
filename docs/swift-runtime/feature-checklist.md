@@ -207,13 +207,13 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [~] | Protocol inheritance | ✅ | ★★ | R4 |
 | [x] | Protocol composition `P & Q` | ✅ | ★★ | R4 |
 | [x] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
-| [ ] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
+| [x] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
 | [x] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
 | [x] | `Self` requirements | ✅ | ★★★ | R4 |
 | [x] | Protocol witness for operators | ✅ | ★★ | R4 |
 | [ ] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
-| [ ] | Conditional conformance | ✅ | ★★★ | R4 |
+| [x] | Conditional conformance | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
 
@@ -224,7 +224,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
 | [x] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
 | [~] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
-| [ ] | Associated-type constraints | ✅ | ★★★ | R4 |
+| [x] | Associated-type constraints | ✅ | ★★★ | R4 |
 | [ ] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
 | [ ] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
