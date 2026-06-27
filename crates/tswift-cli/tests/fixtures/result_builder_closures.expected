@@ -1,0 +1,5 @@
+wrapped([one] [two])
+esc([a] [b])
+[g1] [g2]
+wrapped([plain] [last])
+last

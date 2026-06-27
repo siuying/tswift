@@ -42,8 +42,90 @@ impl Pass for BuilderTransform {
         for (decl, builder) in targets {
             transform_func(ast, decl, &builder, symbols);
         }
+
+        // Contextual builders: a closure literal passed to a `@Builder`
+        // parameter is transformed as a builder body (#127).
+        let mut closure_targets = Vec::new();
+        collect_closure_targets(ast, ast.root(), symbols, &mut closure_targets);
+        for (closure, builder) in closure_targets {
+            transform_closure(ast, closure, &builder, symbols);
+        }
         diags
     }
+}
+
+/// Find closure-literal arguments passed to `@Builder` parameters, paired with
+/// the builder name. Positional match: parameter *i* maps to call child *i+1*
+/// (child 0 is the callee), which also covers trailing-closure syntax.
+fn collect_closure_targets(
+    ast: &Ast,
+    parent: NodeId,
+    symbols: &Symbols,
+    out: &mut Vec<(NodeId, String)>,
+) {
+    for child in child_ids(ast, parent) {
+        if ast.node(child).kind() == NodeKind::CallExpr {
+            let kids = child_ids(ast, child);
+            if let Some(&callee) = kids.first() {
+                if ast.node(callee).kind() == NodeKind::IdentExpr {
+                    if let Some(name) = ast.node(callee).text() {
+                        for (index, builder) in symbols.func_builder_params(name) {
+                            if let Some(&arg) = kids.get(index + 1) {
+                                if ast.node(arg).kind() == NodeKind::ClosureExpr {
+                                    out.push((arg, builder));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        collect_closure_targets(ast, child, symbols, out);
+    }
+}
+
+/// Transform a closure literal's body as a builder block. Parameters and capture
+/// list are preserved; the statement children become the lowered build calls.
+/// The function parameter keeps its builder attribute so the interpreter still
+/// transforms *non-literal* closure arguments (a closure passed by name).
+fn transform_closure(ast: &mut Ast, closure: NodeId, builder: &str, symbols: &Symbols) {
+    let Some(methods) = symbols.result_builder(builder) else {
+        return;
+    };
+    let has_fold = methods.has("buildBlock")
+        || (methods.has_arity("buildPartialBlock", 1) && methods.has_arity("buildPartialBlock", 2));
+    if !has_fold {
+        return;
+    }
+    let kids = child_ids(ast, closure);
+    let (prelude, stmts): (Vec<NodeId>, Vec<NodeId>) = kids.into_iter().partition(|&c| {
+        matches!(
+            ast.node(c).kind(),
+            NodeKind::Param | NodeKind::ClosureCapture
+        )
+    });
+    // A sole `return` bypasses the builder (SE-0289); also avoids re-wrapping a
+    // body the transform already produced.
+    if stmts.len() == 1 && ast.node(stmts[0]).kind() == NodeKind::ReturnStmt {
+        return;
+    }
+    if !stmts.iter().all(|&s| is_handleable(ast, methods, s)) {
+        return;
+    }
+    let (line, col) = (ast.node(closure).line(), ast.node(closure).col());
+    let mut lowering = Lowering {
+        ast,
+        builder,
+        methods,
+        counter: 0,
+    };
+    let (mut lowered, value) = lowering.lower_block(&stmts, line, col);
+    let value = lowering.build_final_result(value, line, col);
+    let ret = astbuild::return_stmt(lowering.ast, value, line, col);
+    lowered.push(ret);
+    let mut new_children = prelude;
+    new_children.extend(lowered);
+    ast.set_children(closure, new_children);
 }
 
 /// The set of recognized result-builder method names.
@@ -1677,6 +1759,75 @@ mod tests {
             !diags.iter().any(|d| d.message.contains("ambiguous")),
             "{diags:?}"
         );
+    }
+
+    /// Find the first `ClosureExpr` in the tree.
+    fn first_closure(ast: &Ast) -> tswift_ast::Node<'_> {
+        fn find(ast: &Ast, parent: NodeId) -> Option<NodeId> {
+            for c in child_ids(ast, parent) {
+                if ast.node(c).kind() == NodeKind::ClosureExpr {
+                    return Some(c);
+                }
+                if let Some(f) = find(ast, c) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        ast.node(find(ast, ast.root()).expect("closure present"))
+    }
+
+    #[test]
+    fn closure_literal_argument_to_builder_param_is_transformed() {
+        let ast = analyzed(
+            "func wrap(@B _ content: () -> String) -> String { content() }\n\
+             let r = wrap { \"one\"\n \"two\" }",
+        );
+        let closure = first_closure(&ast);
+        // Body rewritten to two lets + a `return B.buildBlock(...)`.
+        let kids: Vec<_> = closure.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![NodeKind::LetDecl, NodeKind::LetDecl, NodeKind::ReturnStmt]
+        );
+        let ret_call = closure
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .next()
+            .unwrap();
+        assert_eq!(
+            ret_call.children().next().unwrap().text(),
+            Some("buildBlock")
+        );
+    }
+
+    #[test]
+    fn closure_with_params_keeps_them_and_transforms_body() {
+        let ast = analyzed(
+            "func wrap(@B _ content: () -> String) -> String { content() }\n\
+             let r = wrap { \"x\" }",
+        );
+        let closure = first_closure(&ast);
+        // Single expression -> one let + return.
+        assert_eq!(
+            closure.children().last().unwrap().kind(),
+            NodeKind::ReturnStmt
+        );
+    }
+
+    #[test]
+    fn non_closure_argument_to_builder_param_is_untouched() {
+        // Passing a closure by name is left for the runtime transform.
+        let ast = analyzed(
+            "func wrap(@B _ content: () -> String) -> String { content() }\n\
+             let p = { \"a\"\n \"b\" }\n let r = wrap(p)",
+        );
+        // The `p` closure (assigned to a let, not a literal arg) is NOT rewritten.
+        let closure = first_closure(&ast);
+        let kinds: Vec<_> = closure.children().map(|c| c.kind()).collect();
+        assert_eq!(kinds, vec![NodeKind::ExprStmt, NodeKind::ExprStmt]);
     }
 
     #[test]

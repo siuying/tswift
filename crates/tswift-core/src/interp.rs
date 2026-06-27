@@ -6799,6 +6799,16 @@ impl<'w> Interpreter<'w> {
             let Some((def, captured)) = self.closures.get(id) else {
                 return SwiftValue::Closure(id);
             };
+            // A closure body containing a `return` is not a transformable
+            // builder DSL: a sole `return` bypasses the builder (SE-0289), and a
+            // closure literal the sema result-builder transform already rewrote
+            // ends in `return Builder.buildBlock(...)`. Either way, skip so the
+            // interpreter does not transform it a second time.
+            if let ClosureDef::User { body, .. } = def {
+                if body.iter().any(|s| s.kind() == NodeKind::ReturnStmt) {
+                    return SwiftValue::Closure(id);
+                }
+            }
             let cloned = match def {
                 ClosureDef::User { params, body, .. } => ClosureDef::User {
                     params: clone_params(params),
