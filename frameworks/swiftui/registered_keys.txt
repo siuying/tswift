@@ -8,8 +8,10 @@ List.init
 Rectangle.init
 RoundedRectangle.init
 Section.init
+SecureField.init
 Spacer.init
 Text.init
+TextField.init
 Toggle.init
 VStack.init
 View.background

@@ -184,6 +184,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
+    interp.register_free_fn("TextField", text_field_init);
+    interp.register_free_fn("SecureField", secure_field_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -222,8 +224,8 @@ pub fn registered_keys() -> Vec<String> {
         .into_iter()
         .filter_map(|key| match key.as_str() {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
-            | "Button" | "Toggle" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule"
-            | "Ellipse" => Some(format!("{key}.init")),
+            | "Button" | "Toggle" | "TextField" | "SecureField" | "Circle" | "Rectangle"
+            | "RoundedRectangle" | "Capsule" | "Ellipse" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -538,6 +540,53 @@ fn toggle_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(view_value("Toggle", fields))
 }
 
+/// `TextField(_ title, text: Binding<String>)` — a single-line text input. The
+/// current string is read from the binding for rendering; the binding is stashed
+/// internally so a `set` event writes the new text through it.
+fn text_field_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    input_field_init(ctx, args, "TextField")
+}
+
+/// `SecureField(_ title, text: Binding<String>)` — a masked text input. Same
+/// shape as `TextField`; the host renders the value obscured.
+fn secure_field_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    input_field_init(ctx, args, "SecureField")
+}
+
+/// Shared builder for `TextField`/`SecureField`: a `title` placeholder, the
+/// current `text` string (read from the binding), and the stashed binding.
+fn input_field_init(ctx: &mut dyn StdContext, args: Vec<Arg>, kind: &str) -> StdResult {
+    let mut title = String::new();
+    let mut binding: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("text") => binding = Some(arg.value),
+            _ => {
+                if let SwiftValue::Str(s) = &arg.value {
+                    if title.is_empty() {
+                        title = s.clone();
+                    }
+                }
+            }
+        }
+    }
+    let text = match &binding {
+        Some(b) => match ctx.get_member(b, "wrappedValue")? {
+            SwiftValue::Str(s) => s,
+            other => other.to_string(),
+        },
+        None => String::new(),
+    };
+    let mut fields = vec![
+        ("title".into(), SwiftValue::Str(title)),
+        ("text".into(), SwiftValue::Str(text)),
+    ];
+    if let Some(b) = binding {
+        fields.push((BINDING_FIELD.into(), b));
+    }
+    Ok(view_value(kind, fields))
+}
+
 /// `Button(_ title) { action }` — a titled button. The leading positional is
 /// the title string; the trailing closure is the tap action, stored as an
 /// `_action` closure value the dispatch loop invokes on a `tap` event.
@@ -765,8 +814,10 @@ mod tests {
                 "Rectangle.init",
                 "RoundedRectangle.init",
                 "Section.init",
+                "SecureField.init",
                 "Spacer.init",
                 "Text.init",
+                "TextField.init",
                 "Toggle.init",
                 "VStack.init",
                 "View.background",
@@ -1042,6 +1093,27 @@ struct V: View {
             keys,
             vec![Some("a_0"), Some("a_1"), Some("b_0"), Some("b_1")]
         );
+    }
+
+    #[test]
+    fn textfield_reads_initial_text_from_binding() {
+        let src = r#"
+struct V: View {
+    @State private var name = "Ada"
+    var body: some View {
+        TextField("Name", text: $name)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("TextField"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("title"), Some(&SwiftValue::Str("Name".into())));
+        assert_eq!(obj.get("text"), Some(&SwiftValue::Str("Ada".into())));
+        // The binding is stashed internally (not a visible arg).
+        assert!(obj.get(BINDING_FIELD).is_some());
     }
 
     #[test]

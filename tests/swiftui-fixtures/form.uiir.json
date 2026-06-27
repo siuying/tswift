@@ -1,0 +1,1 @@
+{"id":"0","kind":"VStack","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"TextField","args":{"title":"Name","text":"World"},"modifiers":[],"children":[]},{"id":"0.1","kind":"SecureField","args":{"title":"Password","text":""},"modifiers":[],"children":[]},{"id":"0.2","kind":"Text","args":{"verbatim":"Hello, World!"},"modifiers":[],"children":[]}]}

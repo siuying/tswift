@@ -213,6 +213,18 @@ export class PatchApplier {
         el.append(input, text);
         return el;
       }
+      case "TextField":
+      case "SecureField": {
+        // A text input emitting `set` with its string value on each edit.
+        const input = document.createElement("input");
+        input.type = node.kind === "SecureField" ? "password" : "text";
+        input.style.cssText =
+          "padding:8px;border:1px solid #ccc;border-radius:6px;font:inherit;";
+        input.addEventListener("input", () =>
+          this.emit(node.id, "set", input.value),
+        );
+        return input;
+      }
       case "Text":
       default:
         return document.createElement("span");
@@ -252,6 +264,15 @@ export class PatchApplier {
       }
       if (label && typeof args.title === "string") {
         label.textContent = args.title;
+      }
+    } else if (kind === "TextField" || kind === "SecureField") {
+      if (el instanceof HTMLInputElement) {
+        // Only overwrite when the model and DOM disagree, so we don't fight the
+        // user's caret mid-edit on the echo back.
+        if (typeof args.text === "string" && el.value !== args.text) {
+          el.value = args.text;
+        }
+        if (typeof args.title === "string") el.placeholder = args.title;
       }
     }
   }

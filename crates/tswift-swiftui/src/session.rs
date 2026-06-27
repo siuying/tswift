@@ -11,7 +11,40 @@
 
 use tswift_core::{EvalError, Interpreter, SwiftValue};
 
-use crate::{ACTION_FIELD, BINDING_FIELD, CHILDREN_FIELD};
+use crate::{child_id, ACTION_FIELD, BINDING_FIELD, CHILDREN_FIELD};
+
+/// Coerce a host `set` payload to the binding's current value type, so each
+/// control writes a well-typed value (and a `Toggle<Bool>` can't be corrupted
+/// by a stray string). Returns `None` for a missing or incompatible payload,
+/// including a number that doesn't fit the binding's integer width.
+fn coerce_binding_value(current: &SwiftValue, incoming: Option<&SwiftValue>) -> Option<SwiftValue> {
+    let incoming = incoming?;
+    match (current, incoming) {
+        (SwiftValue::Bool(_), SwiftValue::Bool(b)) => Some(SwiftValue::Bool(*b)),
+        (SwiftValue::Str(_), SwiftValue::Str(s)) => Some(SwiftValue::Str(s.clone())),
+        // Integer bindings keep their declared width/sign: the incoming number
+        // must be integral and in range, else the write is rejected (no silent
+        // truncation or saturation that would corrupt `@State`).
+        (SwiftValue::Int(cur), SwiftValue::Int(i)) => fit_int(i.raw, cur.width),
+        (SwiftValue::Int(cur), SwiftValue::Double(d)) => {
+            (d.is_finite() && d.fract() == 0.0).then(|| fit_int(*d as i128, cur.width))?
+        }
+        // Double bindings (a `Slider`) accept any finite number.
+        (SwiftValue::Double(_), SwiftValue::Double(d)) if d.is_finite() => {
+            Some(SwiftValue::Double(*d))
+        }
+        (SwiftValue::Double(_), SwiftValue::Int(i)) => Some(SwiftValue::Double(i.raw as f64)),
+        _ => None,
+    }
+}
+
+/// Build an integer of the binding's `width` from `raw`, or `None` if it is out
+/// of range — so a control can never push an out-of-bounds value into a
+/// fixed-width / unsigned `@State`.
+fn fit_int(raw: i128, width: tswift_core::IntWidth) -> Option<SwiftValue> {
+    let v = tswift_core::IntValue::new(raw, width);
+    v.in_range().then_some(SwiftValue::Int(v))
+}
 
 /// A discrete host→runtime event (plan §3.3): a node `id`, an event name, and
 /// an optional payload value (e.g. a text field's new string).
@@ -71,16 +104,17 @@ impl<'i, 'w> Session<'i, 'w> {
                     self.interp.invoke_closure(closure_id, Vec::new())?;
                 }
             }
-            // A control's new boolean value (e.g. a `Toggle`) written through
-            // its `Binding`, so the bound `@State` updates before re-render. A
-            // missing or non-bool payload is ignored rather than corrupting the
-            // `Binding<Bool>`.
+            // A control's new value (a `Toggle` bool, a `TextField` string, a
+            // `Slider`/`Stepper` number) written through its `Binding`, so the
+            // bound `@State` updates before re-render. The payload is coerced to
+            // the binding's current value type; an incompatible or missing
+            // payload is ignored rather than corrupting the binding.
             "set" => {
-                if let (Some(binding), Some(SwiftValue::Bool(b))) =
-                    (find_binding(&tree, &event.id), event.value.as_ref())
-                {
-                    self.interp
-                        .set_member(&binding, "wrappedValue", SwiftValue::Bool(*b))?;
+                if let Some(binding) = find_binding(&tree, &event.id) {
+                    let current = self.interp.get_member(&binding, "wrappedValue")?;
+                    if let Some(new) = coerce_binding_value(&current, event.value.as_ref()) {
+                        self.interp.set_member(&binding, "wrappedValue", new)?;
+                    }
                 }
             }
             _ => {}
@@ -109,7 +143,7 @@ pub fn find_action(tree: &SwiftValue, target: &str) -> Option<usize> {
         }
         if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
             for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &format!("{id}.{i}"), target) {
+                if let Some(found) = walk(child, &child_id(id, i, child), target) {
                     return Some(found);
                 }
             }
@@ -135,7 +169,7 @@ pub fn find_binding(tree: &SwiftValue, target: &str) -> Option<SwiftValue> {
         }
         if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
             for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &format!("{id}.{i}"), target) {
+                if let Some(found) = walk(child, &child_id(id, i, child), target) {
                     return Some(found);
                 }
             }
@@ -246,6 +280,149 @@ struct GreetingView: View {
         assert!(
             json.contains("Hey!"),
             "toggling should switch the greeting: {json}"
+        );
+    }
+
+    fn textfield_interp() -> Interpreter<'static> {
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct FormView: View {
+    @State private var name = "World"
+    var body: some View {
+        VStack {
+            TextField("Name", text: $name)
+            Text("Hello, \(name)!")
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn textfield_set_writes_string_through_binding() {
+        let mut interp = textfield_interp();
+        let mut session = Session::new(&mut interp, "FormView").expect("session");
+        session.render().expect("render");
+
+        let set = Event {
+            id: "0.0".into(),
+            event: "set".into(),
+            value: Some(SwiftValue::Str("Swift".into())),
+        };
+        let after = session.dispatch(&set).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(json.contains(r#""text":"Swift""#), "field updates: {json}");
+        assert!(
+            json.contains("Hello, Swift!"),
+            "binding drives the greeting: {json}"
+        );
+    }
+
+    #[test]
+    fn dispatch_routes_to_a_keyed_foreach_row_control() {
+        // A control nested inside a keyed `ForEach` row must be reachable by its
+        // keyed id (`0.0.row.0`), exercising the child_id walker fix.
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct RowsView: View {
+    @State private var name = "World"
+    var body: some View {
+        VStack {
+            ForEach(["row"], id: \.self) { _ in
+                TextField("Name", text: $name)
+            }
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let mut session = Session::new(&mut interp, "RowsView").expect("session");
+        let first = session.render().expect("render");
+        // VStack(0) > ForEach(0.0) > keyed TextField row (key "row").
+        assert!(
+            uiir::to_json(&first).contains(r#""id":"0.0.row""#),
+            "keyed row id: {}",
+            uiir::to_json(&first)
+        );
+        // A `set` to the keyed id must route through the binding.
+        let set = Event {
+            id: "0.0.row".into(),
+            event: "set".into(),
+            value: Some(SwiftValue::Str("Ada".into())),
+        };
+        let after = session.dispatch(&set).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains(r#""text":"Ada""#),
+            "keyed-row event should reach the field: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn coerce_binding_value_enforces_types_and_int_ranges() {
+        use tswift_core::{IntValue, IntWidth};
+        // String binding accepts strings, rejects others.
+        let s = SwiftValue::Str("a".into());
+        assert_eq!(
+            coerce_binding_value(&s, Some(&SwiftValue::Str("b".into()))),
+            Some(SwiftValue::Str("b".into()))
+        );
+        assert_eq!(
+            coerce_binding_value(&s, Some(&SwiftValue::Bool(true))),
+            None
+        );
+        // Bool binding rejects a string.
+        let b = SwiftValue::Bool(false);
+        assert_eq!(
+            coerce_binding_value(&b, Some(&SwiftValue::Str("x".into()))),
+            None
+        );
+        // A UInt8 binding rejects an out-of-range or negative value.
+        let u8b = SwiftValue::Int(IntValue::new(10, IntWidth::U8));
+        assert_eq!(
+            coerce_binding_value(&u8b, Some(&SwiftValue::int(300))),
+            None
+        );
+        assert_eq!(coerce_binding_value(&u8b, Some(&SwiftValue::int(-1))), None);
+        assert_eq!(
+            coerce_binding_value(&u8b, Some(&SwiftValue::int(200))),
+            Some(SwiftValue::Int(IntValue::new(200, IntWidth::U8)))
+        );
+        // Double binding accepts an int (widened) but rejects NaN.
+        let d = SwiftValue::Double(1.0);
+        assert_eq!(
+            coerce_binding_value(&d, Some(&SwiftValue::int(3))),
+            Some(SwiftValue::Double(3.0))
+        );
+        assert_eq!(
+            coerce_binding_value(&d, Some(&SwiftValue::Double(f64::NAN))),
+            None
+        );
+        // An integer binding rejects a non-integral double.
+        let i = SwiftValue::int(0);
+        assert_eq!(
+            coerce_binding_value(&i, Some(&SwiftValue::Double(2.5))),
+            None
+        );
+        assert_eq!(
+            coerce_binding_value(&i, Some(&SwiftValue::Double(2.0))),
+            Some(SwiftValue::int(2))
         );
     }
 
