@@ -2448,9 +2448,80 @@ impl<'a> Parser<'a> {
     }
 
     /// Trailing call `(...)` and member/tuple-index `.x` / `.0` suffixes.
+    /// If the current `<` begins a generic argument clause for a call or member
+    /// access (`Type<Args>(…)` / `Type<Args>.member`), return the token index
+    /// just past the closing `>`. Swift's heuristic: the angle group must be
+    /// balanced, contain only type-like tokens, and be immediately followed by
+    /// `(` (same line) or `.`. This disambiguates specialization from the
+    /// comparison chain `a < b > c`.
+    fn generic_call_args(&self) -> Option<usize> {
+        let first = self.tokens.get(self.pos)?;
+        if first.kind != TokenKind::Oper || !first.text.starts_with('<') {
+            return None;
+        }
+        let mut i = self.pos;
+        let mut depth = 0i32;
+        loop {
+            let t = self.tokens.get(i)?;
+            match t.kind {
+                // Only the angle operators may open/close the group. Multi-char
+                // operators that merely contain `<`/`>` (`<=`, `>=`, `->`) and
+                // logical/ternary operators (`&&`, `??`) disqualify the scan so
+                // genuine comparison and ternary expressions are never swallowed.
+                TokenKind::Oper if t.text.chars().all(|c| c == '<' || c == '>') => {
+                    for ch in t.text.chars() {
+                        if ch == '<' {
+                            depth += 1;
+                        } else {
+                            depth -= 1;
+                        }
+                        // Over-closing (`A<B>>(`) is not a balanced clause.
+                        if depth < 0 {
+                            return None;
+                        }
+                    }
+                    i += 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                // Type-list interior: names, qualified names, nested array /
+                // dictionary types, and tuples.
+                TokenKind::Identifier
+                | TokenKind::Comma
+                | TokenKind::Dot
+                | TokenKind::LBracket
+                | TokenKind::RBracket
+                | TokenKind::Colon => i += 1,
+                _ => return None,
+            }
+        }
+        let next = self.tokens.get(i)?;
+        match next.kind {
+            TokenKind::LParen if !next.leading_newline => Some(i),
+            TokenKind::Dot => Some(i),
+            _ => None,
+        }
+    }
+
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
         loop {
             match self.peek().kind {
+                // Generic specialization at a call/member site: `Type<Args>(…)`
+                // or `Type<Args>.member`. The runtime infers type arguments
+                // from values, so the `<…>` clause is skipped here.
+                TokenKind::Oper
+                    if self.peek().text.starts_with('<')
+                        && matches!(
+                            self.ast.node(expr).kind(),
+                            NodeKind::IdentExpr | NodeKind::MemberExpr
+                        ) =>
+                {
+                    match self.generic_call_args() {
+                        Some(end) => self.pos = end,
+                        None => break,
+                    }
+                }
                 // Forced unwrap `expr!`.
                 TokenKind::Oper if self.peek().text == "!" => {
                     let bang = self.bump();

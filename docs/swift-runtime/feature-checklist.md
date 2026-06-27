@@ -221,7 +221,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
 | [x] | Generic functions `<T>` | ✅ | ★★★ | R4 |
-| [~] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
+| [x] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
 | [x] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
 | [~] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
 | [ ] | Associated-type constraints | ✅ | ★★★ | R4 |
@@ -238,8 +238,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Extend struct/class/enum/protocol | ✅ | ★★ | R4 |
 | [~] | Add methods/computed props/inits/subscripts | ✅ | ★★ | R4 |
 | [x] | Add protocol conformance via extension | ✅ | ★★★ | R4 |
-| [ ] | Conditional extensions (`where`) | ✅ | ★★★ | R4 |
-| [ ] | Extensions on generic types | ✅ | ★★★ | R4 |
+| [x] | Conditional extensions (`where`) | ✅ | ★★★ | R4 |
+| [x] | Extensions on generic types | ✅ | ★★★ | R4 |
 
 ---
 
