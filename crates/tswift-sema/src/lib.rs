@@ -13,6 +13,9 @@ use std::collections::HashMap;
 
 use tswift_ast::{Ast, Node, NodeId, NodeKind, Type};
 
+mod symbols;
+use symbols::Symbols;
+
 /// One semantic diagnostic with its 1-based source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -28,10 +31,9 @@ pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
         types: Vec::new(),
         diags: Vec::new(),
         in_type_body: false,
-        enums: HashMap::new(),
+        symbols: Symbols::collect(ast),
     };
     let root = ast.root();
-    r.collect_enums(ast, root);
     r.prebind_func_decls(ast, root);
     for stmt in child_ids(ast, root) {
         r.resolve_statement(ast, stmt);
@@ -60,62 +62,26 @@ struct Resolver {
     /// properties are bound as mutable here: assigning to them is legal inside
     /// the type's initializer, so the local-`let` constant check must not fire.
     in_type_body: bool,
-    /// Every `enum` in the program, by name, mapped to its case names in source
-    /// order. Used to diagnose non-exhaustive `switch` statements.
-    enums: HashMap<String, Vec<String>>,
+    /// The program's declaration registry: enum cases, function return types,
+    /// and other "what does the program declare?" facts, collected once.
+    symbols: Symbols,
 }
 
 impl Resolver {
+    /// Bind the functions declared directly under `parent` into the current
+    /// scope, reading each return type from the declaration registry. Binding
+    /// (not the registry) controls visibility, so block-local functions stay
+    /// scoped to their block.
     fn prebind_func_decls(&mut self, ast: &Ast, parent: NodeId) {
         for child in child_ids(ast, parent) {
             if ast.node(child).kind() != NodeKind::FuncDecl {
                 continue;
             }
-            let ret = child_ids(ast, child)
-                .into_iter()
-                .find(|c| ast.node(*c).kind() == NodeKind::TypeRef)
-                .and_then(|c| ast.node(c).text().and_then(parse_type_name))
-                .unwrap_or(Type::Void);
             if let Some(name) = ast.node(child).text() {
+                let ret = self.symbols.func_return(name).unwrap_or(Type::Void);
                 self.bind(name, Some(ret), false);
             }
         }
-    }
-
-    /// Record every `enum` declaration (including nested ones) and its case
-    /// names, so a `switch` over an enum can be checked for exhaustiveness.
-    fn collect_enums(&mut self, ast: &Ast, parent: NodeId) {
-        for child in child_ids(ast, parent) {
-            if ast.node(child).kind() == NodeKind::EnumDecl {
-                if let Some(name) = ast.node(child).text() {
-                    let cases = self.collect_enum_cases(ast, child);
-                    if !cases.is_empty() {
-                        self.enums.insert(name.to_string(), cases);
-                    }
-                }
-            }
-            // Recurse: enums may be nested inside other types or blocks.
-            self.collect_enums(ast, child);
-        }
-    }
-
-    /// The case names declared directly under an `enum`, in source order. Only
-    /// the case-list `Block` is descended, so a nested type's cases are not
-    /// mistaken for this enum's.
-    fn collect_enum_cases(&self, ast: &Ast, enum_decl: NodeId) -> Vec<String> {
-        let mut cases = Vec::new();
-        for child in child_ids(ast, enum_decl) {
-            match ast.node(child).kind() {
-                NodeKind::EnumCaseDecl => {
-                    if let Some(name) = ast.node(child).text() {
-                        cases.push(name.to_string());
-                    }
-                }
-                NodeKind::Block => cases.extend(self.collect_enum_cases(ast, child)),
-                _ => {}
-            }
-        }
-        cases
     }
 
     fn push_scope(&mut self) {
@@ -359,8 +325,8 @@ impl Resolver {
             return;
         }
         let fits: Vec<(&String, &Vec<String>)> = self
-            .enums
-            .iter()
+            .symbols
+            .enums()
             .filter(|(_, cases)| referenced.iter().all(|r| cases.iter().any(|c| c == r)))
             .collect();
         let [(enum_name, all_cases)] = fits.as_slice() else {
