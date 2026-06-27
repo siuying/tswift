@@ -17,6 +17,8 @@
 
 use std::rc::Rc;
 
+pub mod uiir;
+
 use tswift_core::{
     Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn, StructObj,
     SwiftValue,
