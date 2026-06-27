@@ -46,7 +46,8 @@ impl<'i, 'w> Session<'i, 'w> {
     /// Evaluate the root view's `body` into a fresh UIIR tree, caching it for
     /// event routing.
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {
-        let tree = self.interp.get_member(&self.instance, "body")?;
+        let body = self.interp.get_member(&self.instance, "body")?;
+        let tree = crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?;
         self.current = Some(tree.clone());
         Ok(tree)
     }

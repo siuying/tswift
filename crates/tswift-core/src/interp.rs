@@ -7184,6 +7184,11 @@ impl StdContext for Interpreter<'_> {
         }
     }
 
+    fn get_member(&mut self, value: &SwiftValue, name: &str) -> crate::stdlib::StdResult {
+        self.read_struct_member(value, name)
+            .map_err(Self::signal_to_std_error)
+    }
+
     fn out(&mut self) -> &mut dyn Write {
         self.out
     }

@@ -171,7 +171,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
 /// interpreter must already have run the program so `root_type` is declared.
 pub fn render_root(interp: &mut Interpreter<'_>, root_type: &str) -> Result<SwiftValue, EvalError> {
     let view = interp.make_struct(root_type, &[])?;
-    interp.get_member(&view, "body")
+    let body = interp.get_member(&view, "body")?;
+    resolve_root(interp, body).map_err(std_error_to_eval)
+}
+
+/// Collapse a [`StdError`] back to an [`EvalError`] for the render entry points.
+fn std_error_to_eval(err: StdError) -> EvalError {
+    match err {
+        StdError::Error(e) => e,
+        StdError::Throw(v) => EvalError::Type(format!("thrown: {}", v.type_name())),
+    }
 }
 
 /// Every SwiftUI entry registered by [`install`], as coverage keys
@@ -271,33 +280,88 @@ fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 
 /// Resolve a container's `@ViewBuilder` content into an ordered child list.
 /// Each argument is either the content closure (evaluated as a result-builder
-/// block) or an already-built view; non-view statement values are dropped.
+/// block) or an already-built view; non-view statement values are dropped and
+/// composed custom `View`s are expanded into their `body`.
 fn collect_children(ctx: &mut dyn StdContext, args: Vec<Arg>) -> Result<Vec<SwiftValue>, StdError> {
     let mut out = Vec::new();
     for arg in args {
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                push_views(&block, &mut out);
+                expand_into(ctx, block, &mut out, 0)?;
             }
-            other => push_views(&other, &mut out),
+            other => expand_into(ctx, other, &mut out, 0)?,
         }
     }
     Ok(out)
 }
 
-/// Append every view value reachable in `value` (flattening nested arrays a
-/// builder shim produces) to `out`, dropping non-view results.
-fn push_views(value: &SwiftValue, out: &mut Vec<SwiftValue>) {
+/// Maximum custom-`View` composition depth before bailing. Bounds the `body`
+/// recursion so a self- or mutually-recursive view can't hang the renderer.
+const MAX_VIEW_DEPTH: usize = 256;
+
+/// Append every view value reachable in `value` to `out`, flattening nested
+/// arrays the builder shim produces, expanding composed custom `View`s into
+/// their `body`, and dropping scalar/non-view results. `depth` bounds the
+/// custom-view `body` recursion (array flattening does not count toward it).
+fn expand_into(
+    ctx: &mut dyn StdContext,
+    value: SwiftValue,
+    out: &mut Vec<SwiftValue>,
+    depth: usize,
+) -> Result<(), StdError> {
     match value {
         SwiftValue::Array(items) => {
             for item in items.iter() {
-                push_views(item, out);
+                expand_into(ctx, item.clone(), out, depth)?;
             }
         }
-        v if view_type_name(v).is_some() => out.push(v.clone()),
+        v if view_type_name(&v).is_some() => out.push(v),
+        // Scalar / non-struct non-views are dropped; a struct-shaped candidate
+        // must be a composed custom `View` (neither a builtin view value nor a
+        // token), collapsed to its own `body`, recursively.
+        v @ SwiftValue::Struct(_) if is_custom_view(ctx, &v) => {
+            if depth >= MAX_VIEW_DEPTH {
+                return Err(recursion_error(&v));
+            }
+            let body = ctx.get_member(&v, "body")?;
+            expand_into(ctx, body, out, depth + 1)?;
+        }
         _ => {}
     }
+    Ok(())
+}
+
+/// The error raised when custom-`View` composition exceeds [`MAX_VIEW_DEPTH`].
+fn recursion_error(view: &SwiftValue) -> StdError {
+    type_error(format!(
+        "view composition exceeded depth {MAX_VIEW_DEPTH} (recursive `{}`?)",
+        view.type_name()
+    ))
+}
+
+/// Whether `value` is a user-defined `View` to expand: a struct that is not
+/// already a builtin view value and not a prelude token (`Color`/`Font`/…).
+fn is_custom_view(_ctx: &mut dyn StdContext, value: &SwiftValue) -> bool {
+    matches!(value, SwiftValue::Struct(_))
+        && view_type_name(value).is_none()
+        && token_of(value).is_none()
+}
+
+/// Resolve a root `body` value to a single concrete view node, collapsing a
+/// chain of composed custom `View`s (`body` returning another custom view)
+/// down to the first builtin view value.
+pub fn resolve_root(ctx: &mut dyn StdContext, value: SwiftValue) -> Result<SwiftValue, StdError> {
+    let mut current = value;
+    let mut depth = 0;
+    while is_custom_view(ctx, &current) {
+        if depth >= MAX_VIEW_DEPTH {
+            return Err(recursion_error(&current));
+        }
+        current = ctx.get_member(&current, "body")?;
+        depth += 1;
+    }
+    Ok(current)
 }
 
 /// Build a `_Modifier` record: a struct carrying `name` plus each call argument
@@ -520,6 +584,85 @@ struct V: View {
         assert_eq!(children.len(), 2);
         assert_eq!(view_type_name(&children[0]), Some("Text"));
         assert_eq!(view_type_name(&children[1]), Some("Text"));
+    }
+
+    #[test]
+    fn render_root_expands_composed_sub_view() {
+        // A custom `View` used inside a container expands into its own `body`,
+        // with constructor parameters threaded down (Profile-tab composition).
+        let src = r#"
+struct Row: View {
+    let label: String
+    var body: some View { Text(label) }
+}
+struct V: View {
+    var body: some View {
+        VStack {
+            Row(label: "a")
+            Text("b")
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("VStack"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children array");
+        };
+        assert_eq!(children.len(), 2);
+        // The composed Row collapses to its body (a Text carrying its param).
+        assert_eq!(view_type_name(&children[0]), Some("Text"));
+        let SwiftValue::Struct(text) = &children[0] else {
+            panic!("expected text struct");
+        };
+        assert_eq!(text.get("verbatim"), Some(&SwiftValue::Str("a".into())));
+        assert_eq!(view_type_name(&children[1]), Some("Text"));
+    }
+
+    #[test]
+    fn render_root_expands_custom_view_at_root() {
+        // A `body` that returns a custom view (not a builtin) resolves through
+        // to that view's own body.
+        let src = r#"
+struct Inner: View {
+    var body: some View { Text("inner") }
+}
+struct V: View {
+    var body: some View { Inner() }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("Text"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("verbatim"), Some(&SwiftValue::Str("inner".into())));
+    }
+
+    #[test]
+    fn recursive_custom_view_errors_instead_of_hanging() {
+        // A view whose `body` returns itself must bail with a depth error,
+        // not loop forever.
+        let src = r#"
+struct Loop: View {
+    var body: some View { Loop() }
+}
+"#;
+        let program = format!("{PRELUDE}\n{src}");
+        let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let err = render_root(&mut interp, "Loop").expect_err("recursive view must error");
+        assert!(
+            format!("{err:?}").contains("composition exceeded depth"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

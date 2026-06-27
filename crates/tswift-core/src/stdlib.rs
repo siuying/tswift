@@ -56,6 +56,16 @@ pub trait StdContext {
         let value = self.call_closure(id, Vec::new())?;
         Ok(SwiftValue::Array(std::rc::Rc::new(vec![value])))
     }
+    /// Read `name` from a struct `value` — a stored field or a computed getter
+    /// (e.g. a `View`'s `body`). Lets an intrinsic drive member evaluation; the
+    /// SwiftUI render host uses it to expand a composed sub-`View` into its
+    /// `body`. The default reports an unknown member; the interpreter overrides.
+    fn get_member(&mut self, _value: &SwiftValue, name: &str) -> StdResult {
+        Err(StdError::Error(EvalError::Type(format!(
+            "unknown member `{name}`"
+        ))))
+    }
+
     /// The program output sink (`print` and friends write here).
     fn out(&mut self) -> &mut dyn Write;
     /// Build a thrown-error outcome from a Swift error value.

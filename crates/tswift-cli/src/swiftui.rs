@@ -143,27 +143,69 @@ fn analyze(source: &str) -> Result<Analysis, AnalyzeError> {
     Analysis::analyze(source, "swiftui.swift")
 }
 
-/// Find the first struct that conforms to `View` (carries a `TypeRef "View"`).
+/// Find the root `View` struct to render: the one no other view *constructs*.
+///
+/// In a composed scene every sub-view is referenced by a `CallExpr` whose callee
+/// is an `IdentExpr` (`InfoRow(...)`), so the top-level screen is the View whose
+/// name never appears as such a callee. This avoids picking a parameterised
+/// child (which can't be instantiated with no arguments). Falls back to the
+/// first View struct when the references are cyclic or there is only one.
 fn find_root_view(analysis: &Analysis) -> Option<String> {
-    fn walk(node: tswift_frontend::Node<'_>) -> Option<String> {
+    use std::collections::HashSet;
+    // All structs conforming to `View`, in document order.
+    let mut views: Vec<String> = Vec::new();
+    // Names constructed (`Foo(...)`) *inside a `View` body* — composition sites.
+    // Scoping to view bodies avoids counting a preview/app entry reference to
+    // the real root (which would otherwise mark it "used" and hide it).
+    let mut constructed: HashSet<String> = HashSet::new();
+
+    fn callee_name(node: &tswift_frontend::Node<'_>) -> Option<String> {
+        // A construction `Foo(...)` is a CallExpr whose first child is the
+        // callee `IdentExpr`.
+        if node.kind() != NodeKind::CallExpr {
+            return None;
+        }
+        let callee = node.children().next()?;
+        if callee.kind() == NodeKind::IdentExpr {
+            callee.text()
+        } else {
+            None
+        }
+    }
+
+    fn walk(
+        node: tswift_frontend::Node<'_>,
+        in_view: bool,
+        views: &mut Vec<String>,
+        constructed: &mut HashSet<String>,
+    ) {
+        let mut child_in_view = in_view;
         if node.kind() == NodeKind::StructDecl {
             let conforms_view = node
                 .children()
                 .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("View"));
             if conforms_view {
                 if let Some(name) = node.text() {
-                    return Some(name);
+                    views.push(name);
                 }
+                child_in_view = true;
+            }
+        }
+        if in_view {
+            if let Some(name) = callee_name(&node) {
+                constructed.insert(name);
             }
         }
         for child in node.children() {
-            if let Some(found) = walk(child) {
-                return Some(found);
-            }
+            walk(child, child_in_view, views, constructed);
         }
-        None
     }
-    walk(analysis.root())
+    walk(analysis.root(), false, &mut views, &mut constructed);
+    views
+        .iter()
+        .find(|v| !constructed.contains(*v))
+        .or_else(|| views.first())
+        .cloned()
 }
 
 /// Parse an events JSON file: `[ {"id":"0.1","event":"tap","value":<json>?}, … ]`.
@@ -199,5 +241,54 @@ fn json_to_value(json: &Json) -> Option<tswift_core::SwiftValue> {
         Json::Double(d) => Some(SwiftValue::Double(*d)),
         Json::Str(s) => Some(SwiftValue::Str(s.clone())),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{analyze, find_root_view};
+
+    fn root_of(src: &str) -> Option<String> {
+        let analysis = analyze(src).expect("analyze");
+        find_root_view(&analysis)
+    }
+
+    #[test]
+    fn single_view_is_the_root() {
+        let src = "struct Only: View { var body: some View { Text(\"x\") } }";
+        assert_eq!(root_of(src).as_deref(), Some("Only"));
+    }
+
+    #[test]
+    fn composing_parent_is_chosen_over_parameterised_child() {
+        // The child appears first but is constructed inside the parent's body,
+        // so the parent (constructed by nobody) is the root.
+        let src = "
+struct Child: View { let n: Int; var body: some View { Text(\"c\") } }
+struct Parent: View { var body: some View { Child(n: 1) } }
+";
+        assert_eq!(root_of(src).as_deref(), Some("Parent"));
+    }
+
+    #[test]
+    fn mutual_cycle_falls_back_to_first_view() {
+        // Both views are constructed (in each other's body); none is unreferenced,
+        // so the first in document order wins.
+        let src = "
+struct A: View { var body: some View { B() } }
+struct B: View { var body: some View { A() } }
+";
+        assert_eq!(root_of(src).as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn reference_outside_a_view_body_does_not_hide_the_root() {
+        // A top-level construction of the root (e.g. a preview/entry) is *not*
+        // a composition site, so the root stays selectable.
+        let src = "
+struct Screen: View { var body: some View { Text(\"x\") } }
+let preview = Screen()
+";
+        assert_eq!(root_of(src).as_deref(), Some("Screen"));
     }
 }
