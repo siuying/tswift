@@ -15,7 +15,7 @@ use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
     AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext,
-    StdError,
+    StdError, StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -110,6 +110,17 @@ enum Signal {
 impl From<EvalError> for Signal {
     fn from(e: EvalError) -> Self {
         Signal::Error(e)
+    }
+}
+
+/// Collapse a [`Signal`] into an [`EvalError`] for the public render API, which
+/// cannot legitimately observe loop/`return`/`throw` control flow escaping a
+/// top-level struct instantiation or member read.
+fn signal_eval(sig: Signal) -> EvalError {
+    match sig {
+        Signal::Error(e) => e,
+        Signal::Throw(v) => EvalError::Trap(format!("uncaught error: {v}")),
+        other => EvalError::Unsupported(format!("stray control flow: {other:?}")),
     }
 }
 
@@ -313,6 +324,9 @@ pub struct Interpreter<'w> {
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
     /// builtin sequence receiver (layer 2 of the dispatch seam).
     algorithms: HashMap<String, AlgoFn>,
+    /// Generic method intrinsics dispatched on any struct receiver by name, a
+    /// fallback after user methods and builtin receivers (SwiftUI modifiers).
+    struct_methods: HashMap<String, StructMethodFn>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -420,6 +434,7 @@ impl<'w> Interpreter<'w> {
             properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
+            struct_methods: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             builtin_ext_methods: HashMap::new(),
@@ -500,6 +515,32 @@ impl<'w> Interpreter<'w> {
     /// Register a `Sequence`/`Collection` algorithm by method name.
     pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
         self.algorithms.insert(name.to_string(), f);
+    }
+
+    /// Register a generic method intrinsic dispatched on any struct receiver by
+    /// name (the SwiftUI view-modifier seam). Tried only after user-declared
+    /// methods and builtin-receiver intrinsics fail to match, so a user method
+    /// of the same name always wins.
+    pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
+        self.struct_methods.insert(name.to_string(), f);
+    }
+
+    /// Instantiate a user struct `type_name` with `args` (label, value) pairs,
+    /// the public entry point a render host uses to construct a root `View`.
+    pub fn make_struct(
+        &mut self,
+        type_name: &str,
+        args: &[(Option<String>, SwiftValue)],
+    ) -> Result<SwiftValue, EvalError> {
+        self.instantiate_struct(type_name, args)
+            .map_err(signal_eval)
+    }
+
+    /// Read `name` from a struct `value` — a stored field or a computed getter
+    /// (e.g. a `View`'s `body`). The public counterpart of member access for a
+    /// render host driving `body` evaluation.
+    pub fn get_member(&mut self, value: &SwiftValue, name: &str) -> Result<SwiftValue, EvalError> {
+        self.read_struct_member(value, name).map_err(signal_eval)
     }
 
     /// Register a method intrinsic on a builtin receiver type.
@@ -6158,6 +6199,21 @@ impl<'w> Interpreter<'w> {
             }
         }
 
+        // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
+        // any struct receiver by name, after user methods and builtin receivers.
+        if matches!(base_value, SwiftValue::Struct(_)) {
+            if let Some(func) = self.struct_methods.get(&method).copied() {
+                let labeled: Vec<Arg> = args
+                    .into_iter()
+                    .map(|a| Arg {
+                        label: a.label,
+                        value: a.value,
+                    })
+                    .collect();
+                return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
+            }
+        }
+
         let builtin_name = base_value.type_name();
         Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
     }
@@ -7717,6 +7773,55 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn struct_method_fallback_dispatches_and_yields_to_user_methods() {
+        // A registered generic struct method appends a tag; a user method of the
+        // same name must win over it.
+        fn tag(_ctx: &mut dyn StdContext, recv: SwiftValue, _args: Vec<Arg>) -> crate::StdResult {
+            let SwiftValue::Struct(obj) = &recv else {
+                return Ok(SwiftValue::Str("non-struct".into()));
+            };
+            Ok(SwiftValue::Str(format!("builtin:{}", obj.type_name)))
+        }
+
+        let src = concat!(
+            "struct A {}\n",
+            "struct B { func tag() -> String { \"user\" } }\n",
+            "let a = A()\n",
+            "let b = B()\n",
+            "print(a.tag())\n",
+            "print(b.tag())\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_struct_method("tag", tag);
+            interp.run(analysis).expect("run");
+        }
+        // `A` has no `tag` method, so the generic fallback fires; `B` defines
+        // one, so the user method wins.
+        assert_eq!(String::from_utf8(buf).unwrap(), "builtin:A\nuser\n");
+    }
+
+    #[test]
+    fn make_struct_and_get_member_drive_a_computed_property() {
+        // The public render entry points: instantiate a struct, then read a
+        // computed getter (as a render host evaluates a `View`'s `body`).
+        let src = "struct V { var greeting: String { \"hi\" } }\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        crate::install_test_print(&mut interp);
+        interp.run(analysis).expect("run");
+        let v = interp.make_struct("V", &[]).expect("make_struct");
+        let greeting = interp.get_member(&v, "greeting").expect("get_member");
+        assert_eq!(greeting, SwiftValue::Str("hi".into()));
     }
 
     #[test]

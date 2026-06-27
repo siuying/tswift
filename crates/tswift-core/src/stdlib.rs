@@ -217,6 +217,17 @@ impl Arg {
 /// A free-function intrinsic (`print`, `min`, `max`, …).
 pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 
+/// A generic method intrinsic dispatched on *any* `SwiftValue::Struct` receiver
+/// by method name, tried as a fallback after user-declared methods and builtin
+/// receivers fail to match. Receives the context, the receiver by value, and
+/// the evaluated, *labeled* call arguments; returns the call's result.
+///
+/// This is the seam SwiftUI view modifiers (`.font`, `.frame`, …) register
+/// through: they take a view value, append to its `_modifiers` field
+/// copy-on-write, and return the new view — all without `tswift-core` knowing
+/// anything SwiftUI-specific.
+pub type StructMethodFn = fn(&mut dyn StdContext, SwiftValue, Vec<Arg>) -> StdResult;
+
 /// A static (type-level) method intrinsic on a builtin type (`Bool.random()`,
 /// …). Receives the context and the evaluated, labeled call arguments.
 pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;

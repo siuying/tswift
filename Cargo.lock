@@ -438,6 +438,7 @@ name = "tswift-swiftui"
 version = "0.0.0"
 dependencies = [
  "tswift-core",
+ "tswift-frontend",
 ]
 
 [[package]]

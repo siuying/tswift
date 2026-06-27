@@ -17,20 +17,38 @@
 
 use std::rc::Rc;
 
-use tswift_core::{Arg, Interpreter, StdContext, StdResult, StructObj, SwiftValue};
+use tswift_core::{Arg, EvalError, Interpreter, StdContext, StdResult, StructObj, SwiftValue};
 
 /// Field name holding a view's ordered modifier list.
 pub const MODIFIERS_FIELD: &str = "_modifiers";
 /// Field name holding a container view's ordered child views.
 pub const CHILDREN_FIELD: &str = "_children";
+/// Type name of an appended modifier record (`_Modifier { name, <args> }`).
+pub const MODIFIER_TYPE: &str = "_Modifier";
 
-/// Register every currently-supported SwiftUI view constructor into `interp`.
+/// View modifiers registered as generic struct methods. Each appends a
+/// `_Modifier` record to the receiver view's `_modifiers` field (copy-on-write)
+/// and returns the new view. The list also drives the `View.<name>` coverage
+/// keys in [`registered_keys`].
+const MODIFIERS: &[&str] = &["frame"];
+
+/// Register every currently-supported SwiftUI view constructor and modifier
+/// into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Text", text_init);
     interp.register_free_fn("VStack", vstack_init);
     interp.register_free_fn("HStack", hstack_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
+
+    interp.register_struct_method("frame", modifier_frame);
+}
+
+/// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
+/// interpreter must already have run the program so `root_type` is declared.
+pub fn render_root(interp: &mut Interpreter<'_>, root_type: &str) -> Result<SwiftValue, EvalError> {
+    let view = interp.make_struct(root_type, &[])?;
+    interp.get_member(&view, "body")
 }
 
 /// Every SwiftUI entry registered by [`install`], as coverage keys
@@ -47,6 +65,8 @@ pub fn registered_keys() -> Vec<String> {
             _ => None,
         })
         .collect();
+    // Modifiers are members of `View` for coverage purposes.
+    keys.extend(MODIFIERS.iter().map(|m| format!("View.{m}")));
     keys.sort();
     keys.dedup();
     keys
@@ -134,6 +154,68 @@ fn child_views(args: Vec<Arg>) -> Vec<SwiftValue> {
     out
 }
 
+/// Build a `_Modifier` record: a struct carrying `name` plus each call argument
+/// as a field keyed by its label (positional args use `value`, `value1`, …).
+fn make_modifier(name: &str, args: Vec<Arg>) -> SwiftValue {
+    let mut fields: Vec<(String, SwiftValue)> = vec![("name".into(), SwiftValue::Str(name.into()))];
+    let mut positional = 0usize;
+    for arg in args {
+        let key = match arg.label {
+            Some(label) => label,
+            None => {
+                let key = if positional == 0 {
+                    "value".to_string()
+                } else {
+                    format!("value{positional}")
+                };
+                positional += 1;
+                key
+            }
+        };
+        fields.push((key, arg.value));
+    }
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: MODIFIER_TYPE.into(),
+        fields,
+    }))
+}
+
+/// Append `modifier` to `view`'s ordered `_modifiers` list, returning a new view
+/// value (copy-on-write; the original is untouched).
+fn append_modifier(view: SwiftValue, modifier: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(obj) = &view else {
+        return Err(type_error(format!(
+            "view modifier applied to non-view value `{}`",
+            view.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    let slot = fields
+        .iter_mut()
+        .find(|(k, _)| k == MODIFIERS_FIELD)
+        .map(|(_, v)| v)
+        .ok_or_else(|| type_error("view value is missing its `_modifiers` field"))?;
+    let mut mods = match slot {
+        SwiftValue::Array(items) => (**items).clone(),
+        _ => Vec::new(),
+    };
+    mods.push(modifier);
+    *slot = SwiftValue::Array(Rc::new(mods));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
+fn type_error(message: impl Into<String>) -> tswift_core::StdError {
+    tswift_core::StdError::Error(EvalError::Type(message.into()))
+}
+
+/// `.frame(width:height:)` — fixed-size frame around the view.
+fn modifier_frame(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    append_modifier(recv, make_modifier("frame", args))
+}
+
 /// Returns the SwiftUI type name of a view value, if it is one.
 pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
     match value {
@@ -170,8 +252,51 @@ mod tests {
                 "Spacer.init",
                 "Text.init",
                 "VStack.init",
+                "View.frame",
             ]
         );
+    }
+
+    #[test]
+    fn render_root_applies_frame_modifier() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Text("hi").frame(width: 56, height: 56)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        // Text leaf carrying one `frame` modifier with numeric width/height.
+        assert_eq!(view_type_name(&view), Some("Text"));
+        let mods = modifiers_of(&view);
+        assert_eq!(mods.len(), 1);
+        let SwiftValue::Struct(m) = &mods[0] else {
+            panic!("modifier should be a struct");
+        };
+        assert_eq!(m.type_name, "_Modifier");
+        assert_eq!(m.get("name"), Some(&SwiftValue::Str("frame".into())));
+    }
+
+    /// Render `root_type`'s `body` from `src` for assertions.
+    fn render_to_string(src: &str, root_type: &str) -> SwiftValue {
+        let analysis = tswift_frontend::Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        render_root(&mut interp, root_type).expect("render")
+    }
+
+    fn modifiers_of(view: &SwiftValue) -> Vec<SwiftValue> {
+        let SwiftValue::Struct(obj) = view else {
+            return Vec::new();
+        };
+        match obj.get(MODIFIERS_FIELD) {
+            Some(SwiftValue::Array(items)) => items.iter().cloned().collect(),
+            _ => Vec::new(),
+        }
     }
 
     #[test]

@@ -3,3 +3,4 @@ HStack.init
 Spacer.init
 Text.init
 VStack.init
+View.frame
