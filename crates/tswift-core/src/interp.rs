@@ -33,6 +33,14 @@ const MOD_WEAK: u32 = 1 << 11;
 /// overflow.
 const MAX_CALL_DEPTH: usize = 5000;
 
+/// Maximum number of elements a custom sequence algorithm may eagerly
+/// materialize before trapping. `for-in` remains lazy and can still terminate an
+/// unbounded sequence with `break`; eager algorithms like `map` cannot.
+#[cfg(not(test))]
+const MAX_SEQUENCE_MATERIALIZE: usize = 100_000;
+#[cfg(test)]
+const MAX_SEQUENCE_MATERIALIZE: usize = 32;
+
 /// A native (Rust-implemented) Swift function. It receives the output sink and
 /// the already-evaluated arguments, and returns its result value.
 pub type NativeFn = fn(&mut dyn Write, &[SwiftValue]) -> SwiftValue;
@@ -167,6 +175,9 @@ struct MethodDef {
     params: Vec<Param>,
     body: Option<Node<'static>>,
     mutating: bool,
+    /// Names of the method's generic type parameters (`<T: P>`), used to bind
+    /// placeholders to concrete argument types for static dispatch (`T.zero()`).
+    generic_params: Vec<String>,
     /// `static`/`class` (type) method, callable through `Type.m()` and via an
     /// implicit member `.m()` in a contextual position.
     is_static: bool,
@@ -196,6 +207,8 @@ struct StructDef {
     static_subscript: Option<MethodDef>,
     /// A custom initializer, if the struct declares one (else memberwise).
     init: Option<MethodDef>,
+    /// All custom initializer overloads, selected by argument labels/types.
+    init_overloads: Vec<MethodDef>,
     /// Stored property name → its `@propertyWrapper` type, when wrapped.
     wrappers: std::collections::HashMap<String, String>,
     /// `@dynamicMemberLookup`: an unresolved member name routes through the
@@ -239,6 +252,8 @@ struct ClassDef {
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
     init: Option<MethodDef>,
+    /// All custom initializer overloads, selected by argument labels/types.
+    init_overloads: Vec<MethodDef>,
     deinit: Option<Node<'static>>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
@@ -932,6 +947,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -998,6 +1014,12 @@ impl<'w> Interpreter<'w> {
         let params = clone_params(&def.params);
         let body = def.body;
         let mutating = def.mutating;
+        if mutating && place.is_none() {
+            return Some(Err(EvalError::Type(format!(
+                "mutating method `{method}` requires an lvalue receiver"
+            ))
+            .into()));
+        }
         let saved_env = self.env.enter_isolated();
         self.env.declare("self", receiver, true);
         let outcome = match self.bind_params(&params, args) {
@@ -1059,14 +1081,19 @@ impl<'w> Interpreter<'w> {
         &self,
         type_name: &str,
         method: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
         for proto in self.all_protocols(type_name) {
             if let Some(m) = self
                 .protocols
                 .get(&proto)
                 .and_then(|d| d.methods.get(method))
             {
-                return Some((clone_params(&m.params), m.body, m.mutating));
+                return Some((
+                    clone_params(&m.params),
+                    m.body,
+                    m.mutating,
+                    m.generic_params.clone(),
+                ));
             }
         }
         None
@@ -1192,6 +1219,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1245,6 +1273,7 @@ impl<'w> Interpreter<'w> {
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
         let mut init = None;
+        let mut init_overloads = Vec::new();
         let mut deinit = None;
         let mut static_subscript = None;
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
@@ -1252,12 +1281,15 @@ impl<'w> Interpreter<'w> {
         for member in body.children() {
             match member.kind() {
                 NodeKind::InitDecl => {
-                    init = Some(MethodDef {
+                    let def = MethodDef {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: false,
+                        generic_params: generic_param_names(&member),
                         is_static: false,
-                    });
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
                 }
                 NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
                     let acc = member.var_accessors();
@@ -1268,6 +1300,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: sbody,
                         mutating: false,
+                        generic_params: generic_param_names(&member),
                         is_static: true,
                     });
                 }
@@ -1282,6 +1315,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: false,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1354,6 +1388,7 @@ impl<'w> Interpreter<'w> {
                 computed,
                 methods,
                 init,
+                init_overloads,
                 deinit,
                 static_subscript,
             },
@@ -1402,17 +1437,21 @@ impl<'w> Interpreter<'w> {
         let mut subscripts: Vec<SubscriptDef> = Vec::new();
         let mut static_subscript = None;
         let mut init = None;
+        let mut init_overloads = Vec::new();
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
         for member in body.children() {
             match member.kind() {
                 NodeKind::InitDecl => {
-                    init = Some(MethodDef {
+                    let def = MethodDef {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: true,
+                        generic_params: generic_param_names(&member),
                         is_static: false,
-                    });
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
                 }
                 NodeKind::SubscriptDecl => {
                     let acc = member.var_accessors();
@@ -1424,6 +1463,7 @@ impl<'w> Interpreter<'w> {
                             params: parse_params(&member),
                             body: getter,
                             mutating: false,
+                            generic_params: generic_param_names(&member),
                             is_static: true,
                         });
                     } else {
@@ -1448,6 +1488,7 @@ impl<'w> Interpreter<'w> {
                             params,
                             body,
                             mutating,
+                            generic_params: generic_param_names(&member),
                             is_static,
                         };
                         method_overloads
@@ -1531,6 +1572,7 @@ impl<'w> Interpreter<'w> {
                 subscripts,
                 static_subscript,
                 init,
+                init_overloads,
                 wrappers,
                 dynamic_member_lookup,
                 dynamic_callable,
@@ -1668,7 +1710,7 @@ impl<'w> Interpreter<'w> {
             .children()
             .filter(|c| is_expr(c))
             .last()
-            .map(|c| c.kind())
+            .and_then(|c| literal_syntax_kind(&c))
         else {
             return Ok(value);
         };
@@ -1676,32 +1718,82 @@ impl<'w> Interpreter<'w> {
         // An optional annotation (`T?`): a `nil` literal stays the absent
         // optional rather than constructing `T(nilLiteral:)`.
         let optional = ty.ends_with('?');
+        if optional && init_kind == NodeKind::NilLiteral {
+            return Ok(value);
+        }
         let ty = ty.trim_end_matches('?').trim();
         let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
         if !is_user_type {
             return Ok(value);
         }
+        self.coerce_literal_value(ty, init_kind, value)
+    }
+
+    /// Convert a literal value into the contextual user type named by `ty` when
+    /// that type declares the matching `ExpressibleBy*Literal` conformance.
+    fn coerce_literal_value(&mut self, ty: &str, init_kind: NodeKind, value: SwiftValue) -> Eval {
+        let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
+        if !is_user_type {
+            return Ok(value);
+        }
         // The literal protocol implied by the initializer's syntax, plus the
-        // positional argument(s) its initializer takes.
-        let (proto, args): (&str, Vec<SwiftValue>) = match init_kind {
+        // argument label and positional argument(s) its initializer takes.
+        let (proto, label, args): (&str, &str, Vec<SwiftValue>) = match init_kind {
             NodeKind::ArrayLiteral => match &value {
-                SwiftValue::Array(items) => ("ExpressibleByArrayLiteral", items.as_ref().clone()),
+                SwiftValue::Array(items) => (
+                    "ExpressibleByArrayLiteral",
+                    "arrayLiteral",
+                    items.as_ref().clone(),
+                ),
                 _ => return Ok(value),
             },
-            NodeKind::StringLiteral => ("ExpressibleByStringLiteral", vec![value.clone()]),
-            NodeKind::IntegerLiteral => ("ExpressibleByIntegerLiteral", vec![value.clone()]),
-            NodeKind::FloatLiteral => ("ExpressibleByFloatLiteral", vec![value.clone()]),
-            NodeKind::BoolLiteral => ("ExpressibleByBooleanLiteral", vec![value.clone()]),
-            NodeKind::NilLiteral if !optional => {
-                ("ExpressibleByNilLiteral", vec![SwiftValue::Void])
-            }
+            NodeKind::DictLiteral => match &value {
+                SwiftValue::Dict(pairs) => (
+                    "ExpressibleByDictionaryLiteral",
+                    "dictionaryLiteral",
+                    pairs
+                        .iter()
+                        .map(|(k, v)| {
+                            SwiftValue::Tuple(vec![k.clone(), v.clone()], vec![None, None])
+                        })
+                        .collect(),
+                ),
+                _ => return Ok(value),
+            },
+            NodeKind::StringLiteral => (
+                "ExpressibleByStringLiteral",
+                "stringLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::IntegerLiteral => (
+                "ExpressibleByIntegerLiteral",
+                "integerLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::FloatLiteral => (
+                "ExpressibleByFloatLiteral",
+                "floatLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::BoolLiteral => (
+                "ExpressibleByBooleanLiteral",
+                "booleanLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::NilLiteral => (
+                "ExpressibleByNilLiteral",
+                "nilLiteral",
+                vec![SwiftValue::Void],
+            ),
             _ => return Ok(value),
         };
         if !self.all_protocols(ty).iter().any(|p| p == proto) {
             return Ok(value);
         }
-        let call_args: Vec<(Option<String>, SwiftValue)> =
-            args.into_iter().map(|v| (None, v)).collect();
+        let call_args: Vec<(Option<String>, SwiftValue)> = args
+            .into_iter()
+            .map(|v| (Some(label.to_string()), v))
+            .collect();
         if self.structs.contains_key(ty) {
             self.instantiate_struct(ty, &call_args)
         } else {
@@ -2213,16 +2305,39 @@ impl<'w> Interpreter<'w> {
         &self,
         class_name: &str,
         name: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, String)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
             let def = self.classes.get(&cls)?;
             if let Some(m) = def.methods.get(name) {
-                return Some((clone_params(&m.params), m.body, cls));
+                return Some((
+                    clone_params(&m.params),
+                    m.body,
+                    cls,
+                    m.generic_params.clone(),
+                ));
             }
             current = def.superclass.clone();
         }
         None
+    }
+
+    /// Select a class initializer overload by labels/types, falling back to the
+    /// last declared initializer when no overload is uniquely selected.
+    fn select_class_init(
+        &self,
+        class_name: &str,
+        args: &[CallArg],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
+        let def = self.classes.get(class_name)?;
+        if def.init_overloads.len() > 1 {
+            if let Some(init) = select_labeled_overload(&def.init_overloads, args) {
+                return Some((clone_params(&init.params), init.body));
+            }
+        }
+        def.init
+            .as_ref()
+            .map(|init| (clone_params(&init.params), init.body))
     }
 
     /// Instantiate a class: lay out fields from the whole chain, then run init.
@@ -2256,10 +2371,10 @@ impl<'w> Interpreter<'w> {
             .find(|c| self.classes[*c].init.is_some())
             .cloned();
         if let Some(owner) = init_owner {
-            let (params, body) = {
+            let (params, body) = self.select_class_init(&owner, &args).unwrap_or_else(|| {
                 let m = self.classes[&owner].init.as_ref().unwrap();
                 (clone_params(&m.params), m.body)
-            };
+            });
             self.class_ctx.push(owner);
             let saved_env = self.env.enter_isolated();
             self.env.declare("self", value.clone(), false);
@@ -3590,6 +3705,33 @@ impl<'w> Interpreter<'w> {
         self.call_struct_method(receiver, &type_name, "dynamicallyCall", call_args, None)
     }
 
+    /// Select a struct initializer overload by the call's labels and runtime
+    /// value types, falling back to the last declared initializer when the
+    /// overload set is ambiguous for compatibility with existing programs.
+    fn select_struct_init(
+        &self,
+        type_name: &str,
+        args: &[(Option<String>, SwiftValue)],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
+        let def = self.structs.get(type_name)?;
+        let call_args: Vec<CallArg> = args
+            .iter()
+            .map(|(label, value)| CallArg {
+                label: label.clone(),
+                value: value.clone(),
+                place: None,
+            })
+            .collect();
+        if def.init_overloads.len() > 1 {
+            if let Some(init) = select_labeled_overload(&def.init_overloads, &call_args) {
+                return Some((clone_params(&init.params), init.body));
+            }
+        }
+        def.init
+            .as_ref()
+            .map(|init| (clone_params(&init.params), init.body))
+    }
+
     /// Build a struct instance from a memberwise initializer call.
     fn instantiate_struct(
         &mut self,
@@ -3597,10 +3739,7 @@ impl<'w> Interpreter<'w> {
         args: &[(Option<String>, SwiftValue)],
     ) -> Eval {
         // A custom initializer runs against a fresh empty value, binding `self`.
-        let custom_init = self
-            .structs
-            .get(type_name)
-            .and_then(|d| d.init.as_ref().map(|m| (clone_params(&m.params), m.body)));
+        let custom_init = self.select_struct_init(type_name, args);
         if let Some((params, body)) = custom_init {
             // Stored properties with a default are initialized before the
             // initializer body runs (Swift gives each such property its default
@@ -4318,14 +4457,25 @@ impl<'w> Interpreter<'w> {
         outcome
     }
 
-    /// Whether `value` is a user type conforming to `Sequence` or
-    /// `IteratorProtocol`: it exposes a `next()` or `makeIterator()` method
-    /// (structurally, on a struct, enum, or class). This is duck-typed rather
-    /// than checked against a declared conformance.
+    /// Whether `value` declares `Sequence`/`IteratorProtocol` conformance and
+    /// exposes the corresponding iteration method.
     fn is_custom_sequence(&self, value: &SwiftValue) -> bool {
         self.value_type_name(value).is_some_and(|t| {
-            self.seq_type_has_method(&t, "next") || self.seq_type_has_method(&t, "makeIterator")
+            (self.is_sequence_conformer(&t) && self.seq_type_has_method(&t, "makeIterator"))
+                || (self.is_iterator_conformer(&t) && self.seq_type_has_method(&t, "next"))
         })
+    }
+
+    fn is_sequence_conformer(&self, type_name: &str) -> bool {
+        self.all_protocols(type_name)
+            .iter()
+            .any(|p| p == "Sequence")
+    }
+
+    fn is_iterator_conformer(&self, type_name: &str) -> bool {
+        self.all_protocols(type_name)
+            .iter()
+            .any(|p| p == "IteratorProtocol")
     }
 
     /// `type_has_method` extended to class declarations (walking the chain), for
@@ -4372,11 +4522,15 @@ impl<'w> Interpreter<'w> {
         let seq_ty = self
             .value_type_name(seq)
             .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
-        // A type that *is* its own iterator skips `makeIterator`.
-        let iter = if self.seq_type_has_method(&seq_ty, "next") {
-            seq.clone()
-        } else {
+        // A Sequence with a makeIterator() method is driven through that method
+        // even if it also happens to expose a helper named next(). A type that
+        // only conforms as an IteratorProtocol is its own iterator.
+        let iter = if self.is_sequence_conformer(&seq_ty)
+            && self.seq_type_has_method(&seq_ty, "makeIterator")
+        {
             self.call_sequence_method(seq.clone(), &seq_ty, "makeIterator", None)?
+        } else {
+            seq.clone()
         };
         let iter_ty = self
             .value_type_name(&iter)
@@ -4442,6 +4596,50 @@ impl<'w> Interpreter<'w> {
         };
         self.env.pop();
         outcome
+    }
+
+    /// Eagerly drive a custom `Sequence`/`IteratorProtocol` into an array of
+    /// elements for standard-library sequence algorithms.
+    fn materialize_custom_sequence(&mut self, seq: SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        const ITER: &str = "$algoiter";
+        let seq_ty = self
+            .value_type_name(&seq)
+            .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
+        let iter = if self.is_sequence_conformer(&seq_ty)
+            && self.seq_type_has_method(&seq_ty, "makeIterator")
+        {
+            self.call_sequence_method(seq, &seq_ty, "makeIterator", None)?
+        } else {
+            seq
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("iterator has no type".into()))?;
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let mut items = Vec::new();
+        let result = loop {
+            if items.len() >= MAX_SEQUENCE_MATERIALIZE {
+                break Err(trap(format!(
+                    "custom sequence algorithm exceeded {MAX_SEQUENCE_MATERIALIZE} elements"
+                )));
+            }
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            let next = match self.call_sequence_method(current, &iter_ty, "next", Some(place)) {
+                Ok(next) => next,
+                Err(err) => break Err(err),
+            };
+            if matches!(next, SwiftValue::Nil) {
+                break Ok(items);
+            }
+            items.push(next);
+        };
+        self.env.pop();
+        result
     }
 
     /// The nominal type name backing a value, for protocol/method lookup.
@@ -5599,7 +5797,7 @@ impl<'w> Interpreter<'w> {
                     .next()
                     .ok_or_else(|| EvalError::Unsupported("inout without an lvalue".into()))?;
                 let place = self.resolve_place(&inner);
-                self.type_hint.push(hint);
+                self.type_hint.push(hint.clone());
                 let value = self.eval(&inner);
                 self.type_hint.pop();
                 let value = value?;
@@ -5609,10 +5807,20 @@ impl<'w> Interpreter<'w> {
                     place,
                 });
             } else {
-                self.type_hint.push(hint);
+                self.type_hint.push(hint.clone());
                 let value = self.eval(arg);
                 self.type_hint.pop();
-                let value = value?;
+                let mut value = value?;
+                if let (Some(ty), Some(kind)) = (hint.as_deref(), literal_syntax_kind(arg)) {
+                    let optional = ty.trim().ends_with('?');
+                    if !(optional && kind == NodeKind::NilLiteral) {
+                        value = self.coerce_literal_value(
+                            ty.trim().trim_end_matches('?').trim(),
+                            kind,
+                            value,
+                        )?;
+                    }
+                }
                 args.push(CallArg {
                     label,
                     value,
@@ -5822,6 +6030,33 @@ impl<'w> Interpreter<'w> {
             return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
         }
 
+        // User extension method on a builtin type (`extension Int { … }`).
+        // User declarations are consulted before the stdlib seam so a program's
+        // extension can shadow an otherwise-available intrinsic/algorithm.
+        let builtin_name = base_value.type_name();
+        if self
+            .builtin_ext_methods
+            .get(&builtin_name)
+            .is_some_and(|m| m.contains_key(&method))
+        {
+            let params = self
+                .builtin_ext_methods
+                .get(&builtin_name)
+                .and_then(|m| m.get(&method))
+                .map(|def| clone_params(&def.params));
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            let place = self.resolve_place(&base);
+            if let Some(result) = self.call_builtin_ext_method(
+                base_value.clone(),
+                &builtin_name,
+                &method,
+                args,
+                place,
+            ) {
+                return result;
+            }
+        }
+
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
@@ -5849,7 +6084,14 @@ impl<'w> Interpreter<'w> {
         // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
         // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
         if self.algorithms.contains_key(&method) {
-            if let Some(items) = materialize_sequence(&base_value) {
+            let items = if let Some(items) = materialize_sequence(&base_value) {
+                Some(items)
+            } else if self.is_custom_sequence(&base_value) {
+                Some(self.materialize_custom_sequence(base_value.clone())?)
+            } else {
+                None
+            };
+            if let Some(items) = items {
                 let func = self.algorithms[&method];
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
@@ -5891,21 +6133,7 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        // User extension method on a builtin type (`extension Int { … }`).
         let builtin_name = base_value.type_name();
-        if self
-            .builtin_ext_methods
-            .get(&builtin_name)
-            .is_some_and(|m| m.contains_key(&method))
-        {
-            let place = self.resolve_place(&base);
-            if let Some(result) =
-                self.call_builtin_ext_method(base_value, &builtin_name, &method, args, place)
-            {
-                return result;
-            }
-        }
-
         Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
     }
 
@@ -5957,15 +6185,15 @@ impl<'w> Interpreter<'w> {
         method: &str,
         args: Vec<CallArg>,
     ) -> Eval {
-        let (params, body, owner) = match self.lookup_method(from_class, method) {
+        let (params, body, owner, generics) = match self.lookup_method(from_class, method) {
             Some(m) => m,
             None => {
-                let (p, b, _) = self
+                let (p, b, _, g) = self
                     .protocol_default_method(from_class, method)
                     .ok_or_else(|| {
                         EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
                     })?;
-                (p, b, from_class.to_string())
+                (p, b, from_class.to_string(), g)
             }
         };
         // A type-level (`static`/`class`) method has no instance `self`.
@@ -5974,6 +6202,8 @@ impl<'w> Interpreter<'w> {
             self.static_ctx.push(from_class.to_string());
         }
         self.class_ctx.push(owner);
+        let type_binding = self.infer_type_bindings(&generics, &params, &args);
+        self.type_bindings.push(type_binding);
         // Isolate from caller locals (a class `self` is a reference, so field
         // mutations persist through the object regardless of the env).
         let saved_env = self.env.enter_isolated();
@@ -5987,6 +6217,7 @@ impl<'w> Interpreter<'w> {
             Err(e) => Err(e),
         };
         self.env.restore(saved_env);
+        self.type_bindings.pop();
         self.class_ctx.pop();
         if is_static_call {
             self.static_ctx.pop();
@@ -6007,40 +6238,25 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         method: &str,
         args: &[CallArg],
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
         let overloads = self.structs.get(type_name)?.method_overloads.get(method)?;
         if overloads.len() < 2 {
             return None;
         }
-        // First narrow by argument labels (`buildEither(first:)` vs `(second:)`).
-        let label_matches: Vec<&MethodDef> = overloads
-            .iter()
-            .filter(|def| args_select_params(args, &def.params))
-            .collect();
-        let chosen = match label_matches.as_slice() {
-            [one] => *one,
-            [] => return None,
-            many => {
-                // Type-only overloads (`buildExpression(String)` vs `(Int)`):
-                // disambiguate by the argument values' runtime types.
-                let type_matches: Vec<&&MethodDef> = many
-                    .iter()
-                    .filter(|def| args_match_param_types(args, &def.params))
-                    .collect();
-                match type_matches.as_slice() {
-                    [one] => **one,
-                    _ => return None, // unresolved by label or type; defer.
-                }
-            }
-        };
-        Some((clone_params(&chosen.params), chosen.body, chosen.mutating))
+        let chosen = select_labeled_overload(overloads, args)?;
+        Some((
+            clone_params(&chosen.params),
+            chosen.body,
+            chosen.mutating,
+            chosen.generic_params.clone(),
+        ))
     }
 
     /// The declared parameters of a user method on `type_name`, across class,
     /// struct, and enum types (used to spot `@autoclosure` params before the
     /// arguments are evaluated).
     fn user_method_params(&self, type_name: &str, method: &str) -> Option<Vec<Param>> {
-        if let Some((params, _, _)) = self.lookup_method(type_name, method) {
+        if let Some((params, _, _, _)) = self.lookup_method(type_name, method) {
             return Some(params);
         }
         if let Some(d) = self.structs.get(type_name) {
@@ -6090,9 +6306,16 @@ impl<'w> Interpreter<'w> {
                             .get(type_name)
                             .and_then(|d| d.methods.get(method))
                     })
-                    .map(|def| (clone_params(&def.params), def.body, def.mutating))
+                    .map(|def| {
+                        (
+                            clone_params(&def.params),
+                            def.body,
+                            def.mutating,
+                            def.generic_params.clone(),
+                        )
+                    })
             });
-        let (params, body, mutating) = match own {
+        let (params, body, mutating, generics) = match own {
             Some(m) => m,
             None => self
                 .protocol_default_method(type_name, method)
@@ -6107,6 +6330,8 @@ impl<'w> Interpreter<'w> {
         if is_static_call {
             self.static_ctx.push(type_name.to_string());
         }
+        let type_binding = self.infer_type_bindings(&generics, &params, &args);
+        self.type_bindings.push(type_binding);
         // Run isolated from the caller's locals: the body sees globals, its
         // parameters, and `self`/its members, but not enclosing variables.
         let saved_env = self.env.enter_isolated();
@@ -6129,6 +6354,7 @@ impl<'w> Interpreter<'w> {
         };
         let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
         self.env.restore(saved_env);
+        self.type_bindings.pop();
         if is_static_call {
             self.static_ctx.pop();
         }
@@ -6403,7 +6629,10 @@ impl<'w> Interpreter<'w> {
         for p in params {
             if p.variadic {
                 let mut pack = Vec::new();
-                while ai < args.len() && args[ai].label.is_none() {
+                let effective = p.label.as_deref().unwrap_or(p.name.as_str());
+                while ai < args.len()
+                    && (args[ai].label.is_none() || args[ai].label.as_deref() == Some(effective))
+                {
                     pack.push(args[ai].value.clone());
                     ai += 1;
                 }
@@ -6965,7 +7194,34 @@ fn clone_method(m: &MethodDef) -> MethodDef {
         params: clone_params(&m.params),
         body: m.body,
         mutating: m.mutating,
+        generic_params: m.generic_params.clone(),
         is_static: m.is_static,
+    }
+}
+
+/// Select exactly one overload by labels, then by runtime argument types when
+/// labels alone leave multiple candidates.
+fn select_labeled_overload<'a>(
+    overloads: &'a [MethodDef],
+    args: &[CallArg],
+) -> Option<&'a MethodDef> {
+    let label_matches: Vec<&MethodDef> = overloads
+        .iter()
+        .filter(|def| args_select_params(args, &def.params))
+        .collect();
+    match label_matches.as_slice() {
+        [one] => Some(*one),
+        [] => None,
+        many => {
+            let type_matches: Vec<&&MethodDef> = many
+                .iter()
+                .filter(|def| args_match_param_types(args, &def.params))
+                .collect();
+            match type_matches.as_slice() {
+                [one] => Some(**one),
+                _ => None,
+            }
+        }
     }
 }
 
@@ -6977,31 +7233,64 @@ fn clone_method(m: &MethodDef) -> MethodDef {
 /// parameter, since the runtime cannot separate overloads by type. The caller
 /// only commits to a selection when exactly one candidate matches.
 fn args_select_params(args: &[CallArg], params: &[Param]) -> bool {
-    if args.len() != params.len() {
-        return false;
-    }
-    args.iter()
-        .zip(params)
-        .all(|(arg, param)| match &arg.label {
-            Some(label) => {
-                let effective = param.label.as_deref().unwrap_or(param.name.as_str());
-                label == effective
+    let mut ai = 0usize;
+    for param in params {
+        let effective = param.label.as_deref().unwrap_or(param.name.as_str());
+        if param.variadic {
+            while ai < args.len()
+                && (args[ai].label.is_none() || args[ai].label.as_deref() == Some(effective))
+            {
+                ai += 1;
             }
-            None => true,
-        })
+        } else if let Some(arg) = args.get(ai) {
+            if let Some(label) = &arg.label {
+                if label != effective {
+                    return false;
+                }
+            }
+            ai += 1;
+        } else if param.default.is_none() {
+            return false;
+        }
+    }
+    ai == args.len()
 }
 
 /// Whether each argument's runtime type matches its parameter's declared type,
 /// used to disambiguate overloads separable only by type. A parameter with no
 /// written type accepts any argument.
 fn args_match_param_types(args: &[CallArg], params: &[Param]) -> bool {
-    if args.len() != params.len() {
-        return false;
+    let mut ai = 0usize;
+    for param in params {
+        let expected = param
+            .ty
+            .as_deref()
+            .map(|ty| ty.trim().trim_end_matches('?'));
+        if param.variadic {
+            while ai < args.len()
+                && (args[ai].label.is_none()
+                    || args[ai].label.as_deref()
+                        == Some(param.label.as_deref().unwrap_or(param.name.as_str())))
+            {
+                if let Some(ty) = expected {
+                    if args[ai].value.type_name() != ty {
+                        return false;
+                    }
+                }
+                ai += 1;
+            }
+        } else if let Some(arg) = args.get(ai) {
+            if let Some(ty) = expected {
+                if arg.value.type_name() != ty {
+                    return false;
+                }
+            }
+            ai += 1;
+        } else if param.default.is_none() {
+            return false;
+        }
     }
-    args.iter().zip(params).all(|(arg, param)| match &param.ty {
-        Some(ty) => arg.value.type_name() == ty.trim().trim_end_matches('?'),
-        None => true,
-    })
+    ai == args.len()
 }
 
 fn clone_params(params: &[Param]) -> Vec<Param> {
@@ -7118,6 +7407,27 @@ enum LoopFlow {
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
     is_value_node(node) && node.kind() != NodeKind::PatternTuple
+}
+
+/// The literal syntax kind represented by `node`, including Swift's treatment
+/// of a negated numeric literal as literal-convertible syntax.
+fn literal_syntax_kind(node: &Node) -> Option<NodeKind> {
+    match node.kind() {
+        NodeKind::ArrayLiteral
+        | NodeKind::DictLiteral
+        | NodeKind::StringLiteral
+        | NodeKind::IntegerLiteral
+        | NodeKind::FloatLiteral
+        | NodeKind::BoolLiteral
+        | NodeKind::NilLiteral => Some(node.kind()),
+        NodeKind::UnaryExpr if node.op_text().as_deref() == Some("-") => {
+            node.children().next().and_then(|child| match child.kind() {
+                NodeKind::IntegerLiteral | NodeKind::FloatLiteral => Some(child.kind()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Whether `value` is a sequence the synchronous `iterate` already understands
@@ -8183,5 +8493,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn custom_sequence_algorithm_traps_when_materialization_limit_is_exceeded() {
+        let err = run(
+            "struct Naturals: Sequence, IteratorProtocol {\n  var n: Int\n  mutating func next() -> Int? { n += 1; return n }\n  func makeIterator() -> Naturals { self }\n}\nlet xs = Naturals(n: 0).map { $0 }\nprint(xs.count)\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Trap(ref msg) if msg.contains("custom sequence algorithm exceeded")),
+            "got {err:?}"
+        );
     }
 }
