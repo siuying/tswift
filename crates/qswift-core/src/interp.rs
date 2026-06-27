@@ -4518,6 +4518,10 @@ impl<'w> Interpreter<'w> {
         self.env.pop();
         self.class_ctx.pop();
         match result {
+            // A failing `super.init?` (`return nil`) must propagate so the
+            // calling subclass initializer also fails, rather than producing a
+            // half-built instance.
+            Err(Signal::Return(SwiftValue::Nil)) => Err(Signal::Return(SwiftValue::Nil)),
             Ok(_) | Err(Signal::Return(_)) => Ok(()),
             Err(e) => Err(e),
         }
