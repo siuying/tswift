@@ -26,6 +26,7 @@ func boxedShape(_ useCircle: Bool) -> any Shape {
 
 struct Builder {
     var steps: [String] = []
+    static func empty() -> Self { Self() }
     func adding(_ step: String) -> Self {
         var copy = self
         copy.steps.append(step)

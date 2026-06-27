@@ -4777,10 +4777,15 @@ impl<'w> Interpreter<'w> {
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
+                // `Self.member` resolves through the enclosing type. The keyword
+                // is never a value binding, so it bypasses the env shadow check
+                // below even if a local happens to share the resolved type name.
+                let is_self_kw = type_name == "Self";
+                let type_name = self.resolve_self_keyword(type_name);
                 // A generic placeholder (`T.defaultValue`) resolves to its bound
                 // concrete type for the current call.
                 let type_name = self.resolve_type_alias(&type_name).unwrap_or(type_name);
-                if self.env.get(&type_name).is_none() {
+                if is_self_kw || self.env.get(&type_name).is_none() {
                     // `MemoryLayout<T>.size` / `.stride` / `.alignment`. The
                     // written type `T` is recorded as a `TypeIdent` child of the
                     // `MemoryLayout` identifier by the parser.
@@ -5099,6 +5104,8 @@ impl<'w> Interpreter<'w> {
             let name = callee
                 .text()
                 .ok_or_else(|| EvalError::Unsupported("unnamed callee".into()))?;
+            // `Self(...)` constructs an instance of the enclosing type.
+            let name = self.resolve_self_keyword(name);
 
             // `type(of: x)` — the dynamic type of `x` as a metatype value.
             if name == "type" && self.env.get("type").is_none() {
@@ -5407,9 +5414,14 @@ impl<'w> Interpreter<'w> {
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
+                // `Self.method(...)` calls a static method of the enclosing type.
+                // The keyword is never a value binding, so it bypasses the env
+                // shadow check below.
+                let is_self_kw = tn == "Self";
+                let tn = self.resolve_self_keyword(tn);
                 // A generic placeholder (`T.zero()`) resolves to its bound type.
                 let tn = self.resolve_type_alias(&tn).unwrap_or(tn);
-                if self.env.get(&tn).is_none() {
+                if is_self_kw || self.env.get(&tn).is_none() {
                     // Builtin static methods, e.g. `Bool.random()`. A user type
                     // shadowing a builtin name (`struct Bool { … }`) wins, so
                     // only fall back to the builtin when no user type matches.
@@ -6018,6 +6030,30 @@ impl<'w> Interpreter<'w> {
             .iter()
             .rev()
             .find_map(|frame| frame.get(name).cloned())
+    }
+
+    /// The name of the type enclosing the currently executing method, used to
+    /// resolve `Self`. An instance method derives it from the dynamic type of
+    /// the bound `self` (so `Self` in a base class refers to the subclass);
+    /// a `static`/type method derives it from the recorded static context.
+    fn current_self_type(&self) -> Option<String> {
+        match self.env.get("self") {
+            Some(SwiftValue::Struct(o)) => return Some(o.type_name.clone()),
+            Some(SwiftValue::Object(o)) => return Some(o.borrow().class_name.clone()),
+            Some(SwiftValue::Enum(e)) => return Some(e.type_name.clone()),
+            _ => {}
+        }
+        self.static_ctx.last().cloned()
+    }
+
+    /// Rewrite the `Self` type keyword to the enclosing type's name; any other
+    /// name is returned unchanged.
+    fn resolve_self_keyword(&self, name: String) -> String {
+        if name == "Self" {
+            self.current_self_type().unwrap_or(name)
+        } else {
+            name
+        }
     }
 
     /// Bind `args` to `params` in the current scope, returning the caller
