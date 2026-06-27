@@ -23,10 +23,6 @@ struct RuntimeNode {
     ty: Option<String>,
     modifier_bits: u32,
     arg_label: Option<String>,
-    /// For a `CaseClause`, whether it is the `default:` clause.
-    is_default: bool,
-    /// For a `CaseClause`, its `where` guard expression, if any.
-    where_expr: Option<NodeId>,
     /// For a `for`/`while`/`repeat` loop, its statement label (`outer:`), if any.
     loop_label: Option<String>,
     children: Vec<NodeId>,
@@ -69,8 +65,6 @@ impl RuntimeAst {
                 ty: None,
                 modifier_bits: 0,
                 arg_label: None,
-                is_default: false,
-                where_expr: None,
                 loop_label: None,
                 children: Vec::new(),
             }],
@@ -88,8 +82,6 @@ impl RuntimeAst {
             ty: None,
             modifier_bits: 0,
             arg_label: None,
-            is_default: false,
-            where_expr: None,
             loop_label: None,
             children: Vec::new(),
         });
@@ -111,7 +103,6 @@ impl RuntimeAst {
             | K::ExtensionDecl => return self.lower_nominal(node),
             K::LetDecl | K::VarDecl => return self.lower_binding(node),
             K::ForStmt => return self.lower_for(node),
-            K::CaseClause => return self.lower_case_clause(node),
             K::EnumCaseDecl => return self.lower_enum_case(node),
             K::IfStmt | K::GuardStmt | K::WhileStmt => return self.lower_conditional(node),
             _ => {}
@@ -177,31 +168,6 @@ impl RuntimeAst {
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
         let children = self.lower_child_list(node.children());
-        self.set_children(id, children);
-        id
-    }
-
-    /// Lower a `switch` case clause into the runtime-facing shape: pattern
-    /// children followed by the body `Block`, with the `where` guard and the
-    /// `default` marker exposed separately through `case_info` (not as a
-    /// pattern child the runtime would try to match).
-    fn lower_case_clause(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        use tswift_ast::NodeKind as K;
-        let text = node.text().map(ToOwned::to_owned);
-        let is_default = text.as_deref() == Some("default");
-        let id = self.alloc(NodeKind::CaseClause, text, node.line());
-        let mut children: Vec<NodeId> = Vec::new();
-        let mut where_expr: Option<NodeId> = None;
-        for child in node.children() {
-            if child.kind() == K::WhereClause {
-                // The guard's single child is the condition expression.
-                where_expr = child.children().next().map(|c| self.lower_node(c));
-            } else {
-                children.push(self.lower_node(child));
-            }
-        }
-        self.nodes[id.0].is_default = is_default;
-        self.nodes[id.0].where_expr = where_expr;
         self.set_children(id, children);
         id
     }
@@ -319,14 +285,6 @@ impl RuntimeAst {
 
     pub(crate) fn arg_label(&self, id: NodeId) -> Option<String> {
         self.node(id).arg_label.clone()
-    }
-
-    pub(crate) fn case_is_default(&self, id: NodeId) -> bool {
-        self.node(id).is_default
-    }
-
-    pub(crate) fn case_where(&self, id: NodeId) -> Option<NodeId> {
-        self.node(id).where_expr
     }
 
 

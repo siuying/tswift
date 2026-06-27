@@ -64,12 +64,6 @@ pub struct Node<'a> {
 }
 
 impl<'a> Node<'a> {
-    fn cursor(&self, id: compat::NodeId) -> Node<'a> {
-        Node {
-            rust: id,
-            analysis: self.analysis,
-        }
-    }
 
     /// The kind of syntax this node represents.
     pub fn kind(&self) -> NodeKind {
@@ -169,15 +163,16 @@ impl<'a> Node<'a> {
         self.analysis.rust.loop_label(self.rust)
     }
 
-    /// For a `CaseClause`, whether it is `default` and its optional `where` guard.
+    /// For a `CaseClause`, whether it is `default` and its optional `where`
+    /// guard. The `default` clause is marked by the clause's `"default"` text;
+    /// the guard is the condition inside a `WhereClause` child.
     pub fn case_info(&self) -> CaseInfo<'a> {
         CaseInfo {
-            is_default: self.analysis.rust.case_is_default(self.rust),
+            is_default: self.text().as_deref() == Some("default"),
             where_expr: self
-                .analysis
-                .rust
-                .case_where(self.rust)
-                .map(|id| self.cursor(id)),
+                .children()
+                .find(|c| c.kind() == NodeKind::WhereClause)
+                .and_then(|w| w.children().next()),
         }
     }
 

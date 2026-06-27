@@ -7541,6 +7541,11 @@ fn case_parts(case: &Node<'static>) -> (Vec<Node<'static>>, Vec<Node<'static>>) 
     let mut body = Vec::new();
     let mut in_body = false;
     for child in case.children() {
+        // The `where` guard is read separately via `case_info()`, not matched
+        // as a pattern.
+        if child.kind() == NodeKind::WhereClause {
+            continue;
+        }
         if !in_body && is_statement_kind(child.kind()) {
             in_body = true;
         }
