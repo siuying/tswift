@@ -199,6 +199,8 @@ struct StructDef {
     static_subscript: Option<MethodDef>,
     /// A custom initializer, if the struct declares one (else memberwise).
     init: Option<MethodDef>,
+    /// All custom initializer overloads, selected by argument labels/types.
+    init_overloads: Vec<MethodDef>,
     /// Stored property name → its `@propertyWrapper` type, when wrapped.
     wrappers: std::collections::HashMap<String, String>,
     /// `@dynamicMemberLookup`: an unresolved member name routes through the
@@ -242,6 +244,8 @@ struct ClassDef {
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
     init: Option<MethodDef>,
+    /// All custom initializer overloads, selected by argument labels/types.
+    init_overloads: Vec<MethodDef>,
     deinit: Option<Node<'static>>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
@@ -1255,6 +1259,7 @@ impl<'w> Interpreter<'w> {
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
         let mut init = None;
+        let mut init_overloads = Vec::new();
         let mut deinit = None;
         let mut static_subscript = None;
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
@@ -1262,13 +1267,15 @@ impl<'w> Interpreter<'w> {
         for member in body.children() {
             match member.kind() {
                 NodeKind::InitDecl => {
-                    init = Some(MethodDef {
+                    let def = MethodDef {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: false,
                         generic_params: generic_param_names(&member),
                         is_static: false,
-                    });
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
                 }
                 NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
                     let acc = member.var_accessors();
@@ -1367,6 +1374,7 @@ impl<'w> Interpreter<'w> {
                 computed,
                 methods,
                 init,
+                init_overloads,
                 deinit,
                 static_subscript,
             },
@@ -1415,18 +1423,21 @@ impl<'w> Interpreter<'w> {
         let mut subscripts: Vec<SubscriptDef> = Vec::new();
         let mut static_subscript = None;
         let mut init = None;
+        let mut init_overloads = Vec::new();
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
         for member in body.children() {
             match member.kind() {
                 NodeKind::InitDecl => {
-                    init = Some(MethodDef {
+                    let def = MethodDef {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: true,
                         generic_params: generic_param_names(&member),
                         is_static: false,
-                    });
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
                 }
                 NodeKind::SubscriptDecl => {
                     let acc = member.var_accessors();
@@ -1547,6 +1558,7 @@ impl<'w> Interpreter<'w> {
                 subscripts,
                 static_subscript,
                 init,
+                init_overloads,
                 wrappers,
                 dynamic_member_lookup,
                 dynamic_callable,
@@ -1684,7 +1696,7 @@ impl<'w> Interpreter<'w> {
             .children()
             .filter(|c| is_expr(c))
             .last()
-            .map(|c| c.kind())
+            .and_then(|c| literal_syntax_kind(&c))
         else {
             return Ok(value);
         };
@@ -1692,32 +1704,82 @@ impl<'w> Interpreter<'w> {
         // An optional annotation (`T?`): a `nil` literal stays the absent
         // optional rather than constructing `T(nilLiteral:)`.
         let optional = ty.ends_with('?');
+        if optional && init_kind == NodeKind::NilLiteral {
+            return Ok(value);
+        }
         let ty = ty.trim_end_matches('?').trim();
         let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
         if !is_user_type {
             return Ok(value);
         }
+        self.coerce_literal_value(ty, init_kind, value)
+    }
+
+    /// Convert a literal value into the contextual user type named by `ty` when
+    /// that type declares the matching `ExpressibleBy*Literal` conformance.
+    fn coerce_literal_value(&mut self, ty: &str, init_kind: NodeKind, value: SwiftValue) -> Eval {
+        let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
+        if !is_user_type {
+            return Ok(value);
+        }
         // The literal protocol implied by the initializer's syntax, plus the
-        // positional argument(s) its initializer takes.
-        let (proto, args): (&str, Vec<SwiftValue>) = match init_kind {
+        // argument label and positional argument(s) its initializer takes.
+        let (proto, label, args): (&str, &str, Vec<SwiftValue>) = match init_kind {
             NodeKind::ArrayLiteral => match &value {
-                SwiftValue::Array(items) => ("ExpressibleByArrayLiteral", items.as_ref().clone()),
+                SwiftValue::Array(items) => (
+                    "ExpressibleByArrayLiteral",
+                    "arrayLiteral",
+                    items.as_ref().clone(),
+                ),
                 _ => return Ok(value),
             },
-            NodeKind::StringLiteral => ("ExpressibleByStringLiteral", vec![value.clone()]),
-            NodeKind::IntegerLiteral => ("ExpressibleByIntegerLiteral", vec![value.clone()]),
-            NodeKind::FloatLiteral => ("ExpressibleByFloatLiteral", vec![value.clone()]),
-            NodeKind::BoolLiteral => ("ExpressibleByBooleanLiteral", vec![value.clone()]),
-            NodeKind::NilLiteral if !optional => {
-                ("ExpressibleByNilLiteral", vec![SwiftValue::Void])
-            }
+            NodeKind::DictLiteral => match &value {
+                SwiftValue::Dict(pairs) => (
+                    "ExpressibleByDictionaryLiteral",
+                    "dictionaryLiteral",
+                    pairs
+                        .iter()
+                        .map(|(k, v)| {
+                            SwiftValue::Tuple(vec![k.clone(), v.clone()], vec![None, None])
+                        })
+                        .collect(),
+                ),
+                _ => return Ok(value),
+            },
+            NodeKind::StringLiteral => (
+                "ExpressibleByStringLiteral",
+                "stringLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::IntegerLiteral => (
+                "ExpressibleByIntegerLiteral",
+                "integerLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::FloatLiteral => (
+                "ExpressibleByFloatLiteral",
+                "floatLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::BoolLiteral => (
+                "ExpressibleByBooleanLiteral",
+                "booleanLiteral",
+                vec![value.clone()],
+            ),
+            NodeKind::NilLiteral => (
+                "ExpressibleByNilLiteral",
+                "nilLiteral",
+                vec![SwiftValue::Void],
+            ),
             _ => return Ok(value),
         };
         if !self.all_protocols(ty).iter().any(|p| p == proto) {
             return Ok(value);
         }
-        let call_args: Vec<(Option<String>, SwiftValue)> =
-            args.into_iter().map(|v| (None, v)).collect();
+        let call_args: Vec<(Option<String>, SwiftValue)> = args
+            .into_iter()
+            .map(|v| (Some(label.to_string()), v))
+            .collect();
         if self.structs.contains_key(ty) {
             self.instantiate_struct(ty, &call_args)
         } else {
@@ -2246,6 +2308,43 @@ impl<'w> Interpreter<'w> {
         None
     }
 
+    /// Select a class initializer overload by labels/types, falling back to the
+    /// last declared initializer when no overload is uniquely selected.
+    fn select_class_init(
+        &self,
+        class_name: &str,
+        args: &[CallArg],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
+        let def = self.classes.get(class_name)?;
+        if def.init_overloads.len() > 1 {
+            let label_matches: Vec<&MethodDef> = def
+                .init_overloads
+                .iter()
+                .filter(|init| args_select_params(args, &init.params))
+                .collect();
+            let chosen = match label_matches.as_slice() {
+                [one] => Some(*one),
+                many if !many.is_empty() => {
+                    let type_matches: Vec<&&MethodDef> = many
+                        .iter()
+                        .filter(|init| args_match_param_types(args, &init.params))
+                        .collect();
+                    match type_matches.as_slice() {
+                        [one] => Some(**one),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(init) = chosen {
+                return Some((clone_params(&init.params), init.body));
+            }
+        }
+        def.init
+            .as_ref()
+            .map(|init| (clone_params(&init.params), init.body))
+    }
+
     /// Instantiate a class: lay out fields from the whole chain, then run init.
     fn instantiate_class(&mut self, class_name: &str, args: Vec<CallArg>) -> Eval {
         let chain = self.class_chain(class_name);
@@ -2277,10 +2376,10 @@ impl<'w> Interpreter<'w> {
             .find(|c| self.classes[*c].init.is_some())
             .cloned();
         if let Some(owner) = init_owner {
-            let (params, body) = {
+            let (params, body) = self.select_class_init(&owner, &args).unwrap_or_else(|| {
                 let m = self.classes[&owner].init.as_ref().unwrap();
                 (clone_params(&m.params), m.body)
-            };
+            });
             self.class_ctx.push(owner);
             let saved_env = self.env.enter_isolated();
             self.env.declare("self", value.clone(), false);
@@ -3611,6 +3710,52 @@ impl<'w> Interpreter<'w> {
         self.call_struct_method(receiver, &type_name, "dynamicallyCall", call_args, None)
     }
 
+    /// Select a struct initializer overload by the call's labels and runtime
+    /// value types, falling back to the last declared initializer when the
+    /// overload set is ambiguous for compatibility with existing programs.
+    fn select_struct_init(
+        &self,
+        type_name: &str,
+        args: &[(Option<String>, SwiftValue)],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
+        let def = self.structs.get(type_name)?;
+        let call_args: Vec<CallArg> = args
+            .iter()
+            .map(|(label, value)| CallArg {
+                label: label.clone(),
+                value: value.clone(),
+                place: None,
+            })
+            .collect();
+        if def.init_overloads.len() > 1 {
+            let label_matches: Vec<&MethodDef> = def
+                .init_overloads
+                .iter()
+                .filter(|init| args_select_params(&call_args, &init.params))
+                .collect();
+            let chosen = match label_matches.as_slice() {
+                [one] => Some(*one),
+                many if !many.is_empty() => {
+                    let type_matches: Vec<&&MethodDef> = many
+                        .iter()
+                        .filter(|init| args_match_param_types(&call_args, &init.params))
+                        .collect();
+                    match type_matches.as_slice() {
+                        [one] => Some(**one),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(init) = chosen {
+                return Some((clone_params(&init.params), init.body));
+            }
+        }
+        def.init
+            .as_ref()
+            .map(|init| (clone_params(&init.params), init.body))
+    }
+
     /// Build a struct instance from a memberwise initializer call.
     fn instantiate_struct(
         &mut self,
@@ -3618,10 +3763,7 @@ impl<'w> Interpreter<'w> {
         args: &[(Option<String>, SwiftValue)],
     ) -> Eval {
         // A custom initializer runs against a fresh empty value, binding `self`.
-        let custom_init = self
-            .structs
-            .get(type_name)
-            .and_then(|d| d.init.as_ref().map(|m| (clone_params(&m.params), m.body)));
+        let custom_init = self.select_struct_init(type_name, args);
         if let Some((params, body)) = custom_init {
             // Stored properties with a default are initialized before the
             // initializer body runs (Swift gives each such property its default
@@ -5620,7 +5762,7 @@ impl<'w> Interpreter<'w> {
                     .next()
                     .ok_or_else(|| EvalError::Unsupported("inout without an lvalue".into()))?;
                 let place = self.resolve_place(&inner);
-                self.type_hint.push(hint);
+                self.type_hint.push(hint.clone());
                 let value = self.eval(&inner);
                 self.type_hint.pop();
                 let value = value?;
@@ -5630,10 +5772,20 @@ impl<'w> Interpreter<'w> {
                     place,
                 });
             } else {
-                self.type_hint.push(hint);
+                self.type_hint.push(hint.clone());
                 let value = self.eval(arg);
                 self.type_hint.pop();
-                let value = value?;
+                let mut value = value?;
+                if let (Some(ty), Some(kind)) = (hint.as_deref(), literal_syntax_kind(arg)) {
+                    let optional = ty.trim().ends_with('?');
+                    if !(optional && kind == NodeKind::NilLiteral) {
+                        value = self.coerce_literal_value(
+                            ty.trim().trim_end_matches('?').trim(),
+                            kind,
+                            value,
+                        )?;
+                    }
+                }
                 args.push(CallArg {
                     label,
                     value,
@@ -6442,7 +6594,10 @@ impl<'w> Interpreter<'w> {
         for p in params {
             if p.variadic {
                 let mut pack = Vec::new();
-                while ai < args.len() && args[ai].label.is_none() {
+                let effective = p.label.as_deref().unwrap_or(p.name.as_str());
+                while ai < args.len()
+                    && (args[ai].label.is_none() || args[ai].label.as_deref() == Some(effective))
+                {
                     pack.push(args[ai].value.clone());
                     ai += 1;
                 }
@@ -7017,31 +7172,64 @@ fn clone_method(m: &MethodDef) -> MethodDef {
 /// parameter, since the runtime cannot separate overloads by type. The caller
 /// only commits to a selection when exactly one candidate matches.
 fn args_select_params(args: &[CallArg], params: &[Param]) -> bool {
-    if args.len() != params.len() {
-        return false;
-    }
-    args.iter()
-        .zip(params)
-        .all(|(arg, param)| match &arg.label {
-            Some(label) => {
-                let effective = param.label.as_deref().unwrap_or(param.name.as_str());
-                label == effective
+    let mut ai = 0usize;
+    for param in params {
+        let effective = param.label.as_deref().unwrap_or(param.name.as_str());
+        if param.variadic {
+            while ai < args.len()
+                && (args[ai].label.is_none() || args[ai].label.as_deref() == Some(effective))
+            {
+                ai += 1;
             }
-            None => true,
-        })
+        } else if let Some(arg) = args.get(ai) {
+            if let Some(label) = &arg.label {
+                if label != effective {
+                    return false;
+                }
+            }
+            ai += 1;
+        } else if param.default.is_none() {
+            return false;
+        }
+    }
+    ai == args.len()
 }
 
 /// Whether each argument's runtime type matches its parameter's declared type,
 /// used to disambiguate overloads separable only by type. A parameter with no
 /// written type accepts any argument.
 fn args_match_param_types(args: &[CallArg], params: &[Param]) -> bool {
-    if args.len() != params.len() {
-        return false;
+    let mut ai = 0usize;
+    for param in params {
+        let expected = param
+            .ty
+            .as_deref()
+            .map(|ty| ty.trim().trim_end_matches('?'));
+        if param.variadic {
+            while ai < args.len()
+                && (args[ai].label.is_none()
+                    || args[ai].label.as_deref()
+                        == Some(param.label.as_deref().unwrap_or(param.name.as_str())))
+            {
+                if let Some(ty) = expected {
+                    if args[ai].value.type_name() != ty {
+                        return false;
+                    }
+                }
+                ai += 1;
+            }
+        } else if let Some(arg) = args.get(ai) {
+            if let Some(ty) = expected {
+                if arg.value.type_name() != ty {
+                    return false;
+                }
+            }
+            ai += 1;
+        } else if param.default.is_none() {
+            return false;
+        }
     }
-    args.iter().zip(params).all(|(arg, param)| match &param.ty {
-        Some(ty) => arg.value.type_name() == ty.trim().trim_end_matches('?'),
-        None => true,
-    })
+    ai == args.len()
 }
 
 fn clone_params(params: &[Param]) -> Vec<Param> {
@@ -7158,6 +7346,27 @@ enum LoopFlow {
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
     is_value_node(node) && node.kind() != NodeKind::PatternTuple
+}
+
+/// The literal syntax kind represented by `node`, including Swift's treatment
+/// of a negated numeric literal as literal-convertible syntax.
+fn literal_syntax_kind(node: &Node) -> Option<NodeKind> {
+    match node.kind() {
+        NodeKind::ArrayLiteral
+        | NodeKind::DictLiteral
+        | NodeKind::StringLiteral
+        | NodeKind::IntegerLiteral
+        | NodeKind::FloatLiteral
+        | NodeKind::BoolLiteral
+        | NodeKind::NilLiteral => Some(node.kind()),
+        NodeKind::UnaryExpr if node.op_text().as_deref() == Some("-") => {
+            node.children().next().and_then(|child| match child.kind() {
+                NodeKind::IntegerLiteral | NodeKind::FloatLiteral => Some(child.kind()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Whether `value` is a sequence the synchronous `iterate` already understands
