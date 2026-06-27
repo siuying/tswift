@@ -66,7 +66,7 @@ Each box = one atomic commit; full suite green before the next.
       `CompilerDirective` `#if` wrapper at each decl/member/statement site; stop
       splicing in the lowerer. *(Broadest — every child-list site; done last
       among the structural steps.)*
-- [ ] 8. **enum collapse** — re-export `tswift_ast::NodeKind` as the frontend
+- [x] 8. **enum collapse** — re-export `tswift_ast::NodeKind` as the frontend
       `NodeKind`, rewrite `tswift-core` match arms to the clean names, delete
       `map_kind`. Modifier bitfield stays (payload encoding, not structural).
 - [ ] 9. **arena deletion** — `Node` becomes a cursor straight over
@@ -81,6 +81,11 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 8 done (91ecf64). Deleted `kind.rs`/`map_kind`; frontend
+  `NodeKind` is now `tswift_ast::NodeKind`. Renamed all match arms; removed dead
+  kinds (Conformance/OptionalChain/ParenExpr/Type{Optional,Inout,Func,Tuple}).
+  Codex flagged the `precedence_group_decl` JSON-name break (Important) — fixed.
+  447 green.
 - 2026-06-27 — step 7 done (e9e0850). `#if` stays as `MacroExpansion("if")`;
   runtime `expand_directives` flattens it at hoist/eval_seq/member loops/closure
   bodies. Parser rejects `#if` between switch cases, so that path is moot. Codex
