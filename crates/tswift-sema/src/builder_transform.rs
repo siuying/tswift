@@ -25,12 +25,223 @@ pub(crate) struct BuilderTransform;
 
 impl Pass for BuilderTransform {
     fn run(&self, ast: &mut Ast, symbols: &Symbols) -> Vec<Diagnostic> {
+        // Validate declarations and bodies *before* the rewrite mutates them.
+        let mut diags = Vec::new();
+        validate(ast, ast.root(), symbols, &mut diags);
+
         let mut targets = Vec::new();
         collect_targets(ast, ast.root(), symbols, &mut targets);
-        for (func, builder) in targets {
-            transform_func(ast, func, &builder, symbols);
+        for (decl, _builder) in &targets {
+            validate_body(ast, *decl, &mut diags);
         }
-        Vec::new()
+        for (decl, builder) in targets {
+            transform_func(ast, decl, &builder, symbols);
+        }
+        diags
+    }
+}
+
+/// The set of recognized result-builder method names.
+const BUILD_METHODS: &[&str] = &[
+    "buildBlock",
+    "buildExpression",
+    "buildEither",
+    "buildOptional",
+    "buildArray",
+    "buildPartialBlock",
+    "buildFinalResult",
+    "buildLimitedAvailability",
+];
+
+fn diag(ast: &Ast, node: NodeId, message: String) -> Diagnostic {
+    Diagnostic {
+        message,
+        line: ast.node(node).line(),
+        col: ast.node(node).col(),
+    }
+}
+
+/// Structural validation of result-builder declarations (independent of any
+/// lowering construct): builder-type method requirements, build-method
+/// signatures, and builder attributes on parameters.
+fn validate(ast: &Ast, parent: NodeId, symbols: &Symbols, diags: &mut Vec<Diagnostic>) {
+    for child in child_ids(ast, parent) {
+        let kind = ast.node(child).kind();
+        if matches!(
+            kind,
+            NodeKind::StructDecl | NodeKind::EnumDecl | NodeKind::ClassDecl | NodeKind::ActorDecl
+        ) && ast
+            .node(child)
+            .children()
+            .any(|c| c.kind() == NodeKind::Attribute && c.text() == Some("resultBuilder"))
+        {
+            validate_builder_type(ast, child, symbols, diags);
+        }
+        if kind == NodeKind::Param {
+            validate_param_builder_attr(ast, child, symbols, diags);
+        }
+        validate(ast, child, symbols, diags);
+    }
+}
+
+/// A `@resultBuilder` type must declare a `buildBlock` (or the `buildPartialBlock`
+/// pair), and each build method must be `static` with a valid signature.
+fn validate_builder_type(ast: &Ast, decl: NodeId, symbols: &Symbols, diags: &mut Vec<Diagnostic>) {
+    let name = ast.node(decl).text().unwrap_or("");
+    if let Some(methods) = symbols.result_builder(name) {
+        let has_fold = methods.has("buildBlock")
+            || (methods.has_arity("buildPartialBlock", 1)
+                && methods.has_arity("buildPartialBlock", 2));
+        if !has_fold {
+            diags.push(diag(
+                ast,
+                decl,
+                format!(
+                    "result builder '{name}' must provide a static 'buildBlock' method (or the 'buildPartialBlock' pair)"
+                ),
+            ));
+        }
+    }
+    // Signature checks on each declared build method.
+    for func in builder_member_funcs(ast, decl) {
+        let Some(mname) = ast.node(func).text() else {
+            continue;
+        };
+        if !BUILD_METHODS.contains(&mname) {
+            continue;
+        }
+        let is_static = ast.node(func).modifiers().iter().any(|m| m == "static");
+        if !is_static {
+            diags.push(diag(
+                ast,
+                func,
+                format!("result-builder method '{mname}' must be declared 'static'"),
+            ));
+        }
+        if mname == "buildEither" {
+            let first = child_ids(ast, func)
+                .into_iter()
+                .find(|c| ast.node(*c).kind() == NodeKind::Param);
+            let label = first.map(|p| param_effective_label(ast, p));
+            if !matches!(label.as_deref(), Some("first") | Some("second")) {
+                diags.push(diag(
+                    ast,
+                    func,
+                    "'buildEither' must take a single 'first:' or 'second:' parameter".to_string(),
+                ));
+            }
+        }
+    }
+}
+
+/// The member `FuncDecl`s of a type, whether direct children or nested in a
+/// member `Block`.
+fn builder_member_funcs(ast: &Ast, decl: NodeId) -> Vec<NodeId> {
+    let mut funcs = Vec::new();
+    for c in child_ids(ast, decl) {
+        match ast.node(c).kind() {
+            NodeKind::FuncDecl => funcs.push(c),
+            NodeKind::Block => funcs.extend(builder_member_funcs(ast, c)),
+            _ => {}
+        }
+    }
+    funcs
+}
+
+/// A parameter's effective argument label: its explicit label, or its name when
+/// none is written (Swift's `name:` rule).
+fn param_effective_label(ast: &Ast, param: NodeId) -> String {
+    ast.node(param)
+        .arg_label()
+        .or_else(|| ast.node(param).text())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// A builder attribute on a parameter is only valid when the parameter has a
+/// function type (`() -> T`).
+fn validate_param_builder_attr(
+    ast: &Ast,
+    param: NodeId,
+    symbols: &Symbols,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let has_builder_attr = ast
+        .node(param)
+        .children()
+        .filter(|c| c.kind() == NodeKind::Attribute)
+        .filter_map(|c| c.text())
+        .any(|name| symbols.result_builder(name).is_some());
+    if !has_builder_attr {
+        return;
+    }
+    let is_function_typed = child_ids(ast, param).into_iter().any(|c| {
+        ast.node(c).kind() == NodeKind::TypeRef
+            && ast.node(c).text().is_some_and(|t| t.contains("->"))
+    });
+    if !is_function_typed {
+        diags.push(diag(
+            ast,
+            param,
+            "result-builder attribute can only be applied to a parameter of function type"
+                .to_string(),
+        ));
+    }
+}
+
+/// A builder body may not contain `while`/`repeat` loops, and may not mix an
+/// explicit `return` with other components (a sole `return` is allowed).
+fn validate_body(ast: &Ast, decl: NodeId, diags: &mut Vec<Diagnostic>) {
+    let Some(body) = decl_body_block(ast, decl) else {
+        return;
+    };
+    let stmts = child_ids(ast, body);
+    let returns: Vec<NodeId> = stmts
+        .iter()
+        .copied()
+        .filter(|&s| ast.node(s).kind() == NodeKind::ReturnStmt)
+        .collect();
+    let components = stmts
+        .iter()
+        .filter(|&&s| is_component_stmt(ast.node(s).kind()))
+        .count();
+    if !returns.is_empty() && (components > 0 || returns.len() > 1) {
+        diags.push(diag(
+            ast,
+            returns[0],
+            "cannot use an explicit 'return' statement mixed with other components in a result-builder body"
+                .to_string(),
+        ));
+    }
+    // `while`/`repeat` anywhere in the body (including nested blocks).
+    collect_unsupported_loops(ast, body, diags);
+}
+
+fn is_component_stmt(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::ExprStmt
+            | NodeKind::IfStmt
+            | NodeKind::ForStmt
+            | NodeKind::SwitchStmt
+            | NodeKind::WhileStmt
+            | NodeKind::RepeatStmt
+    )
+}
+
+fn collect_unsupported_loops(ast: &Ast, node: NodeId, diags: &mut Vec<Diagnostic>) {
+    for child in child_ids(ast, node) {
+        match ast.node(child).kind() {
+            NodeKind::WhileStmt | NodeKind::RepeatStmt => {
+                diags.push(diag(
+                    ast,
+                    child,
+                    "'while'/'repeat' loops are not supported in a result-builder body".to_string(),
+                ));
+            }
+            _ => {}
+        }
+        collect_unsupported_loops(ast, child, diags);
     }
 }
 
@@ -1244,6 +1455,115 @@ mod tests {
         let callee = ret_call.children().next().unwrap();
         assert_eq!(callee.text(), Some("buildBlock"));
         assert_eq!(callee.children().next().unwrap().text(), Some("Inner"));
+    }
+
+    fn diags_of(src: &str) -> Vec<Diagnostic> {
+        let mut ast = parse(src).expect("parse ok");
+        analyze(&mut ast)
+    }
+
+    #[test]
+    fn builder_attr_on_non_function_param_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             func wrap(@SB _ c: Int) -> String { \"x\" }",
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("function type")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn function_typed_builder_param_is_accepted() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             func wrap(@SB _ c: () -> String) -> String { c() }",
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains("function type")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn builder_missing_build_block_is_diagnosed() {
+        let diags =
+            diags_of("@resultBuilder\nstruct Bad {\n static func buildExpression(_ v: String) -> String { v } }");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("must provide a static 'buildBlock'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn non_static_build_method_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n func buildBlock(_ p: String...) -> String { \"\" } }",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("must be declared 'static'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn build_either_without_first_or_second_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n\
+             static func buildBlock(_ p: String...) -> String { \"\" }\n\
+             static func buildEither(_ v: String) -> String { v } }",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("'first:' or 'second:'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn while_loop_in_builder_body_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             @SB\nfunc g() -> String {\n while true { \"x\" }\n }",
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("'while'/'repeat'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn return_mixed_with_components_is_diagnosed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             @SB\nfunc g() -> String {\n \"a\"\n return \"b\"\n }",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("explicit 'return'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn sole_return_in_builder_body_is_allowed() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             @SB\nfunc g() -> String {\n return \"b\"\n }",
+        );
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("explicit 'return'")),
+            "{diags:?}"
+        );
     }
 
     #[test]
