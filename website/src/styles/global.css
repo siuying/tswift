@@ -3,7 +3,7 @@
   /* Warm, characterful canvas — palette drawn from the swallow mascot:
      burnt-orange throat, steel-blue head, cream belly, tan/purple wings.
      Dark navy code panels (the bird's tail) are the signature motif. */
-  --bg:        #faf8f3;            /* warm ivory — the belly */
+  --bg:        #ffffff;            /* pure white — blends the mascot's backdrop */
   --surface:   #ffffff;
   --surface2:  #f4efe6;            /* warm sand */
   --border:    rgba(48,38,28,.12);
@@ -85,15 +85,16 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
 /* ── Nav ─────────────────────────────────────────────────────────── */
 .site-nav {
   position: sticky; top: 0; z-index: 100;
-  background: rgba(250,248,243,.82);
+  background: rgba(255,255,255,.82);
   backdrop-filter: blur(18px) saturate(140%);
   border-bottom: 1px solid var(--line);
 }
 
 .nav-logo .logo-bird {
-  width: 26px; height: 26px;
-  object-fit: contain;
-  margin: -2px 0;
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(48,38,28,.22);
 }
 
 .nav-inner {
@@ -177,33 +178,25 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
   max-width: 1200px; margin: 0 auto;
   position: relative;
 }
-.hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
-  align-items: center;
-  gap: 2.5rem;
+/* Copy sits in normal flow at ~half width; the mascot floats behind it. */
+.hero-grid { position: relative; }
+.hero-copy {
+  position: relative; z-index: 2;
+  max-width: 50%;
 }
-.hero-copy { max-width: 40rem; }
 
-/* Mascot — the swallow, with a soft warm halo echoing its throat/wing hues */
+/* Mascot — the swallow drifts in the right-hand background, behind the copy */
 .hero-mascot {
-  position: relative;
-  display: flex; align-items: center; justify-content: center;
-}
-.hero-mascot::before {
-  content: '';
-  position: absolute; inset: 0;
-  background:
-    radial-gradient(closest-side, rgba(217,98,46,.18), transparent 70%) 35% 40%/70% 70% no-repeat,
-    radial-gradient(closest-side, rgba(58,90,130,.16), transparent 70%) 65% 55%/75% 75% no-repeat,
-    radial-gradient(closest-side, rgba(94,79,134,.12), transparent 70%) 50% 65%/85% 85% no-repeat;
-  filter: blur(6px);
-  z-index: 0;
+  position: absolute; z-index: 1;
+  top: 50%; right: 0;
+  transform: translateY(-50%);
+  width: 62%;
+  pointer-events: none;
 }
 .hero-mascot img {
-  position: relative; z-index: 1;
-  width: 100%; max-width: 480px; height: auto;
-  filter: drop-shadow(0 18px 30px rgba(48,38,28,.16));
+  width: 100%; height: auto;
+  /* bleed the wingspan off the right edge of the viewport */
+  margin-right: -10%;
   animation: mascot-float 6s ease-in-out infinite;
 }
 @keyframes mascot-float {
@@ -211,9 +204,13 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
   50%      { transform: translateY(-12px) rotate(.4deg); }
 }
 @media (max-width: 880px) {
-  .hero-grid { grid-template-columns: 1fr; gap: 1rem; }
-  .hero-mascot { order: -1; }
-  .hero-mascot img { max-width: 320px; }
+  .hero-copy { max-width: 100%; }
+  .hero-mascot {
+    position: static; transform: none;
+    width: 80%; max-width: 420px;
+    margin: 0 auto 1.5rem;
+  }
+  .hero-mascot img { margin-right: 0; }
 }
 .hero-eyebrow {
   display: inline-flex; align-items: center; gap: .55rem;
