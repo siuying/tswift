@@ -21,6 +21,10 @@
 
 use std::rc::Rc;
 
+/// Upper bound on a counted-quantifier repeat (`{n}` / `{n,m}`). Larger counts
+/// are rejected so a pattern cannot expand into an unbounded amount of bytecode.
+const MAX_REPEAT: usize = 1000;
+
 /// A compiled regular expression: its source pattern, byte-code program, and
 /// capture-group count (group 0 is the whole match).
 #[derive(Debug, Clone)]
@@ -273,7 +277,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a `{n}` / `{n,}` / `{n,m}` quantifier. Returns `Ok(None)` to treat
-    /// a `{` that is not a valid counted quantifier as a literal brace.
+    /// a `{` that is not a valid counted quantifier as a literal brace, and
+    /// `Err` for a well-formed but invalid range (`max < min`) or counts that
+    /// would expand to an unreasonable amount of bytecode.
     fn parse_counted(&mut self) -> Result<Option<(usize, Option<usize>)>, String> {
         let save = self.pos;
         self.bump(); // '{'
@@ -295,10 +301,25 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        if result.is_none() {
-            self.pos = save; // not a quantifier; rewind so `{` is literal
+        match result {
+            None => {
+                self.pos = save; // not a quantifier; rewind so `{` is literal
+                Ok(None)
+            }
+            Some((min, max)) => {
+                if let Some(max) = max {
+                    if max < min {
+                        return Err(format!("invalid quantifier range {{{min},{max}}}"));
+                    }
+                }
+                if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
+                    return Err(format!(
+                        "quantifier count exceeds the maximum of {MAX_REPEAT}"
+                    ));
+                }
+                Ok(Some((min, max)))
+            }
         }
-        Ok(result)
     }
 
     fn parse_int(&mut self) -> Option<usize> {
@@ -306,7 +327,9 @@ impl<'a> Parser<'a> {
         let mut n: usize = 0;
         while let Some(c) = self.peek() {
             if let Some(d) = c.to_digit(10) {
-                n = n * 10 + d as usize;
+                // Saturate rather than overflow; `parse_counted` rejects counts
+                // above `MAX_REPEAT` anyway.
+                n = n.saturating_mul(10).saturating_add(d as usize);
                 self.bump();
             } else {
                 break;
@@ -601,10 +624,25 @@ fn patch_split(prog: &mut [Inst], at: usize, body: usize, skip: usize, greedy: b
 /// a match was found (with `saves` populated on success).
 fn exec(
     prog: &[Inst],
+    pc: usize,
+    input: &[char],
+    pos: usize,
+    saves: &mut Vec<Option<usize>>,
+) -> bool {
+    // `active` holds the `(split_pc, pos)` states currently on the recursion
+    // stack, so an empty-width quantifier body (e.g. `(a?)*`, `()*`) cannot
+    // re-enter the same split at the same position and recurse forever.
+    let mut active = std::collections::HashSet::new();
+    exec_inner(prog, pc, input, pos, saves, &mut active)
+}
+
+fn exec_inner(
+    prog: &[Inst],
     mut pc: usize,
     input: &[char],
     mut pos: usize,
     saves: &mut Vec<Option<usize>>,
+    active: &mut std::collections::HashSet<(usize, usize)>,
 ) -> bool {
     loop {
         match &prog[pc] {
@@ -658,7 +696,7 @@ fn exec(
             Inst::Save(slot) => {
                 let prev = saves[*slot];
                 saves[*slot] = Some(pos);
-                if exec(prog, pc + 1, input, pos, saves) {
+                if exec_inner(prog, pc + 1, input, pos, saves, active) {
                     return true;
                 }
                 saves[*slot] = prev; // backtrack: restore the slot
@@ -666,7 +704,17 @@ fn exec(
             }
             Inst::Jmp(target) => pc = *target,
             Inst::Split(a, b) => {
-                if exec(prog, *a, input, pos, saves) {
+                let key = (pc, pos);
+                // Re-entering the same split at the same position means the body
+                // made no progress; take the exit branch instead of looping.
+                if active.contains(&key) {
+                    pc = *b;
+                    continue;
+                }
+                active.insert(key);
+                let matched = exec_inner(prog, *a, input, pos, saves, active);
+                active.remove(&key);
+                if matched {
                     return true;
                 }
                 pc = *b;
@@ -737,6 +785,33 @@ mod tests {
     fn lazy_quantifier() {
         let re = Regex::compile(r"a+?").unwrap();
         assert_eq!(matched(&re, "aaa").as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn counted_quantifier_validation() {
+        // Well-formed range works.
+        assert!(Regex::compile(r"a{2,3}").is_ok());
+        // max < min is rejected.
+        assert!(Regex::compile(r"a{3,2}").is_err());
+        // Excessive counts are rejected rather than expanded.
+        assert!(Regex::compile(r"a{100000}").is_err());
+        assert!(Regex::compile(r"a{0,100000}").is_err());
+        // A `{` that is not a quantifier stays a literal brace.
+        assert_eq!(matched(&Regex::compile(r"a{b").unwrap(), "a{b").as_deref(), Some("a{b"));
+    }
+
+    #[test]
+    fn nullable_quantifier_does_not_loop_forever() {
+        // Empty-width quantifier bodies must terminate rather than recurse
+        // forever / overflow the stack.
+        let re = Regex::compile(r"(a?)*").unwrap();
+        assert_eq!(matched(&re, "aaab").as_deref(), Some("aaa"));
+        let re = Regex::compile(r"()*").unwrap();
+        assert_eq!(matched(&re, "xyz").as_deref(), Some(""));
+        let re = Regex::compile(r"(a*)*b").unwrap();
+        assert_eq!(matched(&re, "aaab").as_deref(), Some("aaab"));
+        let re = Regex::compile(r"(a*)*c").unwrap();
+        assert!(re.find(&chars("aaab")).is_none());
     }
 
     #[test]

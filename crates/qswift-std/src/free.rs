@@ -7,7 +7,6 @@
 //! `swap` and `isKnownUniquelyReferenced` need caller `Place`s / reference
 //! identity and are served directly by the interpreter, not through this seam.
 
-use std::cmp::Ordering;
 use std::io::BufRead;
 use std::rc::Rc;
 
@@ -99,13 +98,13 @@ fn output_parts(args: Vec<Arg>, def_sep: &str, def_term: &str) -> (Vec<SwiftValu
 // ---- comparison ------------------------------------------------------------
 
 /// `min(_:_:...)` — the least of two or more comparable values.
-fn min(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    fold_extreme(args, Ordering::Less)
+fn min(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    fold_extreme(ctx, args, false)
 }
 
 /// `max(_:_:...)` — the greatest of two or more comparable values.
-fn max(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    fold_extreme(args, Ordering::Greater)
+fn max(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    fold_extreme(ctx, args, true)
 }
 
 /// `abs(_:)` — magnitude of an integer or floating-point value.
@@ -123,14 +122,21 @@ fn abs(_ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
     }
 }
 
-/// Reduce 2+ comparable arguments to the one matching `want` (`Less` = min).
-fn fold_extreme(args: Vec<Arg>, want: Ordering) -> StdResult {
+/// Reduce 2+ comparable arguments to an extreme. `want_greater` selects `max`;
+/// otherwise `min`. Ordering goes through `ctx.value_less_than`, so user types
+/// conforming to `Comparable` (a `static func <`) work, not just scalars. Ties
+/// mirror Swift: `min` keeps the earlier value, `max` the later.
+fn fold_extreme(ctx: &mut dyn StdContext, args: Vec<Arg>, want_greater: bool) -> StdResult {
     let mut values = args.into_iter().map(|a| a.value);
     let mut best = values
         .next()
         .ok_or_else(|| type_err("min/max requires at least two arguments".into()))?;
     for v in values {
-        if order(&v, &best) == Some(want) {
+        let less = ctx
+            .value_less_than(&v, &best)
+            .ok_or_else(|| type_err("min/max arguments are not comparable".into()))?;
+        // min replaces when `v < best`; max replaces when `v >= best`.
+        if if want_greater { !less } else { less } {
             best = v;
         }
     }
@@ -392,19 +398,6 @@ fn as_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             let end = if *inclusive { *hi + 1 } else { *hi };
             Some((*lo..end).map(SwiftValue::int).collect())
         }
-        _ => None,
-    }
-}
-
-/// Total order over the comparable scalar values, mirroring Swift's `<`.
-fn order(a: &SwiftValue, b: &SwiftValue) -> Option<Ordering> {
-    match (a, b) {
-        (SwiftValue::Int(x), SwiftValue::Int(y)) => Some(x.raw.cmp(&y.raw)),
-        (SwiftValue::Double(x), SwiftValue::Double(y)) => x.partial_cmp(y),
-        (SwiftValue::Int(x), SwiftValue::Double(y)) => (x.raw as f64).partial_cmp(y),
-        (SwiftValue::Double(x), SwiftValue::Int(y)) => x.partial_cmp(&(y.raw as f64)),
-        (SwiftValue::Str(x), SwiftValue::Str(y)) => Some(x.cmp(y)),
-        (SwiftValue::Bool(x), SwiftValue::Bool(y)) => Some(x.cmp(y)),
         _ => None,
     }
 }

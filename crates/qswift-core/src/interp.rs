@@ -135,6 +135,10 @@ struct FuncDef {
     /// Names of the function's generic type parameters (`<T: P, U>` → `[T, U]`),
     /// used to bind placeholders to concrete argument types at the call.
     generic_params: Vec<String>,
+    /// Element labels of a tuple return type (`-> (lo: Int, hi: Int)`), applied
+    /// to a returned tuple so `f().lo` works even when the `return` expression
+    /// itself was unlabeled.
+    ret_tuple_labels: Option<Vec<Option<String>>>,
 }
 
 /// A stored property of a struct.
@@ -1538,6 +1542,11 @@ impl<'w> Interpreter<'w> {
         }
         let params = parse_params(node);
         let body = node.children().find(|c| c.kind() == NodeKind::Block);
+        let ret_tuple_labels = node
+            .children()
+            .find(|c| matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeTuple))
+            .and_then(|t| t.text())
+            .and_then(|t| tuple_type_labels(&t));
         let captured = self.env.capture();
         let generic_params = generic_param_names(node);
         let id = self.funcs.len();
@@ -1546,6 +1555,7 @@ impl<'w> Interpreter<'w> {
             body,
             captured,
             generic_params,
+            ret_tuple_labels,
         });
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
@@ -3185,9 +3195,12 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Str(s) => {
                 let i = subscript_index(indices)?;
-                s.chars()
+                // Index by extended grapheme cluster (Swift `Character`), so
+                // string indexing agrees with `count` and iteration.
+                crate::graphemes(s)
+                    .into_iter()
                     .nth(i)
-                    .map(|c| SwiftValue::Str(c.to_string()))
+                    .map(SwiftValue::Str)
                     .ok_or_else(|| trap(format!("string index {i} out of range")))
             }
             SwiftValue::Struct(obj) => {
@@ -3593,6 +3606,21 @@ impl<'w> Interpreter<'w> {
                             },
                         ];
                         return self.call_struct_method(SwiftValue::Void, &tn, &op, args, None);
+                    }
+                    // Comparable derives `>`, `<=`, `>=` (and `<`) from a single
+                    // `static func <`, so a type that defines only `<` still
+                    // supports the other ordering operators.
+                    if matches!(op.as_str(), "<" | ">" | "<=" | ">=") {
+                        let derived = match op.as_str() {
+                            "<" => self.value_less_than(&l, &r),
+                            ">" => self.value_less_than(&r, &l),
+                            "<=" => self.value_less_than(&r, &l).map(|gt| !gt),
+                            ">=" => self.value_less_than(&l, &r).map(|lt| !lt),
+                            _ => None,
+                        };
+                        if let Some(b) = derived {
+                            return Ok(SwiftValue::Bool(b));
+                        }
                     }
                 }
                 // A user-defined (custom) operator is a function named after it.
@@ -4121,7 +4149,7 @@ impl<'w> Interpreter<'w> {
                 .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
                 .collect()),
             SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+            SwiftValue::Str(s) => Ok(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
             }
@@ -4704,7 +4732,7 @@ impl<'w> Interpreter<'w> {
         }
         match (&value, member.as_str()) {
             // Array `count`/`isEmpty` are served by the property registry (S4).
-            (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
+            (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(crate::graphemes(s).len() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
             (SwiftValue::Tuple(items, _), idx) if idx.parse::<usize>().is_ok() => {
                 let i: usize = idx.parse().unwrap();
@@ -5318,6 +5346,10 @@ impl<'w> Interpreter<'w> {
         self.env.restore(saved_env);
         self.class_ctx.pop();
         match result {
+            // A failing `super.init?` (`return nil`) must propagate so the
+            // calling subclass initializer also fails, rather than producing a
+            // half-built instance.
+            Err(Signal::Return(SwiftValue::Nil)) => Err(Signal::Return(SwiftValue::Nil)),
             Ok(_) | Err(Signal::Return(_)) => Ok(()),
             Err(e) => Err(e),
         }
@@ -5635,9 +5667,18 @@ impl<'w> Interpreter<'w> {
         self.env = saved;
         self.depth -= 1;
 
-        let (value, writes) = outcome?;
+        let (mut value, writes) = outcome?;
         for (place, val) in writes {
             self.write_place(&place, val)?;
+        }
+        // Apply the declared tuple return labels so `f().lo` resolves even when
+        // the returned tuple literal carried no labels of its own.
+        if let (SwiftValue::Tuple(items, labels), Some(decl)) =
+            (&mut value, &self.funcs[id].ret_tuple_labels)
+        {
+            if items.len() == decl.len() && labels.iter().all(Option::is_none) {
+                *labels = decl.clone();
+            }
         }
         Ok(value)
     }
@@ -6040,7 +6081,7 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             let end = if *inclusive { *hi + 1 } else { *hi };
             Some((*lo..end).map(SwiftValue::int).collect())
         }
-        SwiftValue::Str(s) => Some(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+        SwiftValue::Str(s) => Some(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
         // A dictionary is a sequence of `(key, value)` tuples.
         SwiftValue::Dict(pairs) => Some(
             pairs
@@ -6180,6 +6221,61 @@ fn generic_param_names(node: &Node<'static>) -> Vec<String> {
             (!name.is_empty()).then(|| name.to_string())
         })
         .collect()
+}
+
+/// Parse the element labels of a tuple type written as `(lo: Int, hi: Int)`.
+/// Returns `None` when the text is not a labeled tuple of two or more elements
+/// (a single parenthesized type is not a tuple, and a function type `->` is
+/// excluded). Each element yields `Some(label)` or `None` when unlabeled.
+fn tuple_type_labels(text: &str) -> Option<Vec<Option<String>>> {
+    let inner = text.trim().strip_prefix('(')?.strip_suffix(')')?;
+    // Split on top-level commas, tracking bracket depth so nested tuples,
+    // arrays, dictionaries, and generics are not split apart.
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for ch in inner.chars() {
+        match ch {
+            '(' | '[' | '<' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ')' | ']' | '>' => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(ch),
+        }
+    }
+    parts.push(cur);
+    if parts.len() < 2 {
+        return None;
+    }
+    let mut labels = Vec::with_capacity(parts.len());
+    let mut any = false;
+    for part in parts {
+        let part = part.trim();
+        // A function type element rules out a plain tuple return.
+        if part.contains("->") {
+            return None;
+        }
+        // `name: Type` — the label is a leading identifier before a top-level
+        // colon. Anything else (a bare type) is unlabeled.
+        let label = part.split_once(':').and_then(|(name, _)| {
+            let name = name.trim();
+            (!name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_'))
+            .then(|| name.to_string())
+        });
+        any |= label.is_some();
+        labels.push(label);
+    }
+    any.then_some(labels)
 }
 
 fn clone_params(params: &[Param]) -> Vec<Param> {
@@ -6512,6 +6608,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn tuple_type_labels_parses_labeled_tuples() {
+        assert_eq!(
+            tuple_type_labels("(lo: Int, hi: Int)"),
+            Some(vec![Some("lo".into()), Some("hi".into())])
+        );
+        // Mixed labeled/unlabeled.
+        assert_eq!(
+            tuple_type_labels("(Int, value: String)"),
+            Some(vec![None, Some("value".into())])
+        );
+        // Nested brackets are not split at their inner commas.
+        assert_eq!(
+            tuple_type_labels("(a: (Int, Int), b: [Int: Int])"),
+            Some(vec![Some("a".into()), Some("b".into())])
+        );
+        // Not tuples / no labels.
+        assert_eq!(tuple_type_labels("(Int, Int)"), None);
+        assert_eq!(tuple_type_labels("(Int)"), None);
+        assert_eq!(tuple_type_labels("Int"), None);
+        // A function type is not a labeled tuple return.
+        assert_eq!(tuple_type_labels("(a: Int) -> Int"), None);
     }
 
     #[test]

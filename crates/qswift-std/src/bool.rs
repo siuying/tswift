@@ -34,11 +34,17 @@ fn random(c: &mut dyn StdContext, a: Vec<Arg>) -> StdResult {
 
 type Outcomes = Result<Outcome, StdError>;
 
-/// `Bool.toggle()` — flip the value in place.
-fn toggle(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+/// `Bool.toggle()` — flip the value in place. Returns `Void` (`()`), matching
+/// Swift's `mutating func toggle()`; it takes no arguments.
+fn toggle(_c: &mut dyn StdContext, recv: SwiftValue, a: Vec<SwiftValue>) -> Outcomes {
+    if !a.is_empty() {
+        return Err(StdError::Error(EvalError::Type(
+            "Bool.toggle() takes no arguments".into(),
+        )));
+    }
     let b = as_bool(&recv)?;
     Ok(Outcome {
-        result: SwiftValue::Nil,
+        result: SwiftValue::Void,
         receiver: SwiftValue::Bool(!b),
     })
 }
@@ -111,9 +117,15 @@ mod tests {
         let mut c = ctx();
         let out = toggle(&mut c, SwiftValue::Bool(true), vec![]).unwrap();
         assert_eq!(out.receiver, SwiftValue::Bool(false));
-        assert_eq!(out.result, SwiftValue::Nil);
+        assert_eq!(out.result, SwiftValue::Void);
         let out = toggle(&mut c, SwiftValue::Bool(false), vec![]).unwrap();
         assert_eq!(out.receiver, SwiftValue::Bool(true));
+    }
+
+    #[test]
+    fn toggle_rejects_arguments() {
+        let mut c = ctx();
+        assert!(toggle(&mut c, SwiftValue::Bool(true), vec![SwiftValue::int(1)]).is_err());
     }
 
     #[test]

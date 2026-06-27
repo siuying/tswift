@@ -76,10 +76,17 @@ fn truncate(value: &str, max: usize) -> String {
         return value.to_string();
     }
 
+    // Slice on a UTF-8 char boundary at or before `max`; a raw byte slice would
+    // panic when the limit falls inside a multibyte character.
+    let mut end = max;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
     format!(
         "{}\n\n[prototype truncated {} bytes]",
-        &value[..max],
-        value.len() - max
+        &value[..end],
+        value.len() - end
     )
 }
 
@@ -213,6 +220,28 @@ mod tests {
         // compile.ok is the first "ok" field and must be true.
         assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
         assert!(json.contains("\"run\":{\"ok\":false"), "json={json}");
+    }
+
+    #[test]
+    fn truncate_respects_utf8_boundaries() {
+        // A multibyte character straddling the limit must not panic; truncation
+        // falls back to the previous char boundary.
+        let s = "a\u{1F600}b"; // 'a' + 4-byte emoji + 'b'
+        // max=2 lands inside the emoji (bytes 1..5); expect only "a" kept.
+        let out = truncate(s, 2);
+        assert!(out.starts_with('a'), "out={out}");
+        assert!(out.contains("truncated"), "out={out}");
+        assert!(!out.contains('\u{1F600}'), "out={out}");
+        // A limit on a boundary keeps the whole prefix.
+        assert_eq!(truncate(s, s.len()), s);
+    }
+
+    #[test]
+    fn runs_with_multibyte_output() {
+        // End-to-end: emoji/CJK output must round-trip through the JSON builder
+        // without panicking on truncation or escaping.
+        let json = run_swift_impl("print(\"\u{1F600}\u{4F60}\u{597D}\")");
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
     }
 
     #[test]

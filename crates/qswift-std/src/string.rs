@@ -28,10 +28,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "last", last);
 
     // `Character` predicate properties. A Character is a single-grapheme
-    // String, so these classify its leading Unicode scalar.
+    // String, so these classify the whole cluster: `isASCII` requires every
+    // scalar to be ASCII, and digit-like predicates require a single scalar so
+    // an enclosed digit (e.g. a keycap `1\u{20E3}`) is not misread as a digit.
     interp.register_property(s, "isLetter", is_letter);
     interp.register_property(s, "isNumber", is_number);
-    interp.register_property(s, "isWholeNumber", is_number);
+    interp.register_property(s, "isWholeNumber", is_whole_number);
     interp.register_property(s, "isWhitespace", is_whitespace);
     interp.register_property(s, "isNewline", is_newline);
     interp.register_property(s, "isUppercase", is_uppercase);
@@ -74,80 +76,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
 }
 
-/// Segment a string into extended grapheme clusters (pragmatic UAX #29 subset).
-pub fn graphemes(s: &str) -> Vec<String> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let start = i;
-        i += 1;
-        loop {
-            if i >= chars.len() {
-                break;
-            }
-            let prev = chars[i - 1];
-            let cur = chars[i];
-            // CRLF stays together.
-            if prev == '\r' && cur == '\n' {
-                i += 1;
-                continue;
-            }
-            // Extend (combining marks / variation selectors) and ZWJ join.
-            if is_extend(cur) || cur == ZWJ {
-                i += 1;
-                continue;
-            }
-            // A ZWJ glues whatever follows (emoji sequences).
-            if prev == ZWJ {
-                i += 1;
-                continue;
-            }
-            // Pair regional indicators (flags): join only when the run from the
-            // cluster start is currently odd in length.
-            if is_regional(prev) && is_regional(cur) {
-                let run = chars[start..i]
-                    .iter()
-                    .rev()
-                    .take_while(|c| is_regional(**c))
-                    .count();
-                if run % 2 == 1 {
-                    i += 1;
-                    continue;
-                }
-            }
-            break;
-        }
-        out.push(chars[start..i].iter().collect());
-    }
-    out
-}
-
-const ZWJ: char = '\u{200D}';
-
-fn is_regional(c: char) -> bool {
-    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
-}
-
-/// Combining marks and variation selectors that extend a grapheme cluster.
-fn is_extend(c: char) -> bool {
-    matches!(c as u32,
-        0x0300..=0x036F   // combining diacritical marks
-        | 0x0483..=0x0489
-        | 0x0591..=0x05BD
-        | 0x0610..=0x061A
-        | 0x064B..=0x065F
-        | 0x0670
-        | 0x06D6..=0x06DC
-        | 0x0E31 | 0x0E34..=0x0E3A
-        | 0x1AB0..=0x1AFF // combining diacritical marks extended
-        | 0x1DC0..=0x1DFF // combining diacritical marks supplement
-        | 0x20D0..=0x20FF // combining diacritical marks for symbols
-        | 0xFE00..=0xFE0F // variation selectors
-        | 0xFE20..=0xFE2F // combining half marks
-        | 0xE0100..=0xE01EF // variation selectors supplement
-    )
-}
+/// Segment a string into extended grapheme clusters (Swift `Character`s).
+///
+/// Re-exported from `qswift-core` so the interpreter's string iteration and
+/// these `String` intrinsics segment identically.
+pub use qswift_core::graphemes;
 
 fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
     match recv {
@@ -199,9 +132,28 @@ fn first_scalar(recv: &SwiftValue) -> Result<Option<char>, StdError> {
     Ok(str_of(recv)?.chars().next())
 }
 
+/// The single Unicode scalar of a value, or `None` if it is empty or a
+/// multi-scalar grapheme cluster (combining marks, enclosing keycaps, ZWJ
+/// sequences, …). Used by predicates whose concept applies only to a lone
+/// scalar, so an adorned digit/letter is not misclassified.
+fn lone_scalar(recv: &SwiftValue) -> Result<Option<char>, StdError> {
+    let s = str_of(recv)?;
+    let mut it = s.chars();
+    Ok(match (it.next(), it.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    })
+}
+
 /// Classify the leading scalar with `pred`; an empty value is `false`.
 fn classify(recv: SwiftValue, pred: impl Fn(char) -> bool) -> StdResult {
     Ok(SwiftValue::Bool(first_scalar(&recv)?.is_some_and(pred)))
+}
+
+/// Classify a value that must be a single scalar; multi-scalar clusters and
+/// empty values are `false`.
+fn classify_lone(recv: SwiftValue, pred: impl Fn(char) -> bool) -> StdResult {
+    Ok(SwiftValue::Bool(lone_scalar(&recv)?.is_some_and(pred)))
 }
 
 fn is_letter(recv: SwiftValue) -> StdResult {
@@ -209,7 +161,13 @@ fn is_letter(recv: SwiftValue) -> StdResult {
 }
 
 fn is_number(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_numeric())
+    classify_lone(recv, |c| c.is_numeric())
+}
+
+/// `Character.isWholeNumber` — a digit with an integer value (e.g. `7`), unlike
+/// `isNumber` which also accepts fractions like `½`.
+fn is_whole_number(recv: SwiftValue) -> StdResult {
+    classify_lone(recv, |c| c.to_digit(10).is_some())
 }
 
 fn is_whitespace(recv: SwiftValue) -> StdResult {
@@ -233,12 +191,15 @@ fn is_lowercase(recv: SwiftValue) -> StdResult {
     classify(recv, |c| c.is_lowercase())
 }
 
+/// `Character.isASCII` — true only when every scalar of the cluster is ASCII,
+/// so `e\u{301}` (a combining accent) is not ASCII.
 fn is_ascii(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_ascii())
+    let s = str_of(&recv)?;
+    Ok(SwiftValue::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii())))
 }
 
 fn is_hex_digit(recv: SwiftValue) -> StdResult {
-    classify(recv, |c| c.is_ascii_hexdigit())
+    classify_lone(recv, |c| c.is_ascii_hexdigit())
 }
 
 // ---- transforms ------------------------------------------------------------
@@ -532,6 +493,23 @@ mod tests {
         assert_eq!(is_hex_digit(s("G")).unwrap(), f);
         // An empty value classifies as false rather than trapping.
         assert_eq!(is_letter(s("")).unwrap(), f);
+    }
+
+    #[test]
+    fn character_predicates_consider_whole_cluster() {
+        let t = SwiftValue::Bool(true);
+        let f = SwiftValue::Bool(false);
+        // isASCII looks at every scalar: a combining accent is not ASCII.
+        assert_eq!(is_ascii(s("e\u{301}")).unwrap(), f);
+        // A digit with an enclosing keycap is not a number/whole-number/hex.
+        let keycap = s("1\u{20E3}");
+        assert_eq!(is_number(keycap.clone()).unwrap(), f);
+        assert_eq!(is_whole_number(keycap.clone()).unwrap(), f);
+        assert_eq!(is_hex_digit(keycap).unwrap(), f);
+        // isWholeNumber rejects fractions that isNumber accepts.
+        assert_eq!(is_number(s("\u{00BD}")).unwrap(), t); // ½ is a number
+        assert_eq!(is_whole_number(s("\u{00BD}")).unwrap(), f);
+        assert_eq!(is_whole_number(s("7")).unwrap(), t);
     }
 
     #[test]
