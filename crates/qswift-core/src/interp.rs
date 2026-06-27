@@ -132,6 +132,9 @@ struct FuncDef {
     params: Vec<Param>,
     body: Option<Node<'static>>,
     captured: Vec<Scope>,
+    /// Names of the function's generic type parameters (`<T: P, U>` → `[T, U]`),
+    /// used to bind placeholders to concrete argument types at the call.
+    generic_params: Vec<String>,
 }
 
 /// A stored property of a struct.
@@ -294,6 +297,10 @@ pub struct Interpreter<'w> {
     static_ctx: Vec<String>,
     /// Stack of class names for the methods currently executing (for `super`).
     class_ctx: Vec<String>,
+    /// Stack of generic type-parameter substitutions for the calls currently
+    /// executing, so a static reference through a generic placeholder
+    /// (`T.zero()` where `T == Vec2`) resolves to the concrete type.
+    type_bindings: Vec<HashMap<String, String>>,
     /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
@@ -367,6 +374,7 @@ impl<'w> Interpreter<'w> {
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             env: Env::new(),
+            type_bindings: Vec::new(),
             funcs: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
@@ -1462,11 +1470,13 @@ impl<'w> Interpreter<'w> {
         let params = parse_params(node);
         let body = node.children().find(|c| c.kind() == NodeKind::Block);
         let captured = self.env.capture();
+        let generic_params = generic_param_names(node);
         let id = self.funcs.len();
         self.funcs.push(FuncDef {
             params,
             body,
             captured,
+            generic_params,
         });
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
@@ -4245,6 +4255,9 @@ impl<'w> Interpreter<'w> {
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
+                // A generic placeholder (`T.defaultValue`) resolves to its bound
+                // concrete type for the current call.
+                let type_name = self.resolve_type_alias(&type_name).unwrap_or(type_name);
                 if self.env.get(&type_name).is_none() {
                     // `Type.self` — a metatype value naming the type.
                     if member == "self" && self.is_type_name(&type_name) {
@@ -4704,6 +4717,8 @@ impl<'w> Interpreter<'w> {
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
+                // A generic placeholder (`T.zero()`) resolves to its bound type.
+                let tn = self.resolve_type_alias(&tn).unwrap_or(tn);
                 if self.env.get(&tn).is_none() {
                     // Builtin static methods, e.g. `Bool.random()`. A user type
                     // shadowing a builtin name (`struct Bool { … }`) wins, so
@@ -5184,8 +5199,14 @@ impl<'w> Interpreter<'w> {
         let params = clone_params(&self.funcs[id].params);
         let body = self.funcs[id].body;
         let captured = self.funcs[id].captured.clone();
+        let generics = self.funcs[id].generic_params.clone();
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
+
+        // Bind generic type parameters to the concrete types of the arguments
+        // so a static reference through a placeholder (`T.zero()`) resolves.
+        let type_binding = self.infer_type_bindings(&generics, &params, &args);
+        self.type_bindings.push(type_binding);
 
         let bound = self.bind_params(&params, args);
         let outcome = match bound {
@@ -5208,6 +5229,7 @@ impl<'w> Interpreter<'w> {
             Err(e) => Err(e),
         };
 
+        self.type_bindings.pop();
         self.env = saved;
         self.depth -= 1;
 
@@ -5216,6 +5238,55 @@ impl<'w> Interpreter<'w> {
             self.write_place(&place, val)?;
         }
         Ok(value)
+    }
+
+    /// Infer generic type-parameter substitutions from the concrete runtime
+    /// types of a call's arguments. A declared parameter type that is a single
+    /// placeholder (`T`) or an array of one (`[T]`) and is not a registered or
+    /// builtin type binds that placeholder to the argument's concrete type.
+    fn infer_type_bindings(
+        &self,
+        generics: &[String],
+        params: &[Param],
+        args: &[CallArg],
+    ) -> HashMap<String, String> {
+        let mut bindings = HashMap::new();
+        if generics.is_empty() {
+            return bindings;
+        }
+        let is_placeholder = |name: &str| generics.iter().any(|g| g == name);
+        for (i, p) in params.iter().enumerate() {
+            let Some(ty) = p.ty.as_deref() else { continue };
+            let Some(arg) = args.get(i) else { continue };
+            let ty = ty.trim();
+            // `[T]` — bind T to the element type of an array argument.
+            if let Some(inner) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                let inner = inner.trim();
+                if is_placeholder(inner) {
+                    if let SwiftValue::Array(items) = &arg.value {
+                        if let Some(first) = items.first() {
+                            bindings
+                                .entry(inner.to_string())
+                                .or_insert_with(|| first.type_name());
+                        }
+                    }
+                }
+            } else if is_placeholder(ty) {
+                bindings
+                    .entry(ty.to_string())
+                    .or_insert_with(|| arg.value.type_name());
+            }
+        }
+        bindings
+    }
+
+    /// Resolve a type name through the active generic substitutions, returning
+    /// the concrete type a placeholder (`T`) is bound to in the current call.
+    fn resolve_type_alias(&self, name: &str) -> Option<String> {
+        self.type_bindings
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(name).cloned())
     }
 
     /// Bind `args` to `params` in the current scope, returning the caller
@@ -5697,6 +5768,25 @@ fn coerce_numeric(value: SwiftValue, target_ty: Option<&str>) -> SwiftValue {
 
 fn is_operator_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^~".contains(c))
+}
+
+/// Extract the generic type-parameter names from a declaration's
+/// `GenericParam` child. `<T: P, U>` yields `["T", "U"]`.
+fn generic_param_names(node: &Node<'static>) -> Vec<String> {
+    let Some(gp) = node.children().find(|c| c.kind() == NodeKind::GenericParam) else {
+        return Vec::new();
+    };
+    let Some(text) = gp.text() else {
+        return Vec::new();
+    };
+    let inner = text.trim().trim_start_matches('<').trim_end_matches('>');
+    inner
+        .split(',')
+        .filter_map(|part| {
+            let name = part.split(':').next().unwrap_or("").trim();
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .collect()
 }
 
 fn clone_params(params: &[Param]) -> Vec<Param> {

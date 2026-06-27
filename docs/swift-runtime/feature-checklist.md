@@ -209,8 +209,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
 | [ ] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
 | [x] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
-| [ ] | `Self` requirements | ✅ | ★★★ | R4 |
-| [ ] | Protocol witness for operators | ✅ | ★★ | R4 |
+| [x] | `Self` requirements | ✅ | ★★★ | R4 |
+| [x] | Protocol witness for operators | ✅ | ★★ | R4 |
 | [ ] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [ ] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [ ] | Conditional conformance | ✅ | ★★★ | R4 |
