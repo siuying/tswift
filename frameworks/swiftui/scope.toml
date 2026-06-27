@@ -1,0 +1,68 @@
+[meta]
+framework = "SwiftUI"
+reference = "swiftc 6.3.2 / MacOSX SDK"
+stance = """
+Render-host semantics, not value semantics: types here are SwiftUI view/control/
+container concepts the runtime evaluates into a host-neutral UIIR (see
+docs/adr/0006-swiftui-render-host.md and docs/plan/swiftui-support.md). View
+modifiers (.font/.padding/.foregroundColor/…) are measured as members of `View`.
+Tiers mirror the plan roadmap: UI1 = v1 Counter slice, UI2 = the remaining demo
+tabs, UI3–UI8 = the staged tiers. Animation/gestures/graphics and app/scene
+lifecycle are out of scope (deferred to a backlog ADR / never).
+"""
+
+# ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
+[[tier]]
+id = "UI1"
+title = "Counter slice: View protocol, @State, stacks, Text, Button"
+types = ["View", "State", "Text", "Button", "VStack", "HStack", "Spacer"]
+
+# ── UI2 — remaining demo tabs (Greeting / Stack / Profile) ────────────────────
+[[tier]]
+id = "UI2"
+title = "Toggle + ternary, shapes + ZStack, view composition"
+types = ["Toggle", "ZStack", "Color", "Circle", "RoundedRectangle", "Rectangle", "Capsule", "Ellipse"]
+
+# ── UI3 — dynamic collections & identity (keyed diff + move patch) ────────────
+[[tier]]
+id = "UI3"
+title = "ForEach / List / Section"
+types = ["ForEach", "List", "Section"]
+
+# ── UI4 — bindings & input controls (two-way data flow, focus) ────────────────
+[[tier]]
+id = "UI4"
+title = "Binding + input controls"
+types = ["Binding", "TextField", "SecureField", "Slider", "Stepper", "Picker"]
+
+# ── UI5 — observation & shared model state (invalidation graph) ───────────────
+[[tier]]
+id = "UI5"
+title = "Observation & environment"
+types = ["StateObject", "ObservedObject", "EnvironmentObject", "Environment", "ObservableObject"]
+
+# ── UI6 — task & async (blocked on language async, ADR-0005) ──────────────────
+[[tier]]
+id = "UI6"
+title = "Async views (.task / .refreshable / progress)"
+types = ["ProgressView", "AsyncImage"]
+
+# ── UI7 — layout & geometry (GeometryReader round-trip inflection) ────────────
+[[tier]]
+id = "UI7"
+title = "Layout & geometry"
+types = ["ScrollView", "LazyVStack", "LazyHStack", "Grid", "LazyVGrid", "LazyHGrid", "GeometryReader", "GeometryProxy", "ViewThatFits"]
+
+# ── UI8 — navigation & presentation (out-of-tree surfaces) ────────────────────
+[[tier]]
+id = "UI8"
+title = "Navigation & presentation"
+types = ["NavigationStack", "NavigationLink", "NavigationSplitView", "NavigationPath", "TabView", "Form", "Group"]
+
+# ── Explicitly excluded (keeps the denominator honest) ────────────────────────
+[out_of_scope]
+animation = ["Animation", "AnyTransition", "Namespace", "MatchedGeometryEffect", "PhaseAnimator", "KeyframeAnimator"]
+gestures = ["DragGesture", "TapGesture", "LongPressGesture", "MagnificationGesture", "RotationGesture", "GestureState", "SpatialEventGesture"]
+graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
+platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
+app_scene_lifecycle = ["App", "Scene", "WindowGroup", "Settings", "DocumentGroup", "MenuBarExtra", "Commands"]
