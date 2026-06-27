@@ -2,15 +2,15 @@ SourceFile L1
   StructDecl "StringBuilder" L2
     FuncDecl "buildExpression" L3 :String [static]
       Param "value" L3 :String
-        TypeIdent "String" L3
-      TypeIdent "String" L3
+        TypeRef "String" L3
+      TypeRef "String" L3
       Block L3
         ExprStmt L3
           IdentExpr "value" L3 :String
     FuncDecl "buildBlock" L4 :String [static]
       Param "parts" L4 :String [variadic]
-        TypeIdent "String" L4
-      TypeIdent "String" L4
+        TypeRef "String" L4
+      TypeRef "String" L4
       Block L4
         ExprStmt L4
           CallExpr L4 :Void
@@ -20,21 +20,21 @@ SourceFile L1
     Attribute "resultBuilder" L1
   StructDecl "View" L7
     LetDecl L8 :String
-      PatternValueBinding "name" L8 :String
-      TypeIdent "String" L8
+      NamePattern "name" L8 :String
+      TypeRef "String" L8
     VarDecl L11 :String
-      PatternValueBinding "body" L11 :String
-      TypeIdent "String" L11
-      AccessorDecl "get" L11
+      NamePattern "body" L11 :String
+      TypeRef "String" L11
+      Accessor "get" L11
         Block L11
           LetDecl L12
-            PatternValueBinding "$build0" L12
+            NamePattern "$build0" L12
             CallExpr L12 :Void
               MemberExpr "buildExpression" L12
                 IdentExpr "StringBuilder" L12
               StringLiteral "\"View\"" L12 :String
           LetDecl L13
-            PatternValueBinding "$build1" L13
+            NamePattern "$build1" L13
             CallExpr L13 :Void
               MemberExpr "buildExpression" L13
                 IdentExpr "StringBuilder" L13

@@ -13,8 +13,10 @@
 #![forbid(unsafe_code)]
 
 mod compat;
-mod kind;
-pub use kind::NodeKind;
+
+/// The syntactic category of a [`Node`]. Re-exported from `tswift_ast`: the
+/// frontend and the parse AST now share one node vocabulary.
+pub use tswift_ast::NodeKind;
 
 /// An owned Swift analysis result: the typed, runtime-facing AST plus
 /// diagnostics for one Swift source file.
@@ -84,7 +86,7 @@ impl<'a> Node<'a> {
         self.analysis.rust.text(self.rust)
     }
 
-    /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`/`PatternEnum`, the
+    /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`/`EnumCasePattern`, the
     /// operator's (or case's) text.
     pub fn op_text(&self) -> Option<String> {
         self.analysis.rust.text(self.rust)
@@ -96,8 +98,8 @@ impl<'a> Node<'a> {
         // declaration (func/struct/enum/…) carries it as the node's own text.
         for child in self.children() {
             match child.kind() {
-                NodeKind::PatternValueBinding => return child.text(),
-                NodeKind::PatternWildcard => return Some("_".to_string()),
+                NodeKind::NamePattern => return child.text(),
+                NodeKind::WildcardPattern => return Some("_".to_string()),
                 _ => {}
             }
         }
@@ -205,7 +207,7 @@ impl<'a> Node<'a> {
             did_set_param: None,
         };
         for child in self.children() {
-            if child.kind() != NodeKind::AccessorDecl {
+            if child.kind() != NodeKind::Accessor {
                 continue;
             }
             let body = child.children().find(|c| c.kind() == NodeKind::Block);
@@ -286,11 +288,7 @@ impl<'a> Node<'a> {
         use std::fmt::Write as _;
         let indent = "  ".repeat(depth);
         let kind = self.kind();
-        let raw = match kind {
-            NodeKind::Other(n) => format!("Other({n})"),
-            k => format!("{k:?}"),
-        };
-        let _ = write!(out, "{indent}{raw}");
+        let _ = write!(out, "{indent}{kind:?}");
         if let Some(text) = self.text() {
             if !text.is_empty() {
                 let _ = write!(out, " {text:?}");
@@ -324,9 +322,6 @@ impl<'a> Node<'a> {
     fn dump_json_into(&self, out: &mut String) {
         use std::fmt::Write as _;
         let _ = write!(out, "{{\"kind\":\"{}\"", self.kind().name());
-        if let NodeKind::Other(n) = self.kind() {
-            let _ = write!(out, ",\"raw\":{n}");
-        }
         if let Some(text) = self.text() {
             if !text.is_empty() {
                 let _ = write!(out, ",\"text\":{}", json_string(&text));
@@ -532,7 +527,7 @@ mod tests {
         assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
         assert_eq!(
             a.root().dump(),
-            "SourceFile L1\n  StructDecl \"User\" L1\n    TypeIdent \"Codable\" L1\n    LetDecl L2 :String\n      PatternValueBinding \"name\" L2 :String\n      TypeIdent \"String\" L2\n    VarDecl L3 :Int\n      PatternValueBinding \"age\" L3 :Int\n      TypeIdent \"Int\" L3\n"
+            "SourceFile L1\n  StructDecl \"User\" L1\n    TypeRef \"Codable\" L1\n    LetDecl L2 :String\n      NamePattern \"name\" L2 :String\n      TypeRef \"String\" L2\n    VarDecl L3 :Int\n      NamePattern \"age\" L3 :Int\n      TypeRef \"Int\" L3\n"
         );
     }
 
@@ -606,7 +601,7 @@ mod tests {
         assert_eq!(case.text().as_deref(), Some("a"));
         assert!(case
             .children()
-            .any(|c| c.kind() == NodeKind::TypeIdent && c.text().as_deref() == Some("Int")));
+            .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("Int")));
 
         let if_stmt = root
             .children()
@@ -625,12 +620,12 @@ mod tests {
             .filter(|c| c.kind() == NodeKind::CaseClause)
             .collect();
         let enum_pat = clauses[0].children().next().unwrap();
-        assert_eq!(enum_pat.kind(), NodeKind::PatternEnum);
+        assert_eq!(enum_pat.kind(), NodeKind::EnumCasePattern);
         assert_eq!(enum_pat.op_text().as_deref(), Some("a"));
         assert!(clauses[0].case_info().where_expr.is_some());
         assert_eq!(
             clauses[1].children().next().unwrap().kind(),
-            NodeKind::PatternTuple
+            NodeKind::TuplePattern
         );
         assert!(clauses[2].case_info().is_default);
     }
@@ -648,7 +643,7 @@ mod tests {
         // active branch; the runtime expands it inline.
         let if_dir = root
             .children()
-            .find(|c| c.kind() == NodeKind::MacroExpansion && c.text().as_deref() == Some("if"))
+            .find(|c| c.kind() == NodeKind::CompilerDirective && c.text().as_deref() == Some("if"))
             .unwrap();
         assert!(if_dir
             .children()
@@ -665,7 +660,7 @@ mod tests {
         assert_eq!(try_expr.kind(), NodeKind::TryExpr);
         assert_eq!(try_expr.op_text().as_deref(), Some("?"));
         let line_macro = stmts[1].children().last().unwrap();
-        assert_eq!(line_macro.kind(), NodeKind::MacroExpansion);
+        assert_eq!(line_macro.kind(), NodeKind::CompilerDirective);
         assert_eq!(line_macro.text().as_deref(), Some("line"));
         assert_eq!(
             stmts[2].children().last().unwrap().kind(),
@@ -675,7 +670,7 @@ mod tests {
         assert!(for_stmt.is_async());
         let binding = for_stmt
             .children()
-            .find(|c| c.kind() == NodeKind::PatternValueBinding)
+            .find(|c| c.kind() == NodeKind::NamePattern)
             .unwrap();
         assert_eq!(binding.text().as_deref(), Some("x"));
     }

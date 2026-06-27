@@ -107,7 +107,7 @@ impl RuntimeAst {
             _ => {}
         }
 
-        let kind = map_kind(node.kind());
+        let kind = node.kind();
         // Source-location / message directives (`#line`, `#file`, `#warning`,
         // …) carry their name without the leading `#`, matching the runtime's
         // `eval_macro` keys.
@@ -137,7 +137,7 @@ impl RuntimeAst {
     }
 
     /// Lower a child sequence. Every child — including a resolved `#if`
-    /// conditional-compilation directive (which becomes a `MacroExpansion`
+    /// conditional-compilation directive (which becomes a `CompilerDirective`
     /// wrapper the runtime expands inline) — lowers in place, preserving the
     /// clean AST's structure.
     fn lower_child_list<'b>(
@@ -148,11 +148,11 @@ impl RuntimeAst {
     }
 
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
-    /// the runtime-facing shape: name as text; inherited types (`TypeIdent`),
+    /// the runtime-facing shape: name as text; inherited types (`TypeRef`),
     /// attributes, generic parameters, and members all stay as direct children
     /// in source order. This is the shape `tswift-core`'s `register_*` expects.
     fn lower_nominal(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        let kind = map_kind(node.kind());
+        let kind = node.kind();
         let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
@@ -166,7 +166,7 @@ impl RuntimeAst {
     /// lowers like any other `LetDecl`/`VarDecl`, keeping its binding pattern
     /// and initializer as children for the runtime's `eval_cond_list` to read.
     fn lower_conditional(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        let kind = map_kind(node.kind());
+        let kind = node.kind();
         let id = self.alloc(kind, node.text().map(ToOwned::to_owned), node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         // A `while` loop's text is its statement label, if any.
@@ -197,7 +197,7 @@ impl RuntimeAst {
     /// runtime reads the bound name from the binding-pattern child via
     /// `decl_name()` and the default from the first value child.
     fn lower_binding(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        let kind = map_kind(node.kind());
+        let kind = node.kind();
         let id = self.alloc(kind, None, node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
@@ -289,12 +289,7 @@ impl RuntimeAst {
             name: self.text(id).unwrap_or_default(),
             variadic: bits & MOD_VARIADIC != 0,
             autoclosure: bits & MOD_AUTOCLOSURE != 0,
-            is_inout: bits & MOD_INOUT != 0
-                || self
-                    .node(id)
-                    .children
-                    .iter()
-                    .any(|&child| self.kind(child) == NodeKind::TypeInout),
+            is_inout: bits & MOD_INOUT != 0,
         }
     }
 
@@ -308,87 +303,6 @@ impl Children {
         let id = self.ids.get(self.pos).copied()?;
         self.pos += 1;
         Some(id)
-    }
-}
-
-fn map_kind(kind: tswift_ast::NodeKind) -> NodeKind {
-    use tswift_ast::NodeKind as K;
-    match kind {
-        K::SourceFile => NodeKind::SourceFile,
-        K::ExprStmt => NodeKind::ExprStmt,
-        K::CallExpr => NodeKind::CallExpr,
-        K::IdentExpr => NodeKind::IdentExpr,
-        K::BinaryExpr => NodeKind::BinaryExpr,
-        K::PrefixExpr => NodeKind::UnaryExpr,
-        K::AssignExpr => NodeKind::AssignExpr,
-        K::TernaryExpr => NodeKind::TernaryExpr,
-        K::TupleExpr => NodeKind::TupleExpr,
-        K::ArrayLiteral => NodeKind::ArrayLiteral,
-        K::DictLiteral => NodeKind::DictLiteral,
-        K::SubscriptExpr => NodeKind::SubscriptExpr,
-        K::MemberExpr => NodeKind::MemberExpr,
-        K::KeyPathExpr => NodeKind::KeyPathExpr,
-        K::LetDecl => NodeKind::LetDecl,
-        K::VarDecl => NodeKind::VarDecl,
-        K::FuncDecl => NodeKind::FuncDecl,
-        K::StructDecl => NodeKind::StructDecl,
-        K::EnumDecl => NodeKind::EnumDecl,
-        K::ClassDecl => NodeKind::ClassDecl,
-        K::ActorDecl => NodeKind::ActorDecl,
-        K::ProtocolDecl => NodeKind::ProtocolDecl,
-        K::ExtensionDecl => NodeKind::ExtensionDecl,
-        K::AssociatedTypeDecl => NodeKind::ProtocolReq,
-        K::TypeAliasDecl => NodeKind::TypealiasDecl,
-        K::ImportDecl => NodeKind::ImportDecl,
-        K::GenericParam => NodeKind::GenericParam,
-        K::DeinitDecl => NodeKind::DeinitDecl,
-        K::DoStmt => NodeKind::DoStmt,
-        K::CatchClause => NodeKind::CatchClause,
-        K::ThrowStmt => NodeKind::ThrowStmt,
-        K::DeferStmt => NodeKind::DeferStmt,
-        K::TryExpr => NodeKind::TryExpr,
-        K::AwaitExpr => NodeKind::AwaitExpr,
-        K::InoutExpr => NodeKind::InoutExpr,
-        K::OperatorDecl => NodeKind::OperatorDecl,
-        K::PrecedenceGroupDecl => NodeKind::PrecedenceGroupDecl,
-        K::CompilerDirective => NodeKind::MacroExpansion,
-        K::Attribute => NodeKind::Attribute,
-        K::ClosureExpr => NodeKind::ClosureExpr,
-        K::ClosureCapture => NodeKind::ClosureCapture,
-        K::CastExpr => NodeKind::CastExpr,
-        K::EnumCaseDecl => NodeKind::EnumCaseDecl,
-        K::InitDecl => NodeKind::InitDecl,
-        K::SubscriptDecl => NodeKind::SubscriptDecl,
-        K::Accessor => NodeKind::AccessorDecl,
-        K::PostfixExpr => NodeKind::ForceUnwrap,
-        K::Param => NodeKind::Param,
-        K::Block => NodeKind::Block,
-        K::ReturnStmt => NodeKind::ReturnStmt,
-        K::IfStmt => NodeKind::IfStmt,
-        K::GuardStmt => NodeKind::GuardStmt,
-        K::WhileStmt => NodeKind::WhileStmt,
-        K::RepeatStmt => NodeKind::RepeatStmt,
-        K::ForStmt => NodeKind::ForStmt,
-        K::SwitchStmt => NodeKind::SwitchStmt,
-        K::CaseClause => NodeKind::CaseClause,
-        K::BreakStmt => NodeKind::BreakStmt,
-        K::ContinueStmt => NodeKind::ContinueStmt,
-        K::FallthroughStmt => NodeKind::FallthroughStmt,
-        K::TypeRef => NodeKind::TypeIdent,
-        K::TypeArray => NodeKind::TypeArray,
-        K::TypeDict => NodeKind::TypeDict,
-        K::NamePattern => NodeKind::PatternValueBinding,
-        K::WildcardPattern => NodeKind::PatternWildcard,
-        K::TuplePattern => NodeKind::PatternTuple,
-        K::EnumCasePattern => NodeKind::PatternEnum,
-        K::RangePattern => NodeKind::PatternRange,
-        K::WhereClause => NodeKind::WhereClause,
-        K::IntegerLiteral => NodeKind::IntegerLiteral,
-        K::FloatLiteral => NodeKind::FloatLiteral,
-        K::BoolLiteral => NodeKind::BoolLiteral,
-        K::NilLiteral => NodeKind::NilLiteral,
-        K::StringLiteral => NodeKind::StringLiteral,
-        K::RegexLiteral => NodeKind::RegexLiteral,
     }
 }
 

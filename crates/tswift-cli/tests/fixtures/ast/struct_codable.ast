@@ -1,9 +1,9 @@
 SourceFile L1
   StructDecl "User" L1
-    TypeIdent "Codable" L1
+    TypeRef "Codable" L1
     LetDecl L2 :String
-      PatternValueBinding "name" L2 :String
-      TypeIdent "String" L2
+      NamePattern "name" L2 :String
+      TypeRef "String" L2
     VarDecl L3 :Int
-      PatternValueBinding "age" L3 :Int
-      TypeIdent "Int" L3
+      NamePattern "age" L3 :Int
+      TypeRef "Int" L3

@@ -213,7 +213,7 @@ impl NodeKind {
             NodeKind::AwaitExpr => "await_expr",
             NodeKind::InoutExpr => "inout_expr",
             NodeKind::OperatorDecl => "operator_decl",
-            NodeKind::PrecedenceGroupDecl => "precedencegroup_decl",
+            NodeKind::PrecedenceGroupDecl => "precedence_group_decl",
             NodeKind::CompilerDirective => "compiler_directive",
             NodeKind::Attribute => "attribute",
             NodeKind::ClosureExpr => "closure_expr",
