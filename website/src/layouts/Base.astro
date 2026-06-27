@@ -1,0 +1,55 @@
+---
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'tswift — Swift Runtime in Rust',
+  description = 'A lightweight Swift runtime written in Rust. Parse, type-check, and run Swift source without LLVM, Clang, or a Swift toolchain.',
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <!-- Mermaid (loaded only when needed via data-mermaid attribute) -->
+  </head>
+  <body>
+    <Nav currentPath={Astro.url.pathname} />
+    <slot />
+    <Footer />
+    <script type="module">
+      // Lazy-load Mermaid only when mermaid code blocks exist
+      if (document.querySelector('.mermaid')) {
+        const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
+        mermaid.initialize({
+          startOnLoad: true,
+          theme: 'dark',
+          themeVariables: {
+            darkMode: true,
+            background: '#16161c',
+            primaryColor: '#1e1e27',
+            primaryTextColor: '#eeeef5',
+            primaryBorderColor: 'rgba(255,255,255,.2)',
+            lineColor: '#8888a0',
+            secondaryColor: '#262632',
+            tertiaryColor: '#1e1e27',
+          },
+        });
+        mermaid.run();
+      }
+    </script>
+  </body>
+</html>

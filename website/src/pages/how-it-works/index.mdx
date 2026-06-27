@@ -1,0 +1,109 @@
+---
+layout: ../../layouts/Doc.astro
+title: How it works
+description: Architecture overview of the tswift Swift runtime — frontend, runtime, and libraries.
+section: how-it-works
+---
+
+import Mermaid from '../../components/Mermaid.astro';
+
+# How tswift works
+
+tswift is a **tree-walking interpreter** for Swift, implemented entirely in
+safe Rust with no C, no LLVM, and no Swift toolchain dependency.
+
+The design has two clean layers:
+
+1. **Frontend** — lexing, parsing, and semantic analysis of Swift source into a
+   typed AST.
+2. **Runtime** — a tree-walking evaluator that walks that AST, resolving
+   identifiers through lexical scope, evaluating expressions into `SwiftValue`s,
+   and implementing both language semantics _and_ the standard library.
+
+---
+
+## End-to-end pipeline
+
+<Mermaid caption="tswift compilation and execution pipeline">
+{`
+flowchart LR
+    src["Swift source\\n(.swift)"]
+    lex["tswift-lexer\\nTokenizer"]
+    ast["tswift-ast\\nAST definitions"]
+    par["tswift-parser\\nRecursive-descent\\nparser"]
+    sem["tswift-sema\\nSemantic analysis /\\ntype resolution"]
+    fe["tswift-frontend\\nCompat lowerer"]
+    rt["tswift-core\\nEvaluator"]
+    std["tswift-std\\nStdlib builtins"]
+    out["Output"]
+
+    src --> lex --> ast --> par --> sem --> fe
+    fe -->|"Analysis / Node / NodeKind"| rt
+    std --> rt
+    rt --> out
+
+    style src fill:#1e1e27,stroke:#ff6b35,color:#eeeef5
+    style out fill:#1e1e27,stroke:#6ddf9f,color:#eeeef5
+    style fe fill:#1e1e27,stroke:#a855f7,color:#eeeef5
+`}
+</Mermaid>
+
+---
+
+## Crate layout
+
+| Crate | Role |
+|---|---|
+| `tswift-lexer` | Tokenizer — converts Swift source to a stream of tokens |
+| `tswift-ast` | AST node type definitions shared across the pipeline |
+| `tswift-parser` | Recursive-descent parser — tokens → untyped AST |
+| `tswift-sema` | Semantic analysis and type resolution |
+| `tswift-frontend` | Compat lowerer — drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` |
+| `tswift-core` | Evaluator spine — `SwiftValue`, `env`, `interp`, operators, native seam |
+| `tswift-std` | Native stdlib builtins (`print`, `Array`, `Dictionary`, …) |
+| `tswift-cli` | The `tswift` CLI binary |
+| `tswift-wasm` | WebAssembly bridge — exposes `runSwift(src)` to JavaScript |
+
+---
+
+## Key design decisions
+
+### No `unsafe` anywhere
+
+The entire stack is `#![forbid(unsafe_code)]` — from the lexer through the
+evaluator. Swift's hardest memory semantics fall out naturally:
+
+- **Value-type copy-on-write** → `Rc::clone` + `Rc::make_mut`
+- **class ARC** → `Rc<RefCell<Object>>`; retain = clone, release = drop
+- **Deterministic `deinit`** → Rust `Drop` fires when strong-count reaches 0
+- **`weak` (zeroing)** → `rc::Weak`; `.upgrade()` returns `None` after dealloc
+- **Overflow-trapping** → `checked_add` (trap) / `wrapping_add` (&+)
+
+### Single cooperative executor for concurrency
+
+`async`/`await`, actors, and task groups run on a single-threaded cooperative
+executor (ADR-0005). Suspension is decoupled from parsing via a coroutine
+primitive (`corosensei`). Results and structure are faithful to Swift's async
+semantics; preemptive interleaving order may differ.
+
+### WebAssembly
+
+`tswift-wasm` provides a thin `#[wasm_bindgen]` wrapper:
+
+```rust
+#[wasm_bindgen]
+pub fn run_swift(source: &str) -> String {
+    // returns JSON: { ok, compile: {...}, run: {...} }
+}
+```
+
+The browser imports this as an ES module and runs it entirely locally — no
+server round-trip.
+
+---
+
+## Explore further
+
+- [Frontend Pipeline →](/how-it-works/frontend) — lexer, parser, sema, lowerer
+- [Runtime Evaluator →](/how-it-works/runtime) — interpreter, values, ARC/CoW
+- [Libraries →](/how-it-works/libraries) — stdlib, Foundation, SwiftUI plans

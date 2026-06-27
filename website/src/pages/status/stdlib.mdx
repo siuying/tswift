@@ -1,0 +1,105 @@
+---
+layout: ../../layouts/Doc.astro
+title: Standard Library
+description: Swift standard library implementation status in tswift.
+section: status
+---
+
+import CoverageBar from '../../components/CoverageBar.astro';
+
+# Standard Library
+
+The Swift standard library provides the runtime behaviour for all built-in
+types and protocols. tswift implements these entirely in Rust inside `tswift-std`.
+
+The frontend provides type _shapes_; `tswift-std` provides the _behaviour_.
+
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+
+---
+
+## Overall coverage
+
+<CoverageBar label="Standard Library" done={19} total={26} />
+
+---
+
+## Core Value Types
+
+<CoverageBar label="Core value types" done={6} total={8} />
+
+| Status | Type | Notes |
+|--------|------|-------|
+| ✅ | `Int`, `UInt` family (all widths) | Overflow-trapping + `&+`/`&-`/`&*` wrapping |
+| ✅ | `Float`, `Double` | IEEE 754, math functions |
+| ✅ | `Bool` | |
+| 🟡 | `String` (UTF-8, NFC, views) + `Character` | Most APIs work; `CharacterView`, `UnicodeScalarView` partial |
+| 🟡 | `Substring` | Slicing works; full index arithmetic incomplete |
+| ✅ | `Optional<Wrapped>` | Full — binding, chaining, coalescing, patterns |
+| ✅ | `Range` / `ClosedRange` / `Stride` | For-in, `contains`, `count`, `overlaps` |
+| ⬜ | Tuples as first-class stdlib types | Runtime supports tuples; stdlib protocols not wired |
+
+---
+
+## Collections
+
+<CoverageBar label="Collections" done={4} total={5} />
+
+| Status | Type | Notes |
+|--------|------|-------|
+| ✅ | `Array<Element>` + CoW | `append`, `insert`, `remove`, `sorted`, `map`/`filter`/`reduce`, slicing |
+| ✅ | `Dictionary<Key,Value>` + CoW | `keys`, `values`, `merging`, `filter`, `mapValues` |
+| ✅ | `Set<Element>` + CoW | `union`, `intersection`, `subtracting`, `symmetricDifference` |
+| ✅ | `ContiguousArray` / `ArraySlice` | Backed by Array in the runtime |
+| ⬜ | `isKnownUniquelyReferenced` | CoW correctness helper — not exposed |
+
+---
+
+## Protocols That Drive the Language
+
+<CoverageBar label="Key protocols" done={7} total={10} />
+
+| Status | Protocol | Notes |
+|--------|---------|-------|
+| ✅ | `Equatable` / `Hashable` / `Comparable` | Synthesised for structs/enums with synthesised conformance |
+| ✅ | `Sequence` / `IteratorProtocol` | Custom sequences via `makeIterator()` |
+| ⬜ | `Collection` / `BidirectionalCollection` / `RandomAccessCollection` | Index arithmetic not yet fully implemented |
+| ⬜ | `RangeReplaceableCollection` | |
+| ✅ | `ExpressibleBy*Literal` | All literal-conversion protocols |
+| ✅ | `CustomStringConvertible` / `CustomDebugStringConvertible` | |
+| ✅ | `RawRepresentable` / `CaseIterable` | Enum conformances synthesised |
+| ✅ | `Codable` / `Encodable` / `Decodable` | JSON encode/decode via synthesised `CodingKeys` |
+| ✅ | `Identifiable` | |
+| ⬜ | `Sendable` | Accepted by parser; not statically checked |
+| ⬜ | `AsyncSequence` / `AsyncIteratorProtocol` | `for await` works; custom `AsyncSequence` conformances partial |
+
+---
+
+## Free Functions & Utilities
+
+<CoverageBar label="Free functions" done={6} total={7} />
+
+| Status | API | Notes |
+|--------|-----|-------|
+| ✅ | `print` / `debugPrint` / `dump` | Streaming to stdout |
+| ✅ | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/`zip` | All HOF on sequences |
+| ✅ | `assert`/`precondition`/`fatalError`/`assertionFailure` | Trapping semantics |
+| ✅ | `min`/`max`/`abs`/`stride`/`zip`/`swap` | |
+| ✅ | `Result<Success, Failure>` | Both cases, `map`, `flatMap`, `mapError` |
+| ✅ | `MemoryLayout<T>` | `size`, `stride`, `alignment` |
+| ⬜ | `Unsafe*Pointer` family | Requires unsafe Rust; out of scope for now |
+
+---
+
+## What's next
+
+The highest-impact missing pieces:
+
+1. **`Collection` protocol conformances** — needed for custom types to slot
+   into `for-in`, `count`, `first`, `last`, index subscripting.
+2. **`String` index arithmetic** — `String.Index`, `index(before:)`, `index(after:)`,
+   `index(_:offsetBy:)` needed for full character-level manipulation.
+3. **`AsyncSequence`** — needed to implement `for await` over custom types.
+
+To see how these map to GitHub issues, visit the
+[issue tracker](https://github.com/siuying/tswift/issues).

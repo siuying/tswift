@@ -1,0 +1,79 @@
+---
+import Doc from '../../layouts/Doc.astro';
+import CoverageBar from '../../components/CoverageBar.astro';
+---
+
+<Doc title="Status Overview" section="status"
+  description="Implementation status of the tswift Swift runtime — language features, stdlib, Foundation, and SwiftUI.">
+  <h1>Implementation Status</h1>
+  <p class="lead">
+    tswift targets the full Swift 6.3 surface area. This dashboard tracks
+    progress across language features, the standard library, Foundation, and SwiftUI.
+  </p>
+
+  <h2>At a glance</h2>
+
+  <div class="status-grid" style="margin-bottom:3rem">
+    <div class="status-card">
+      <h3>Language</h3>
+      <div class="pct-big high">81%</div>
+      <p style="font-size:.85rem">Tiers 0–7 · 138 of 171 features</p>
+      <a href="/status/language" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>Standard Library</h3>
+      <div class="pct-big mid">73%</div>
+      <p style="font-size:.85rem">19 of 26 major areas</p>
+      <a href="/status/stdlib" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>Foundation</h3>
+      <div class="pct-big low">17%</div>
+      <p style="font-size:.85rem">2 of 12 APIs</p>
+      <a href="/status/foundation" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>SwiftUI</h3>
+      <div class="pct-big zero">0%</div>
+      <p style="font-size:.85rem">Requires result builders (Tier 8)</p>
+      <a href="/status/swiftui" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+  </div>
+
+  <h2>Language tiers</h2>
+  <p>The Swift language surface is organised into tiers by complexity and dependency order.</p>
+
+  <CoverageBar label="Tier 0 — Lexical &amp; Literals" done={17} total={17} href="/status/language" />
+  <CoverageBar label="Tier 1 — Core Imperative (functions, control flow)" done={20} total={22} href="/status/language" />
+  <CoverageBar label="Tier 2 — Value &amp; Nominal Types" done={25} total={28} href="/status/language" />
+  <CoverageBar label="Tier 3 — Reference Types &amp; ARC" done={19} total={20} href="/status/language" />
+  <CoverageBar label="Tier 4 — Protocols, Generics, Extensions" done={23} total={27} href="/status/language" />
+  <CoverageBar label="Tier 5 — Error Handling" done={8}  total={10} href="/status/language" />
+  <CoverageBar label="Tier 6 — Advanced Types &amp; Expressions" done={7}  total={13} href="/status/language" />
+  <CoverageBar label="Tier 7 — Concurrency" done={9}  total={14} href="/status/language" />
+  <CoverageBar label="Tier 8 — Macros &amp; Metaprogramming" done={2}  total={8}  href="/status/language" />
+  <CoverageBar label="Tier 9 — Attributes, Access Control, Operators" done={8}  total={20} href="/status/language" />
+
+  <h2 style="margin-top:2rem">Roadmap</h2>
+  <p>Implementation phases follow the runtime design plan (R0–R6+):</p>
+
+  <div class="card-grid card-grid-2" style="margin-top:1.25rem">
+    {[
+      { phase: 'R0–R1', label: 'Literals, bindings, control flow, basic stdlib', done: true },
+      { phase: 'R2',    label: 'Value types: struct, enum, optionals, properties', done: true },
+      { phase: 'R3',    label: 'Reference types: class, ARC, closures', done: true },
+      { phase: 'R4',    label: 'Protocols, generics, extensions, dispatch', done: true },
+      { phase: 'R5',    label: 'Error handling, property wrappers, Codable, @main', done: true },
+      { phase: 'R6',    label: 'Bytecode VM for performance (future)', done: false },
+      { phase: 'R6+',   label: 'Concurrency ✓, Macros, SwiftUI, Ownership, Unsafe', done: false },
+    ].map(({ phase, label, done }) => (
+      <div class="card" style="display:flex;gap:1rem;align-items:flex-start">
+        <span style={`font-size:1.4rem;flex-shrink:0;${done ? '' : 'opacity:.4'}`}>{done ? '✅' : '⏳'}</span>
+        <div>
+          <strong style="font-size:.85rem;color:var(--accent)">{phase}</strong>
+          <p style="font-size:.875rem;margin-top:.25rem">{label}</p>
+        </div>
+      </div>
+    ))}
+  </div>
+</Doc>

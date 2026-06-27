@@ -1,0 +1,127 @@
+---
+layout: ../../layouts/Doc.astro
+title: Frontend Pipeline
+description: The pure-Rust Swift frontend — lexer, AST, parser, semantic analysis, and compat lowerer.
+section: how-it-works
+---
+
+import Mermaid from '../../components/Mermaid.astro';
+
+# Frontend Pipeline
+
+The tswift frontend is a **pure-Rust Swift compiler front-end** that turns Swift
+source into a stable, runtime-facing typed AST. There is no C code, no LLVM,
+no `unsafe`, and no Swift toolchain involved.
+
+---
+
+## Stage 1 — Lexer (`tswift-lexer`)
+
+The lexer converts raw Swift source into a stream of **tokens**. It handles:
+
+- All Swift literal forms: integers (dec/hex/oct/bin with `_` separators),
+  floats (including hex exponents), booleans, `nil`, strings (including
+  multiline `"""`, raw `#"…"#`, extended delimiters, and `\(expr)` interpolation).
+- Unicode identifiers and operator characters.
+- Line comments (`//`), block comments (`/* … */`), and nested block comments.
+- Regex literals `/…/` and `#/…/#`.
+
+String interpolation is particularly tricky: the lexer emits a token stream
+that the parser then re-enters for the interpolated expression, allowing
+arbitrary nesting.
+
+---
+
+## Stage 2 — AST (`tswift-ast`)
+
+The AST crate defines the **node types** shared by all pipeline stages. Every
+node carries:
+
+- `kind: NodeKind` — the syntactic kind (e.g. `FuncDecl`, `BinaryExpr`, `CallExpr`)
+- `text: &str` — the source text span
+- `line: u32` — source line number
+
+After semantic analysis, nodes also carry:
+
+- `resolved_type: Option<SwiftType>` — the inferred Swift type
+- `modifiers: Modifiers` — decoded declaration modifiers (`mutating`, `static`, …)
+
+---
+
+## Stage 3 — Parser (`tswift-parser`)
+
+A **recursive-descent** parser that consumes the token stream and produces an
+untyped AST. Highlights:
+
+- Full expression hierarchy (primary → postfix → unary → binary with precedence
+  climbing)
+- Pattern matching (`switch`, `if case`, `for case`, destructuring)
+- All declaration forms: `func`, `var`/`let`, `class`, `struct`, `enum`,
+  `protocol`, `extension`, `actor`, `typealias`, `operator`, `precedencegroup`
+- Generics: `<T: P>`, `where` clauses, parameter packs
+- Attributes: `@escaping`, `@autoclosure`, `@discardableResult`, `@main`, …
+- Concurrency: `async`, `await`, `actor`, `@MainActor`, `async let`
+
+<Mermaid caption="Parser produces an untyped CST → AST walk">
+{`
+flowchart TD
+    tokens["Token stream"]
+    decls["Declarations\\n(func, var, class, …)"]
+    exprs["Expressions\\n(binary, call, closure, …)"]
+    stmts["Statements\\n(if, for, switch, guard, …)"]
+    pats["Patterns\\n(case, tuple, optional, …)"]
+    raw["Untyped AST"]
+
+    tokens --> decls & exprs & stmts & pats --> raw
+    style raw fill:#1e1e27,stroke:#a855f7,color:#eeeef5
+`}
+</Mermaid>
+
+---
+
+## Stage 4 — Semantic Analysis (`tswift-sema`)
+
+The semantic analysis pass resolves **types** and **names**:
+
+- **Type inference** — bidirectional propagation; literal types from context
+- **Name resolution** — lexical scoping, module-level declarations, cross-file
+  references
+- **Overload resolution** — function overloads, operator overloads, method dispatch
+- **Protocol conformance** — builds a witness table for each `struct`/`class`/`enum`
+  conformance declaration
+- **Associated type** binding — resolves `associatedtype` placeholders to concrete types
+
+The output is a **typed AST** where each expression node carries its resolved
+`SwiftType`.
+
+---
+
+## Stage 5 — Compat Lowerer (`tswift-frontend`)
+
+The compat lowerer is the bridge between the typed frontend AST and the
+**runtime-facing AST** (`Analysis` / `Node` / `NodeKind`). Its job:
+
+1. Drive the full pipeline (lexer → parser → sema) for one or more source files.
+2. Lower the typed frontend AST into the stable `NodeKind` enum the runtime
+   has always depended on.
+3. Expose a single `Analysis::analyze(sources)` entry point.
+
+This decoupling means the runtime never depends on frontend internals — it only
+sees `NodeKind` variants and `SwiftType` tags. Upgrading the frontend (e.g. adding
+a new parse rule) does not require touching the runtime.
+
+---
+
+## Why no `unsafe`?
+
+The entire frontend stack is `#![forbid(unsafe_code)]`. Rust's ownership
+model gives us memory safety during parsing for free — no garbage collector,
+no arena lifetime tricks, just owned `Vec` and `Box` trees.
+
+---
+
+## Explore further
+
+- [Runtime Evaluator →](/how-it-works/runtime)
+- [Libraries →](/how-it-works/libraries)
+- [Language Status →](/status/language)

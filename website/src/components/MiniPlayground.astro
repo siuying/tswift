@@ -1,0 +1,281 @@
+---
+// Mini playground for the home page hero section.
+// Uses tswift.wasm served from /wasm/ with ES module dynamic import.
+---
+
+<div class="mini-playground-wrap">
+  <div class="preset-bar" id="mini-preset-bar" aria-label="Example presets"></div>
+  <div class="playground" id="mini-playground">
+    <div class="pane">
+      <div class="pane-head">
+        <span class="filename">main.swift</span>
+        <span id="mini-meta" style="color:var(--muted);font-size:.75rem">0 lines</span>
+      </div>
+      <textarea
+        id="mini-source"
+        class="editor-area"
+        spellcheck="false"
+        aria-label="Swift source code"
+        style="min-height:340px"
+      ></textarea>
+      <div class="run-bar">
+        <button id="mini-run" class="run-btn" disabled>▶ Run</button>
+        <span id="mini-status" class="status-badge">loading…</span>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <span class="filename">Output</span>
+      </div>
+      <pre id="mini-output" class="output-area">Ready.</pre>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // ── Presets ──────────────────────────────────────────────────────
+  const PRESETS = [
+    {
+      label: 'Hello World',
+      group: 'Basics',
+      code: `// Hello, tswift!
+let language = "Swift"
+let version = 6
+print("Hello from \\(language) \\(version)! 👋")
+
+let π = 3.14159
+let radius = 5.0
+let area = π * radius * radius
+print("Circle area (r=\\(radius)): \\(area)")
+
+let score = 87
+let grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : "F"
+print("Score \\(score) → Grade \\(grade)")`,
+    },
+    {
+      label: 'Fibonacci',
+      group: 'Basics',
+      code: `func fib(_ n: Int) -> Int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+for i in 0...12 {
+    print("fib(\\(i)) = \\(fib(i))")
+}`,
+    },
+    {
+      label: 'Closures',
+      group: 'Functions',
+      code: `let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+let doubled = numbers.map { $0 * 2 }
+print("doubled: \\(doubled)")
+
+let sum = numbers.reduce(0, +)
+print("sum: \\(sum)")
+
+let sumOfSquaredEvens = numbers
+    .filter { $0 % 2 == 0 }
+    .map    { $0 * $0 }
+    .reduce(0, +)
+print("sum of squared evens: \\(sumOfSquaredEvens)")
+
+func makeMultiplier(_ factor: Int) -> (Int) -> Int { { $0 * factor } }
+let triple = makeMultiplier(3)
+print("triple(7) = \\(triple(7))")`,
+    },
+    {
+      label: 'Structs',
+      group: 'Types',
+      code: `struct Point {
+    var x: Double
+    var y: Double
+    var magnitude: Double { (x*x + y*y).squareRoot() }
+    mutating func translate(dx: Double, dy: Double) { x += dx; y += dy }
+}
+
+var p = Point(x: 3, y: 4)
+print("|p| = \\(p.magnitude)")
+
+var q = p           // value copy
+q.translate(dx: 10, dy: 0)
+print("p.x=\\(p.x), q.x=\\(q.x)  ← independent copies")`,
+    },
+    {
+      label: 'Enums',
+      group: 'Types',
+      code: `enum Shape {
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+    var area: Double {
+        switch self {
+        case .circle(let r):            return 3.14159 * r * r
+        case .rectangle(let w, let h):  return w * h
+        }
+    }
+}
+
+let shapes: [Shape] = [.circle(radius: 5), .rectangle(width: 4, height: 6)]
+for s in shapes { print("area = \\(s.area)") }
+
+enum Planet: Int { case mercury = 1, venus, earth, mars }
+print("Earth = \\(Planet.earth.rawValue)")`,
+    },
+    {
+      label: 'Protocols',
+      group: 'Abstractions',
+      code: `protocol Scorable {
+    var score: Int { get }
+    func grade() -> String
+}
+extension Scorable {
+    func grade() -> String {
+        switch score {
+        case 90...: return "A"
+        case 80..<90: return "B"
+        case 70..<80: return "C"
+        default: return "F"
+        }
+    }
+}
+struct Student: Scorable {
+    let name: String
+    let score: Int
+}
+let roster = [Student(name: "Ada", score: 95),
+              Student(name: "Bob", score: 72),
+              Student(name: "Eve", score: 88)]
+for s in roster { print("\\(s.name) → \\(s.grade())") }`,
+    },
+    {
+      label: 'Errors',
+      group: 'Abstractions',
+      code: `enum ValidationError: Error {
+    case empty; case tooShort(Int)
+}
+func validate(_ s: String) throws -> String {
+    guard !s.isEmpty else { throw ValidationError.empty }
+    guard s.count >= 4 else { throw ValidationError.tooShort(s.count) }
+    return "✓ valid"
+}
+let inputs = ["", "hi", "swift"]
+for s in inputs {
+    do {
+        print("'\\(s)' → \\(try validate(s))")
+    } catch ValidationError.empty {
+        print("'\\(s)' → empty")
+    } catch ValidationError.tooShort(let n) {
+        print("'\\(s)' → too short (\\(n))")
+    }
+}`,
+    },
+  ];
+
+  // ── DOM refs ─────────────────────────────────────────────────────
+  const presetBar = document.getElementById('mini-preset-bar');
+  const source    = document.getElementById('mini-source');
+  const runBtn    = document.getElementById('mini-run');
+  const statusEl  = document.getElementById('mini-status');
+  const output    = document.getElementById('mini-output');
+  const metaEl    = document.getElementById('mini-meta');
+
+  // ── Render presets ────────────────────────────────────────────────
+  const groups = {};
+  for (const p of PRESETS) {
+    if (!groups[p.group]) groups[p.group] = [];
+    groups[p.group].push(p);
+  }
+  for (const [group, items] of Object.entries(groups)) {
+    const lbl = document.createElement('span');
+    lbl.className = 'preset-group-label';
+    lbl.textContent = group;
+    presetBar.appendChild(lbl);
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.className = 'preset-pill';
+      btn.textContent = item.label;
+      btn.dataset.code = item.code;
+      presetBar.appendChild(btn);
+    }
+  }
+
+  // Load first preset
+  function loadPreset(btn) {
+    source.value = btn.dataset.code;
+    document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    updateMeta();
+    output.textContent = 'Ready.';
+    output.className = 'output-area';
+  }
+  const firstPill = presetBar.querySelector('.preset-pill');
+  if (firstPill) loadPreset(firstPill);
+
+  presetBar.addEventListener('click', e => {
+    const pill = e.target.closest('.preset-pill');
+    if (pill) loadPreset(pill);
+  });
+
+  source.addEventListener('input', () => {
+    document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+    updateMeta();
+  });
+
+  function updateMeta() {
+    const lines = source.value.split('\n').length;
+    metaEl.textContent = `${lines} lines`;
+  }
+
+  // ── WASM ─────────────────────────────────────────────────────────
+  let runSwift = null;
+
+  async function initWasm() {
+    try {
+      const mod = await import(/* @vite-ignore */ '/wasm/tswift_wasm.js');
+      await mod.default();
+      runSwift = mod.runSwift;
+      runBtn.disabled = false;
+      setStatus('idle', '');
+    } catch (err) {
+      setStatus('error', 'wasm failed');
+      output.textContent = `Failed to load runtime:\n${err.message}`;
+      output.className = 'output-area error';
+    }
+  }
+  initWasm();
+
+  function setStatus(type, text) {
+    statusEl.textContent = text || type;
+    statusEl.className = `status-badge ${type}`;
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (!runSwift) return;
+    setStatus('running', 'running…');
+    output.textContent = '';
+    output.className = 'output-area';
+    try {
+      const result = JSON.parse(runSwift(source.value));
+      if (result.run) {
+        const stdout = result.run.stdout?.trim() ?? '';
+        const stderr = result.run.stderr?.trim() ?? '';
+        output.textContent = [stdout, stderr].filter(Boolean).join('\n');
+        if (!result.run.ok) {
+          output.className = 'output-area error';
+          setStatus('error', 'failed');
+        } else {
+          setStatus('ok', 'ok');
+        }
+      } else if (result.compile) {
+        output.textContent = result.compile.stderr || 'compile error (no output)';
+        output.className = 'output-area error';
+        setStatus('error', 'compile error');
+      }
+    } catch (err) {
+      output.textContent = err.message;
+      output.className = 'output-area error';
+      setStatus('error', 'error');
+    }
+  });
+</script>

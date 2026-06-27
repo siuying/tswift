@@ -1,0 +1,14 @@
+---
+// Wrap mermaid diagram source. Mermaid is loaded in Base.astro via CDN.
+interface Props {
+  caption?: string;
+}
+const { caption } = Astro.props;
+---
+
+<figure class="mermaid-wrap">
+  <pre class="mermaid">
+    <slot />
+  </pre>
+  {caption && <figcaption style="text-align:center;font-size:.8rem;color:var(--muted);margin-top:.75rem">{caption}</figcaption>}
+</figure>

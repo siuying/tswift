@@ -1,0 +1,24 @@
+---
+interface Props {
+  label: string;
+  done: number;
+  total: number;
+  href?: string;
+}
+const { label, done, total, href } = Astro.props;
+const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+const fillClass = pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low';
+---
+
+<div class="coverage-section">
+  <div class="coverage-header">
+    {href
+      ? <a href={href} class="coverage-label">{label}</a>
+      : <span class="coverage-label">{label}</span>
+    }
+    <span class="coverage-pct">{pct}% <span style="color:var(--muted);font-weight:400;font-size:.8rem">({done}/{total})</span></span>
+  </div>
+  <div class="coverage-track">
+    <div class={`coverage-fill ${fillClass}`} style={`width:${pct}%`}></div>
+  </div>
+</div>

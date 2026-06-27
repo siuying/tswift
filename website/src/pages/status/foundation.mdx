@@ -1,0 +1,125 @@
+---
+layout: ../../layouts/Doc.astro
+title: Foundation
+description: Apple Foundation framework implementation status in tswift.
+section: status
+---
+
+import CoverageBar from '../../components/CoverageBar.astro';
+import Mermaid from '../../components/Mermaid.astro';
+
+# Foundation
+
+Foundation is Apple's "base layer" framework — it provides date/time handling,
+URL parsing, JSON encoding, data buffers, and more. tswift measures Foundation
+coverage through generated `.swiftinterface` inventories and per-type runtime
+registries.
+
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+
+---
+
+## Overall coverage
+
+<CoverageBar label="Foundation" done={2} total={12} />
+
+---
+
+## How coverage is measured
+
+Foundation coverage is tracked via the **framework inventory** tool
+(`tools/stdlib-inventory/`). It generates a snapshot of every public type and
+member in the real Apple Foundation `.swiftinterface`, then compares it against
+the runtime's native registry. See `docs/swift-runtime/stdlib-inventory.md`.
+
+---
+
+## Type status
+
+<Mermaid caption="Foundation type coverage map">
+{`
+flowchart TD
+    done["✅ Implemented"]
+    partial["🟡 Partial"]
+    todo["⬜ Todo"]
+
+    done --> Data["Data\\ncore constructors + properties"]
+    done --> UUID["UUID\\nuuidString, init, random"]
+    partial --> IndexSet["IndexSet / IndexPath\\nF1 – constructors only"]
+    todo --> URL["URL / URLComponents\\nF2 – todo"]
+    todo --> Date["Date / DateFormatter\\ntodo"]
+    todo --> JSON["JSONEncoder / JSONDecoder\\ntodo"]
+    todo --> Notification["NotificationCenter\\ntodo"]
+    todo --> UserDef["UserDefaults\\ntodo"]
+    todo --> FileMan["FileManager\\ntodo"]
+    todo --> Measure["Measurement / Unit\\ntodo"]
+    todo --> Locale["Locale / Calendar\\ntodo"]
+    todo --> CharSet["CharacterSet\\ntodo"]
+
+    style done fill:#1e3a2a,stroke:#6ddf9f,color:#eeeef5
+    style partial fill:#2a2512,stroke:#f5d06e,color:#eeeef5
+    style todo fill:#1e1e27,stroke:#444455,color:#8888a0
+`}
+</Mermaid>
+
+---
+
+## Detailed status
+
+### F0 — Proof slice (done)
+
+| Status | Type | APIs implemented |
+|--------|------|----------------|
+| ✅ | `Data` | `init()`, `init(bytes:)`, `count`, `isEmpty`, subscript, `append` |
+| ✅ | `UUID` | `init()` (random), `init(uuidString:)`, `uuidString`, `==` |
+
+### F1 — Core value types
+
+| Status | Type | APIs needed |
+|--------|------|------------|
+| ⬜ | `IndexPath` | `init(indexes:)`, subscript, `count`, arithmetic |
+| ⬜ | `IndexSet` | `init()`, `insert`, `remove`, `contains`, set algebra |
+
+### F2 — URLs & networking types
+
+| Status | Type | APIs needed |
+|--------|------|------------|
+| ⬜ | `URL` | `init(string:)`, `absoluteString`, `path`, `host`, `scheme` |
+| ⬜ | `URLComponents` | `init(string:)`, `queryItems`, `url` |
+| ⬜ | `URLQueryItem` | `name`, `value` |
+
+### F3 — Date & time
+
+| Status | Type | APIs needed |
+|--------|------|------------|
+| ⬜ | `Date` | `init()`, `timeIntervalSinceNow`, `addingTimeInterval` |
+| ⬜ | `DateFormatter` | `dateFormat`, `string(from:)`, `date(from:)` |
+| ⬜ | `Calendar` | `component(_:from:)`, `date(byAdding:)` |
+| ⬜ | `Locale` | `current`, `identifier`, `languageCode` |
+
+### F4 — Encoding / decoding
+
+| Status | Type | Notes |
+|--------|------|-------|
+| ⬜ | `JSONEncoder` | `encode(_:)` — Codable synthesis works; encoder not yet bridged |
+| ⬜ | `JSONDecoder` | `decode(_:from:)` — same |
+| ⬜ | `PropertyListEncoder` | |
+
+### F5 — System & I/O
+
+| Status | Type | Notes |
+|--------|------|-------|
+| ⬜ | `FileManager` | Path-based APIs; sandboxed WASM would be a stub |
+| ⬜ | `NotificationCenter` | Observer pattern |
+| ⬜ | `UserDefaults` | Key-value store; stub for WASM |
+
+---
+
+## Roadmap
+
+Foundation work is planned for **R5+**. Priority order:
+
+1. `IndexPath` / `IndexSet` (F1) — small, useful for collections
+2. `URL` / `URLComponents` (F2) — high demand for networking code
+3. `JSONEncoder` / `JSONDecoder` (F4) — bridges to existing Codable work
+4. `Date` / `DateFormatter` (F3) — date math, formatting
