@@ -34,6 +34,10 @@ pub const CHILDREN_FIELD: &str = "_children";
 pub const ACTION_FIELD: &str = "_action";
 /// Type name of an appended modifier record (`_Modifier { name, <args> }`).
 pub const MODIFIER_TYPE: &str = "_Modifier";
+/// Field name holding a `ForEach`-generated child's stable identity key. When
+/// present, the child's UIIR id is `{parent}.{key}` (not `{parent}.{index}`) so
+/// the keyed diff can emit `move` instead of replacing reordered rows.
+pub const KEY_FIELD: &str = "_key";
 
 /// Define a view-modifier intrinsic that appends a named `_Modifier` record to
 /// the receiver view (copy-on-write). All v1 modifiers share this shape; the
@@ -174,6 +178,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("VStack", vstack_init);
     interp.register_free_fn("HStack", hstack_init);
     interp.register_free_fn("ZStack", zstack_init);
+    interp.register_free_fn("ForEach", foreach_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
@@ -214,8 +219,8 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| match key.as_str() {
-            "Text" | "VStack" | "HStack" | "ZStack" | "Spacer" | "Button" | "Toggle" | "Circle"
-            | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
+            "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "Spacer" | "Button"
+            | "Toggle" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
                 Some(format!("{key}.init"))
             }
             _ => None,
@@ -279,6 +284,130 @@ fn hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// `ZStack { ... }` — depth (overlay) container; children stack back-to-front.
 fn zstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(container_value("ZStack", collect_children(ctx, args)?))
+}
+
+/// `ForEach(_ data, id:, content:)` — a keyed sequence of views. Each element
+/// of `data` is passed to the `content` builder; the produced view(s) are
+/// tagged with a stable identity key so the diff can `move` reordered rows
+/// rather than rebuild them. The key comes from the `id:` key-path argument
+/// (e.g. `\.self` or `\.name`), else the element's `id` member (an
+/// `Identifiable` model), else the element's display string.
+fn foreach_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut data: Option<SwiftValue> = None;
+    let mut id_keypath: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("id") => id_keypath = Some(arg.value),
+            Some("content") => content = Some(arg.value),
+            _ => match arg.value {
+                v @ SwiftValue::Closure(_) if content.is_none() => content = Some(v),
+                v if data.is_none() => data = Some(v),
+                _ => {}
+            },
+        }
+    }
+    let (Some(data), Some(SwiftValue::Closure(content))) = (data, content) else {
+        return Err(type_error(
+            "ForEach requires a data sequence and a content closure",
+        ));
+    };
+    let items = sequence_items(&data)
+        .ok_or_else(|| type_error("ForEach data is not a sequence (array or range)"))?;
+
+    let mut children = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in items {
+        let key = foreach_key(ctx, &item, id_keypath.as_ref())?;
+        // The content closure is a `@ViewBuilder`: bind the element and collect
+        // *every* produced sibling view, not just the last statement.
+        let built = ctx.eval_block_values_with_args(content, vec![item])?;
+        let mut rows = Vec::new();
+        expand_into(ctx, built, &mut rows, 0)?;
+        // A single produced view takes the row key directly; multiple views
+        // (a `Group`-like body) get an `_<j>` suffix so keys stay unique. The
+        // separator is `_`, which `key_string` always escapes, so a suffixed
+        // key can never collide with a single-view row's encoded key.
+        let multi = rows.len() > 1;
+        for (j, row) in rows.into_iter().enumerate() {
+            let mut key = if multi {
+                format!("{key}_{j}")
+            } else {
+                key.clone()
+            };
+            // Guarantee uniqueness even if the model yields duplicate ids.
+            while !seen.insert(key.clone()) {
+                key.push('\'');
+            }
+            children.push(with_key(row, key));
+        }
+    }
+    Ok(container_value("ForEach", children))
+}
+
+/// Materialize a ForEach data argument into an ordered element list. Supports
+/// arrays and integer ranges (the two common `ForEach` sources).
+fn sequence_items(data: &SwiftValue) -> Option<Vec<SwiftValue>> {
+    match data {
+        SwiftValue::Array(items) => Some(items.iter().cloned().collect()),
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive { *hi + 1 } else { *hi };
+            Some((*lo..end).map(SwiftValue::int).collect())
+        }
+        _ => None,
+    }
+}
+
+/// Derive a ForEach row's identity key for `item`: apply the `id:` key path if
+/// given, else read an `id` member, else fall back to the display string.
+fn foreach_key(
+    ctx: &mut dyn StdContext,
+    item: &SwiftValue,
+    id_keypath: Option<&SwiftValue>,
+) -> Result<String, StdError> {
+    let keyed = match id_keypath {
+        Some(SwiftValue::Closure(kp)) => ctx.call_closure(*kp, vec![item.clone()])?,
+        _ => match item {
+            SwiftValue::Struct(_) | SwiftValue::Object(_) => {
+                ctx.get_member(item, "id").unwrap_or_else(|_| item.clone())
+            }
+            _ => item.clone(),
+        },
+    };
+    Ok(key_string(&keyed))
+}
+
+/// Stringify an identity value into a stable, id-safe key: an *injective* escape
+/// so distinct identities never collapse to the same key (which would let the
+/// keyed diff preserve the wrong row's state). ASCII alphanumerics and `-` pass
+/// through; every other byte (including `_` and `.`) becomes `_<hex>`, so the
+/// key is a reversible, `.`-free path segment.
+fn key_string(value: &SwiftValue) -> String {
+    let raw = match value {
+        SwiftValue::Str(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' {
+            out.push(b as char);
+        } else {
+            out.push('_');
+            out.push_str(&format!("{b:02x}"));
+        }
+    }
+    out
+}
+
+/// Attach a stable identity [`KEY_FIELD`] to a view value (copy-on-write).
+fn with_key(view: SwiftValue, key: String) -> SwiftValue {
+    let SwiftValue::Struct(obj) = view else {
+        return view;
+    };
+    let mut obj = (*obj).clone();
+    obj.fields.retain(|(k, _)| k != KEY_FIELD);
+    obj.fields.push((KEY_FIELD.into(), SwiftValue::Str(key)));
+    SwiftValue::Struct(Rc::new(obj))
 }
 
 /// `Circle()` — a circular shape leaf.
@@ -531,6 +660,28 @@ pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
     }
 }
 
+/// A node's stable identity key ([`KEY_FIELD`]), set on `ForEach`-generated
+/// children so the diff and serializer agree on a position-independent id.
+pub fn key_of(value: &SwiftValue) -> Option<&str> {
+    match value {
+        SwiftValue::Struct(obj) => match obj.get(KEY_FIELD) {
+            Some(SwiftValue::Str(s)) => Some(s.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The UIIR id of the `index`-th child of node `parent_id`. A keyed child
+/// (`ForEach` row) uses its stable key so reorders preserve identity; every
+/// other child uses its structural position.
+pub fn child_id(parent_id: &str, index: usize, child: &SwiftValue) -> String {
+    match key_of(child) {
+        Some(key) => format!("{parent_id}.{key}"),
+        None => format!("{parent_id}.{index}"),
+    }
+}
+
 #[cfg(test)]
 mod coverage_dump {
     #[test]
@@ -556,6 +707,7 @@ mod tests {
                 "Capsule.init",
                 "Circle.init",
                 "Ellipse.init",
+                "ForEach.init",
                 "HStack.init",
                 "Rectangle.init",
                 "RoundedRectangle.init",
@@ -809,6 +961,44 @@ struct V: View {
             panic!("expected struct");
         };
         assert_eq!(rr.get("cornerRadius"), Some(&SwiftValue::int(12)));
+    }
+
+    #[test]
+    fn foreach_multi_view_row_keeps_every_sibling_with_suffixed_keys() {
+        // A `@ViewBuilder` row emitting two views keeps both, keyed `{k}.0`/`{k}.1`.
+        let src = r#"
+struct V: View {
+    var body: some View {
+        ForEach(["a", "b"], id: \.self) { x in
+            Text(x)
+            Text(x)
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children");
+        };
+        let keys: Vec<Option<&str>> = children.iter().map(key_of).collect();
+        assert_eq!(
+            keys,
+            vec![Some("a_0"), Some("a_1"), Some("b_0"), Some("b_1")]
+        );
+    }
+
+    #[test]
+    fn key_string_is_injective_across_separator_chars() {
+        // Distinct ids that a lossy sanitizer would collapse must stay distinct.
+        assert_ne!(
+            key_string(&SwiftValue::Str("a.b".into())),
+            key_string(&SwiftValue::Str("a_b".into()))
+        );
+        // And the encoding never contains the path separator.
+        assert!(!key_string(&SwiftValue::Str("a.b.c".into())).contains('.'));
     }
 
     #[test]

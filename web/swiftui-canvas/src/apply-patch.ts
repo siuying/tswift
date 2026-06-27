@@ -23,7 +23,8 @@ export type Patch =
   | { op: "replace"; id: string; node: UiirNode }
   | { op: "setText"; id: string; text: string }
   | { op: "setModifiers"; id: string; modifiers: Modifier[] }
-  | { op: "setArgs"; id: string; args: Record<string, unknown> };
+  | { op: "setArgs"; id: string; args: Record<string, unknown> }
+  | { op: "move"; parentId: string; id: string; index: number };
 
 /** How a host node reports an event back to the runtime. */
 export type EventSink = (id: string, event: string, value: unknown) => void;
@@ -67,6 +68,19 @@ export class PatchApplier {
         const el = this.nodes.get(patch.id);
         el?.remove();
         this.forget(patch.id);
+        break;
+      }
+      case "move": {
+        // Keyed reorder: relocate the existing element (preserving its DOM
+        // node and any host state) to index `index`. The target is computed
+        // among the *other* children so it is correct whether the element
+        // moves left or right (insertBefore implicitly removes it first).
+        const parent = this.nodes.get(patch.parentId);
+        const el = this.nodes.get(patch.id);
+        if (!parent || !el) return;
+        const others = Array.from(parent.children).filter((c) => c !== el);
+        const ref = others[patch.index] ?? null;
+        if (ref !== el) parent.insertBefore(el, ref);
         break;
       }
       case "replace": {
@@ -149,6 +163,13 @@ export class PatchApplier {
         const el = document.createElement("div");
         el.style.cssText = "display:grid;place-items:center;";
         el.dataset.zstack = "1";
+        return el;
+      }
+      case "ForEach": {
+        // A transparent group: its keyed rows lay out as if direct children of
+        // the surrounding container.
+        const el = document.createElement("div");
+        el.style.cssText = "display:contents;";
         return el;
       }
       case "Circle":

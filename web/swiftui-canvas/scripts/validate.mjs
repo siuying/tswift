@@ -21,6 +21,7 @@ const PATCH_OPS = new Set([
   "setText",
   "setModifiers",
   "setArgs",
+  "move",
 ]);
 
 let failures = 0;

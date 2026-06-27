@@ -1,15 +1,20 @@
 //! The diff engine — two UIIR trees → a keyed patch stream (plan §3.2).
 //!
-//! v1 is deliberately replace-heavy: there is no `move` op (keyed reconciliation
-//! arrives with `ForEach` in Tier 3) and `setModifiers` replaces the whole
-//! ordered list. Nodes are matched by structural id, so a changed `Text` emits a
-//! `setText` fast-path, an arg change emits `setArgs`, a modifier-list change
-//! emits `setModifiers`, a kind change emits `replace`, and child-count changes
-//! emit `insert`/`remove`.
+//! Nodes are matched by id, so a changed `Text` emits a `setText` fast-path, an
+//! arg change emits `setArgs`, a modifier-list change emits `setModifiers`, a
+//! kind change emits `replace`, and child-count changes emit `insert`/`remove`.
+//!
+//! Children are reconciled positionally by default. A `ForEach` node instead
+//! reconciles its children by their stable identity key (Tier 3): rows present
+//! in both trees are matched by key (so their subtree is diffed in place),
+//! removed keys emit `remove`, new keys emit `insert`, and a key whose relative
+//! order changed emits `move`.
+
+use std::collections::HashMap;
 
 use tswift_core::SwiftValue;
 
-use crate::{uiir, CHILDREN_FIELD, MODIFIERS_FIELD};
+use crate::{key_of, uiir, CHILDREN_FIELD, MODIFIERS_FIELD};
 
 /// One patch operation against the host tree.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +40,12 @@ pub enum Patch {
     },
     /// Replace the node's constructor args.
     SetArgs { id: String, node: SwiftValue },
+    /// Move an existing keyed child to `index` within `parent` (keyed reorder).
+    Move {
+        parent: String,
+        id: String,
+        index: usize,
+    },
 }
 
 /// The kind (SwiftUI type name) of a view node.
@@ -141,8 +152,23 @@ fn diff_node(old: &SwiftValue, new: &SwiftValue, id: &str, patches: &mut Vec<Pat
         });
     }
 
-    // Children: positional diff (no keyed `move` until Tier 3).
+    // Children: keyed reconciliation for `ForEach`, positional otherwise.
     let (old_children, new_children) = (children(old), children(new));
+    if kind(new) == "ForEach" {
+        diff_keyed_children(&old_children, &new_children, id, patches);
+    } else {
+        diff_positional_children(&old_children, &new_children, id, patches);
+    }
+}
+
+/// Positional child diff: match children index-for-index, then insert/remove the
+/// tail. Stable for static containers whose child identities are their order.
+fn diff_positional_children(
+    old_children: &[SwiftValue],
+    new_children: &[SwiftValue],
+    id: &str,
+    patches: &mut Vec<Patch>,
+) {
     let common = old_children.len().min(new_children.len());
     for i in 0..common {
         diff_node(
@@ -165,6 +191,86 @@ fn diff_node(old: &SwiftValue, new: &SwiftValue, id: &str, patches: &mut Vec<Pat
             id: format!("{id}.{i}"),
         });
     }
+}
+
+/// Keyed child diff for `ForEach`: rows carry a stable identity key, so reorders
+/// preserve element identity (DOM node, its state) via `move` instead of
+/// rebuilding. Removed keys are dropped, surviving keys are diffed in place, new
+/// keys are inserted, and a `move` is emitted whenever a surviving key's target
+/// position differs from where the running host order would otherwise place it.
+fn diff_keyed_children(
+    old_children: &[SwiftValue],
+    new_children: &[SwiftValue],
+    id: &str,
+    patches: &mut Vec<Patch>,
+) {
+    // Map each old child's key to its node so survivors can be diffed in place.
+    let old_by_key: HashMap<String, &SwiftValue> = old_children
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (child_key(c, i), c))
+        .collect();
+    let new_keys: Vec<String> = new_children
+        .iter()
+        .enumerate()
+        .map(|(i, c)| child_key(c, i))
+        .collect();
+    let new_key_set: std::collections::HashSet<&String> = new_keys.iter().collect();
+
+    // Remove keys that disappeared.
+    for (i, child) in old_children.iter().enumerate() {
+        let key = child_key(child, i);
+        if !new_key_set.contains(&key) {
+            patches.push(Patch::Remove {
+                id: format!("{id}.{key}"),
+            });
+        }
+    }
+
+    // `order` tracks the host's current child order (keys) as we apply patches,
+    // so a `move` is only emitted when an element is genuinely out of place.
+    let mut order: Vec<String> = old_children
+        .iter()
+        .enumerate()
+        .map(|(i, c)| child_key(c, i))
+        .filter(|k| new_key_set.contains(k))
+        .collect();
+
+    for (target, new_child) in new_children.iter().enumerate() {
+        let key = &new_keys[target];
+        let child_path = format!("{id}.{key}");
+        match old_by_key.get(key) {
+            Some(old_child) => {
+                diff_node(old_child, new_child, &child_path, patches);
+                let cur = order.iter().position(|k| k == key).unwrap();
+                if cur != target {
+                    let item = order.remove(cur);
+                    order.insert(target, item);
+                    patches.push(Patch::Move {
+                        parent: id.to_string(),
+                        id: child_path,
+                        index: target,
+                    });
+                }
+            }
+            None => {
+                patches.push(Patch::Insert {
+                    parent: id.to_string(),
+                    index: target,
+                    node: new_child.clone(),
+                });
+                order.insert(target, key.clone());
+            }
+        }
+    }
+}
+
+/// The identity key of a keyed child, or its structural index as a fallback (so
+/// a non-keyed child under a `ForEach` still gets a stable-enough path).
+fn child_key(child: &SwiftValue, index: usize) -> String {
+    key_of(child)
+        .map(str::to_string)
+        .unwrap_or_else(|| index.to_string())
 }
 
 /// Serialize a patch stream as a canonical JSON array (the Layer-C wire format).
@@ -194,7 +300,9 @@ fn patch_json(patch: &Patch) -> String {
             r#"{{"op":"insert","parentId":{},"index":{},"node":{}}}"#,
             json_string(parent),
             index,
-            uiir::node_json(node, &format!("{parent}.{index}")),
+            // A keyed (`ForEach`) child keeps its stable id under insertion so
+            // later move/remove/setText/events for `{parent}.{key}` resolve.
+            uiir::node_json(node, &crate::child_id(parent, *index, node)),
         ),
         Patch::Remove { id } => format!(r#"{{"op":"remove","id":{}}}"#, json_string(id)),
         Patch::Replace { id, node } => format!(
@@ -216,6 +324,12 @@ fn patch_json(patch: &Patch) -> String {
             r#"{{"op":"setArgs","id":{},"args":{}}}"#,
             json_string(id),
             uiir::args_json(node),
+        ),
+        Patch::Move { parent, id, index } => format!(
+            r#"{{"op":"move","parentId":{},"id":{},"index":{}}}"#,
+            json_string(parent),
+            json_string(id),
+            index,
         ),
     }
 }
@@ -291,5 +405,81 @@ struct CounterView: View {
         assert!(lines[0].starts_with(r#"[{"op":"mount""#));
         // The tap changes only the Text child "0.0" from "0" to "1".
         assert_eq!(lines[1], r#"[{"op":"setText","id":"0.0","text":"1"}]"#);
+    }
+
+    /// Render a `ForEach` over a literal string array (id: \.self), each row a
+    /// `Text(name)`, and return the root view value.
+    fn render_foreach(items: &[&str]) -> SwiftValue {
+        let literal = items
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let src = format!(
+            "{PRELUDE}\nstruct V: View {{ var body: some View {{ \
+             ForEach([{literal}], id: \\.self) {{ name in Text(name) }} }} }}\n"
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        crate::render_root(&mut interp, "V").expect("render")
+    }
+
+    #[test]
+    fn foreach_reorder_emits_only_moves() {
+        let before = render_foreach(&["a", "b", "c"]);
+        let after = render_foreach(&["c", "a", "b"]);
+        let patches = diff(&before, &after);
+        // No rebuild: every patch is a `move` (rows kept their identity).
+        assert!(
+            patches.iter().all(|p| matches!(p, Patch::Move { .. })),
+            "expected only moves, got {patches:?}"
+        );
+        // Moving `c` to the front is the single minimal reorder.
+        assert_eq!(
+            patches,
+            vec![Patch::Move {
+                parent: "0".into(),
+                id: "0.c".into(),
+                index: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn foreach_insert_and_remove_use_keyed_ids() {
+        let before = render_foreach(&["a", "b", "c"]);
+        let after = render_foreach(&["a", "x", "c"]);
+        let patches = diff(&before, &after);
+        // `b` removed by key, `x` inserted at its position — no `c` churn.
+        assert!(patches.contains(&Patch::Remove { id: "0.b".into() }));
+        assert!(patches.iter().any(
+            |p| matches!(p, Patch::Insert { parent, index, .. } if parent == "0" && *index == 1)
+        ));
+        assert!(!patches.iter().any(|p| matches!(p, Patch::Replace { .. })));
+    }
+
+    #[test]
+    fn keyed_insert_serializes_with_the_row_key_not_its_index() {
+        // Inserting a new key registers the subtree under `{parent}.{key}` so
+        // later move/remove/setText/events for that row resolve in the host.
+        let before = render_foreach(&["a", "c"]);
+        let after = render_foreach(&["a", "b", "c"]);
+        let json = to_json(&diff(&before, &after));
+        assert!(
+            json.contains(r#""op":"insert","parentId":"0","index":1,"node":{"id":"0.b""#),
+            "insert subtree must use the keyed id: {json}"
+        );
+    }
+
+    #[test]
+    fn foreach_identical_data_emits_no_patches() {
+        // Stable keys + unchanged content reconcile to nothing.
+        let before = render_foreach(&["a", "b"]);
+        let after = render_foreach(&["a", "b"]);
+        assert!(diff(&before, &after).is_empty());
     }
 }

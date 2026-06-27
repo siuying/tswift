@@ -11,7 +11,8 @@
 use tswift_core::SwiftValue;
 
 use crate::{
-    token_of, view_type_name, ACTION_FIELD, CHILDREN_FIELD, MODIFIERS_FIELD, MODIFIER_TYPE,
+    child_id, token_of, view_type_name, ACTION_FIELD, CHILDREN_FIELD, KEY_FIELD, MODIFIERS_FIELD,
+    MODIFIER_TYPE,
 };
 
 /// Serialize a view-value tree rooted at `view` into canonical UIIR JSON, with
@@ -86,7 +87,7 @@ fn write_node(view: &SwiftValue, id: &str, out: &mut String) {
     out.push_str(",\"args\":{");
     let mut first = true;
     for (key, value) in &obj.fields {
-        if key.starts_with('_') || key == ACTION_FIELD {
+        if key.starts_with('_') || key == ACTION_FIELD || key == KEY_FIELD {
             continue;
         }
         if !first {
@@ -118,8 +119,8 @@ fn write_node(view: &SwiftValue, id: &str, out: &mut String) {
             if i > 0 {
                 out.push(',');
             }
-            let child_id = format!("{id}.{i}");
-            write_node(child, &child_id, out);
+            let cid = child_id(id, i, child);
+            write_node(child, &cid, out);
         }
     }
     out.push(']');

@@ -2,6 +2,7 @@ Button.init
 Capsule.init
 Circle.init
 Ellipse.init
+ForEach.init
 HStack.init
 Rectangle.init
 RoundedRectangle.init

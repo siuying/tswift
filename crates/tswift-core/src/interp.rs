@@ -2817,6 +2817,71 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Evaluate a `@ViewBuilder`-style closure body with bound arguments,
+    /// collecting *every* view-valued statement (not just the last). This is the
+    /// builder-block analogue of [`Interpreter::call_closure`]: `ForEach`'s
+    /// per-element content closure takes the element as an argument yet may emit
+    /// several sibling views.
+    fn eval_builder_block_with_args(
+        &mut self,
+        id: usize,
+        args: Vec<SwiftValue>,
+    ) -> Result<Vec<SwiftValue>, Signal> {
+        let (params, body, captured) = match &self.closures[id] {
+            (ClosureDef::User { params, body }, cap) => {
+                (clone_params(params), body.clone(), cap.clone())
+            }
+            // Operator/key-path closures carry no multi-statement body; fall
+            // back to a single applied value.
+            _ => {
+                let v = self.call_closure(id, args)?;
+                return Ok(if matches!(v, SwiftValue::Void) {
+                    Vec::new()
+                } else {
+                    vec![v]
+                });
+            }
+        };
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap("stack overflow: recursion too deep".into()));
+        }
+        let call_env = Env::with_captured(captured);
+        let saved = std::mem::replace(&mut self.env, call_env);
+        for (i, p) in params.iter().enumerate() {
+            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
+            self.env.declare(&p.name, v, false);
+        }
+        for (i, v) in args.iter().enumerate() {
+            self.env.declare(&format!("${i}"), v.clone(), false);
+        }
+        let mut values = Vec::new();
+        let mut error = None;
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(SwiftValue::Void) => {}
+                Ok(v) => values.push(v),
+                Err(Signal::Return(v)) => {
+                    if !matches!(v, SwiftValue::Void) {
+                        values.push(v);
+                    }
+                    break;
+                }
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
+        }
+        self.env = saved;
+        self.depth -= 1;
+        match error {
+            Some(e) => Err(e),
+            None => Ok(values),
+        }
+    }
+
     /// Invoke a closure value with already-evaluated arguments.
     fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> Eval {
         if id >= self.closures.len() {
@@ -7238,6 +7303,17 @@ impl StdContext for Interpreter<'_> {
 
     fn eval_block_values(&mut self, id: usize) -> crate::stdlib::StdResult {
         match self.eval_builder_block(id) {
+            Ok(values) => Ok(SwiftValue::Array(Rc::new(values))),
+            Err(sig) => Err(Self::signal_to_std_error(sig)),
+        }
+    }
+
+    fn eval_block_values_with_args(
+        &mut self,
+        id: usize,
+        args: Vec<SwiftValue>,
+    ) -> crate::stdlib::StdResult {
+        match self.eval_builder_block_with_args(id, args) {
             Ok(values) => Ok(SwiftValue::Array(Rc::new(values))),
             Err(sig) => Err(Self::signal_to_std_error(sig)),
         }

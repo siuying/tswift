@@ -56,6 +56,15 @@ pub trait StdContext {
         let value = self.call_closure(id, Vec::new())?;
         Ok(SwiftValue::Array(std::rc::Rc::new(vec![value])))
     }
+    /// Like [`StdContext::eval_block_values`] but binds `args` to the closure's
+    /// parameters first — the `@ViewBuilder` shim for a content closure that
+    /// takes an argument yet may emit several sibling views (`ForEach`'s
+    /// per-element body). The default applies the closure to `args` and wraps
+    /// the single result.
+    fn eval_block_values_with_args(&mut self, id: usize, args: Vec<SwiftValue>) -> StdResult {
+        let value = self.call_closure(id, args)?;
+        Ok(SwiftValue::Array(std::rc::Rc::new(vec![value])))
+    }
     /// Read `name` from a struct `value` — a stored field or a computed getter
     /// (e.g. a `View`'s `body`). Lets an intrinsic drive member evaluation; the
     /// SwiftUI render host uses it to expand a composed sub-`View` into its
