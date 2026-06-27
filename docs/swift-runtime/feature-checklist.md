@@ -362,12 +362,12 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | `@main` entry point | ✅ | ★★ | R5 |
 | [x] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
 | [x] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
-| [ ] | `@discardableResult` | ✅ | ★ | R1 |
-| [ ] | `@propertyWrapper` | ✅ | ★★★ | R5 |
+| [x] | `@discardableResult` | ✅ | ★ | R1 |
+| [x] | `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [ ] | `@resultBuilder` | ⚠️ | ★★★★ | R6+ |
 | [x] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
 | [x] | `@Sendable` | ✅ | ★★ | R6+ |
-| [ ] | `@autoclosure` / `@escaping` / `@convention` | ✅ | ★★ | R3 |
+| [~] | `@autoclosure` / `@escaping` / `@convention` | ✅/⚠️ | ★★ | R3 |
 | [x] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
 | [x] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
 | [x] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |
