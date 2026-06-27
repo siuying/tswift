@@ -26,6 +26,8 @@ use tswift_core::{
 pub const MODIFIERS_FIELD: &str = "_modifiers";
 /// Field name holding a container view's ordered child views.
 pub const CHILDREN_FIELD: &str = "_children";
+/// Field name holding a view's primary action closure (`Button`'s `action`).
+pub const ACTION_FIELD: &str = "_action";
 /// Type name of an appended modifier record (`_Modifier { name, <args> }`).
 pub const MODIFIER_TYPE: &str = "_Modifier";
 
@@ -229,21 +231,25 @@ fn spacer_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Spacer", Vec::new()))
 }
 
-/// `Button(_ title) { action }` (scaffold: title only; the action closure and
-/// `@ViewBuilder` label come with the interaction slice).
+/// `Button(_ title) { action }` — a titled button. The leading positional is
+/// the title string; the trailing closure is the tap action, stored as an
+/// `_action` closure value the dispatch loop invokes on a `tap` event.
 fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    let mut iter = args.into_iter();
-    let title = match iter.next() {
-        Some(arg) => match arg.value {
-            SwiftValue::Str(s) => s,
-            other => other.to_string(),
-        },
-        None => String::new(),
-    };
-    Ok(view_value(
-        "Button",
-        vec![("title".into(), SwiftValue::Str(title))],
-    ))
+    let mut title = String::new();
+    let mut action: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.value {
+            SwiftValue::Closure(_) => action = Some(arg.value),
+            SwiftValue::Str(s) if action.is_none() => title = s,
+            other if title.is_empty() && action.is_none() => title = other.to_string(),
+            _ => {}
+        }
+    }
+    let mut fields = vec![("title".into(), SwiftValue::Str(title))];
+    if let Some(action) = action {
+        fields.push((ACTION_FIELD.into(), action));
+    }
+    Ok(view_value("Button", fields))
 }
 
 /// Resolve a container's `@ViewBuilder` content into an ordered child list.
@@ -378,6 +384,46 @@ mod tests {
                 "View.frame",
                 "View.padding",
             ]
+        );
+    }
+
+    #[test]
+    fn render_root_captures_button_title_and_action() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Button("Increment") { }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("Button"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("title"), Some(&SwiftValue::Str("Increment".into())));
+        assert!(
+            matches!(obj.get(ACTION_FIELD), Some(SwiftValue::Closure(_))),
+            "button should capture its action closure"
+        );
+    }
+
+    #[test]
+    fn render_root_interpolates_text() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Text("count: \(1 + 1)")
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(
+            obj.get("verbatim"),
+            Some(&SwiftValue::Str("count: 2".into()))
         );
     }
 
