@@ -2447,10 +2447,17 @@ impl<'w> Interpreter<'w> {
     /// parameter is `inout`). Falls back to the value-only path when the
     /// closure has no `inout` parameters.
     fn call_closure_with_args(&mut self, id: usize, args: Vec<CallArg>) -> Eval {
-        let has_inout = matches!(
-            self.closures.get(id),
-            Some((ClosureDef::User { params, .. }, _)) if params.iter().any(|p| p.inout_)
-        );
+        // A closure participates in the `inout` write-back path when it either
+        // declares an explicit `inout` parameter or is being called with an
+        // `&`-prefixed argument. The latter covers shorthand closures
+        // (`{ $0 += 1 }`), whose parameters carry no explicit `inout` marker —
+        // the caller's `&x` is the contextual signal that position is `inout`.
+        let has_inout = match self.closures.get(id) {
+            Some((ClosureDef::User { params, .. }, _)) => {
+                params.iter().any(|p| p.inout_) || args.iter().any(|a| a.place.is_some())
+            }
+            _ => false,
+        };
         if !has_inout {
             let plain = args.into_iter().map(|a| a.value).collect();
             return self.call_closure(id, plain);
@@ -2472,19 +2479,39 @@ impl<'w> Interpreter<'w> {
 
         let mut writebacks: Vec<(String, Place)> = Vec::new();
         for (i, p) in params.iter().enumerate() {
+            // Swift rejects passing a value to an `inout` parameter without an
+            // explicit `&`; an `inout` parameter therefore requires its caller
+            // argument to carry a write-back `Place`.
+            if p.inout_ && args.get(i).and_then(|a| a.place.as_ref()).is_none() {
+                self.env = saved;
+                self.depth -= 1;
+                return Err(trap(format!(
+                    "passing value to 'inout' parameter '{}' requires '&'",
+                    p.name
+                )));
+            }
             let v = args
                 .get(i)
                 .map(|a| a.value.clone())
                 .unwrap_or(SwiftValue::Nil);
-            self.env.declare(&p.name, v, p.inout_);
-            if p.inout_ {
-                if let Some(place) = args.get(i).and_then(|a| a.place.clone()) {
-                    writebacks.push((p.name.clone(), place));
-                }
+            let place = args.get(i).and_then(|a| a.place.clone());
+            self.env.declare(&p.name, v, p.inout_ || place.is_some());
+            if let Some(place) = place {
+                writebacks.push((p.name.clone(), place));
             }
         }
         for (i, a) in args.iter().enumerate() {
-            self.env.declare(&format!("${i}"), a.value.clone(), false);
+            // Shorthand closures (`{ $0 += 1 }`) expose no named `Param`; an
+            // `&`-passed argument makes the `$i` binding the mutable `inout`
+            // target and schedules its final value for write-back.
+            let is_shorthand_inout = i >= params.len() && a.place.is_some();
+            self.env
+                .declare(&format!("${i}"), a.value.clone(), is_shorthand_inout);
+            if is_shorthand_inout {
+                if let Some(place) = a.place.clone() {
+                    writebacks.push((format!("${i}"), place));
+                }
+            }
         }
 
         let mut result = Ok(SwiftValue::Void);
@@ -7659,6 +7686,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "11 6\n");
+    }
+
+    #[test]
+    fn closure_shorthand_inout_writes_back() {
+        let out =
+            run("let f: (inout Int) -> Void = { $0 += 1 }\nvar x = 5\nf(&x)\nf(&x)\nprint(x)\n")
+                .unwrap();
+        assert_eq!(out, "7\n");
+    }
+
+    #[test]
+    fn closure_inout_requires_ampersand() {
+        let err =
+            run("let f: (inout Int) -> Void = { (n: inout Int) in n += 1 }\nvar x = 5\nf(x)\n")
+                .unwrap_err();
+        assert!(matches!(err, EvalError::Trap(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn closure_throws_signature_writes_back_before_throw() {
+        let out = run(
+            "struct Boom: Error {}\nlet f: (inout Int) throws -> Void = { (n: inout Int) throws in n += 1; throw Boom() }\nvar x = 5\ndo { try f(&x) } catch {}\nprint(x)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "6\n");
     }
 
     #[test]
