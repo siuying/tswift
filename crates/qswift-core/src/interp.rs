@@ -3119,6 +3119,9 @@ impl<'w> Interpreter<'w> {
             .cloned()
             .expect("at least one index checked by caller");
         // `dict[key] = value` inserts/updates; `dict[key] = nil` removes.
+        // When `indices.len() > 1` (e.g. `dict[k, default:]`), only
+        // `indices[0]` is the key; the compound-op read already folded the
+        // `default:` in via `read_subscript`, so extra indices are ignored here.
         if let SwiftValue::Dict(pairs) = &container {
             let mut new_pairs = pairs.as_ref().clone();
             let existing = new_pairs.iter().position(|(k, _)| *k == index_value);
