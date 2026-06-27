@@ -157,7 +157,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | Instance subscripts | ✅ | ★★ | R3 |
 | [x] | Type subscripts (`static subscript`) | ✅ | ★★ | R3 |
-| [~] | Subscript overloads / multi-param | ✅ | ★★ | R3 |
+| [x] | Subscript overloads / multi-param | ✅ | ★★ | R3 |
 
 ---
 
