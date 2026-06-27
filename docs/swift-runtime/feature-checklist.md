@@ -149,7 +149,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Forced unwrap `!` (trap on nil) | ✅ | ★ | R2 |
 | [x] | Optional chaining `?.` | ✅ | ★★★ | R2 |
 | [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [~] | Implicitly unwrapped optionals `T!` | ✅ | ★★ | R2 |
+| [x] | Implicitly unwrapped optionals `T!` | ✅ | ★★ | R2 |
 | [x] | `Optional` pattern `case let x?` | ✅ | ★★ | R2 |
 
 ### 2d. Subscripts
@@ -174,7 +174,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `super.` calls | ✅ | ★★ | R3 |
 | [~] | Designated / convenience initializers | ✅ | ★★★ | R3 |
 | [~] | Initializer delegation + 2-phase init | ✅ | ★★★★ | R3 |
-| [ ] | `required` initializers | ✅ | ★★ | R3 |
+| [x] | `required` initializers | ✅ | ★★ | R3 |
 | [x] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
 | [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
 | [~] | `unowned` references | ✅ | ★★ | R3 |
