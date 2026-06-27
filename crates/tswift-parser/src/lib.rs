@@ -1299,6 +1299,16 @@ impl<'a> Parser<'a> {
             dir.line,
             dir.col,
         );
+        // `#sourceLocation(file:line:)` / `#sourceLocation()` controls the
+        // reported source position. Its arguments are labelled, not an
+        // expression, and it is a no-op for the tree-walker, so skip the whole
+        // balanced argument list.
+        if dir.text == "#sourceLocation" {
+            if self.peek().kind == TokenKind::LParen {
+                self.skip_balanced_parens();
+            }
+            return Ok(node);
+        }
         if self.peek().kind == TokenKind::LParen {
             self.bump();
             if self.peek().kind != TokenKind::RParen {
