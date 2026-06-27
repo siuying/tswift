@@ -1,5 +1,7 @@
 # AGENTS.md
 
+This project aimed to build a end-to-end, lightweight Swift compiler and runtime in Rust.
+
 ## Folder Structure
 
 - `creates` - quick-swift rust packages.
@@ -16,10 +18,9 @@
 
 ## Development
 
+- Read `CODING_STANDARD.md` before writing code.
 - **Git Commits**: Use conventional format: <type>(<scope>): <subject> where type = feat|fix|docs|style|refactor|test|chore|perf. Subject: 50 chars max, imperative mood ("add" not "added"), no period. For small changes: one-line commit only. For complex changes: add body explaining what/why (72-char lines) and reference issues. Keep commits atomic (one logical change) and self-explanatory. Split into multiple commits if addressing different concerns.
 - No "Co-Authored-By: Claude" or "Generated with" line.
-- Before commit, ensure all unit tests pass.
-- Prefer self-documenting code over comments.
 
 ## Feature Checklist
 
