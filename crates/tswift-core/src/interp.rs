@@ -7414,7 +7414,7 @@ enum LoopFlow {
 /// Whether a node is an expression (vs. a type annotation or other non-value
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
-    is_value_node(node) && node.kind() != NodeKind::PatternTuple
+    is_value_node(node)
 }
 
 /// The literal syntax kind represented by `node`, including Swift's treatment
@@ -7466,16 +7466,19 @@ fn dedup_preserving_order(items: Vec<SwiftValue>) -> Vec<SwiftValue> {
 /// Whether a node is a value expression (not a type annotation, accessor, or
 /// pattern node that can appear as a declaration child).
 fn is_value_node(node: &Node) -> bool {
-    !matches!(
-        node.kind(),
-        NodeKind::TypeIdent
-            | NodeKind::TypeOptional
-            | NodeKind::TypeInout
-            | NodeKind::AccessorDecl
-            | NodeKind::Conformance
-            | NodeKind::TypeFunc
-            | NodeKind::Attribute
-    )
+    // Binding patterns (`let x`, `let (a, b)`, …) sit as children of a
+    // declaration alongside its value; they are never the value themselves.
+    !is_pattern_node(node.kind())
+        && !matches!(
+            node.kind(),
+            NodeKind::TypeIdent
+                | NodeKind::TypeOptional
+                | NodeKind::TypeInout
+                | NodeKind::AccessorDecl
+                | NodeKind::Conformance
+                | NodeKind::TypeFunc
+                | NodeKind::Attribute
+        )
 }
 
 /// Whether a node kind is a statement (as opposed to a `switch` pattern).

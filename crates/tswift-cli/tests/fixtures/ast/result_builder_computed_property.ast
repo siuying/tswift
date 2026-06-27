@@ -21,18 +21,22 @@ SourceFile L1
               StringLiteral "\" \"" L4 :String
   StructDecl "View" L7
     Block "{" L7
-      LetDecl "name" L8 :String
+      LetDecl L8 :String
+        PatternValueBinding "name" L8 :String
         TypeIdent "String" L8
-      VarDecl "body" L11 :String
+      VarDecl L11 :String
+        PatternValueBinding "body" L11 :String
         TypeIdent "String" L11
         AccessorDecl "get" L11
           Block L11
-            LetDecl "$build0" L12
+            LetDecl L12
+              PatternValueBinding "$build0" L12
               CallExpr L12 :Void
                 MemberExpr "buildExpression" L12
                   IdentExpr "StringBuilder" L12
                 StringLiteral "\"View\"" L12 :String
-            LetDecl "$build1" L13
+            LetDecl L13
+              PatternValueBinding "$build1" L13
               CallExpr L13 :Void
                 MemberExpr "buildExpression" L13
                   IdentExpr "StringBuilder" L13

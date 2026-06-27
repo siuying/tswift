@@ -22,14 +22,17 @@ SourceFile L1
   FuncDecl "greeting" L8 :String
     TypeIdent "String" L8
     Block L8
-      LetDecl "prefix" L9 :String
+      LetDecl L9 :String
+        PatternValueBinding "prefix" L9 :String
         StringLiteral "\"Hi\"" L9 :String
-      LetDecl "$build0" L10 :Void
+      LetDecl L10 :Void
+        PatternValueBinding "$build0" L10 :Void
         CallExpr L10 :Void
           MemberExpr "buildExpression" L10
             IdentExpr "StringBuilder" L10
           IdentExpr "prefix" L10 :String
-      LetDecl "$build1" L11 :Void
+      LetDecl L11 :Void
+        PatternValueBinding "$build1" L11 :Void
         CallExpr L11 :Void
           MemberExpr "buildExpression" L11
             IdentExpr "StringBuilder" L11

@@ -348,34 +348,16 @@ impl RuntimeAst {
         id
     }
 
-    /// Lower a `let`/`var` binding into the runtime-facing shape: the binding
-    /// name as the node's text, a `TypeIdent` child for the annotation, then the
-    /// initializer/accessor children. The runtime reads the name via
-    /// `decl_name()` and the default via the first value child.
+    /// Lower a `let`/`var` binding. The binding pattern, type annotation,
+    /// initializer, and accessors all stay as children in source order; the
+    /// runtime reads the bound name from the binding-pattern child via
+    /// `decl_name()` and the default from the first value child.
     fn lower_binding(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        use tswift_ast::NodeKind as K;
         let kind = map_kind(node.kind());
         let id = self.alloc(kind, None, node.line());
         self.nodes[id.0].ty = node.type_name().map(ToOwned::to_owned);
         self.nodes[id.0].modifier_bits = modifier_bits(node.modifiers());
-
-        let mut name: Option<String> = None;
-        let mut children: Vec<NodeId> = Vec::new();
-        for child in node.children() {
-            match child.kind() {
-                // The simple name pattern becomes the decl's own text; we do
-                // not keep it as a child (matching the msf `var x` shape).
-                K::NamePattern if name.is_none() => {
-                    name = child.text().map(ToOwned::to_owned);
-                }
-                // A wildcard binding (`let _ = e`) names itself `_`.
-                K::WildcardPattern if name.is_none() => {
-                    name = Some("_".to_string());
-                }
-                _ => children.push(self.lower_node(child)),
-            }
-        }
-        self.nodes[id.0].text = name;
+        let children = self.lower_child_list(node.children());
         self.set_children(id, children);
         id
     }

@@ -47,23 +47,24 @@ Each box = one atomic commit; full suite green before the next.
 - [x] 1. **`for` hoist + await sentinel** (`lower_for`) — runtime reads the loop
       pattern child and the `async` modifier directly; delete the `"await"`
       sentinel + `token_text_offset(1)` path. *(Single eval site — loop
-      validator; reordered ahead of `#if` which touches every child-list site.)*
-- [ ] 2. **`#if` splice** (`lower_child_list`) — runtime expands the
-      `CompilerDirective` `#if` wrapper at each decl/member/statement site; stop
-      splicing in the lowerer.
-- [ ] 3. **binding name hoist** (`lower_binding`) — runtime reads the
+      validator.)*
+- [x] 2. **binding name hoist** (`lower_binding`) — runtime reads the
       `NamePattern`/`WildcardPattern` child instead of the decl's hoisted text.
-- [ ] 4. **nominal reshape** (`lower_nominal`) — `register_*` read members and
+- [ ] 3. **nominal reshape** (`lower_nominal`) — `register_*` read members and
       inherited `TypeRef`s directly; stop synthesizing the `Block` wrapper and
       `Conformance`/`TypeIdent` nodes.
-- [ ] 5. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
+- [ ] 4. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
       — `eval_cond_list` reads the `LetDecl`/`VarDecl` + pattern; delete
       `OptionalBinding`/`CaseCondition` synthesis.
-- [ ] 6. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
+- [ ] 5. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
       child and `default` marker directly; drop `case_info` synthesis.
-- [ ] 7. **enum case** (`lower_enum_case`) — runtime reads the flat
+- [ ] 6. **enum case** (`lower_enum_case`) — runtime reads the flat
       `EnumCaseDecl` + `TypeRef` children; delete the `EnumElementDecl`/`Param`
       nesting.
+- [ ] 7. **`#if` splice** (`lower_child_list`) — runtime expands the
+      `CompilerDirective` `#if` wrapper at each decl/member/statement site; stop
+      splicing in the lowerer. *(Broadest — every child-list site; done last
+      among the structural steps.)*
 - [ ] 8. **enum collapse** — re-export `tswift_ast::NodeKind` as the frontend
       `NodeKind`, rewrite `tswift-core` match arms to the clean names, delete
       `map_kind`. Modifier bitfield stays (payload encoding, not structural).
@@ -77,6 +78,13 @@ Each box = one atomic commit; full suite green before the next.
 - 2026-06-27 — swapped steps 1↔2: `#if` splice touches every child-list site
   (top-level/members/block), `for` hoist is a single eval site, so `for` goes
   first as the lower-risk loop validator.
+- 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
+  child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 2 done. `lower_binding` keeps the binding pattern as a child;
+  `decl_name()` reads the name from the `PatternValueBinding`/`PatternWildcard`
+  child. Excluded pattern nodes from `is_value_node` so the re-added child is
+  never mistaken for an initializer/member default; simplified `is_expr`.
+  Regenerated 3 `.ast` snapshots. Codex review: no Critical/Important. 444 green.
 - 2026-06-27 — step 1 done. `lower_for` keeps the binding pattern as a child and
   records the `async` modifier; `eval_for` reads the binding from the pattern
   child and detects `for await` via `Node::is_async()`. Deleted the `"await"`

@@ -98,6 +98,15 @@ impl<'a> Node<'a> {
 
     /// For a declaration node (var/let/func/param), its name.
     pub fn decl_name(&self) -> Option<String> {
+        // `let`/`var` carry their name in a binding-pattern child; every other
+        // declaration (func/struct/enum/…) carries it as the node's own text.
+        for child in self.children() {
+            match child.kind() {
+                NodeKind::PatternValueBinding => return child.text(),
+                NodeKind::PatternWildcard => return Some("_".to_string()),
+                _ => {}
+            }
+        }
         self.analysis.rust.text(self.rust)
     }
 
@@ -536,9 +545,11 @@ mod tests {
                  Conformance \"Codable\" L1\n      \
                    TypeIdent \"Codable\" L1\n    \
                  Block \"{\" L1\n      \
-                   LetDecl \"name\" L2 :String\n        \
+                   LetDecl L2 :String\n        \
+                     PatternValueBinding \"name\" L2 :String\n        \
                      TypeIdent \"String\" L2\n      \
-                   VarDecl \"age\" L3 :Int\n        \
+                   VarDecl L3 :Int\n        \
+                     PatternValueBinding \"age\" L3 :Int\n        \
                      TypeIdent \"Int\" L3\n"
         );
     }

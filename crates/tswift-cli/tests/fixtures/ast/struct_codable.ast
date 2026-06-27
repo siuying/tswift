@@ -3,7 +3,9 @@ SourceFile L1
     Conformance "Codable" L1
       TypeIdent "Codable" L1
     Block "{" L1
-      LetDecl "name" L2 :String
+      LetDecl L2 :String
+        PatternValueBinding "name" L2 :String
         TypeIdent "String" L2
-      VarDecl "age" L3 :Int
+      VarDecl L3 :Int
+        PatternValueBinding "age" L3 :Int
         TypeIdent "Int" L3
