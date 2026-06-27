@@ -2066,6 +2066,14 @@ impl<'a> Parser<'a> {
         while self.peek().kind == TokenKind::Attribute {
             self.bump();
         }
+        // Suppressed constraint `~Copyable` / `~Escapable`: a tilde prefix that
+        // removes an implicit conformance. It is a no-op for the tree-walker, so
+        // keep the marker in the type text and let the runtime ignore it.
+        if self.at_oper("~") {
+            self.bump();
+            let rest = self.parse_type_text()?;
+            return Ok(format!("~{rest}"));
+        }
         // Existential / opaque prefixes: `any P`, `some P`, `inout T`.
         if (self.at_keyword("any") || self.at_keyword("some") || self.at_keyword("inout"))
             && self.tokens[self.pos + 1].kind != TokenKind::Eof

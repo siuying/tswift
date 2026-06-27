@@ -230,7 +230,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Integer generic parameters (`let N: Int`) | ⚠️ | ★★★ | R6+ |
-| [ ] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
+| [x] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
 
 ### 4c. Extensions
 | ✓ | Feature | FE | RT | Phase |
