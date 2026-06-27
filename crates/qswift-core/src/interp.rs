@@ -158,6 +158,9 @@ struct MethodDef {
     params: Vec<Param>,
     body: Option<Node<'static>>,
     mutating: bool,
+    /// `static`/`class` (type) method, callable through `Type.m()` and via an
+    /// implicit member `.m()` in a contextual position.
+    is_static: bool,
 }
 
 /// An instance `subscript` declaration. A type may declare several overloads,
@@ -885,6 +888,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
                     }
@@ -1087,6 +1091,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
                     }
@@ -1149,6 +1154,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: false,
+                        is_static: false,
                     });
                 }
                 NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
@@ -1160,6 +1166,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: sbody,
                         mutating: false,
+                        is_static: true,
                     });
                 }
                 NodeKind::DeinitDecl => {
@@ -1173,6 +1180,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: false,
+                                is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
                     }
@@ -1288,6 +1296,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: true,
+                        is_static: false,
                     });
                 }
                 NodeKind::SubscriptDecl => {
@@ -1300,6 +1309,7 @@ impl<'w> Interpreter<'w> {
                             params: parse_params(&member),
                             body: getter,
                             mutating: false,
+                            is_static: true,
                         });
                     } else {
                         subscripts.push(SubscriptDef {
@@ -1321,6 +1331,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: mods & MOD_MUTATING != 0,
+                                is_static: mods & MOD_STATIC != 0,
                             },
                         );
                     }
@@ -1767,6 +1778,47 @@ impl<'w> Interpreter<'w> {
             }
         }
         found.cloned()
+    }
+
+    /// Resolve an implicit-member call `.m(...)` to the contextual type that
+    /// declares a `static`/`class` method named `m`. Prefers the node's
+    /// inferred type; otherwise accepts a unique struct/class/enum that
+    /// declares such a static method.
+    fn resolve_implicit_static_method(&self, node: &Node<'static>, method: &str) -> Option<String> {
+        let declares = |type_name: &str| -> bool {
+            let m = self
+                .structs
+                .get(type_name)
+                .map(|d| &d.methods)
+                .or_else(|| self.classes.get(type_name).map(|d| &d.methods))
+                .or_else(|| self.enums.get(type_name).map(|d| &d.methods));
+            m.and_then(|methods| methods.get(method))
+                .is_some_and(|def| def.is_static)
+        };
+        // Contextual type, if the frontend resolved one.
+        if let Some(ty) = node.type_name() {
+            for type_name in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if declares(type_name) {
+                    return Some(type_name.to_string());
+                }
+            }
+        }
+        // Otherwise, a unique type declaring this static method.
+        let mut found: Option<String> = None;
+        let names = self
+            .structs
+            .keys()
+            .chain(self.classes.keys())
+            .chain(self.enums.keys());
+        for name in names {
+            if declares(name) {
+                if found.is_some() {
+                    return None; // ambiguous
+                }
+                found = Some(name.clone());
+            }
+        }
+        found
     }
 
     /// Whether `name` is a case of enum `type_name`.
@@ -4596,6 +4648,16 @@ impl<'w> Interpreter<'w> {
                 let args = self.eval_args(arg_nodes)?;
                 let payload = args.into_iter().map(|a| a.value).collect();
                 return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
+            }
+            // Implicit member static method: `.custom(x)` where the contextual
+            // type declares `static func custom`.
+            if let Some(tn) = self.resolve_implicit_static_method(member, &method) {
+                let params = self.user_method_params(&tn, &method);
+                let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+                if self.classes.contains_key(&tn) {
+                    return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
+                }
+                return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
             }
             return Err(EvalError::Unsupported(format!(".{method}() (unresolved type)")).into());
         };

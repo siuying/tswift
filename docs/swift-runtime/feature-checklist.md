@@ -274,7 +274,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [ ] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
 | [ ] | `#selector` / `#keyPath` | ⚠️ | ★★ | R6+ |
 | [ ] | Self type | ✅ | ★★ | R4 |
-| [ ] | Implicit member expr `.foo` | ✅ | ★★ | R2 |
+| [x] | Implicit member expr `.foo` | ✅ | ★★ | R2 |
 | [ ] | `consume` / `borrow` operators (ownership) | ✅ | ★★★★ | R6+ |
 | [ ] | `discard self` | ✅ | ★★★ | R6+ |
 
