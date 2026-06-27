@@ -2690,13 +2690,17 @@ impl<'a> Parser<'a> {
                 // Type-list interior: names, qualified names, optionals,
                 // protocol compositions, nested array/dictionary types, and tuples.
                 TokenKind::Identifier
-                | TokenKind::Keyword
                 | TokenKind::Question
                 | TokenKind::Comma
                 | TokenKind::Dot
                 | TokenKind::LBracket
                 | TokenKind::RBracket
                 | TokenKind::Colon => i += 1,
+                TokenKind::Keyword
+                    if matches!(t.text, "some" | "any" | "inout" | "protocol" | "class") =>
+                {
+                    i += 1
+                }
                 _ => return None,
             }
         }
@@ -3935,6 +3939,17 @@ mod tests {
         assert_eq!(f.children().next().unwrap().text(), Some("<T:Comparable>"));
         // Body still parses after the trailing `where`.
         assert_eq!(f.children().last().unwrap().kind(), NodeKind::Block);
+    }
+
+    #[test]
+    fn generic_specialization_rejects_expression_keywords() {
+        // `self` is a value expression, not a type-argument keyword. The angle
+        // scanner must leave this as comparison syntax instead of swallowing
+        // `< self.x >` as a generic-argument list.
+        let ast = ast_of(
+            "struct S { var x: Int\n func f(_ a: Int, _ c: Int) { let y = a < self.x > (c) } }",
+        );
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::StructDecl);
     }
 
     #[test]

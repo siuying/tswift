@@ -33,6 +33,11 @@ const MOD_WEAK: u32 = 1 << 11;
 /// overflow.
 const MAX_CALL_DEPTH: usize = 5000;
 
+/// Maximum number of elements a custom sequence algorithm may eagerly
+/// materialize before trapping. `for-in` remains lazy and can still terminate an
+/// unbounded sequence with `break`; eager algorithms like `map` cannot.
+const MAX_SEQUENCE_MATERIALIZE: usize = 100_000;
+
 /// A native (Rust-implemented) Swift function. It receives the output sink and
 /// the already-evaluated arguments, and returns its result value.
 pub type NativeFn = fn(&mut dyn Write, &[SwiftValue]) -> SwiftValue;
@@ -2323,26 +2328,7 @@ impl<'w> Interpreter<'w> {
     ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
         let def = self.classes.get(class_name)?;
         if def.init_overloads.len() > 1 {
-            let label_matches: Vec<&MethodDef> = def
-                .init_overloads
-                .iter()
-                .filter(|init| args_select_params(args, &init.params))
-                .collect();
-            let chosen = match label_matches.as_slice() {
-                [one] => Some(*one),
-                many if !many.is_empty() => {
-                    let type_matches: Vec<&&MethodDef> = many
-                        .iter()
-                        .filter(|init| args_match_param_types(args, &init.params))
-                        .collect();
-                    match type_matches.as_slice() {
-                        [one] => Some(**one),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(init) = chosen {
+            if let Some(init) = select_labeled_overload(&def.init_overloads, args) {
                 return Some((clone_params(&init.params), init.body));
             }
         }
@@ -3734,26 +3720,7 @@ impl<'w> Interpreter<'w> {
             })
             .collect();
         if def.init_overloads.len() > 1 {
-            let label_matches: Vec<&MethodDef> = def
-                .init_overloads
-                .iter()
-                .filter(|init| args_select_params(&call_args, &init.params))
-                .collect();
-            let chosen = match label_matches.as_slice() {
-                [one] => Some(*one),
-                many if !many.is_empty() => {
-                    let type_matches: Vec<&&MethodDef> = many
-                        .iter()
-                        .filter(|init| args_match_param_types(&call_args, &init.params))
-                        .collect();
-                    match type_matches.as_slice() {
-                        [one] => Some(**one),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(init) = chosen {
+            if let Some(init) = select_labeled_overload(&def.init_overloads, &call_args) {
                 return Some((clone_params(&init.params), init.body));
             }
         }
@@ -4649,6 +4616,11 @@ impl<'w> Interpreter<'w> {
         self.env.declare(ITER, iter, true);
         let mut items = Vec::new();
         let result = loop {
+            if items.len() >= MAX_SEQUENCE_MATERIALIZE {
+                break Err(trap(format!(
+                    "custom sequence algorithm exceeded {MAX_SEQUENCE_MATERIALIZE} elements"
+                )));
+            }
             let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
             let place = Place {
                 root: ITER.into(),
@@ -6268,27 +6240,7 @@ impl<'w> Interpreter<'w> {
         if overloads.len() < 2 {
             return None;
         }
-        // First narrow by argument labels (`buildEither(first:)` vs `(second:)`).
-        let label_matches: Vec<&MethodDef> = overloads
-            .iter()
-            .filter(|def| args_select_params(args, &def.params))
-            .collect();
-        let chosen = match label_matches.as_slice() {
-            [one] => *one,
-            [] => return None,
-            many => {
-                // Type-only overloads (`buildExpression(String)` vs `(Int)`):
-                // disambiguate by the argument values' runtime types.
-                let type_matches: Vec<&&MethodDef> = many
-                    .iter()
-                    .filter(|def| args_match_param_types(args, &def.params))
-                    .collect();
-                match type_matches.as_slice() {
-                    [one] => **one,
-                    _ => return None, // unresolved by label or type; defer.
-                }
-            }
-        };
+        let chosen = select_labeled_overload(overloads, args)?;
         Some((
             clone_params(&chosen.params),
             chosen.body,
@@ -7241,6 +7193,32 @@ fn clone_method(m: &MethodDef) -> MethodDef {
         mutating: m.mutating,
         generic_params: m.generic_params.clone(),
         is_static: m.is_static,
+    }
+}
+
+/// Select exactly one overload by labels, then by runtime argument types when
+/// labels alone leave multiple candidates.
+fn select_labeled_overload<'a>(
+    overloads: &'a [MethodDef],
+    args: &[CallArg],
+) -> Option<&'a MethodDef> {
+    let label_matches: Vec<&MethodDef> = overloads
+        .iter()
+        .filter(|def| args_select_params(args, &def.params))
+        .collect();
+    match label_matches.as_slice() {
+        [one] => Some(*one),
+        [] => None,
+        many => {
+            let type_matches: Vec<&&MethodDef> = many
+                .iter()
+                .filter(|def| args_match_param_types(args, &def.params))
+                .collect();
+            match type_matches.as_slice() {
+                [one] => Some(**one),
+                _ => None,
+            }
+        }
     }
 }
 
