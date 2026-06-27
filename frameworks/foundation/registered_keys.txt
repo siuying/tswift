@@ -2,5 +2,17 @@ Data.append
 Data.count
 Data.init
 Data.isEmpty
+IndexPath.append
+IndexPath.appending
+IndexPath.count
+IndexPath.init
+IndexPath.isEmpty
+IndexSet.contains
+IndexSet.count
+IndexSet.first
+IndexSet.init
+IndexSet.insert
+IndexSet.isEmpty
+IndexSet.last
 UUID.init
 UUID.uuidString

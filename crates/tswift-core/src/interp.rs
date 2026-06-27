@@ -5751,6 +5751,16 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
+                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet)
+                    && args.iter().any(|arg| arg.label.is_some())
+                {
+                    return Err(EvalError::Type(format!(
+                        "{}.{} does not accept argument labels",
+                        kind.type_name(),
+                        method
+                    ))
+                    .into());
+                }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
                 if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {

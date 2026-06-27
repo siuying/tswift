@@ -448,7 +448,7 @@ inventories plus per-framework runtime registries. See
 |---|---|----|-------|
 | [x] | Framework inventory/coverage loop (`--framework`, scope manifests, registry dumps) | ★★ | R5+ |
 | [x] | Foundation proof slice: `Data`/`UUID` constructors and core properties | ★★ | R5+ |
-| [ ] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
+| [~] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
 | [ ] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
 | [ ] | SwiftUI measurement descriptor and runtime ADR | ★★★★ | R6+ |
 
