@@ -23,3 +23,4 @@ See docs/swift-runtime/blocked-features.md
 | 11 | b16cc0b | required init + implicitly-unwrapped optionals | keep | already worked; added runtime fixtures + flipped checklist |
 | 12 | 018276e | as/is patterns + custom Error types | keep | `catch let e as T`, `case is T`, `case let x as T`; match_pattern CastExpr |
 | 13 | c6fea91 | subscript overloads + nested subscript assign | keep | Vec<SubscriptDef> by arity; get/set; `m[i][j]=v`. Reviewed by subagent (claude-sonnet-4-5), 2 Important fixes applied |
+| 14 | pending | verify final/override, deinit, unowned | keep | already worked; added unowned fixture; final/override/deinit covered by existing fixtures |

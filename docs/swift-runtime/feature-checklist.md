@@ -167,9 +167,9 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | `class` declaration + reference semantics | ✅ | ★★★ | R3 |
 | [x] | **ARC retain/release** (refcount, no cycle GC) | ✅ | ★★★ | R3 |
-| [~] | Deterministic `deinit` at refcount 0 | ✅ | ★★ | R3 |
+| [x] | Deterministic `deinit` at refcount 0 | ✅ | ★★ | R3 |
 | [x] | Inheritance + method/property override | ✅ | ★★★ | R3 |
-| [~] | `final` / `override` semantics | ✅ | ★★ | R3 |
+| [x] | `final` / `override` semantics | ✅ | ★★ | R3 |
 | [x] | Dynamic dispatch (vtables) | ✅ | ★★★ | R3 |
 | [x] | `super.` calls | ✅ | ★★ | R3 |
 | [~] | Designated / convenience initializers | ✅ | ★★★ | R3 |
@@ -177,7 +177,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `required` initializers | ✅ | ★★ | R3 |
 | [x] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
 | [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
-| [~] | `unowned` references | ✅ | ★★ | R3 |
+| [x] | `unowned` references | ✅ | ★★ | R3 |
 | [ ] | `unowned(unsafe)` | ⚠️ | ★★ | R3 |
 | [x] | Identity `===` `!==` | ✅ | ★ | R3 |
 | [x] | Type casting `is` / `as?` / `as!` / `as` | ✅ | ★★★ | R3 |
