@@ -644,7 +644,13 @@ mod tests {
         )
         .unwrap();
         let root = a.root();
-        assert!(root
+        // `#if` stays as a `MacroExpansion("if")` wrapper whose children are the
+        // active branch; the runtime expands it inline.
+        let if_dir = root
+            .children()
+            .find(|c| c.kind() == NodeKind::MacroExpansion && c.text().as_deref() == Some("if"))
+            .unwrap();
+        assert!(if_dir
             .children()
             .any(|c| c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("mode")));
         let body = root

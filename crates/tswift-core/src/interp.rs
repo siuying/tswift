@@ -816,7 +816,7 @@ impl<'w> Interpreter<'w> {
     /// references resolve.
     fn hoist(&mut self, node: &Node<'static>) {
         // First pass: type and protocol declarations.
-        for child in node.children() {
+        for child in expand_directives(node) {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => {
@@ -840,7 +840,7 @@ impl<'w> Interpreter<'w> {
             }
         }
         // Second pass: extensions (they add to already-registered types).
-        for child in node.children() {
+        for child in expand_directives(node) {
             if child.kind() == NodeKind::ExtensionDecl {
                 self.register_extension(&child);
             }
@@ -854,7 +854,7 @@ impl<'w> Interpreter<'w> {
         // body block. Non-member children (inherited types, attributes, generic
         // params) fall through each loop's `_ => {}` arm.
         let body = node;
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::StructDecl => {
                     self.register_struct(&member);
@@ -940,7 +940,7 @@ impl<'w> Interpreter<'w> {
         let body = node;
         let mut methods = std::collections::HashMap::new();
         let mut computed = std::collections::HashMap::new();
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
@@ -1171,7 +1171,7 @@ impl<'w> Interpreter<'w> {
         let mut cases = Vec::new();
         let mut methods = std::collections::HashMap::new();
         let mut computed = std::collections::HashMap::new();
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 // Each `case` element is a flat `EnumCaseDecl(name)`: its
                 // expression child (if any) is the raw value (`case c = 1`);
@@ -1277,7 +1277,7 @@ impl<'w> Interpreter<'w> {
         let mut static_subscript = None;
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
@@ -1440,7 +1440,7 @@ impl<'w> Interpreter<'w> {
         let mut init_overloads = Vec::new();
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
@@ -1601,7 +1601,7 @@ impl<'w> Interpreter<'w> {
     /// Evaluate each child in order, yielding the last value.
     fn eval_seq(&mut self, node: &Node<'static>) -> Eval {
         let mut last = SwiftValue::Void;
-        for child in node.children() {
+        for child in expand_directives(node) {
             last = self.eval(&child)?;
         }
         Ok(last)
@@ -2562,6 +2562,10 @@ impl<'w> Interpreter<'w> {
                 }
             }
         }
+
+        // A closure body is collected here rather than executed through
+        // `eval_block`, so expand any `#if` wrappers in it now.
+        let body = expand_directive_list(body);
 
         let mut captured = self.env.capture();
         if !captured_overrides.is_empty() {
@@ -7527,6 +7531,41 @@ fn is_statement_kind(kind: NodeKind) -> bool {
     )
 }
 
+/// Expand `#if` conditional-compilation wrappers inline so the active branch's
+/// statements, declarations, and members belong to the enclosing scope. The
+/// parser already selected the active branch; this only flattens the
+/// `MacroExpansion("if")` wrapper (recursively, for nested `#if`). Other
+/// directives (`#warning`, `#line`, …) are left untouched.
+fn expand_directives(node: &Node<'static>) -> Vec<Node<'static>> {
+    let mut out = Vec::new();
+    for child in node.children() {
+        push_active_branch(child, &mut out);
+    }
+    out
+}
+
+/// Like [`expand_directives`], but over an already-collected list of nodes
+/// (e.g. a closure body whose statements were gathered before execution).
+fn expand_directive_list(nodes: Vec<Node<'static>>) -> Vec<Node<'static>> {
+    let mut out = Vec::new();
+    for node in nodes {
+        push_active_branch(node, &mut out);
+    }
+    out
+}
+
+/// Push `node` into `out`, flattening a `MacroExpansion("if")` wrapper into its
+/// active-branch children (recursively, for nested `#if`).
+fn push_active_branch(node: Node<'static>, out: &mut Vec<Node<'static>>) {
+    if node.kind() == NodeKind::MacroExpansion && node.text().as_deref() == Some("if") {
+        for child in node.children() {
+            push_active_branch(child, out);
+        }
+    } else {
+        out.push(node);
+    }
+}
+
 /// Split a `case` clause into (patterns, body-statements). Patterns are the
 /// leading non-statement children; the body is everything from the first
 /// statement onward.
@@ -7696,6 +7735,37 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn conditional_compilation_expands_in_scopes() {
+        // `#if` active branches expand at top level, in type bodies, in
+        // function bodies, and in closure bodies.
+        let out = run(
+            "#if DEBUG
+let tag = \"d\"
+struct Box { func v() -> String { \"box:\\(tag)\" } }
+#endif
+print(tag)
+print(Box().v())
+func f() -> Int {
+  #if DEBUG
+  return 1
+  #else
+  return 2
+  #endif
+}
+print(f())
+let c = {
+  #if DEBUG
+  print(\"clo\")
+  #endif
+}
+c()
+",
+        )
+        .unwrap();
+        assert_eq!(out, "d\nbox:d\n1\nclo\n");
     }
 
     #[test]

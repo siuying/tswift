@@ -136,25 +136,15 @@ impl RuntimeAst {
         id
     }
 
-    /// Lower a child sequence, splicing resolved `#if` conditional-compilation
-    /// directives inline (as msf does) so their active-branch statements land in
-    /// the enclosing scope instead of behind a wrapper node the runtime would
-    /// skip.
+    /// Lower a child sequence. Every child — including a resolved `#if`
+    /// conditional-compilation directive (which becomes a `MacroExpansion`
+    /// wrapper the runtime expands inline) — lowers in place, preserving the
+    /// clean AST's structure.
     fn lower_child_list<'b>(
         &mut self,
         children: impl Iterator<Item = tswift_ast::Node<'b>>,
     ) -> Vec<NodeId> {
-        let mut out = Vec::new();
-        for child in children {
-            if child.kind() == tswift_ast::NodeKind::CompilerDirective
-                && child.text() == Some("#if")
-            {
-                out.extend(self.lower_child_list(child.children()));
-            } else {
-                out.push(self.lower_node(child));
-            }
-        }
-        out
+        children.map(|child| self.lower_node(child)).collect()
     }
 
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
