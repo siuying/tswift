@@ -32,7 +32,7 @@ flowchart LR
     ast["tswift-ast\\nAST definitions"]
     par["tswift-parser\\nRecursive-descent\\nparser"]
     sem["tswift-sema\\nSemantic analysis /\\ntype resolution"]
-    fe["tswift-frontend\\nCompat lowerer"]
+    fe["tswift-frontend\\nRuntime AST facade"]
     rt["tswift-core\\nEvaluator"]
     std["tswift-std\\nStdlib builtins"]
     out["Output"]
@@ -58,7 +58,7 @@ flowchart LR
 | `tswift-ast` | AST node type definitions shared across the pipeline |
 | `tswift-parser` | Recursive-descent parser — tokens → untyped AST |
 | `tswift-sema` | Semantic analysis and type resolution |
-| `tswift-frontend` | Compat lowerer — drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` |
+| `tswift-frontend` | Runtime-facing AST facade — drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` as a thin cursor over the parse AST |
 | `tswift-core` | Evaluator spine — `SwiftValue`, `env`, `interp`, operators, native seam |
 | `tswift-std` | Native stdlib builtins (`print`, `Array`, `Dictionary`, …) |
 | `tswift-cli` | The `tswift` CLI binary |
@@ -104,6 +104,6 @@ server round-trip.
 
 ## Explore further
 
-- [Frontend Pipeline →](/how-it-works/frontend) — lexer, parser, sema, lowerer
+- [Frontend Pipeline →](/how-it-works/frontend) — lexer, parser, sema, AST facade
 - [Runtime Evaluator →](/how-it-works/runtime) — interpreter, values, ARC/CoW
 - [Libraries →](/how-it-works/libraries) — stdlib, Foundation, SwiftUI plans
