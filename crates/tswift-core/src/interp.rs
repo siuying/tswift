@@ -4481,14 +4481,25 @@ impl<'w> Interpreter<'w> {
         outcome
     }
 
-    /// Whether `value` is a user type conforming to `Sequence` or
-    /// `IteratorProtocol`: it exposes a `next()` or `makeIterator()` method
-    /// (structurally, on a struct, enum, or class). This is duck-typed rather
-    /// than checked against a declared conformance.
+    /// Whether `value` declares `Sequence`/`IteratorProtocol` conformance and
+    /// exposes the corresponding iteration method.
     fn is_custom_sequence(&self, value: &SwiftValue) -> bool {
         self.value_type_name(value).is_some_and(|t| {
-            self.seq_type_has_method(&t, "next") || self.seq_type_has_method(&t, "makeIterator")
+            (self.is_sequence_conformer(&t) && self.seq_type_has_method(&t, "makeIterator"))
+                || (self.is_iterator_conformer(&t) && self.seq_type_has_method(&t, "next"))
         })
+    }
+
+    fn is_sequence_conformer(&self, type_name: &str) -> bool {
+        self.all_protocols(type_name)
+            .iter()
+            .any(|p| p == "Sequence")
+    }
+
+    fn is_iterator_conformer(&self, type_name: &str) -> bool {
+        self.all_protocols(type_name)
+            .iter()
+            .any(|p| p == "IteratorProtocol")
     }
 
     /// `type_has_method` extended to class declarations (walking the chain), for
@@ -4535,11 +4546,15 @@ impl<'w> Interpreter<'w> {
         let seq_ty = self
             .value_type_name(seq)
             .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
-        // A type that *is* its own iterator skips `makeIterator`.
-        let iter = if self.seq_type_has_method(&seq_ty, "next") {
-            seq.clone()
-        } else {
+        // A Sequence with a makeIterator() method is driven through that method
+        // even if it also happens to expose a helper named next(). A type that
+        // only conforms as an IteratorProtocol is its own iterator.
+        let iter = if self.is_sequence_conformer(&seq_ty)
+            && self.seq_type_has_method(&seq_ty, "makeIterator")
+        {
             self.call_sequence_method(seq.clone(), &seq_ty, "makeIterator", None)?
+        } else {
+            seq.clone()
         };
         let iter_ty = self
             .value_type_name(&iter)
@@ -4605,6 +4620,45 @@ impl<'w> Interpreter<'w> {
         };
         self.env.pop();
         outcome
+    }
+
+    /// Eagerly drive a custom `Sequence`/`IteratorProtocol` into an array of
+    /// elements for standard-library sequence algorithms.
+    fn materialize_custom_sequence(&mut self, seq: SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        const ITER: &str = "$algoiter";
+        let seq_ty = self
+            .value_type_name(&seq)
+            .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
+        let iter = if self.is_sequence_conformer(&seq_ty)
+            && self.seq_type_has_method(&seq_ty, "makeIterator")
+        {
+            self.call_sequence_method(seq, &seq_ty, "makeIterator", None)?
+        } else {
+            seq
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("iterator has no type".into()))?;
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let mut items = Vec::new();
+        let result = loop {
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            let next = match self.call_sequence_method(current, &iter_ty, "next", Some(place)) {
+                Ok(next) => next,
+                Err(err) => break Err(err),
+            };
+            if matches!(next, SwiftValue::Nil) {
+                break Ok(items);
+            }
+            items.push(next);
+        };
+        self.env.pop();
+        result
     }
 
     /// The nominal type name backing a value, for protocol/method lookup.
@@ -6022,7 +6076,14 @@ impl<'w> Interpreter<'w> {
         // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
         // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
         if self.algorithms.contains_key(&method) {
-            if let Some(items) = materialize_sequence(&base_value) {
+            let items = if let Some(items) = materialize_sequence(&base_value) {
+                Some(items)
+            } else if self.is_custom_sequence(&base_value) {
+                Some(self.materialize_custom_sequence(base_value.clone())?)
+            } else {
+                None
+            };
+            if let Some(items) = items {
                 let func = self.algorithms[&method];
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
