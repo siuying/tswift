@@ -1823,7 +1823,11 @@ impl<'a> Parser<'a> {
     fn parse_enum_cases(&mut self, parent: NodeId) -> Result<(), ParseError> {
         self.bump(); // `case`
         loop {
-            let name = self.expect(TokenKind::Identifier)?;
+            let name = match self.peek().kind {
+                TokenKind::Identifier => self.bump(),
+                TokenKind::Keyword if matches!(self.peek().text, "some" | "any") => self.bump(),
+                other => return self.error(format!("expected enum case name, found {other:?}")),
+            };
             let case = self
                 .ast
                 .add(NodeKind::EnumCaseDecl, Some(name.text), name.line, name.col);
@@ -2665,6 +2669,7 @@ impl<'a> Parser<'a> {
                 // operators that merely contain `<`/`>` (`<=`, `>=`, `->`) and
                 // logical/ternary operators (`&&`, `??`) disqualify the scan so
                 // genuine comparison and ternary expressions are never swallowed.
+                TokenKind::Oper if matches!(t.text, "?" | "&") => i += 1,
                 TokenKind::Oper if t.text.chars().all(|c| c == '<' || c == '>') => {
                     for ch in t.text.chars() {
                         if ch == '<' {
@@ -2682,9 +2687,11 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
-                // Type-list interior: names, qualified names, nested array /
-                // dictionary types, and tuples.
+                // Type-list interior: names, qualified names, optionals,
+                // protocol compositions, nested array/dictionary types, and tuples.
                 TokenKind::Identifier
+                | TokenKind::Keyword
+                | TokenKind::Question
                 | TokenKind::Comma
                 | TokenKind::Dot
                 | TokenKind::LBracket
