@@ -64,8 +64,11 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
     let Some(methods) = symbols.result_builder(builder) else {
         return;
     };
-    // The builder must declare `buildBlock` (the required fold method).
-    if !methods.has("buildBlock") {
+    // The builder must declare a fold method: variadic `buildBlock` or the
+    // `buildPartialBlock` pair.
+    let has_fold = methods.has("buildBlock")
+        || (methods.has_arity("buildPartialBlock", 1) && methods.has_arity("buildPartialBlock", 2));
+    if !has_fold {
         return;
     }
     let Some(body) = child_ids(ast, func)
@@ -87,6 +90,9 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
         counter: 0,
     };
     let (mut new_body, value) = lowering.lower_block(&stmts, line, col);
+    // `buildFinalResult` wraps the outermost block's value exactly once, when
+    // the builder declares it.
+    let value = lowering.build_final_result(value, line, col);
     let ret = astbuild::return_stmt(lowering.ast, value, line, col);
     new_body.push(ret);
     ast.set_children(body, new_body);
@@ -187,12 +193,68 @@ impl Lowering<'_> {
                 _ => out.push(stmt),
             }
         }
+        let value = self.fold_components(&components, line, col);
+        (out, value)
+    }
+
+    /// Fold a block's component variables into its single value. Prefers the
+    /// `buildPartialBlock` left-fold when the builder declares both halves of
+    /// the pair (SE-0289 precedence); otherwise uses variadic `buildBlock`. An
+    /// empty block is `buildBlock()`.
+    fn fold_components(&mut self, components: &[String], line: u32, col: u32) -> NodeId {
+        if !components.is_empty() && self.uses_partial_block() {
+            // buildPartialBlock(first: c0), then
+            // buildPartialBlock(accumulated: acc, next: cN) left-to-right.
+            let first = astbuild::ident(self.ast, &components[0], line, col);
+            let mut acc = astbuild::static_call(
+                self.ast,
+                self.builder,
+                "buildPartialBlock",
+                vec![(Some("first"), first)],
+                line,
+                col,
+            );
+            for name in &components[1..] {
+                let next = astbuild::ident(self.ast, name, line, col);
+                acc = astbuild::static_call(
+                    self.ast,
+                    self.builder,
+                    "buildPartialBlock",
+                    vec![(Some("accumulated"), acc), (Some("next"), next)],
+                    line,
+                    col,
+                );
+            }
+            return acc;
+        }
         let args: Vec<(Option<&str>, NodeId)> = components
             .iter()
             .map(|name| (None, astbuild::ident(self.ast, name, line, col)))
             .collect();
-        let value = astbuild::static_call(self.ast, self.builder, "buildBlock", args, line, col);
-        (out, value)
+        astbuild::static_call(self.ast, self.builder, "buildBlock", args, line, col)
+    }
+
+    /// Whether the builder declares the full `buildPartialBlock` pair
+    /// (`first:` arity 1 and `accumulated:next:` arity 2).
+    fn uses_partial_block(&self) -> bool {
+        self.methods.has_arity("buildPartialBlock", 1)
+            && self.methods.has_arity("buildPartialBlock", 2)
+    }
+
+    /// `Builder.buildFinalResult(value)` when declared; otherwise `value`.
+    fn build_final_result(&mut self, value: NodeId, line: u32, col: u32) -> NodeId {
+        if self.methods.has("buildFinalResult") {
+            astbuild::static_call(
+                self.ast,
+                self.builder,
+                "buildFinalResult",
+                vec![(None, value)],
+                line,
+                col,
+            )
+        } else {
+            value
+        }
     }
 
     /// Lower an `if` to a fresh component var assigned in every branch. Returns
@@ -694,6 +756,69 @@ mod tests {
         let ast = analyzed("@B\nfunc g() -> String {\n for x in [\"a\"] { x }\n}");
         let body = func_body(&ast, "g");
         assert!(body.children().any(|c| c.kind() == NodeKind::ForStmt));
+    }
+
+    #[test]
+    fn partial_block_pair_folds_left_to_right() {
+        let src = "@resultBuilder\nstruct P {\n\
+            static func buildExpression(_ v: String) -> String { v }\n\
+            static func buildPartialBlock(first: String) -> String { first }\n\
+            static func buildPartialBlock(accumulated: String, next: String) -> String { accumulated }\n}\n\
+            @P\nfunc g() -> String {\n \"a\"\n \"b\"\n \"c\"\n}";
+        let mut ast = parse(src).expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let ret_call = body.children().last().unwrap().children().next().unwrap();
+        // Outermost call is buildPartialBlock(accumulated:next:).
+        assert_eq!(
+            ret_call.children().next().unwrap().text(),
+            Some("buildPartialBlock")
+        );
+        let labels: Vec<_> = ret_call.children().skip(1).map(|c| c.arg_label()).collect();
+        assert_eq!(labels, vec![Some("accumulated"), Some("next")]);
+        // Its accumulated arg is itself a buildPartialBlock call (the fold).
+        let inner = ret_call.children().nth(1).unwrap();
+        assert_eq!(
+            inner.children().next().unwrap().text(),
+            Some("buildPartialBlock")
+        );
+    }
+
+    #[test]
+    fn partial_block_is_preferred_when_build_block_also_present() {
+        let src = "@resultBuilder\nstruct P {\n\
+            static func buildBlock(_ parts: String...) -> String { \"\" }\n\
+            static func buildPartialBlock(first: String) -> String { first }\n\
+            static func buildPartialBlock(accumulated: String, next: String) -> String { accumulated }\n}\n\
+            @P\nfunc g() -> String {\n \"a\"\n \"b\"\n}";
+        let mut ast = parse(src).expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let ret_call = body.children().last().unwrap().children().next().unwrap();
+        assert_eq!(
+            ret_call.children().next().unwrap().text(),
+            Some("buildPartialBlock"),
+            "partial-block is preferred over variadic buildBlock"
+        );
+    }
+
+    #[test]
+    fn build_final_result_wraps_the_outermost_value_once() {
+        let src = "@resultBuilder\nstruct F {\n\
+            static func buildBlock(_ parts: String...) -> String { \"\" }\n\
+            static func buildFinalResult(_ v: String) -> String { v }\n}\n\
+            @F\nfunc g() -> String {\n \"a\"\n}";
+        let mut ast = parse(src).expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let ret_call = body.children().last().unwrap().children().next().unwrap();
+        assert_eq!(
+            ret_call.children().next().unwrap().text(),
+            Some("buildFinalResult")
+        );
+        // Its sole arg is the buildBlock value (wrapped exactly once).
+        let inner = ret_call.children().nth(1).unwrap();
+        assert_eq!(inner.children().next().unwrap().text(), Some("buildBlock"));
     }
 
     #[test]

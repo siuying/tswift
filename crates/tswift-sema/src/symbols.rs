@@ -47,6 +47,15 @@ impl BuilderMethods {
         self.methods.iter().any(|m| m.name == name)
     }
 
+    /// Whether the builder declares a method `name` taking exactly `arity`
+    /// parameters. Used to tell the `buildPartialBlock(first:)` (arity 1) and
+    /// `buildPartialBlock(accumulated:next:)` (arity 2) overloads apart.
+    pub(crate) fn has_arity(&self, name: &str, arity: usize) -> bool {
+        self.methods
+            .iter()
+            .any(|m| m.name == name && m.arity == arity)
+    }
+
     /// Every declared static method, in source order.
     #[allow(dead_code)] // read by later selection slices; exercised by tests now.
     pub(crate) fn methods(&self) -> &[BuilderMethod] {
