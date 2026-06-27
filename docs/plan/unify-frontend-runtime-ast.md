@@ -62,7 +62,7 @@ Each box = one atomic commit; full suite green before the next.
 - [x] 6. **enum case** (`lower_enum_case`) — runtime reads the flat
       `EnumCaseDecl` + `TypeRef` children; delete the `EnumElementDecl`/`Param`
       nesting.
-- [ ] 7. **`#if` splice** (`lower_child_list`) — runtime expands the
+- [x] 7. **`#if` splice** (`lower_child_list`) — runtime expands the
       `CompilerDirective` `#if` wrapper at each decl/member/statement site; stop
       splicing in the lowerer. *(Broadest — every child-list site; done last
       among the structural steps.)*
@@ -81,6 +81,10 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 7 done (e9e0850). `#if` stays as `MacroExpansion("if")`;
+  runtime `expand_directives` flattens it at hoist/eval_seq/member loops/closure
+  bodies. Parser rejects `#if` between switch cases, so that path is moot. Codex
+  flagged the closure-body gap (Important) — fixed + regression test. 447 green.
 - 2026-06-27 — step 6 done. Enum cases read as flat `EnumCaseDecl(name)` with
   `TypeIdent` payload children / raw-value expr; deleted `lower_enum_case`.
   Verified int/str raw values + assoc destructuring. Codex: Yes. 446 green.
