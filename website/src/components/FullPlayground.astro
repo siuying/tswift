@@ -388,8 +388,13 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
 
   async function initWasm() {
     try {
-      const wasmJsUrl = (await import('/wasm/tswift_wasm.js?url')).default;
-      const mod = await import(/* @vite-ignore */ wasmJsUrl);
+      // Load the wasm-bindgen glue from /public. We bypass Vite's import
+      // pipeline (which rewrites public-file imports with ?import/?url and
+      // breaks them in dev) by importing an absolute URL via indirect import.
+      const base = import.meta.env.BASE_URL || '/';
+      const wasmUrl = new URL(base + 'wasm/tswift_wasm.js', location.origin).href;
+      const importModule = new Function('u', 'return import(u)');
+      const mod = await importModule(wasmUrl);
       await mod.default();
       runSwift = mod.runSwift;
       runBtn.disabled = false;
