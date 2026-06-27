@@ -1,0 +1,156 @@
+---
+import Base from '../layouts/Base.astro';
+import MiniPlayground from '../components/MiniPlayground.astro';
+import CoverageBar from '../components/CoverageBar.astro';
+---
+
+<Base
+  title="tswift — Swift Runtime in Rust"
+  description="A lightweight Swift runtime written in Rust. Parse, type-check, and run Swift source without LLVM, Clang, or a Swift toolchain."
+>
+  <!-- ── Hero ─────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <p class="hero-eyebrow">Swift · Rust · WebAssembly</p>
+    <h1>Swift in the browser,<br /><span class="accent">powered by Rust.</span></h1>
+    <p class="lead">
+      tswift parses, type-checks, and runs Swift source entirely in Rust —
+      no LLVM, no Clang, no Swift toolchain. The same Rust binary compiles
+      to WebAssembly so you can run Swift code right here in the browser.
+    </p>
+    <div class="hero-ctas">
+      <a href="/playground" class="btn btn-primary">⚡ Open Playground</a>
+      <a href="/how-it-works" class="btn btn-secondary">How it works →</a>
+      <a href="https://github.com/siuying/tswift" target="_blank" rel="noopener" class="btn btn-secondary">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </section>
+
+  <!-- ── Live Demo ─────────────────────────────────────────────────── -->
+  <section class="section" style="padding-top:0">
+    <MiniPlayground />
+  </section>
+
+  <!-- ── How it works (quick) ─────────────────────────────────────── -->
+  <section class="section" style="border-top:1px solid var(--border)">
+    <h2 class="section-title">How it works</h2>
+    <p class="section-subtitle">
+      A pure-Rust pipeline from Swift source to output, with no C dependencies.
+    </p>
+
+    <div class="pipeline" aria-label="Pipeline diagram">
+      <div class="pipe-node highlight">Swift source</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node">tswift-lexer</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node">tswift-parser</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node">tswift-sema</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node">compat lowerer</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node highlight">Typed AST</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node">Runtime evaluator</div>
+      <span class="pipe-arrow" aria-hidden="true">→</span>
+      <div class="pipe-node highlight">Output</div>
+    </div>
+
+    <div class="card-grid card-grid-3" style="margin-top:2rem">
+      <a href="/how-it-works/frontend" class="card" style="text-decoration:none;color:inherit">
+        <div class="card-icon">🔍</div>
+        <h3>Frontend Pipeline</h3>
+        <p>Pure-Rust lexer → AST → parser → semantic analysis. No C, no LLVM, no unsafe code.</p>
+      </a>
+      <a href="/how-it-works/runtime" class="card" style="text-decoration:none;color:inherit">
+        <div class="card-icon">⚙️</div>
+        <h3>Runtime Evaluator</h3>
+        <p>Tree-walking interpreter with ARC via <code>Rc</code>, copy-on-write value semantics, and native closures.</p>
+      </a>
+      <a href="/how-it-works/libraries" class="card" style="text-decoration:none;color:inherit">
+        <div class="card-icon">📦</div>
+        <h3>Libraries</h3>
+        <p>Native Rust implementations of Swift's stdlib, with Foundation and SwiftUI on the roadmap.</p>
+      </a>
+    </div>
+    <div style="margin-top:1.25rem;text-align:center">
+      <a href="/how-it-works" class="btn btn-secondary">Read the full architecture →</a>
+    </div>
+  </section>
+
+  <!-- ── Status ────────────────────────────────────────────────────── -->
+  <section class="section" style="border-top:1px solid var(--border)">
+    <h2 class="section-title">Implementation status</h2>
+    <p class="section-subtitle">
+      tswift covers 8 tiers of the Swift 6.3 language surface, plus stdlib and Foundation.
+    </p>
+
+    <div style="max-width:680px">
+      <CoverageBar label="Language (Tiers 0–7)" done={138} total={171} href="/status/language" />
+      <CoverageBar label="Standard Library"      done={19}  total={26}  href="/status/stdlib" />
+      <CoverageBar label="Foundation"            done={2}   total={12}  href="/status/foundation" />
+      <CoverageBar label="SwiftUI"               done={0}   total={1}   href="/status/swiftui" />
+    </div>
+
+    <div style="margin-top:1.5rem">
+      <a href="/status" class="btn btn-secondary">Full status dashboard →</a>
+    </div>
+  </section>
+
+  <!-- ── Why Rust ──────────────────────────────────────────────────── -->
+  <section class="section" style="border-top:1px solid var(--border)">
+    <h2 class="section-title">Why Rust?</h2>
+    <p class="section-subtitle">
+      Rust's ownership model maps onto Swift's memory semantics surprisingly well.
+    </p>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3>Memory safety, for free</h3>
+        <p>
+          Swift's ARC becomes <code>Rc&lt;RefCell&lt;T&gt;&gt;</code> in Rust.
+          Value-type copy-on-write becomes <code>Rc::make_mut</code>.
+          Deterministic <code>deinit</code> maps to <code>Drop</code>.
+          No <code>unsafe</code> anywhere in the stack.
+        </p>
+      </div>
+      <div class="card">
+        <h3>One binary → WebAssembly</h3>
+        <p>
+          The same Rust crate compiles to native (fast CLI) and to
+          <code>wasm32-unknown-unknown</code> (browser). No platform-specific
+          shims — the interpreter just runs.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Semantic alignment</h3>
+        <table style="width:100%;font-size:.8rem;border-collapse:collapse;margin-top:.75rem">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:.3rem .5rem;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border)">Swift</th>
+              <th style="text-align:left;padding:.3rem .5rem;color:var(--muted);font-weight:700;border-bottom:1px solid var(--border)">Rust</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>Value-type CoW</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Rc::clone + Rc::make_mut</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>class ARC</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Rc&lt;RefCell&lt;Object&gt;&gt;</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>deinit</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Drop at strong-count 0</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>weak (zeroing)</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">rc::Weak + .upgrade()</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>overflow trap</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">checked_add / wrapping_add</td></tr>
+            <tr><td style="padding:.3rem .5rem"><code>UTF-8 String</code></td><td style="padding:.3rem .5rem;color:var(--muted)">Rust String</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Golden fixture testing</h3>
+        <p>
+          Every feature has a <code>.swift</code> + <code>.expected</code> golden
+          fixture. The harness runs each through the CLI and diffs stdout.
+          53+ fixtures pass end-to-end today.
+        </p>
+      </div>
+    </div>
+  </section>
+</Base>

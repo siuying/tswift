@@ -1,0 +1,80 @@
+---
+import Base from './Base.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  section?: 'how-it-works' | 'status';
+  frontmatter?: {
+    title?: string;
+    description?: string;
+    section?: 'how-it-works' | 'status';
+  };
+}
+
+// Support both direct props and MDX frontmatter
+const {
+  title: directTitle,
+  description: directDesc,
+  section: directSection,
+  frontmatter = {},
+} = Astro.props;
+
+const title = directTitle ?? frontmatter.title ?? 'tswift';
+const description = directDesc ?? frontmatter.description;
+const section = directSection ?? frontmatter.section;
+
+const howItWorksLinks = [
+  { href: '/how-it-works', label: 'Overview' },
+  { href: '/how-it-works/frontend', label: 'Frontend Pipeline' },
+  { href: '/how-it-works/runtime', label: 'Runtime Evaluator' },
+  { href: '/how-it-works/libraries', label: 'Libraries' },
+];
+
+const statusLinks = [
+  { href: '/status', label: 'Overview' },
+  { href: '/status/language', label: 'Language Features' },
+  { href: '/status/stdlib', label: 'Standard Library' },
+  { href: '/status/foundation', label: 'Foundation' },
+  { href: '/status/swiftui', label: 'SwiftUI' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<Base title={`${title} — tswift`} description={description}>
+  <div class="doc-layout">
+    <aside class="doc-sidebar">
+      {section === 'how-it-works' && (
+        <div class="doc-sidebar-section">
+          <p class="doc-sidebar-heading">How it works</p>
+          <ul class="doc-sidebar-links">
+            {howItWorksLinks.map(l => (
+              <li><a href={l.href} class={currentPath === l.href || currentPath === l.href + '/' ? 'active' : ''}>{l.label}</a></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {section === 'status' && (
+        <div class="doc-sidebar-section">
+          <p class="doc-sidebar-heading">Status</p>
+          <ul class="doc-sidebar-links">
+            {statusLinks.map(l => (
+              <li><a href={l.href} class={currentPath === l.href || currentPath === l.href + '/' ? 'active' : ''}>{l.label}</a></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div class="doc-sidebar-section">
+        <p class="doc-sidebar-heading">Resources</p>
+        <ul class="doc-sidebar-links">
+          <li><a href="/playground">Playground</a></li>
+          <li><a href="https://github.com/siuying/tswift" target="_blank" rel="noopener">GitHub ↗</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main class="doc-content">
+      <slot />
+    </main>
+  </div>
+</Base>

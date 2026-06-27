@@ -1,0 +1,142 @@
+---
+layout: ../../layouts/Doc.astro
+title: Libraries
+description: tswift's native Rust implementations of Swift's standard library, Foundation, and the roadmap for SwiftUI.
+section: how-it-works
+---
+
+import Mermaid from '../../components/Mermaid.astro';
+
+# Libraries
+
+tswift implements Swift's runtime behavior entirely in Rust — there is no
+Swift compiler or standard library binary involved. Every API you call
+(`print`, `Array.map`, `String.split`, …) has a native Rust implementation
+inside `tswift-std`.
+
+---
+
+## Architecture
+
+<Mermaid caption="Library layer sits between the runtime and Swift source">
+{`
+flowchart BT
+    src["Swift source"]
+    fe["Frontend\\n(lex → parse → sema → lower)"]
+    rt["tswift-core\\nEvaluator"]
+    std["tswift-std\\nStandard library"]
+    fnd["Foundation\\n(partial)"]
+    swiftui["SwiftUI\\n(future)"]
+
+    src --> fe --> rt
+    std --> rt
+    fnd -.->|planned| rt
+    swiftui -.->|future| rt
+
+    style swiftui stroke-dasharray: 5 5,color:#8888a0
+    style fnd    stroke-dasharray: 5 5
+`}
+</Mermaid>
+
+---
+
+## Standard Library (`tswift-std`)
+
+The standard library is implemented as a **native seam**: the evaluator
+recognizes calls to known Swift standard library functions/methods and
+dispatches them to Rust functions instead of looking them up in the AST.
+
+### Core value types
+
+| Type | Status | Notes |
+|------|--------|-------|
+| `Int`, `UInt` (all widths) | ✅ Done | Overflow-trapping + wrapping ops |
+| `Float`, `Double` | ✅ Done | IEEE 754, `Foundation.sqrt` bridged |
+| `Bool` | ✅ Done | |
+| `String`, `Character` | 🟡 Partial | UTF-8 backed; most methods implemented |
+| `Substring` | 🟡 Partial | Slicing supported |
+| `Optional<T>` | ✅ Done | Full binding, chaining, coalescing |
+| `Range`, `ClosedRange`, `Stride` | ✅ Done | For-in, `contains`, `count` |
+
+### Collections
+
+| Type | Status | Notes |
+|------|--------|-------|
+| `Array<T>` | ✅ Done | Full CoW, all HOF methods |
+| `Dictionary<K,V>` | ✅ Done | CoW, `keys`/`values`/`merging` |
+| `Set<T>` | ✅ Done | Set algebra operations |
+| `ContiguousArray`, `ArraySlice` | ✅ Done | Slicing bridge |
+
+### Protocols
+
+| Protocol | Status |
+|---------|--------|
+| `Equatable`, `Hashable`, `Comparable` | ✅ Done |
+| `Sequence`, `IteratorProtocol` | ✅ Done |
+| `Collection`, `BidirectionalCollection` | 🔴 Todo |
+| `ExpressibleBy*Literal` | ✅ Done |
+| `CustomStringConvertible` | ✅ Done |
+| `Codable` / `Encodable` / `Decodable` | ✅ Done |
+| `Identifiable` | ✅ Done |
+
+### Free functions
+
+| API | Status |
+|-----|--------|
+| `print`, `debugPrint`, `dump` | ✅ Done |
+| `map`, `filter`, `reduce`, `flatMap`, `compactMap` | ✅ Done |
+| `assert`, `precondition`, `fatalError` | ✅ Done |
+| `min`, `max`, `abs`, `stride`, `zip`, `swap` | ✅ Done |
+| `Result<S,F>` | ✅ Done |
+| `MemoryLayout` | ✅ Done |
+| `Unsafe*Pointer` family | 🔴 Todo |
+
+See the [Standard Library status page →](/status/stdlib) for detailed counts.
+
+---
+
+## Foundation (partial)
+
+Foundation support is measured through generated `.swiftinterface` inventories.
+The current proof slice:
+
+| API | Status |
+|-----|--------|
+| `Data` — core constructors and properties | ✅ Done |
+| `UUID` — constructors and `uuidString` | ✅ Done |
+| `IndexPath`, `IndexSet` | 🔴 Todo |
+| `URL`, `URLComponents`, `URLQueryItem` | 🔴 Todo |
+| `DateFormatter`, `JSONDecoder`, `JSONEncoder` | 🔴 Todo |
+| `NotificationCenter`, `UserDefaults` | 🔴 Todo |
+
+See the [Foundation status page →](/status/foundation).
+
+---
+
+## SwiftUI (future)
+
+SwiftUI requires a **result-builder transform** (the `@ViewBuilder` macro) plus
+a layout/rendering engine. Both are significant undertakings:
+
+1. **Result builders** (Tier 8 — macros) need a macro-expansion engine over
+   the AST — the biggest outstanding language feature.
+2. **Layout** — SwiftUI's layout algorithm is non-trivial; a headless
+   approximation (for testing) is the practical first step.
+3. **Platform bridge** — full SwiftUI output ultimately needs a platform
+   rendering target (DOM for the web, Metal for macOS).
+
+See the [SwiftUI status page →](/status/swiftui) for the current plan.
+
+---
+
+## How to add a stdlib API
+
+If you want to contribute a missing standard library method:
+
+1. Find the call site in `tswift-std/src/` — look for the `native_call` dispatch table.
+2. Add a match arm for the new method name.
+3. Implement the behaviour in Rust, returning a `SwiftValue`.
+4. Add a golden fixture `tests/swift-fixtures/<name>.swift` + `<name>.expected`.
+5. Run `cargo test` — the golden harness validates automatically.
+
+See the [AGENTS.md](/how-it-works) for commit conventions.

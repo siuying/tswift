@@ -1,0 +1,109 @@
+---
+layout: ../../layouts/Doc.astro
+title: SwiftUI
+description: SwiftUI implementation roadmap and plan for the tswift runtime.
+section: status
+---
+
+import Mermaid from '../../components/Mermaid.astro';
+
+# SwiftUI
+
+SwiftUI is Apple's declarative UI framework. Implementing it in tswift is a
+multi-stage challenge involving language features, a layout engine, and a
+platform rendering target.
+
+**Current status: not started.** SwiftUI is planned for after Tier 8
+(macros/result builders) is complete.
+
+---
+
+## Why it's hard
+
+<Mermaid caption="SwiftUI dependencies on unimplemented features">
+{`
+flowchart TD
+    swiftui["SwiftUI\\nruntime support"]
+
+    rb["@resultBuilder\\n(Tier 8 — macros)\\n⬜ Not implemented"]
+    macros["Macro expansion engine\\n⬜ Not implemented"]
+    layout["Layout engine\\n⬜ Not designed"]
+    render["Rendering target\\n(DOM / Canvas / Metal)\\n⬜ TBD"]
+    obs["Observable / @State\\n@Binding / @StateObject\\n⬜ Not implemented"]
+
+    rb --> swiftui
+    macros --> rb
+    layout --> swiftui
+    render --> swiftui
+    obs --> swiftui
+
+    style swiftui fill:#1a0d2e,stroke:#a855f7,color:#eeeef5
+    style rb      fill:#1e1e27,stroke:#ff7070,color:#ff9999
+    style macros  fill:#1e1e27,stroke:#ff7070,color:#ff9999
+    style layout  fill:#1e1e27,stroke:#888,color:#8888a0
+    style render  fill:#1e1e27,stroke:#888,color:#8888a0
+    style obs     fill:#1e1e27,stroke:#ff7070,color:#ff9999
+`}
+</Mermaid>
+
+---
+
+## Blockers
+
+### 1. `@resultBuilder` (Tier 8)
+
+`@ViewBuilder` is a result builder — syntactic sugar that transforms a series
+of view expressions into a single `some View`. The Swift compiler expands this
+at compile time using the macro system.
+
+tswift does not yet have a macro-expansion engine. This is the **primary
+blocker** for SwiftUI.
+
+### 2. Property wrapper macros: `@State`, `@Binding`, `@ObservedObject`
+
+SwiftUI's reactivity system relies on property wrappers backed by observable
+stores. While `@propertyWrapper` is partially implemented in tswift, the
+observation side (e.g. `Observation.framework` with `@Observable`) requires
+the `@attached` macro system.
+
+### 3. Layout engine
+
+SwiftUI's layout is a tree of `Layout` protocol conformances. A faithful
+implementation needs:
+
+- `Layout` protocol: `sizeThatFits`, `placeSubviews`
+- Geometry proxies: `GeometryReader`, `GeometryProxy`
+- Alignment guides
+
+For a headless (testing) target, an approximation that returns bounding boxes
+is sufficient.
+
+### 4. Rendering target
+
+On the web, SwiftUI views would need to map to DOM elements or a `<canvas>`.
+This is a significant engineering effort separate from the runtime.
+
+---
+
+## Planned phases
+
+| Phase | Goal |
+|-------|------|
+| **SwiftUI-0** | `@resultBuilder` language feature (unblocks `@ViewBuilder`) |
+| **SwiftUI-1** | `View` protocol + basic view hierarchy (headless) |
+| **SwiftUI-2** | `@State`, `@Binding`, `@Observable` — property wrappers |
+| **SwiftUI-3** | Layout engine (`VStack`, `HStack`, `ZStack`, `Spacer`) |
+| **SwiftUI-4** | Text, Image, Button, List, NavigationStack |
+| **SwiftUI-5** | DOM rendering target for the web playground |
+
+---
+
+## What you can do now
+
+While SwiftUI itself isn't supported, you can already run:
+
+- View model logic written as plain Swift `struct` / `class`
+- `Codable` models that SwiftUI views would bind to
+- Pure functions that transform state
+
+Try it in the [Playground →](/playground)

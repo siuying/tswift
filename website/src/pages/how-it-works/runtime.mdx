@@ -1,0 +1,143 @@
+---
+layout: ../../layouts/Doc.astro
+title: Runtime Evaluator
+description: The tswift tree-walking interpreter — SwiftValue, ARC, copy-on-write, closures, and concurrency.
+section: how-it-works
+---
+
+import Mermaid from '../../components/Mermaid.astro';
+
+# Runtime Evaluator
+
+The tswift runtime is a **tree-walking interpreter** that walks the typed AST
+produced by the frontend and evaluates it into side effects and output.
+
+---
+
+## Core loop
+
+The evaluator is an `eval(node, env) -> Completion` function:
+
+- **`node`** — a `Node` from the typed AST
+- **`env`** — the current lexical environment (a `Rc<RefCell<Env>>` chain)
+- **`Completion`** — the result of evaluation: `Normal(value)`, `Return(value)`,
+  `Throw(error)`, `Break`, `Continue`
+
+Every Swift statement and expression is handled by pattern-matching `node.kind`.
+
+---
+
+## SwiftValue
+
+The central type of the runtime is `SwiftValue`, a Rust enum covering every
+value a Swift program can produce:
+
+```rust
+enum SwiftValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(Rc<String>),           // CoW via Rc
+    Nil,
+    Optional(Option<Box<Self>>),
+    Tuple(Vec<(Option<String>, Self)>),
+    Array(Rc<RefCell<Vec<Self>>>), // CoW
+    Dictionary(Rc<RefCell<...>>),
+    Set(Rc<RefCell<...>>),
+    Struct(Rc<RefCell<StructObject>>),
+    Class(Rc<RefCell<ClassObject>>), // ARC via Rc
+    Enum(EnumValue),
+    Closure(Rc<ClosureObject>),
+    Function(FunctionValue),
+    Metatype(SwiftType),
+    // … more
+}
+```
+
+---
+
+## Memory model
+
+<Mermaid caption="Swift memory semantics mapped to Rust mechanisms">
+{`
+flowchart LR
+    subgraph Swift
+        cows["Value types\\n(struct, enum, String, Array)\\nCopy on assign/pass"]
+        refs["Reference types\\n(class)\\nARC retain/release"]
+        wks["weak / unowned\\nZeroing references"]
+    end
+    subgraph Rust
+        rcc["Rc::clone + Rc::make_mut\\n(copy-on-write)"]
+        rcrc["Rc<RefCell<Object>>\\n(ARC = ref count)"]
+        wk["rc::Weak\\n.upgrade() → None after drop"]
+    end
+    cows --> rcc
+    refs --> rcrc
+    wks  --> wk
+    style Swift fill:#1e1e27,stroke:#ff6b35
+    style Rust  fill:#1e1e27,stroke:#a855f7
+`}
+</Mermaid>
+
+### Value types (struct, enum, String, Array)
+
+All value types are wrapped in `Rc<T>`. Assignment or function call clones the
+`Rc` (cheap pointer bump). Mutation calls `Rc::make_mut`, which performs the
+actual deep copy only if there is more than one strong reference — true
+copy-on-write.
+
+### Reference types (class)
+
+Class instances are `Rc<RefCell<ClassObject>>`. Retain is clone; release is
+drop (when the last strong reference is dropped, `deinit` runs via Rust's `Drop`
+trait). This gives us **deterministic, prompt finalization** matching Swift's ARC.
+
+### Weak references
+
+`weak var` is implemented with `rc::Weak<RefCell<ClassObject>>`. Calling
+`.upgrade()` returns `None` when the strong count reaches zero — exactly
+Swift's zeroing weak reference semantics.
+
+---
+
+## Closures
+
+Closures capture their environment by cloning the `Rc<RefCell<Env>>` of their
+definition scope. This gives:
+
+- **Upvalues that outlive their defining scope** — the `Env` stays alive as
+  long as the closure does.
+- **`[weak self]` capture lists** — stored as `Weak` inside the `ClosureObject`.
+- **`@escaping`** — closures are always `Rc`-based and can freely escape.
+
+---
+
+## Concurrency (async/await, actors)
+
+tswift implements Swift concurrency on a **single-threaded cooperative executor**
+(see ADR-0005):
+
+- `async fn` wraps its body in a coroutine (via `corosensei`).
+- `await` suspends the current coroutine and yields back to the executor.
+- The executor drains a ready queue, running tasks to completion at each `await`.
+- `actor` isolation is enforced by serializing method calls through the executor.
+- `Task`, `Task.detached`, `withTaskGroup`, `async let` are all supported.
+
+Correctness (final values, task structure) is faithful. Preemptive scheduling
+interleaving may differ from native Swift because the executor is cooperative.
+
+---
+
+## Error handling
+
+`throw` produces a `Completion::Throw(SwiftValue)`. `do/catch` catches it by
+pattern-matching against the error value. `try?` maps `Throw` to
+`Normal(Optional::None)`. `try!` panics (traps) on `Throw`.
+
+---
+
+## Explore further
+
+- [Frontend Pipeline ←](/how-it-works/frontend)
+- [Libraries →](/how-it-works/libraries)
+- [Language Status →](/status/language)

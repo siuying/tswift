@@ -1,0 +1,30 @@
+---
+import Base from '../layouts/Base.astro';
+import FullPlayground from '../components/FullPlayground.astro';
+---
+
+<Base
+  title="Playground — tswift"
+  description="Run Swift code in the browser powered by the tswift Rust runtime compiled to WebAssembly."
+>
+  <div style="max-width:1280px;margin:0 auto;padding:2.5rem 1.5rem 5rem">
+    <div style="margin-bottom:2rem">
+      <p style="color:var(--accent);font-size:.75rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.5rem">
+        ⚡ tswift Playground
+      </p>
+      <h1 style="font-size:2rem;margin-bottom:.5rem">Run Swift in the browser</h1>
+      <p style="max-width:60ch">
+        Powered by the tswift Rust runtime compiled to WebAssembly.
+        Pick a preset or write your own Swift code and click <strong>Run</strong>.
+      </p>
+    </div>
+    <FullPlayground />
+    <div style="margin-top:2rem;display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+      <span style="font-size:.85rem;color:var(--muted)">
+        ⚠️ Execution happens locally in your browser — no code is sent to a server.
+        Some Swift features are not yet implemented.
+        See <a href="/status">implementation status</a>.
+      </span>
+    </div>
+  </div>
+</Base>

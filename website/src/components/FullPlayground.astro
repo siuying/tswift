@@ -1,0 +1,449 @@
+---
+// Full playground page component — editor + output with all presets.
+---
+
+<div class="full-playground">
+  <div class="fp-preset-wrap">
+    <div id="fp-preset-bar" class="preset-bar" aria-label="Example presets"></div>
+  </div>
+  <div class="playground">
+    <div class="pane">
+      <div class="pane-head">
+        <span class="filename">main.swift</span>
+        <span id="fp-meta" style="color:var(--muted);font-size:.75rem">0 lines</span>
+      </div>
+      <textarea
+        id="fp-source"
+        class="editor-area"
+        spellcheck="false"
+        aria-label="Swift source code"
+        style="min-height:520px"
+      ></textarea>
+      <div class="run-bar">
+        <button id="fp-run" class="run-btn" disabled>▶ Run</button>
+        <span id="fp-status" class="status-badge">loading…</span>
+        <button id="fp-clear" style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:.3rem .75rem;cursor:pointer;font-size:.78rem">Clear</button>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="pane-head">
+        <span class="filename">Output</span>
+        <div class="tabs" id="fp-tabs">
+          <button data-tab="stdout" class="tab active">stdout</button>
+          <button data-tab="compile" class="tab">compile</button>
+        </div>
+      </div>
+      <pre id="fp-stdout" class="output-area" style="min-height:480px">Ready.</pre>
+      <pre id="fp-compile" class="output-area" style="min-height:480px;display:none"></pre>
+    </div>
+  </div>
+</div>
+
+<style>
+  .full-playground { padding: 0; }
+  .fp-preset-wrap { margin-bottom: 1rem; }
+  .tabs { display:flex; gap:.5rem; }
+  .tab {
+    font-size:.75rem; font-weight:700; padding:.3rem .75rem;
+    background:transparent; border:1px solid var(--border); border-radius:999px;
+    color:var(--muted); cursor:pointer;
+  }
+  .tab.active { background:var(--accent); color:#0d0d10; border-color:transparent; }
+</style>
+
+<script type="module">
+  const ALL_PRESETS = [
+    { group: 'Basics',       label: 'Hello World',      code: `// Hello, tswift!
+let language = "Swift"
+let version = 6
+print("Hello from \\(language) \\(version)! 👋")
+
+let π = 3.14159
+let radius = 5.0
+let area = π * radius * radius
+print("Circle area (r=\\(radius)): \\(area)")
+
+let score = 87
+let grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : "F"
+print("Score \\(score) → Grade \\(grade)")` },
+
+    { group: 'Basics',       label: 'Fibonacci',        code: `func fib(_ n: Int) -> Int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+print("Fibonacci sequence:")
+for i in 0...12 {
+    print("  fib(\\(i)) = \\(fib(i))")
+}
+
+func fibFast(_ n: Int) -> Int {
+    var a = 0, b = 1
+    for _ in 0..<n { (a, b) = (b, a + b) }
+    return a
+}
+print("fibFast(20) = \\(fibFast(20))")` },
+
+    { group: 'Functions',    label: 'Closures & HOF',   code: `let numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+let doubled = numbers.map { $0 * 2 }
+print("doubled: \\(doubled)")
+
+let evens = numbers.filter { $0 % 2 == 0 }
+print("evens: \\(evens)")
+
+let sum = numbers.reduce(0, +)
+print("sum: \\(sum)")
+
+let sumOfSquaredEvens = numbers
+    .filter { $0 % 2 == 0 }
+    .map    { $0 * $0 }
+    .reduce(0, +)
+print("sum of squared evens: \\(sumOfSquaredEvens)")
+
+func makeMultiplier(_ factor: Int) -> (Int) -> Int { { $0 * factor } }
+let triple = makeMultiplier(3)
+print("triple(7) = \\(triple(7))")
+
+let words = ["swift", "is", "fast", "and", "safe"]
+let shout = words.map { $0.uppercased() }.joined(separator: " ")
+print(shout)` },
+
+    { group: 'Value Types',  label: 'Structs',          code: `struct Point {
+    var x: Double
+    var y: Double
+    var magnitude: Double { (x*x + y*y).squareRoot() }
+    mutating func translate(dx: Double, dy: Double) { x += dx; y += dy }
+    func scaled(by factor: Double) -> Point { Point(x: x * factor, y: y * factor) }
+}
+
+var p = Point(x: 3, y: 4)
+print("p = (\\(p.x), \\(p.y)), |p| = \\(p.magnitude)")
+
+var q = p
+q.translate(dx: 10, dy: 0)
+print("after translating q: p=\\(p.x), q=\\(q.x)  ← independent copies")
+
+let big = p.scaled(by: 2)
+print("scaled: (\\(big.x), \\(big.y))")` },
+
+    { group: 'Value Types',  label: 'Enums',            code: `enum Direction: CaseIterable {
+    case north, south, east, west
+    var opposite: Direction {
+        switch self {
+        case .north: return .south; case .south: return .north
+        case .east:  return .west;  case .west:  return .east
+        }
+    }
+}
+print("All directions: \\(Direction.allCases)")
+print("Opposite of north: \\(Direction.north.opposite)")
+
+enum Shape {
+    case circle(radius: Double)
+    case rectangle(width: Double, height: Double)
+    var area: Double {
+        switch self {
+        case .circle(let r):            return 3.14159 * r * r
+        case .rectangle(let w, let h):  return w * h
+        }
+    }
+}
+let shapes: [Shape] = [.circle(radius: 5), .rectangle(width: 4, height: 6)]
+for s in shapes { print("area = \\(s.area)") }
+
+enum Planet: Int { case mercury = 1, venus, earth, mars }
+print("Earth = \\(Planet.earth.rawValue)")` },
+
+    { group: 'Value Types',  label: 'Optionals',        code: `let values: [Int?] = [1, nil, 3, nil, 5]
+for v in values {
+    if let x = v { print("got \\(x)") }
+    else { print("nil") }
+}
+
+func divide(_ a: Int, _ b: Int) -> Int? {
+    guard b != 0 else { return nil }
+    return a / b
+}
+
+let result = divide(10, 2)
+print("10/2 = \\(result ?? -1)")
+
+let bad = divide(5, 0)
+print("5/0 = \\(bad ?? -1)")
+
+// Optional chaining
+struct User { var address: Address? }
+struct Address { var city: String }
+let user = User(address: Address(city: "Cupertino"))
+print(user.address?.city ?? "unknown")` },
+
+    { group: 'Reference Types', label: 'Classes',       code: `class Animal {
+    let name: String
+    init(_ name: String) { self.name = name }
+    func speak() -> String { "..." }
+}
+class Dog: Animal {
+    override func speak() -> String { "Woof!" }
+}
+class Cat: Animal {
+    override func speak() -> String { "Meow!" }
+}
+
+let animals: [Animal] = [Dog("Rex"), Cat("Whiskers"), Dog("Buddy")]
+for a in animals { print("\\(a.name): \\(a.speak())") }
+
+// Reference semantics
+class Counter {
+    var count = 0
+    func increment() { count += 1 }
+}
+let c1 = Counter()
+let c2 = c1   // same object
+c1.increment()
+c1.increment()
+print("c1=\\(c1.count), c2=\\(c2.count)  ← same reference")` },
+
+    { group: 'Protocols',    label: 'Protocols',        code: `protocol Scorable {
+    var score: Int { get }
+    func grade() -> String
+}
+extension Scorable {
+    func grade() -> String {
+        switch score {
+        case 90...: return "A"
+        case 80..<90: return "B"
+        case 70..<80: return "C"
+        default: return "F"
+        }
+    }
+}
+protocol Named { var name: String { get } }
+typealias NamedAndScored = Named & Scorable
+
+struct Student: NamedAndScored {
+    let name: String
+    let score: Int
+}
+
+func topStudent(_ students: [any NamedAndScored]) -> String {
+    guard let best = students.max(by: { $0.score < $1.score }) else { return "none" }
+    return "\\(best.name): \\(best.grade()) (\\(best.score))"
+}
+
+let roster = [Student(name: "Ada", score: 95),
+              Student(name: "Bob", score: 72),
+              Student(name: "Eve", score: 88)]
+for s in roster { print("\\(s.name) → \\(s.grade())") }
+print("Top: \\(topStudent(roster))")` },
+
+    { group: 'Protocols',    label: 'Generics',         code: `func maxOf<T: Comparable>(_ a: T, _ b: T) -> T { a > b ? a : b }
+print(maxOf(3, 7))
+print(maxOf("apple", "banana"))
+
+struct Stack<Element> {
+    private var items: [Element] = []
+    mutating func push(_ item: Element) { items.append(item) }
+    mutating func pop() -> Element? { items.popLast() }
+    var top: Element? { items.last }
+    var isEmpty: Bool { items.isEmpty }
+}
+
+var s = Stack<Int>()
+s.push(1); s.push(2); s.push(3)
+print("top: \\(s.top!)")
+while let x = s.pop() { print("popped \\(x)") }` },
+
+    { group: 'Errors',       label: 'Error Handling',   code: `enum ValidationError: Error {
+    case empty
+    case tooShort(Int)
+    case invalidChar(Character)
+}
+
+func validate(_ password: String) throws -> String {
+    guard !password.isEmpty else { throw ValidationError.empty }
+    guard password.count >= 6 else { throw ValidationError.tooShort(password.count) }
+    for ch in password {
+        guard ch.isLetter || ch.isNumber else { throw ValidationError.invalidChar(ch) }
+    }
+    return "✓ valid"
+}
+
+let inputs = ["", "hi", "hello!", "secure123"]
+for pwd in inputs {
+    do {
+        let msg = try validate(pwd)
+        print("'\\(pwd)' → \\(msg)")
+    } catch ValidationError.empty {
+        print("'\\(pwd)' → error: empty")
+    } catch ValidationError.tooShort(let n) {
+        print("'\\(pwd)' → error: too short (\\(n) chars)")
+    } catch ValidationError.invalidChar(let c) {
+        print("'\\(pwd)' → error: bad char '\\(c)'"  )
+    }
+}
+
+let safe = try? validate("abc123")
+print("try? 'abc123' → \\(safe ?? "nil")")` },
+
+    { group: 'Stdlib',       label: 'Collections',      code: `// Array operations
+var fruits = ["apple", "banana", "cherry"]
+fruits.append("date")
+print("fruits: \\(fruits)")
+print("sorted: \\(fruits.sorted())")
+print("filtered: \\(fruits.filter { $0.count > 5 })")
+
+// Dictionary
+var scores: [String: Int] = ["Alice": 95, "Bob": 72, "Eve": 88]
+scores["Charlie"] = 91
+print("scores: \\(scores)")
+let avg = scores.values.reduce(0, +) / scores.count
+print("average: \\(avg)")
+
+// Set
+var set1: Set = [1, 2, 3, 4]
+let set2: Set = [3, 4, 5, 6]
+print("union: \\(set1.union(set2).sorted())")
+print("intersection: \\(set1.intersection(set2).sorted())")` },
+  ];
+
+  // ── DOM ──────────────────────────────────────────────────────────
+  const presetBar = document.getElementById('fp-preset-bar');
+  const source    = document.getElementById('fp-source');
+  const runBtn    = document.getElementById('fp-run');
+  const clearBtn  = document.getElementById('fp-clear');
+  const statusEl  = document.getElementById('fp-status');
+  const stdout    = document.getElementById('fp-stdout');
+  const compile   = document.getElementById('fp-compile');
+  const metaEl    = document.getElementById('fp-meta');
+  const tabs      = document.querySelectorAll('#fp-tabs .tab');
+
+  // ── Tabs ─────────────────────────────────────────────────────────
+  function showTab(name) {
+    stdout.style.display  = name === 'stdout'  ? '' : 'none';
+    compile.style.display = name === 'compile' ? '' : 'none';
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  }
+  tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+
+  // ── Presets ──────────────────────────────────────────────────────
+  const groups = {};
+  for (const p of ALL_PRESETS) {
+    if (!groups[p.group]) groups[p.group] = [];
+    groups[p.group].push(p);
+  }
+  for (const [group, items] of Object.entries(groups)) {
+    const lbl = document.createElement('span');
+    lbl.className = 'preset-group-label';
+    lbl.textContent = group;
+    presetBar.appendChild(lbl);
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.className = 'preset-pill';
+      btn.textContent = item.label;
+      btn.dataset.code = item.code;
+      presetBar.appendChild(btn);
+    }
+  }
+
+  function loadPreset(btn) {
+    source.value = btn.dataset.code;
+    document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    updateMeta();
+    stdout.textContent = 'Ready.';
+    stdout.className = 'output-area';
+    compile.textContent = '';
+    showTab('stdout');
+  }
+
+  const firstPill = presetBar.querySelector('.preset-pill');
+  if (firstPill) loadPreset(firstPill);
+
+  presetBar.addEventListener('click', e => {
+    const pill = e.target.closest('.preset-pill');
+    if (pill) loadPreset(pill);
+  });
+
+  source.addEventListener('input', () => {
+    document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+    updateMeta();
+  });
+
+  clearBtn.addEventListener('click', () => {
+    source.value = '';
+    stdout.textContent = '';
+    compile.textContent = '';
+    updateMeta();
+  });
+
+  function updateMeta() {
+    const lines = source.value.split('\n').length;
+    const chars = source.value.length;
+    metaEl.textContent = `${lines} lines · ${chars} chars`;
+  }
+
+  // ── WASM ─────────────────────────────────────────────────────────
+  let runSwift = null;
+
+  async function initWasm() {
+    try {
+      const mod = await import(/* @vite-ignore */ '/wasm/tswift_wasm.js');
+      await mod.default();
+      runSwift = mod.runSwift;
+      runBtn.disabled = false;
+      setStatus('idle', 'idle');
+    } catch (err) {
+      setStatus('error', 'wasm failed');
+      stdout.textContent = `Failed to load runtime:\n${err.message}`;
+      stdout.className = 'output-area error';
+    }
+  }
+  initWasm();
+
+  function setStatus(type, text) {
+    statusEl.textContent = text;
+    statusEl.className = `status-badge ${type}`;
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (!runSwift) return;
+    setStatus('running', 'running…');
+    stdout.textContent = '';
+    stdout.className = 'output-area';
+    compile.textContent = '';
+    try {
+      const result = JSON.parse(runSwift(source.value));
+      // compile tab
+      if (result.compile) {
+        compile.textContent = [
+          `compile: ${result.compile.ok ? 'ok' : 'failed'} (${result.compile.elapsedMs}ms)`,
+          result.compile.stderr,
+          result.compile.astPreview,
+        ].filter(Boolean).join('\n\n');
+      }
+      // stdout tab
+      if (result.run) {
+        const out = [result.run.stdout?.trim(), result.run.stderr?.trim()].filter(Boolean).join('\n');
+        stdout.textContent = out || '(no output)';
+        if (!result.run.ok) {
+          stdout.className = 'output-area error';
+          setStatus('error', `failed (${result.run.elapsedMs}ms)`);
+          showTab('stdout');
+        } else {
+          setStatus('ok', `ok (${result.run.elapsedMs}ms)`);
+          showTab('stdout');
+        }
+      } else {
+        stdout.textContent = 'Program was not run (compile failed).';
+        stdout.className = 'output-area error';
+        setStatus('error', 'compile error');
+        showTab('compile');
+      }
+    } catch (err) {
+      stdout.textContent = err.message;
+      stdout.className = 'output-area error';
+      setStatus('error', 'error');
+    }
+  });
+</script>

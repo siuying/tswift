@@ -1,0 +1,338 @@
+---
+layout: ../../layouts/Doc.astro
+title: Language Features
+description: Swift 6.3 language feature coverage in tswift — Tiers 0 through 9.
+section: status
+---
+
+# Language Features
+
+Coverage of the Swift 6.3 language surface across Tiers 0–9.
+
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+
+---
+
+## Tier 0 — Lexical & Literals
+
+> 100% complete — everything downstream depends on these.
+
+| Status | Feature | Notes |
+|--------|---------|-------|
+| ✅ | Integer literals (dec/hex/oct/bin, `_` separators) | |
+| ✅ | Floating-point literals (dec/hex, exponents) | |
+| ✅ | Boolean literals `true`/`false` | |
+| ✅ | `nil` literal | |
+| ✅ | String literals (escapes, `\u{}`) | |
+| ✅ | Multiline string literals `"""` | |
+| ✅ | Raw string literals `#"..."#` | |
+| ✅ | String interpolation `\(expr)` | |
+| ✅ | Extended string delimiters `#"\n"#` | |
+| ✅ | Regex literals `/…/` and `#/…/#` | |
+| ✅ | Unicode identifiers | |
+| ✅ | Comments (line, block, nested, doc) | |
+| ✅ | Operators: arithmetic / comparison / logical / bitwise / range | |
+| ✅ | Wrapping operators `&+` `&-` `&*` `&<<` `&>>` | |
+| ✅ | Overflow-trapping integer semantics | |
+| ✅ | Nil-coalescing `??` | |
+| ✅ | Range operators `..<` `...` (+ one-sided) | |
+| ✅ | Identity operators `===` `!==` | |
+
+---
+
+## Tier 1 — Core Imperative
+
+### Bindings & Expressions
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `let` / `var` declarations + type annotations |
+| ✅ | Type inference for initializers |
+| ✅ | Arithmetic / comparison / logical / bitwise eval |
+| ✅ | Compound assignment `+= -= *= …` |
+| ✅ | Ternary `a ? b : c` |
+| ✅ | Tuples + tuple decomposition `let (a,b) = …` |
+| ✅ | Parenthesized / wildcard `_` expressions |
+| ✅ | Integer width conversions & `Int(x)` casts |
+
+### Functions
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Function declarations, params, return |
+| ✅ | Argument labels & parameter names |
+| ✅ | Default parameter values |
+| ✅ | Variadic parameters `T...` |
+| ✅ | `inout` parameters (true lvalue aliasing) |
+| ✅ | Nested functions + capture |
+| ✅ | Function types as values / params / returns |
+| ✅ | Multiple return values via tuples |
+| ✅ | `@discardableResult` |
+| ✅ | Functions that never return (`-> Never`) |
+
+### Control Flow
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `if` / `else` / `else if` |
+| ✅ | `if` as expression (Swift 5.9) |
+| ✅ | `guard` / `guard let` |
+| ✅ | `while` / `repeat-while` |
+| ✅ | `for-in` over ranges / arrays / sequences |
+| ✅ | `for case` / `for … where` |
+| ✅ | `switch` + cases + `default` |
+| ✅ | `switch` value / range / tuple patterns |
+| ✅ | `where` clauses in cases |
+| ✅ | `fallthrough` |
+| ✅ | `break` / `continue` + labeled statements |
+| ✅ | `switch` exhaustiveness / `@unknown default` |
+
+---
+
+## Tier 2 — Value & Nominal Types
+
+### Structs & Enums
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `struct` declaration + stored properties |
+| ✅ | Value semantics (copy on assign/pass) |
+| ✅ | Memberwise initializers (synthesized) |
+| ✅ | Methods on structs |
+| ✅ | `mutating` methods |
+| ✅ | `enum` with simple cases |
+| ✅ | Enum associated values |
+| ✅ | Enum raw values + `RawRepresentable` |
+| ✅ | `indirect` enums (recursive) |
+| ✅ | Enum methods / computed props |
+| ✅ | `CaseIterable` synthesis |
+| ✅ | Nested types |
+
+### Properties
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Stored properties (let/var) |
+| ✅ | Computed properties (get/set) |
+| ✅ | Read-only computed properties |
+| ✅ | Property observers `willSet`/`didSet` |
+| ✅ | `lazy` stored properties |
+| ✅ | Type properties `static`/`class` |
+| ✅ | Property wrappers `@propertyWrapper` |
+| 🟡 | Projected values `$wrapper` |
+| ⬜ | Global & local lazy variables |
+
+### Optionals
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Optional type `T?` |
+| ✅ | `if let` / `guard let` binding |
+| ✅ | Shorthand `if let x` (Swift 5.7) |
+| ✅ | Forced unwrap `!` (trap on nil) |
+| ✅ | Optional chaining `?.` |
+| ✅ | Nil-coalescing `??` |
+| ✅ | Implicitly unwrapped optionals `T!` |
+| ✅ | `Optional` pattern `case let x?` |
+
+### Subscripts
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Instance subscripts |
+| ✅ | Type subscripts (`static subscript`) |
+| ✅ | Subscript overloads / multi-param |
+
+---
+
+## Tier 3 — Reference Types & Memory (ARC)
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `class` declaration + reference semantics |
+| ✅ | ARC retain/release (refcount, no cycle GC) |
+| ✅ | Deterministic `deinit` at refcount 0 |
+| ✅ | Inheritance + method/property override |
+| ✅ | `final` / `override` semantics |
+| ✅ | Dynamic dispatch (vtables) |
+| ✅ | `super.` calls |
+| 🟡 | Designated / convenience initializers |
+| 🟡 | Initializer delegation + 2-phase init |
+| ✅ | `required` initializers |
+| ✅ | Failable initializers `init?` / `init!` |
+| ✅ | `weak` references (zeroing) |
+| ✅ | `unowned` references |
+| ✅ | `unowned(unsafe)` |
+| ✅ | Identity `===` `!==` |
+| ✅ | Type casting `is` / `as?` / `as!` / `as` |
+| ✅ | Downcasting in class hierarchies |
+
+### Closures
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Closure expressions |
+| ✅ | Trailing closures (+ multiple) |
+| ✅ | Shorthand args `$0 $1` |
+| ✅ | Capture by reference (upvalues) |
+| 🟡 | Capture lists `[weak self]` `[unowned]` |
+| 🟡 | `@escaping` closures |
+| ✅ | `@autoclosure` |
+| ✅ | Closures capturing `inout` |
+
+---
+
+## Tier 4 — Abstraction: Protocols, Generics, Extensions
+
+### Protocols
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Protocol declaration (methods/props/init) |
+| ✅ | Conformance + witness tables |
+| 🟡 | Protocol inheritance |
+| ✅ | Protocol composition `P & Q` |
+| ✅ | Default implementations (in extensions) |
+| ✅ | Associated types |
+| ✅ | Protocol as type / existential `any P` |
+| ✅ | `Self` requirements |
+| ✅ | Protocol witness for operators |
+| ⬜ | Optional protocol requirements (`@objc optional`) |
+| ✅ | Class-only protocols (`AnyObject`) |
+| ✅ | Conditional conformance |
+| 🟡 | Synthesized `Equatable`/`Hashable`/`Comparable` |
+| 🟡 | Synthesized `Codable` |
+
+### Generics
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Generic functions `<T>` |
+| ✅ | Generic types (struct/class/enum) |
+| ✅ | Type constraints `<T: Protocol>` |
+| 🟡 | `where` clauses |
+| ✅ | Associated-type constraints |
+| ✅ | Generic subscripts |
+| ⬜ | Monomorphization vs witness dispatch |
+| ✅ | Contextual `where` on extensions |
+| ⬜ | Primary associated types (`some Collection<Int>`) |
+| ⬜ | Parameter packs / variadic generics `each` |
+| ⬜ | Integer generic parameters (`let N: Int`) |
+| ⬜ | `~Copyable` / `~Escapable` |
+
+### Extensions
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Extend struct/class/enum/protocol |
+| ✅ | Add methods/computed props/inits/subscripts |
+| ✅ | Add protocol conformance via extension |
+| ✅ | Conditional extensions (`where`) |
+| ✅ | Extensions on generic types |
+
+---
+
+## Tier 5 — Error Handling & Resource Management
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `Error` protocol + custom errors |
+| ✅ | `throws` functions |
+| ✅ | `throw` statement |
+| ✅ | `do` / `catch` (+ pattern catches) |
+| ✅ | `try` / `try?` / `try!` |
+| 🟡 | `rethrows` |
+| 🟡 | Typed throws `throws(E)` (Swift 6) |
+| ✅ | `defer` statements (LIFO on scope exit) |
+| ✅ | Error propagation through call stack |
+| ✅ | `Result<Success, Failure>` |
+
+---
+
+## Tier 6 — Advanced Types & Expressions
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Opaque types `some P` (return) |
+| ✅ | Boxed/existential `any P` |
+| ✅ | Metatypes `T.self` / `.Type` / `.Protocol` |
+| ✅ | `type(of:)` dynamic type |
+| ✅ | Key paths `\Root.path` |
+| ✅ | Key-path expressions as functions |
+| ⬜ | `@dynamicMemberLookup` |
+| ⬜ | `@dynamicCallable` |
+| ⬜ | `#selector` / `#keyPath` |
+| ⬜ | `Self` type in return position |
+| ✅ | Implicit member expr `.foo` |
+| ⬜ | `consume` / `borrow` operators |
+| ⬜ | `discard self` |
+
+---
+
+## Tier 7 — Concurrency
+
+> Runs on a single-threaded cooperative executor. Results and structure are
+> faithful; preemptive scheduling order may differ from native Swift.
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `async` functions |
+| ✅ | `await` expressions |
+| ✅ | `async let` |
+| ✅ | `Task` / `Task.detached` |
+| ✅ | Task groups (`withTaskGroup`) |
+| 🟡 | Task cancellation |
+| ✅ | `actor` declarations + isolation |
+| 🟡 | Actor reentrancy / serial executor |
+| ✅ | `@MainActor` / global actors |
+| 🟡 | `nonisolated` / `isolated` params |
+| 🟡 | `Sendable` checking |
+| ✅ | `AsyncSequence` / `for await` |
+| ⬜ | Continuations (`withCheckedContinuation`) |
+| ⬜ | Strict concurrency (Swift 6 mode) |
+
+---
+
+## Tier 8 — Macros & Metaprogramming
+
+| Status | Feature |
+|--------|---------|
+| ⬜ | Freestanding macros `#macro` |
+| ⬜ | Attached macros `@Macro` |
+| ⬜ | Macro declarations |
+| ✅ | Built-in `#file`/`#line`/`#function`/`#column` |
+| 🟡 | `#warning` / `#error` |
+| ⬜ | `@freestanding` / `@attached` roles |
+| ⬜ | `@resultBuilder` (DSL transform) |
+| ⬜ | Result-builder method synthesis |
+
+---
+
+## Tier 9 — Attributes, Access Control, Operators
+
+### Access Control
+
+| Status | Feature |
+|--------|---------|
+| ⬜ | `open` `public` `internal` `fileprivate` `private` |
+| ⬜ | `package` access level |
+| ⬜ | Access on setters `private(set)` |
+| 🟡 | Module boundaries / `import` |
+
+### Custom Operators
+
+| Status | Feature |
+|--------|---------|
+| ✅ | `prefix`/`infix`/`postfix` operator decls |
+| ✅ | `precedencegroup` |
+| ✅ | Operator method implementations |
+| ✅ | Operator overloading |
+
+### Compiler Directives
+
+| Status | Feature |
+|--------|---------|
+| ✅ | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` |
+| ✅ | `#if` platform/arch/compiler/`canImport`/`swift()` |
+| ⬜ | `#sourceLocation` line control |
+| ⬜ | `#available` / `#unavailable` conditions |
