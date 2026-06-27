@@ -1,17 +1,21 @@
 /* ── Reset & tokens ─────────────────────────────────────────────── */
 :root {
-  /* Light, minimalist canvas — dark code panels are the signature motif */
-  --bg:        #fcfcfd;
+  /* Warm, characterful canvas — palette drawn from the swallow mascot:
+     burnt-orange throat, steel-blue head, cream belly, tan/purple wings.
+     Dark navy code panels (the bird's tail) are the signature motif. */
+  --bg:        #faf8f3;            /* warm ivory — the belly */
   --surface:   #ffffff;
-  --surface2:  #f3f4f6;
-  --border:    rgba(20,22,28,.10);
-  --line:      rgba(20,22,28,.07);
-  --accent:    #4f46e5;            /* indigo — interactive / active only */
-  --accent-soft: rgba(79,70,229,.10);
-  --accent2:   #0d9488;            /* teal — rare secondary */
-  --text:      #15171c;
-  --muted:     #61656f;
-  --code-bg:   #0e1014;            /* dark IDE panels on the light page */
+  --surface2:  #f4efe6;            /* warm sand */
+  --border:    rgba(48,38,28,.12);
+  --line:      rgba(48,38,28,.08);
+  --accent:    #d9622e;            /* burnt orange — the throat (interactive) */
+  --accent-strong: #bd5023;        /* darker orange for hovers */
+  --accent-soft: rgba(217,98,46,.10);
+  --accent2:   #3a5a82;            /* steel blue — the head */
+  --accent3:   #5e4f86;            /* muted purple — the wing */
+  --text:      #23201c;            /* warm near-black */
+  --muted:     #6c6155;            /* warm grey */
+  --code-bg:   #1a1c2b;            /* deep navy panels — the tail */
   --code-text: #d7dbe6;
   --radius:    12px;
   --radius-sm: 8px;
@@ -81,9 +85,15 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
 /* ── Nav ─────────────────────────────────────────────────────────── */
 .site-nav {
   position: sticky; top: 0; z-index: 100;
-  background: rgba(252,252,253,.82);
+  background: rgba(250,248,243,.82);
   backdrop-filter: blur(18px) saturate(140%);
   border-bottom: 1px solid var(--line);
+}
+
+.nav-logo .logo-bird {
+  width: 26px; height: 26px;
+  object-fit: contain;
+  margin: -2px 0;
 }
 
 .nav-inner {
@@ -163,8 +173,47 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
 
 /* ── Hero ────────────────────────────────────────────────────────── */
 .hero {
-  padding: 7rem 1.5rem 5rem;
+  padding: 6rem 1.5rem 5rem;
   max-width: 1200px; margin: 0 auto;
+  position: relative;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  align-items: center;
+  gap: 2.5rem;
+}
+.hero-copy { max-width: 40rem; }
+
+/* Mascot — the swallow, with a soft warm halo echoing its throat/wing hues */
+.hero-mascot {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.hero-mascot::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(closest-side, rgba(217,98,46,.18), transparent 70%) 35% 40%/70% 70% no-repeat,
+    radial-gradient(closest-side, rgba(58,90,130,.16), transparent 70%) 65% 55%/75% 75% no-repeat,
+    radial-gradient(closest-side, rgba(94,79,134,.12), transparent 70%) 50% 65%/85% 85% no-repeat;
+  filter: blur(6px);
+  z-index: 0;
+}
+.hero-mascot img {
+  position: relative; z-index: 1;
+  width: 100%; max-width: 480px; height: auto;
+  filter: drop-shadow(0 18px 30px rgba(48,38,28,.16));
+  animation: mascot-float 6s ease-in-out infinite;
+}
+@keyframes mascot-float {
+  0%, 100% { transform: translateY(0) rotate(-.4deg); }
+  50%      { transform: translateY(-12px) rotate(.4deg); }
+}
+@media (max-width: 880px) {
+  .hero-grid { grid-template-columns: 1fr; gap: 1rem; }
+  .hero-mascot { order: -1; }
+  .hero-mascot img { max-width: 320px; }
 }
 .hero-eyebrow {
   display: inline-flex; align-items: center; gap: .55rem;
@@ -194,9 +243,9 @@ pre code { background: transparent; border: none; padding: 0; font-size: inherit
 }
 .btn-primary {
   background: var(--accent); color: #fff;
-  box-shadow: 0 6px 20px rgba(79,70,229,.22);
+  box-shadow: 0 6px 20px rgba(217,98,46,.24);
 }
-.btn-primary:hover { background: #4338ca; text-decoration: none; box-shadow: 0 8px 24px rgba(79,70,229,.28); }
+.btn-primary:hover { background: var(--accent-strong); text-decoration: none; box-shadow: 0 8px 24px rgba(217,98,46,.32); }
 .btn-secondary {
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border);
@@ -300,7 +349,7 @@ a.card:hover { border-color: rgba(20,22,28,.22); box-shadow: 0 10px 30px rgba(20
   font-weight: 600; font-size: .85rem; cursor: pointer;
   transition: .15s;
 }
-.run-btn:hover { background: #4338ca; }
+.run-btn:hover { background: var(--accent-strong); }
 .run-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .status-badge {
@@ -335,7 +384,7 @@ a.card:hover { border-color: rgba(20,22,28,.22); box-shadow: 0 10px 30px rgba(20
   cursor: pointer; transition: .15s;
 }
 .preset-pill:hover { color: var(--text); background: #e9eaee; }
-.preset-pill.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(79,70,229,.4); }
+.preset-pill.active { background: var(--accent-soft); color: var(--accent); border-color: rgba(217,98,46,.4); }
 
 /* ── Doc layout ──────────────────────────────────────────────────── */
 .doc-layout {
@@ -418,7 +467,7 @@ a.card:hover { border-color: rgba(20,22,28,.22); box-shadow: 0 10px 30px rgba(20
 }
 .coverage-fill {
   height: 100%; border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), #7c74f0);
+  background: linear-gradient(90deg, var(--accent), #ec9461);
   transition: width .6s ease;
 }
 .coverage-fill.high { background: linear-gradient(90deg, #16a34a, #22c55e); }
@@ -478,7 +527,7 @@ a.card:hover { border-color: rgba(20,22,28,.22); box-shadow: 0 10px 30px rgba(20
   font-size: .82rem; font-weight: 500;
   white-space: nowrap;
 }
-.pipe-node.highlight { border-color: rgba(79,70,229,.45); color: var(--accent); background: var(--accent-soft); }
+.pipe-node.highlight { border-color: rgba(217,98,46,.45); color: var(--accent); background: var(--accent-soft); }
 .pipe-arrow { color: var(--muted); font-size: 1.2rem; }
 
 /* ── Responsive tweaks ───────────────────────────────────────────── */

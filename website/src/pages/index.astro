@@ -10,6 +10,8 @@ import CoverageBar from '../components/CoverageBar.astro';
 >
   <!-- ── Hero ─────────────────────────────────────────────────────── -->
   <section class="hero">
+   <div class="hero-grid">
+    <div class="hero-copy">
     <p class="hero-eyebrow">swift → rust → wasm</p>
     <h1>Run Swift in the browser,<br /><span class="accent">compiled by Rust.</span></h1>
     <p class="lead">
@@ -27,6 +29,11 @@ import CoverageBar from '../components/CoverageBar.astro';
         GitHub
       </a>
     </div>
+    </div>
+    <div class="hero-mascot" aria-hidden="true">
+      <img src="/assets/swift.png" alt="" width="480" height="260" loading="eager" />
+    </div>
+   </div>
   </section>
 
   <!-- ── Live Demo ─────────────────────────────────────────────────── -->
