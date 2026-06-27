@@ -1,0 +1,194 @@
+//! tswift-swiftui — SwiftUI view primitives as runtime builtins.
+//!
+//! SwiftUI is a render-host framework, not value semantics: the interpreter
+//! evaluates a `View`'s `body` into a tree of *view values* (the host-neutral
+//! UIIR), a Rust diff engine turns successive trees into a keyed patch stream,
+//! and a thin host applies the patches. See `docs/adr/0006-swiftui-render-host.md`
+//! and `docs/plan/swiftui-support.md`.
+//!
+//! This crate mirrors the `tswift-foundation` registry seam: [`install`] wires
+//! the view constructors into an interpreter, and [`registered_keys`] exposes
+//! the live registry to the framework-inventory coverage tooling (Layer A).
+//!
+//! A *view value* is a [`SwiftValue::Struct`] carrying the SwiftUI type name and
+//! a flat, ordered `_modifiers` field (appended copy-on-write by `.font(_:)`
+//! &c.). Container views additionally carry a `_children` field. The view-value
+//! tree *is* the UIIR — no `tswift-core` change is needed for view values.
+
+use std::rc::Rc;
+
+use tswift_core::{Arg, Interpreter, StdContext, StdResult, StructObj, SwiftValue};
+
+/// Field name holding a view's ordered modifier list.
+pub const MODIFIERS_FIELD: &str = "_modifiers";
+/// Field name holding a container view's ordered child views.
+pub const CHILDREN_FIELD: &str = "_children";
+
+/// Register every currently-supported SwiftUI view constructor into `interp`.
+pub fn install(interp: &mut Interpreter<'_>) {
+    interp.register_free_fn("Text", text_init);
+    interp.register_free_fn("VStack", vstack_init);
+    interp.register_free_fn("HStack", hstack_init);
+    interp.register_free_fn("Spacer", spacer_init);
+    interp.register_free_fn("Button", button_init);
+}
+
+/// Every SwiftUI entry registered by [`install`], as coverage keys
+/// (`Type.member`, matching `tools/framework-inventory/coverage.py`).
+pub fn registered_keys() -> Vec<String> {
+    let mut sink = std::io::sink();
+    let mut interp = Interpreter::new(&mut sink);
+    install(&mut interp);
+    let mut keys: Vec<String> = interp
+        .registered_keys()
+        .into_iter()
+        .filter_map(|key| match key.as_str() {
+            "Text" | "VStack" | "HStack" | "Spacer" | "Button" => Some(format!("{key}.init")),
+            _ => None,
+        })
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// Build a view value: a struct carrying `type_name` plus any constructor
+/// fields, an empty ordered `_modifiers` list, and (for containers) `_children`.
+fn view_value(type_name: &str, mut fields: Vec<(String, SwiftValue)>) -> SwiftValue {
+    fields.push((
+        MODIFIERS_FIELD.into(),
+        SwiftValue::Array(Rc::new(Vec::new())),
+    ));
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: type_name.into(),
+        fields,
+    }))
+}
+
+/// Build a container view value with an ordered `_children` list.
+fn container_value(type_name: &str, children: Vec<SwiftValue>) -> SwiftValue {
+    view_value(
+        type_name,
+        vec![(CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children)))],
+    )
+}
+
+/// `Text(_ verbatim: String)` — the leaf text view.
+fn text_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let verbatim = match args.into_iter().next() {
+        Some(arg) => match arg.value {
+            SwiftValue::Str(s) => s,
+            other => other.to_string(),
+        },
+        None => String::new(),
+    };
+    Ok(view_value(
+        "Text",
+        vec![("verbatim".into(), SwiftValue::Str(verbatim))],
+    ))
+}
+
+/// `VStack { ... }` — vertical container. Children arrive via the `@ViewBuilder`
+/// shim as the positional arguments evaluated from the trailing closure.
+fn vstack_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("VStack", child_views(args)))
+}
+
+/// `HStack { ... }` — horizontal container.
+fn hstack_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("HStack", child_views(args)))
+}
+
+/// `Spacer()` — flexible empty space.
+fn spacer_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Spacer", Vec::new()))
+}
+
+/// `Button(_ title) { action }` (scaffold: title only; the action closure and
+/// `@ViewBuilder` label come with the interaction slice).
+fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut iter = args.into_iter();
+    let title = match iter.next() {
+        Some(arg) => match arg.value {
+            SwiftValue::Str(s) => s,
+            other => other.to_string(),
+        },
+        None => String::new(),
+    };
+    Ok(view_value(
+        "Button",
+        vec![("title".into(), SwiftValue::Str(title))],
+    ))
+}
+
+/// Collect positional view arguments (the `@ViewBuilder` children) into a list,
+/// flattening any array a builder shim may have produced.
+fn child_views(args: Vec<Arg>) -> Vec<SwiftValue> {
+    let mut out = Vec::new();
+    for arg in args {
+        match arg.value {
+            SwiftValue::Array(items) => out.extend(items.iter().cloned()),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Returns the SwiftUI type name of a view value, if it is one.
+pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
+    match value {
+        SwiftValue::Struct(obj) if obj.fields.iter().any(|(k, _)| k == MODIFIERS_FIELD) => {
+            Some(obj.type_name.as_str())
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod coverage_dump {
+    #[test]
+    fn dump_registered_keys() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("frameworks/swiftui/registered_keys.txt");
+        let body = super::registered_keys().join("\n") + "\n";
+        std::fs::write(&path, body).expect("write registered_keys.txt");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registered_keys_cover_v1_constructors() {
+        let keys = registered_keys();
+        assert_eq!(
+            keys,
+            vec![
+                "Button.init",
+                "HStack.init",
+                "Spacer.init",
+                "Text.init",
+                "VStack.init",
+            ]
+        );
+    }
+
+    #[test]
+    fn text_value_carries_verbatim_and_modifiers() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        let v = text_init(
+            &mut interp,
+            vec![Arg::positional(SwiftValue::Str("hi".into()))],
+        )
+        .unwrap();
+        assert_eq!(view_type_name(&v), Some("Text"));
+        let SwiftValue::Struct(obj) = &v else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.fields[0].0, "verbatim");
+        assert_eq!(obj.fields[1].0, MODIFIERS_FIELD);
+    }
+}

@@ -434,6 +434,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tswift-swiftui"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+]
+
+[[package]]
 name = "tswift-wasm"
 version = "0.0.0"
 dependencies = [

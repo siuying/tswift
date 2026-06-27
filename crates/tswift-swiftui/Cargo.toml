@@ -1,0 +1,10 @@
+[package]
+name = "tswift-swiftui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tswift SwiftUI render host: view primitives evaluated into a host-neutral UIIR and diffed into a patch stream."
+
+[dependencies]
+tswift-core.workspace = true
