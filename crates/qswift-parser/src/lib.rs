@@ -2542,7 +2542,35 @@ impl<'a> Parser<'a> {
                         ) =>
                 {
                     match self.generic_call_args() {
-                        Some(end) => self.pos = end,
+                        Some(end) => {
+                            // Most generics infer their arguments from values, so
+                            // the `<…>` clause is discarded. `MemoryLayout<T>`,
+                            // however, is parameterised purely by a written type,
+                            // so record that type as a `TypeIdent` child of the
+                            // `MemoryLayout` identifier for the runtime to read.
+                            if self.ast.node(expr).kind() == NodeKind::IdentExpr
+                                && self.ast.node(expr).text() == Some("MemoryLayout")
+                            {
+                                let inner: String = self.tokens[self.pos..end]
+                                    .iter()
+                                    .map(|t| t.text)
+                                    .collect::<String>()
+                                    .trim()
+                                    .trim_start_matches('<')
+                                    .trim_end_matches('>')
+                                    .trim()
+                                    .to_string();
+                                let tok = self.peek();
+                                let ty = self.ast.add(
+                                    NodeKind::TypeRef,
+                                    Some(&inner),
+                                    tok.line,
+                                    tok.col,
+                                );
+                                self.ast.append_child(expr, ty);
+                            }
+                            self.pos = end;
+                        }
                         None => break,
                     }
                 }
@@ -3424,6 +3452,25 @@ mod tests {
         // The parameter and accessor still parse after the generic clause.
         let kinds: Vec<_> = sub.children().map(|c| c.kind()).collect();
         assert!(kinds.contains(&NodeKind::Param));
+    }
+
+    #[test]
+    fn memory_layout_records_type_argument() {
+        // `MemoryLayout<Int>.size` records the written type `Int` as a `TypeRef`
+        // child of the `MemoryLayout` identifier, so the runtime can read it.
+        let ast = ast_of("let s = MemoryLayout<Int>.size");
+        let decl = first_stmt(&ast);
+        // let s = <member>.size  →  MemberExpr "size" over IdentExpr "MemoryLayout".
+        let init = decl
+            .children()
+            .find(|c| c.kind() == NodeKind::MemberExpr)
+            .expect("member expr initializer");
+        let base = init.children().next().expect("member base");
+        assert_eq!(base.kind(), NodeKind::IdentExpr);
+        assert_eq!(base.text(), Some("MemoryLayout"));
+        let ty = base.children().next().expect("recorded type argument");
+        assert_eq!(ty.kind(), NodeKind::TypeRef);
+        assert_eq!(ty.text(), Some("Int"));
     }
 
     #[test]

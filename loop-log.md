@@ -24,3 +24,4 @@ See docs/swift-runtime/blocked-features.md
 | 12 | 018276e | as/is patterns + custom Error types | keep | `catch let e as T`, `case is T`, `case let x as T`; match_pattern CastExpr |
 | 13 | c6fea91 | subscript overloads + nested subscript assign | keep | Vec<SubscriptDef> by arity; get/set; `m[i][j]=v`. Reviewed by subagent (claude-sonnet-4-5), 2 Important fixes applied |
 | 14 | pending | verify final/override, deinit, unowned | keep | already worked; added unowned fixture; final/override/deinit covered by existing fixtures |
+| 15 | 2be09b5 | Generic subscripts `subscript<T>` | keep | parser accepts `<...>` + `where` on subscript; runtime type-erases. Reviewed by gpt-5.5 (clean). Pre-existing limit: subscript overloads selected by arity only (labels untracked) |

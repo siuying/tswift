@@ -433,7 +433,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
 | [x] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
 | [x] | `Result` | ★★ | R5 |
-| [ ] | `MemoryLayout` | ★★ | R6+ |
+| [x] | `MemoryLayout` | ★★ | R6+ |
 | [ ] | `Unsafe*Pointer` family | ★★★★ | R6+ |
 
 ---

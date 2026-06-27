@@ -4625,6 +4625,85 @@ impl<'w> Interpreter<'w> {
 
     /// Member access: static integer members (`Int.max`/`Int.min`) and
     /// `Array.count`.
+    /// Evaluate a `MemoryLayout<T>.size` / `.stride` / `.alignment` access.
+    /// Layouts are modelled on a 64-bit platform. Primitive scalar types and
+    /// user structs (laid out field-by-field with C-style alignment/padding)
+    /// are supported; other types report an unsupported-feature error.
+    fn memory_layout_member(&self, ty: &str, member: &str) -> Eval {
+        let (size, stride, alignment) = self
+            .type_layout(ty)
+            .ok_or_else(|| EvalError::Unsupported(format!("MemoryLayout<{ty}>")))?;
+        let pick = match member {
+            "size" => size,
+            "stride" => stride,
+            "alignment" => alignment,
+            other => {
+                return Err(
+                    EvalError::Unsupported(format!("MemoryLayout<{ty}>.{other}")).into(),
+                )
+            }
+        };
+        Ok(SwiftValue::Int(IntValue::new(pick as i128, IntWidth::I64)))
+    }
+
+    /// The `(size, stride, alignment)` of `ty` on a 64-bit platform, or `None`
+    /// if the type's layout is not modelled.
+    fn type_layout(&self, ty: &str) -> Option<(u64, u64, u64)> {
+        self.type_layout_inner(ty, &mut Vec::new())
+    }
+
+    /// `type_layout`, tracking the chain of structs currently being laid out so
+    /// a recursive value type (`struct A { var a: A }`) fails safely instead of
+    /// overflowing the stack.
+    fn type_layout_inner(&self, ty: &str, stack: &mut Vec<String>) -> Option<(u64, u64, u64)> {
+        // Scalar primitives: `(size, alignment)`; stride == size for these.
+        let scalar = |n: u64| Some((n, n, n));
+        match ty.trim() {
+            "Int" | "UInt" | "Int64" | "UInt64" | "Double" | "Float64" => scalar(8),
+            "Int32" | "UInt32" | "Float" | "Float32" => scalar(4),
+            "Int16" | "UInt16" => scalar(2),
+            "Int8" | "UInt8" | "Bool" => scalar(1),
+            // An empty type still occupies a stride of 1.
+            "Void" | "()" => Some((0, 1, 1)),
+            other => self.struct_layout(other, stack),
+        }
+    }
+
+    /// Compute a user struct's layout by laying out its stored properties in
+    /// declaration order with C-style alignment and tail padding. A nested
+    /// struct field advances the running offset by the field's *size* (its tail
+    /// padding is reusable), matching Swift's value-type layout. Returns `None`
+    /// for unmodelled field types or a self-referential (cyclic) layout.
+    fn struct_layout(&self, type_name: &str, stack: &mut Vec<String>) -> Option<(u64, u64, u64)> {
+        let def = self.structs.get(type_name)?;
+        // A struct that (transitively) contains itself has no finite layout.
+        if stack.iter().any(|t| t == type_name) {
+            return None;
+        }
+        stack.push(type_name.to_string());
+        let mut offset: u64 = 0;
+        let mut max_align: u64 = 1;
+        for prop in &def.stored {
+            let Some(field_ty) = prop.ty.as_deref() else {
+                stack.pop();
+                return None;
+            };
+            let Some((fsize, _fstride, falign)) = self.type_layout_inner(field_ty, stack) else {
+                stack.pop();
+                return None;
+            };
+            max_align = max_align.max(falign);
+            // Round the running offset up to the field's alignment.
+            offset = offset.div_ceil(falign) * falign;
+            offset += fsize;
+        }
+        stack.pop();
+        let size = offset;
+        // Stride rounds the size up to the struct's overall alignment.
+        let stride = size.div_ceil(max_align) * max_align;
+        Some((size, stride, max_align))
+    }
+
     fn eval_member(&mut self, node: &Node<'static>) -> Eval {
         let mut member = node
             .text()
@@ -4653,6 +4732,18 @@ impl<'w> Interpreter<'w> {
                 // concrete type for the current call.
                 let type_name = self.resolve_type_alias(&type_name).unwrap_or(type_name);
                 if self.env.get(&type_name).is_none() {
+                    // `MemoryLayout<T>.size` / `.stride` / `.alignment`. The
+                    // written type `T` is recorded as a `TypeIdent` child of the
+                    // `MemoryLayout` identifier by the parser.
+                    if type_name == "MemoryLayout" {
+                        if let Some(ty) = base
+                            .children()
+                            .find(|c| c.kind() == NodeKind::TypeIdent)
+                            .and_then(|c| c.text())
+                        {
+                            return self.memory_layout_member(&ty, &member);
+                        }
+                    }
                     // `Type.self` — a metatype value naming the type.
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
@@ -6628,6 +6719,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn memory_layout_primitives_and_structs() {
+        let out = run(
+            "print(MemoryLayout<Int>.size, MemoryLayout<Int>.stride, MemoryLayout<Int>.alignment)\n\
+             print(MemoryLayout<Int8>.size, MemoryLayout<Bool>.size, MemoryLayout<Float>.size)\n\
+             struct Pair { var flag: Int8; var value: Int }\n\
+             print(MemoryLayout<Pair>.size, MemoryLayout<Pair>.stride, MemoryLayout<Pair>.alignment)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "8 8 8\n1 1 4\n16 16 8\n");
+    }
+
+    #[test]
+    fn memory_layout_recursive_struct_fails_safely() {
+        // A self-referential value type has no finite layout: report it as an
+        // unsupported construct rather than recursing until the stack overflows.
+        let err = run("struct A { var a: A }\nprint(MemoryLayout<A>.size)\n").unwrap_err();
+        match err {
+            EvalError::Unsupported(msg) => assert!(msg.contains("MemoryLayout<A>"), "{msg}"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
     }
 
     #[test]
