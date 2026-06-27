@@ -50,9 +50,10 @@ Each box = one atomic commit; full suite green before the next.
       validator.)*
 - [x] 2. **binding name hoist** (`lower_binding`) — runtime reads the
       `NamePattern`/`WildcardPattern` child instead of the decl's hoisted text.
-- [ ] 3. **nominal reshape** (`lower_nominal`) — `register_*` read members and
+- [x] 3. **nominal reshape** (`lower_nominal`) — `register_*` read members and
       inherited `TypeRef`s directly; stop synthesizing the `Block` wrapper and
-      `Conformance`/`TypeIdent` nodes.
+      `Conformance`/`TypeIdent` nodes. *(Split into 3a conformances→TypeIdent,
+      3b drop Block wrapper.)*
 - [ ] 4. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
       — `eval_cond_list` reads the `LetDecl`/`VarDecl` + pattern; delete
       `OptionalBinding`/`CaseCondition` synthesis.
@@ -80,6 +81,11 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 3b done (bfac697). Removed the synthesized nominal `Block`;
+  members are direct children. 5 register sites iterate direct children. Codex:
+  no issues. 444 green.
+- 2026-06-27 — step 3a done (38d7cf8). Conformances kept as plain `TypeIdent`
+  children; runtime readers filter `TypeIdent`. Codex: Yes. 444 green.
 - 2026-06-27 — step 2 done. `lower_binding` keeps the binding pattern as a child;
   `decl_name()` reads the name from the `PatternValueBinding`/`PatternWildcard`
   child. Excluded pattern nodes from `is_value_node` so the re-added child is
