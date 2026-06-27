@@ -270,7 +270,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `type(of:)` dynamic type | ✅ | ★★ | R4 |
 | [x] | Key paths `\Root.path` | ✅ | ★★★ | R6+ |
 | [x] | Key-path expressions as functions | ⚠️ | ★★★ | R6+ |
-| [ ] | `@dynamicMemberLookup` | ✅ | ★★★ | R6+ |
+| [x] | `@dynamicMemberLookup` | ✅ | ★★★ | R6+ |
 | [ ] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
 | [ ] | `#selector` / `#keyPath` | ⚠️ | ★★ | R6+ |
 | [x] | Self type | ✅ | ★★ | R4 |

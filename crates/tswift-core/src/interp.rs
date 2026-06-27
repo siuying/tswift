@@ -194,6 +194,9 @@ struct StructDef {
     init: Option<MethodDef>,
     /// Stored property name → its `@propertyWrapper` type, when wrapped.
     wrappers: std::collections::HashMap<String, String>,
+    /// `@dynamicMemberLookup`: an unresolved member name routes through the
+    /// type's `subscript(dynamicMember:)`.
+    dynamic_member_lookup: bool,
 }
 
 /// One case of an enum.
@@ -1363,6 +1366,11 @@ impl<'w> Interpreter<'w> {
         {
             self.main_type = Some(name.clone());
         }
+        // `@dynamicMemberLookup` routes unresolved member access through the
+        // type's `subscript(dynamicMember:)`.
+        let dynamic_member_lookup = node.children().any(|c| {
+            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicMemberLookup")
+        });
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -1496,6 +1504,7 @@ impl<'w> Interpreter<'w> {
                 static_subscript,
                 init,
                 wrappers,
+                dynamic_member_lookup,
             },
         );
         // Now that the struct is registered, evaluate its static initializers
@@ -3356,7 +3365,60 @@ impl<'w> Interpreter<'w> {
                 .run_with_self(value.clone(), |me| me.eval(&body))
                 .map(|(v, _)| v);
         }
+        // `@dynamicMemberLookup`: an unresolved member name routes through a
+        // `subscript(dynamicMember:)` getter, passing the name as a string.
+        if let Some(v) = self.dynamic_member_read(value, &obj.type_name, name)? {
+            return Ok(v);
+        }
         Err(EvalError::Type(format!("struct {} has no member `{name}`", obj.type_name)).into())
+    }
+
+    /// Find a `subscript(dynamicMember:)` getter on `type_name` and invoke it
+    /// with `member` as a string key. Returns `None` when the type declares no
+    /// dynamic-member subscript, so the caller can fall through to its error.
+    fn dynamic_member_read(
+        &mut self,
+        receiver: &SwiftValue,
+        type_name: &str,
+        member: &str,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let getter = self.structs.get(type_name).and_then(|d| {
+            if !d.dynamic_member_lookup {
+                return None;
+            }
+            // The dynamic-member subscript is the single `String`-keyed overload
+            // (its `dynamicMember` argument label is not retained in the AST, so
+            // the `@dynamicMemberLookup` attribute plus a one-`String`-parameter
+            // signature identifies it — and disambiguates it from an ordinary
+            // single-parameter subscript such as `subscript(_ i: Int)`).
+            d.subscripts
+                .iter()
+                .find(|s| s.params.len() == 1 && s.params[0].ty.as_deref() == Some("String"))
+                .map(|s| (clone_params(&s.params), s.getter))
+        });
+        let Some((params, body)) = getter else {
+            return Ok(None);
+        };
+        let args = vec![CallArg {
+            label: None,
+            value: SwiftValue::Str(member.to_string()),
+            place: None,
+        }];
+        let saved_env = self.env.enter_isolated();
+        self.env.declare("self", receiver.clone(), false);
+        let bound = self.bind_params(&params, args);
+        let result = match bound {
+            Ok(_) => match body {
+                Some(b) => self.eval(&b),
+                None => Ok(SwiftValue::Void),
+            },
+            Err(e) => Err(e),
+        };
+        self.env.restore(saved_env);
+        match result {
+            Ok(v) | Err(Signal::Return(v)) => Ok(Some(v)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Build a struct instance from a memberwise initializer call.
