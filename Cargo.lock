@@ -379,6 +379,7 @@ dependencies = [
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
+ "tswift-swiftui",
 ]
 
 [[package]]

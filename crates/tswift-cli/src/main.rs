@@ -9,6 +9,8 @@
 //! (kind, text, line, resolved type, modifiers) for inspecting how the frontend
 //! parses a construct — the fast path when adding a language feature.
 
+mod swiftui;
+
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -44,9 +46,10 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("swiftui") => swiftui::run(args),
         Some(other) => {
             eprintln!(
-                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift dump [--json] <file.swift>"
+                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift dump [--json] <file.swift> | tswift swiftui render|dispatch <file.swift> [events.json]"
             );
             ExitCode::FAILURE
         }

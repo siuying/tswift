@@ -8,7 +8,7 @@
 mod env;
 pub mod grapheme;
 mod interp;
-mod json;
+pub mod json;
 mod ops;
 pub mod regex;
 mod stdlib;
