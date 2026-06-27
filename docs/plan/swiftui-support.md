@@ -2,7 +2,7 @@
 
 **Status:** proposed
 **Date:** 2026-06-27
-**Reference toolchain / SDK:** Swift **6.3.2** (`swift-6.3.2-RELEASE`) + matching macOS SDK
+**Reference toolchain / SDK:** Swift **6.3.2** (`swift-6.3.2-RELEASE`) + **iPhoneSimulator SDK** — iOS is the target platform, so the SwiftUI surface (`frameworks/swiftui/inventory.md`, and the denominator `registered_keys.txt` is measured against) is extracted from the iOS Simulator SDK, not macOS. The `[swiftui]` descriptor in `tools/framework-inventory/frameworks.toml` resolves it via `xcrun --sdk iphonesimulator --show-sdk-path` with `arm64-apple-ios-simulator.swiftinterface`.
 **Related:**
 - `docs/plan/framework-support.md` — the framework-parameterized inventory/coverage loop this extends
 - `tools/framework-inventory/` — `extract.py` / `coverage.py` / `frameworks.toml` (the surface-coverage tooling we reuse)

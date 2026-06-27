@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-06-27
 - **Context slice:** SwiftUI rendering (framework layer)
+- **Target platform:** iOS — the SwiftUI surface is extracted from the iPhoneSimulator SDK (not macOS); see `tools/framework-inventory/frameworks.toml` `[swiftui]`
 - **Builds on:** ADR-0002 (tree-walker), `docs/plan/framework-support.md` (framework descriptors)
 - **Drives:** `docs/plan/swiftui-support.md` (the staged implementation plan)
 

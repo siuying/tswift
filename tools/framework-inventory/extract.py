@@ -56,11 +56,15 @@ def toolchain_root(desc: dict) -> Path:
     raise SystemExit(f"cannot find Swift toolchain {name!r}")
 
 
-def sdk_root() -> Path:
+def sdk_root(sdk_name: str | None = None) -> Path:
     sdk = os.environ.get("SDKROOT")
     if sdk:
         return Path(sdk)
-    return Path(run(["xcrun", "--show-sdk-path"]))
+    cmd = ["xcrun"]
+    if sdk_name:
+        cmd += ["--sdk", sdk_name]
+    cmd.append("--show-sdk-path")
+    return Path(run(cmd))
 
 
 def resolve_interface(framework: str) -> Path:
@@ -73,7 +77,7 @@ def resolve_interface(framework: str) -> Path:
     if kind == "toolchain":
         base = toolchain_root(desc) / desc["relative_path"]
     elif kind == "sdk-framework":
-        base = sdk_root() / desc["framework_path"]
+        base = sdk_root(desc.get("sdk")) / desc["framework_path"]
     else:
         raise SystemExit(f"unsupported descriptor kind: {kind}")
     for candidate in desc.get("interface_candidates", []):

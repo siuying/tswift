@@ -35,11 +35,13 @@ fixture_prefix = "foundation_"
 display_name = "SwiftUI"
 module = "SwiftUI"
 kind = "sdk-framework"
-framework_path = "System/Library/Frameworks/SwiftUI.framework/Versions/Current/Modules/SwiftUI.swiftmodule"
+# iOS is the target: resolve the SwiftUI surface from the iOS Simulator SDK,
+# not macOS. iOS framework bundles are not versioned (no Versions/Current).
+sdk = "iphonesimulator"
+framework_path = "System/Library/Frameworks/SwiftUI.framework/Modules/SwiftUI.swiftmodule"
 interface_candidates = [
-  "arm64e-apple-macos.swiftinterface",
-  "arm64-apple-macos.swiftinterface",
-  "x86_64-apple-macos.swiftinterface",
+  "arm64-apple-ios-simulator.swiftinterface",
+  "x86_64-apple-ios-simulator.swiftinterface",
 ]
 inventory = "frameworks/swiftui/inventory.md"
 registry = "frameworks/swiftui/registered_keys.txt"

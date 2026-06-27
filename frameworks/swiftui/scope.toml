@@ -1,6 +1,6 @@
 [meta]
 framework = "SwiftUI"
-reference = "swiftc 6.3.2 / MacOSX SDK"
+reference = "swiftc 6.3.2 / iPhoneSimulator SDK (iOS is the target platform)"
 stance = """
 Render-host semantics, not value semantics: types here are SwiftUI view/control/
 container concepts the runtime evaluates into a host-neutral UIIR (see
