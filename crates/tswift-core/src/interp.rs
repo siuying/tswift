@@ -167,6 +167,9 @@ struct MethodDef {
     params: Vec<Param>,
     body: Option<Node<'static>>,
     mutating: bool,
+    /// Names of the method's generic type parameters (`<T: P>`), used to bind
+    /// placeholders to concrete argument types for static dispatch (`T.zero()`).
+    generic_params: Vec<String>,
     /// `static`/`class` (type) method, callable through `Type.m()` and via an
     /// implicit member `.m()` in a contextual position.
     is_static: bool,
@@ -932,6 +935,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1059,14 +1063,19 @@ impl<'w> Interpreter<'w> {
         &self,
         type_name: &str,
         method: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
         for proto in self.all_protocols(type_name) {
             if let Some(m) = self
                 .protocols
                 .get(&proto)
                 .and_then(|d| d.methods.get(method))
             {
-                return Some((clone_params(&m.params), m.body, m.mutating));
+                return Some((
+                    clone_params(&m.params),
+                    m.body,
+                    m.mutating,
+                    m.generic_params.clone(),
+                ));
             }
         }
         None
@@ -1192,6 +1201,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1256,6 +1266,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: false,
+                        generic_params: generic_param_names(&member),
                         is_static: false,
                     });
                 }
@@ -1268,6 +1279,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: sbody,
                         mutating: false,
+                        generic_params: generic_param_names(&member),
                         is_static: true,
                     });
                 }
@@ -1282,6 +1294,7 @@ impl<'w> Interpreter<'w> {
                                 params: parse_params(&member),
                                 body: member.children().find(|c| c.kind() == NodeKind::Block),
                                 mutating: false,
+                                generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
                             },
                         );
@@ -1411,6 +1424,7 @@ impl<'w> Interpreter<'w> {
                         params: parse_params(&member),
                         body: member.children().find(|c| c.kind() == NodeKind::Block),
                         mutating: true,
+                        generic_params: generic_param_names(&member),
                         is_static: false,
                     });
                 }
@@ -1424,6 +1438,7 @@ impl<'w> Interpreter<'w> {
                             params: parse_params(&member),
                             body: getter,
                             mutating: false,
+                            generic_params: generic_param_names(&member),
                             is_static: true,
                         });
                     } else {
@@ -1448,6 +1463,7 @@ impl<'w> Interpreter<'w> {
                             params,
                             body,
                             mutating,
+                            generic_params: generic_param_names(&member),
                             is_static,
                         };
                         method_overloads
@@ -2213,12 +2229,17 @@ impl<'w> Interpreter<'w> {
         &self,
         class_name: &str,
         name: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, String)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
             let def = self.classes.get(&cls)?;
             if let Some(m) = def.methods.get(name) {
-                return Some((clone_params(&m.params), m.body, cls));
+                return Some((
+                    clone_params(&m.params),
+                    m.body,
+                    cls,
+                    m.generic_params.clone(),
+                ));
             }
             current = def.superclass.clone();
         }
@@ -5957,15 +5978,15 @@ impl<'w> Interpreter<'w> {
         method: &str,
         args: Vec<CallArg>,
     ) -> Eval {
-        let (params, body, owner) = match self.lookup_method(from_class, method) {
+        let (params, body, owner, generics) = match self.lookup_method(from_class, method) {
             Some(m) => m,
             None => {
-                let (p, b, _) = self
+                let (p, b, _, g) = self
                     .protocol_default_method(from_class, method)
                     .ok_or_else(|| {
                         EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
                     })?;
-                (p, b, from_class.to_string())
+                (p, b, from_class.to_string(), g)
             }
         };
         // A type-level (`static`/`class`) method has no instance `self`.
@@ -5974,6 +5995,8 @@ impl<'w> Interpreter<'w> {
             self.static_ctx.push(from_class.to_string());
         }
         self.class_ctx.push(owner);
+        let type_binding = self.infer_type_bindings(&generics, &params, &args);
+        self.type_bindings.push(type_binding);
         // Isolate from caller locals (a class `self` is a reference, so field
         // mutations persist through the object regardless of the env).
         let saved_env = self.env.enter_isolated();
@@ -5987,6 +6010,7 @@ impl<'w> Interpreter<'w> {
             Err(e) => Err(e),
         };
         self.env.restore(saved_env);
+        self.type_bindings.pop();
         self.class_ctx.pop();
         if is_static_call {
             self.static_ctx.pop();
@@ -6007,7 +6031,7 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         method: &str,
         args: &[CallArg],
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
         let overloads = self.structs.get(type_name)?.method_overloads.get(method)?;
         if overloads.len() < 2 {
             return None;
@@ -6033,14 +6057,19 @@ impl<'w> Interpreter<'w> {
                 }
             }
         };
-        Some((clone_params(&chosen.params), chosen.body, chosen.mutating))
+        Some((
+            clone_params(&chosen.params),
+            chosen.body,
+            chosen.mutating,
+            chosen.generic_params.clone(),
+        ))
     }
 
     /// The declared parameters of a user method on `type_name`, across class,
     /// struct, and enum types (used to spot `@autoclosure` params before the
     /// arguments are evaluated).
     fn user_method_params(&self, type_name: &str, method: &str) -> Option<Vec<Param>> {
-        if let Some((params, _, _)) = self.lookup_method(type_name, method) {
+        if let Some((params, _, _, _)) = self.lookup_method(type_name, method) {
             return Some(params);
         }
         if let Some(d) = self.structs.get(type_name) {
@@ -6090,9 +6119,16 @@ impl<'w> Interpreter<'w> {
                             .get(type_name)
                             .and_then(|d| d.methods.get(method))
                     })
-                    .map(|def| (clone_params(&def.params), def.body, def.mutating))
+                    .map(|def| {
+                        (
+                            clone_params(&def.params),
+                            def.body,
+                            def.mutating,
+                            def.generic_params.clone(),
+                        )
+                    })
             });
-        let (params, body, mutating) = match own {
+        let (params, body, mutating, generics) = match own {
             Some(m) => m,
             None => self
                 .protocol_default_method(type_name, method)
@@ -6107,6 +6143,8 @@ impl<'w> Interpreter<'w> {
         if is_static_call {
             self.static_ctx.push(type_name.to_string());
         }
+        let type_binding = self.infer_type_bindings(&generics, &params, &args);
+        self.type_bindings.push(type_binding);
         // Run isolated from the caller's locals: the body sees globals, its
         // parameters, and `self`/its members, but not enclosing variables.
         let saved_env = self.env.enter_isolated();
@@ -6129,6 +6167,7 @@ impl<'w> Interpreter<'w> {
         };
         let updated_self = self.env.get("self").unwrap_or(SwiftValue::Void);
         self.env.restore(saved_env);
+        self.type_bindings.pop();
         if is_static_call {
             self.static_ctx.pop();
         }
@@ -6965,6 +7004,7 @@ fn clone_method(m: &MethodDef) -> MethodDef {
         params: clone_params(&m.params),
         body: m.body,
         mutating: m.mutating,
+        generic_params: m.generic_params.clone(),
         is_static: m.is_static,
     }
 }
