@@ -1,0 +1,59 @@
+// canvas.ts — the `<swiftui-canvas>` custom element (plan §2, decision 5). A
+// Shadow-DOM host that renders a UIIR tree and applies patch streams, isolated
+// from host-page CSS. The element is transport-agnostic: a driver (wasm session
+// or a fetch to the CLI) feeds it `mount(tree)` then `applyPatches(stream)` and
+// listens for `swiftui-event`s to round-trip back to the runtime.
+
+import { Patch, PatchApplier, UiirNode, mountPatch } from "./apply-patch.js";
+
+/** Detail of the `swiftui-event` CustomEvent dispatched on user interaction. */
+export interface SwiftUIEventDetail {
+  id: string;
+  event: string;
+  value: unknown;
+}
+
+export class SwiftUICanvas extends HTMLElement {
+  private readonly mountPoint: HTMLDivElement;
+  private readonly applier: PatchApplier;
+
+  constructor() {
+    super();
+    const shadow = this.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    // Encapsulated baseline: the SwiftUI-modifier→CSS system can't leak out and
+    // host-page styles can't leak in.
+    style.textContent = `
+      :host { display: block; font-family: -apple-system, system-ui, sans-serif; }
+      .root { display: flex; justify-content: center; padding: 16px; }
+      button { font: inherit; border: none; background: transparent; cursor: pointer; }
+    `;
+    this.mountPoint = document.createElement("div");
+    this.mountPoint.className = "root";
+    shadow.append(style, this.mountPoint);
+
+    this.applier = new PatchApplier(this.mountPoint, (id, event, value) => {
+      this.dispatchEvent(
+        new CustomEvent<SwiftUIEventDetail>("swiftui-event", {
+          detail: { id, event, value },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    });
+  }
+
+  /** Render an initial UIIR tree (equivalent to applying a single mount). */
+  mount(tree: UiirNode): void {
+    this.applier.apply(mountPatch(tree));
+  }
+
+  /** Apply a patch stream from `tswift swiftui dispatch`. */
+  applyPatches(patches: Patch[]): void {
+    this.applier.apply(patches);
+  }
+}
+
+if (typeof customElements !== "undefined" && !customElements.get("swiftui-canvas")) {
+  customElements.define("swiftui-canvas", SwiftUICanvas);
+}
