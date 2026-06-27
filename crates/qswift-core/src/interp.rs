@@ -129,6 +129,10 @@ struct FuncDef {
     params: Vec<Param>,
     body: Option<Node<'static>>,
     captured: Vec<Scope>,
+    /// Element labels of a tuple return type (`-> (lo: Int, hi: Int)`), applied
+    /// to a returned tuple so `f().lo` works even when the `return` expression
+    /// itself was unlabeled.
+    ret_tuple_labels: Option<Vec<Option<String>>>,
 }
 
 /// A stored property of a struct.
@@ -1412,12 +1416,18 @@ impl<'w> Interpreter<'w> {
         }
         let params = parse_params(node);
         let body = node.children().find(|c| c.kind() == NodeKind::Block);
+        let ret_tuple_labels = node
+            .children()
+            .find(|c| matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeTuple))
+            .and_then(|t| t.text())
+            .and_then(|t| tuple_type_labels(&t));
         let captured = self.env.capture();
         let id = self.funcs.len();
         self.funcs.push(FuncDef {
             params,
             body,
             captured,
+            ret_tuple_labels,
         });
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
@@ -4796,9 +4806,18 @@ impl<'w> Interpreter<'w> {
         self.env = saved;
         self.depth -= 1;
 
-        let (value, writes) = outcome?;
+        let (mut value, writes) = outcome?;
         for (place, val) in writes {
             self.write_place(&place, val)?;
+        }
+        // Apply the declared tuple return labels so `f().lo` resolves even when
+        // the returned tuple literal carried no labels of its own.
+        if let (SwiftValue::Tuple(items, labels), Some(decl)) =
+            (&mut value, &self.funcs[id].ret_tuple_labels)
+        {
+            if items.len() == decl.len() && labels.iter().all(Option::is_none) {
+                *labels = decl.clone();
+            }
         }
         Ok(value)
     }
@@ -5262,6 +5281,61 @@ fn is_operator_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| "+-*/%<>=!&|^~".contains(c))
 }
 
+/// Parse the element labels of a tuple type written as `(lo: Int, hi: Int)`.
+/// Returns `None` when the text is not a labeled tuple of two or more elements
+/// (a single parenthesized type is not a tuple, and a function type `->` is
+/// excluded). Each element yields `Some(label)` or `None` when unlabeled.
+fn tuple_type_labels(text: &str) -> Option<Vec<Option<String>>> {
+    let inner = text.trim().strip_prefix('(')?.strip_suffix(')')?;
+    // Split on top-level commas, tracking bracket depth so nested tuples,
+    // arrays, dictionaries, and generics are not split apart.
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for ch in inner.chars() {
+        match ch {
+            '(' | '[' | '<' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ')' | ']' | '>' => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(ch),
+        }
+    }
+    parts.push(cur);
+    if parts.len() < 2 {
+        return None;
+    }
+    let mut labels = Vec::with_capacity(parts.len());
+    let mut any = false;
+    for part in parts {
+        let part = part.trim();
+        // A function type element rules out a plain tuple return.
+        if part.contains("->") {
+            return None;
+        }
+        // `name: Type` — the label is a leading identifier before a top-level
+        // colon. Anything else (a bare type) is unlabeled.
+        let label = part.split_once(':').and_then(|(name, _)| {
+            let name = name.trim();
+            (!name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_'))
+            .then(|| name.to_string())
+        });
+        any |= label.is_some();
+        labels.push(label);
+    }
+    any.then_some(labels)
+}
+
 fn clone_params(params: &[Param]) -> Vec<Param> {
     params
         .iter()
@@ -5552,6 +5626,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn tuple_type_labels_parses_labeled_tuples() {
+        assert_eq!(
+            tuple_type_labels("(lo: Int, hi: Int)"),
+            Some(vec![Some("lo".into()), Some("hi".into())])
+        );
+        // Mixed labeled/unlabeled.
+        assert_eq!(
+            tuple_type_labels("(Int, value: String)"),
+            Some(vec![None, Some("value".into())])
+        );
+        // Nested brackets are not split at their inner commas.
+        assert_eq!(
+            tuple_type_labels("(a: (Int, Int), b: [Int: Int])"),
+            Some(vec![Some("a".into()), Some("b".into())])
+        );
+        // Not tuples / no labels.
+        assert_eq!(tuple_type_labels("(Int, Int)"), None);
+        assert_eq!(tuple_type_labels("(Int)"), None);
+        assert_eq!(tuple_type_labels("Int"), None);
+        // A function type is not a labeled tuple return.
+        assert_eq!(tuple_type_labels("(a: Int) -> Int"), None);
     }
 
     #[test]
