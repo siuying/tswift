@@ -431,22 +431,29 @@ continuous gestures need a streaming event channel, not the discrete protocol of
 
 ## 10. Deliverables
 
-- [ ] `frameworks/swiftui/scope.toml` (in-scope view/modifier surface = roadmap +
+- [x] `frameworks/swiftui/scope.toml` (in-scope view/modifier surface = roadmap +
       denominator) + regenerated `inventory.md` via `extract.py --framework swiftui`.
-- [ ] `crates/tswift-swiftui` skeleton: `install()`, `registered_keys()`,
+- [x] `crates/tswift-swiftui` skeleton: `install()`, `registered_keys()`,
       `dump_registered_keys` → `frameworks/swiftui/registered_keys.txt`.
-- [ ] `coverage.py --framework swiftui` reporting missing/implemented/verified.
-- [ ] `SwiftValue::Struct`-based view values + flat `_modifiers`; UIIR serializer
+- [x] `coverage.py --framework swiftui` reporting missing/implemented/verified.
+- [x] `SwiftValue::Struct`-based view values + flat `_modifiers`; UIIR serializer
       (`uiir.rs`) emitting the §3.1 canonical JSON.
-- [ ] **`@State` persistent identity-keyed store (§4)** — the one interpreter hook.
-- [ ] Narrow `@ViewBuilder` shim (§7 v1).
-- [ ] Rust diff engine (`diff.rs`) emitting the §3.2 patch ops (replace-heavy).
-- [ ] `SwiftUISession` in `tswift-wasm` (`render`/`dispatch`; `on_patch`/`pump`
-      inert until Tier 6) + `tswift swiftui render|dispatch` CLI subcommands.
-- [ ] `web/swiftui-canvas/` dependency-free host: `<swiftui-canvas>` Shadow-DOM
-      element + `apply-patch.ts` + `modifier-css.ts`.
-- [ ] **Layer B harness** (`uiir_goldens.rs`) + Counter `*.uiir.json`.
-- [ ] **Layer C harness** (`patch_goldens.rs`) + Counter `*.events.json`/`*.patches.json`.
+- [x] **`@State` persistence** — achieved without a `tswift-core` hook: a prelude
+      `@propertyWrapper struct State<Value>` backed by a shared reference box,
+      with the `Session` reusing one root instance across renders (§4 revised).
+      The sanctioned core seam ended up being the generic `register_struct_method`
+      (view-modifier dispatch) + `eval_block_values` (`@ViewBuilder`) instead.
+- [x] Narrow `@ViewBuilder` shim (§7 v1) — `eval_block_values` collects each
+      result-builder statement; containers filter to view values.
+- [x] Rust diff engine (`diff.rs`) emitting the §3.2 patch ops (replace-heavy,
+      `setText` fast-path).
+- [~] `tswift swiftui render|dispatch` CLI subcommands shipped; the stateful
+      `SwiftUISession` lives in `crates/tswift-swiftui::session` for now
+      (promotion into `tswift-wasm` with `on_patch`/`pump` deferred to Tier 6).
+- [x] `web/swiftui-canvas/` dependency-free host: `<swiftui-canvas>` Shadow-DOM
+      element + `apply-patch.ts` + `modifier-css.ts` (+ `validate.mjs` offline check).
+- [x] **Layer B harness** (`crates/tswift-cli/tests/swiftui_goldens.rs`) + Counter `*.uiir.json`.
+- [x] **Layer C harness** (same file) + Counter `*.events.json`/`*.patches.json`.
 - [ ] Layer D macOS screenshot-diff CI job (non-gating artifact).
 - [ ] `framework-coverage`/`stdlib-coverage`-style skill note for SwiftUI, or
       extend the existing `framework-coverage` skill workflow.
