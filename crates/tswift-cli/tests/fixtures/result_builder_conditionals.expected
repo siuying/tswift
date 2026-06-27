@@ -1,0 +1,9 @@
+[head] first([yes])
+[head] second([no])
+[present]
+none
+first([Sam])
+second([anon])
+first([A])
+second(first([B]))
+second(second([C]))

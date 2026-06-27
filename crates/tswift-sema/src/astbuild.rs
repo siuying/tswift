@@ -76,6 +76,79 @@ pub(crate) fn return_stmt(ast: &mut Ast, expr: NodeId, line: u32, col: u32) -> N
     ret
 }
 
+/// An uninitialized `var name` declaration. The result-builder transform uses
+/// it to hold a conditional component, assigned in each branch of a synthesized
+/// `if` (definite-initialization holds because every branch assigns it).
+pub(crate) fn var_decl(ast: &mut Ast, name: &str, line: u32, col: u32) -> NodeId {
+    let decl = ast.add(NodeKind::VarDecl, None, line, col);
+    let pattern = ast.add(NodeKind::NamePattern, Some(name), line, col);
+    ast.append_child(decl, pattern);
+    decl
+}
+
+/// An assignment statement `target = value` (used as a block statement, which is
+/// how the parser represents a bare assignment — not wrapped in an `ExprStmt`).
+pub(crate) fn assign(ast: &mut Ast, target: &str, value: NodeId, line: u32, col: u32) -> NodeId {
+    let node = ast.add(NodeKind::AssignExpr, Some("="), line, col);
+    let lhs = ident(ast, target, line, col);
+    ast.append_child(node, lhs);
+    ast.append_child(node, value);
+    node
+}
+
+/// The `nil` literal.
+pub(crate) fn nil_literal(ast: &mut Ast, line: u32, col: u32) -> NodeId {
+    ast.add(NodeKind::NilLiteral, None, line, col)
+}
+
+/// A `var name = init` declaration (a mutable binding with an initializer),
+/// used for the `for`-loop accumulator array.
+pub(crate) fn var_decl_init(
+    ast: &mut Ast,
+    name: &str,
+    init: NodeId,
+    line: u32,
+    col: u32,
+) -> NodeId {
+    let decl = ast.add(NodeKind::VarDecl, None, line, col);
+    let pattern = ast.add(NodeKind::NamePattern, Some(name), line, col);
+    ast.append_child(decl, pattern);
+    ast.append_child(decl, init);
+    decl
+}
+
+/// An empty array literal `[]`.
+pub(crate) fn empty_array(ast: &mut Ast, line: u32, col: u32) -> NodeId {
+    ast.add(NodeKind::ArrayLiteral, None, line, col)
+}
+
+/// An instance-method call `receiver.method(args...)`.
+pub(crate) fn method_call(
+    ast: &mut Ast,
+    receiver: NodeId,
+    method: &str,
+    args: Vec<NodeId>,
+    line: u32,
+    col: u32,
+) -> NodeId {
+    let callee = member(ast, receiver, method, line, col);
+    let call = ast.add(NodeKind::CallExpr, None, line, col);
+    ast.append_child(call, callee);
+    for arg in args {
+        ast.append_child(call, arg);
+    }
+    call
+}
+
+/// A braced statement block holding `stmts`.
+pub(crate) fn block(ast: &mut Ast, stmts: Vec<NodeId>, line: u32, col: u32) -> NodeId {
+    let block = ast.add(NodeKind::Block, None, line, col);
+    for s in stmts {
+        ast.append_child(block, s);
+    }
+    block
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

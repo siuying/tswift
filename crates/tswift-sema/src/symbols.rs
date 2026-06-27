@@ -29,9 +29,13 @@ use crate::{child_ids, parse_type_name};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuilderMethod {
     pub(crate) name: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // recorded for label-based selection; not read yet.
     pub(crate) first_label: Option<String>,
     pub(crate) arity: usize,
+    /// The written type of the first parameter (`String` in
+    /// `buildExpression(_ v: String)`), used to reason about type-only
+    /// overloads.
+    pub(crate) first_param_type: Option<String>,
 }
 
 /// The static-method set declared by one `@resultBuilder` type — the menu the
@@ -45,6 +49,15 @@ impl BuilderMethods {
     /// Whether the builder declares any method named `name`.
     pub(crate) fn has(&self, name: &str) -> bool {
         self.methods.iter().any(|m| m.name == name)
+    }
+
+    /// Whether the builder declares a method `name` taking exactly `arity`
+    /// parameters. Used to tell the `buildPartialBlock(first:)` (arity 1) and
+    /// `buildPartialBlock(accumulated:next:)` (arity 2) overloads apart.
+    pub(crate) fn has_arity(&self, name: &str, arity: usize) -> bool {
+        self.methods
+            .iter()
+            .any(|m| m.name == name && m.arity == arity)
     }
 
     /// Every declared static method, in source order.
@@ -70,6 +83,11 @@ pub(crate) struct Symbols {
     /// build-method set. Drives the result-builder transform's method
     /// selection.
     result_builders: HashMap<String, BuilderMethods>,
+    /// Each function by name, mapped to the `(parameter index, attribute name)`
+    /// pairs for parameters carrying a custom attribute. Filtered to builder
+    /// attributes by [`Symbols::func_builder_params`] (a custom attribute is
+    /// only known to be a builder once all `@resultBuilder` types are walked).
+    func_param_attrs: HashMap<String, Vec<(usize, String)>>,
 }
 
 impl Symbols {
@@ -111,6 +129,10 @@ impl Symbols {
                     if let Some(name) = ast.node(child).text() {
                         self.func_returns
                             .insert(name.to_string(), func_return_type(ast, child));
+                        let attrs = collect_param_attrs(ast, child);
+                        if !attrs.is_empty() {
+                            self.func_param_attrs.insert(name.to_string(), attrs);
+                        }
                     }
                 }
                 _ => {}
@@ -136,6 +158,43 @@ impl Symbols {
     pub(crate) fn result_builder(&self, name: &str) -> Option<&BuilderMethods> {
         self.result_builders.get(name)
     }
+
+    /// The `(parameter index, builder name)` pairs for parameters of the
+    /// function `name` annotated with a `@resultBuilder` attribute — the
+    /// contextual builders applied to a closure-literal argument at a call site.
+    pub(crate) fn func_builder_params(&self, name: &str) -> Vec<(usize, String)> {
+        self.func_param_attrs
+            .get(name)
+            .map(|attrs| {
+                attrs
+                    .iter()
+                    .filter(|(_, attr)| self.result_builders.contains_key(attr))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// The `(parameter index, attribute name)` pairs for a function's parameters
+/// that carry a custom `@Attr`. Indexed over `Param` children only.
+fn collect_param_attrs(ast: &Ast, func: NodeId) -> Vec<(usize, String)> {
+    let mut attrs = Vec::new();
+    let mut index = 0;
+    for child in child_ids(ast, func) {
+        if ast.node(child).kind() != NodeKind::Param {
+            continue;
+        }
+        for attr in child_ids(ast, child) {
+            if ast.node(attr).kind() == NodeKind::Attribute {
+                if let Some(name) = ast.node(attr).text() {
+                    attrs.push((index, name.to_string()));
+                }
+            }
+        }
+        index += 1;
+    }
+    attrs
 }
 
 /// Whether a type declaration carries a `@resultBuilder` attribute.
@@ -170,10 +229,17 @@ fn collect_builder_methods_into(ast: &Ast, parent: NodeId, methods: &mut Vec<Bui
                     let first_label = params
                         .first()
                         .and_then(|p| ast.node(*p).arg_label().map(str::to_string));
+                    let first_param_type = params.first().and_then(|p| {
+                        child_ids(ast, *p)
+                            .into_iter()
+                            .find(|c| ast.node(*c).kind() == NodeKind::TypeRef)
+                            .and_then(|c| ast.node(c).text().map(str::to_string))
+                    });
                     methods.push(BuilderMethod {
                         name: name.to_string(),
                         first_label,
                         arity: params.len(),
+                        first_param_type,
                     });
                 }
             }
@@ -286,6 +352,22 @@ mod tests {
             !b.has("buildBlock"),
             "instance methods are not build methods"
         );
+    }
+
+    #[test]
+    fn func_builder_params_reports_builder_annotated_parameters() {
+        let symbols = symbols_of(
+            "@resultBuilder\nstruct SB {\n static func buildBlock(_ p: String...) -> String { \"\" } }\n\
+             func wrap(_ x: Int, @SB _ content: () -> String) -> String { content() }",
+        );
+        let params = symbols.func_builder_params("wrap");
+        assert_eq!(params, vec![(1, "SB".to_string())]);
+    }
+
+    #[test]
+    fn func_builder_params_ignores_non_builder_attributes() {
+        let symbols = symbols_of("func f(@objcMembers _ x: Int) { }");
+        assert!(symbols.func_builder_params("f").is_empty());
     }
 
     #[test]

@@ -124,8 +124,6 @@ struct Param {
     /// `@autoclosure`: the argument expression is wrapped in a zero-argument
     /// thunk and only evaluated when the parameter is called.
     autoclosure: bool,
-    /// Result-builder type attached to this closure parameter, when any.
-    result_builder: Option<String>,
     default: Option<Node<'static>>,
 }
 
@@ -141,8 +139,6 @@ struct FuncDef {
     /// to a returned tuple so `f().lo` works even when the `return` expression
     /// itself was unlabeled.
     ret_tuple_labels: Option<Vec<Option<String>>>,
-    /// Result-builder type attached to the function body, when any.
-    result_builder: Option<String>,
 }
 
 /// A stored property of a struct.
@@ -191,6 +187,10 @@ struct StructDef {
     stored: Vec<StoredProp>,
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
+    /// Same-named methods that differ by argument label (`buildEither(first:)`
+    /// vs `(second:)`). `methods` keeps only the last such declaration; this
+    /// records the full overload set so a call can be dispatched by its labels.
+    method_overloads: std::collections::HashMap<String, Vec<MethodDef>>,
     subscripts: Vec<SubscriptDef>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
@@ -259,7 +259,6 @@ enum ClosureDef {
     User {
         params: Vec<Param>,
         body: Vec<Node<'static>>,
-        result_builder: Option<String>,
     },
     Operator(String),
     /// A key path `\Root.a.b`, represented as a callable value. Calling it with
@@ -307,11 +306,6 @@ pub struct Interpreter<'w> {
     protocols: HashMap<String, ProtoDef>,
     /// type name → protocols it conforms to (directly).
     conformances: HashMap<String, Vec<String>>,
-    /// Struct types marked with `@resultBuilder`.
-    result_builders: HashMap<String, ()>,
-    /// Result-builder static method overloads keyed by builder, method, and
-    /// first parameter label (for `buildEither(first:)`/`second:`).
-    result_builder_methods: HashMap<(String, String, Option<String>), MethodDef>,
     /// Protocol-composition typealiases (`typealias X = A & B`) → their
     /// component protocol names, so a conformance to `X` expands to `A` + `B`
     /// for default-implementation lookup.
@@ -415,8 +409,6 @@ impl<'w> Interpreter<'w> {
             classes: HashMap::new(),
             protocols: HashMap::new(),
             conformances: HashMap::new(),
-            result_builders: HashMap::new(),
-            result_builder_methods: HashMap::new(),
             protocol_aliases: HashMap::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
@@ -721,316 +713,6 @@ impl<'w> Interpreter<'w> {
         r
     }
 
-    /// Evaluate a result-builder-transformed block and combine its statement
-    /// components with `Builder.buildBlock(...)`.
-    fn eval_result_builder_block(&mut self, builder: &str, node: &Node<'static>) -> Eval {
-        self.env.push();
-        self.defer_stack.push(Vec::new());
-        self.hoist(node);
-        let r = self.eval_result_builder_contents(builder, node);
-        let defers = self.defer_stack.pop().unwrap_or_default();
-        for d in defers.iter().rev() {
-            let _ = self.eval(d);
-        }
-        let mut released = self.env.pop_owned();
-        released.reverse();
-        for v in released {
-            self.run_deinit(&v);
-        }
-        r
-    }
-
-    fn eval_result_builder_contents(&mut self, builder: &str, node: &Node<'static>) -> Eval {
-        let nodes: Vec<Node<'static>> = node.children().collect();
-        self.eval_result_builder_nodes(builder, &nodes)
-    }
-
-    fn eval_result_builder_nodes(&mut self, builder: &str, nodes: &[Node<'static>]) -> Eval {
-        let mut parts = Vec::new();
-        for child in nodes {
-            if let Some(value) = self.eval_result_builder_statement(builder, child)? {
-                parts.push(value);
-            }
-        }
-        self.result_builder_build_block(builder, parts)
-    }
-
-    fn eval_result_builder_statement(
-        &mut self,
-        builder: &str,
-        stmt: &Node<'static>,
-    ) -> Result<Option<SwiftValue>, Signal> {
-        match stmt.kind() {
-            NodeKind::FuncDecl => Ok(None),
-            NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::DeferStmt => {
-                self.eval(stmt)?;
-                Ok(None)
-            }
-            NodeKind::ExprStmt => {
-                let value = self.eval(stmt)?;
-                Ok(Some(self.result_builder_build_expression(builder, value)?))
-            }
-            NodeKind::IfStmt => Ok(Some(self.eval_result_builder_if(builder, stmt)?)),
-            NodeKind::ForStmt => Ok(Some(self.eval_result_builder_for(builder, stmt)?)),
-            _ => {
-                let value = self.eval(stmt)?;
-                if matches!(value, SwiftValue::Void) {
-                    Ok(None)
-                } else {
-                    Ok(Some(self.result_builder_build_expression(builder, value)?))
-                }
-            }
-        }
-    }
-
-    fn eval_result_builder_if(&mut self, builder: &str, node: &Node<'static>) -> Eval {
-        let kids: Vec<Node<'static>> = node.children().collect();
-        let then_idx = kids
-            .iter()
-            .position(|c| c.kind() == NodeKind::Block)
-            .ok_or_else(|| EvalError::Unsupported("if without a body".into()))?;
-        let conds = &kids[..then_idx];
-        let then = &kids[then_idx];
-        let els = kids.get(then_idx + 1);
-
-        self.env.push();
-        let passed = self.eval_cond_list(conds);
-        match passed {
-            Ok(true) => {
-                let value = self.eval_result_builder_block(builder, then);
-                self.env.pop();
-                let value = value?;
-                if els.is_some() {
-                    self.call_result_builder_static(
-                        builder,
-                        "buildEither",
-                        Some("first"),
-                        vec![value],
-                    )
-                } else {
-                    self.result_builder_build_optional(builder, value)
-                }
-            }
-            Ok(false) => {
-                self.env.pop();
-                match els {
-                    Some(e) if e.kind() == NodeKind::Block => {
-                        let value = self.eval_result_builder_block(builder, e)?;
-                        self.call_result_builder_static(
-                            builder,
-                            "buildEither",
-                            Some("second"),
-                            vec![value],
-                        )
-                    }
-                    Some(e) if e.kind() == NodeKind::IfStmt => {
-                        let value = self.eval_result_builder_if(builder, e)?;
-                        self.call_result_builder_static(
-                            builder,
-                            "buildEither",
-                            Some("second"),
-                            vec![value],
-                        )
-                    }
-                    Some(e) => self.eval(e),
-                    None => self.result_builder_build_optional(builder, SwiftValue::Nil),
-                }
-            }
-            Err(e) => {
-                self.env.pop();
-                Err(e)
-            }
-        }
-    }
-
-    fn eval_result_builder_for(&mut self, builder: &str, node: &Node<'static>) -> Eval {
-        let mut var_name = node.text();
-        let is_for_await = var_name.as_deref() == Some("await");
-        if is_for_await {
-            var_name = Some(
-                node.token_text_offset(1)
-                    .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?,
-            );
-        }
-        let mut pattern = None;
-        let mut iterable = None;
-        let mut where_clause = None;
-        let mut body = None;
-        for child in node.children() {
-            match child.kind() {
-                NodeKind::Param => {}
-                NodeKind::Block => body = Some(child),
-                k if is_pattern_node(k) && pattern.is_none() && iterable.is_none() => {
-                    pattern = Some(child);
-                }
-                _ => {
-                    if iterable.is_none() {
-                        iterable = Some(child);
-                    } else {
-                        where_clause = Some(child);
-                    }
-                }
-            }
-        }
-        let iterable =
-            iterable.ok_or_else(|| EvalError::Unsupported("for-loop without a sequence".into()))?;
-        let body = body.ok_or_else(|| EvalError::Unsupported("for-loop without a body".into()))?;
-        let seq = self.eval(&iterable)?;
-        let items = self.iterate(&seq)?;
-        let label = node.loop_label();
-        let mut parts = Vec::new();
-        for item in items {
-            self.env.push();
-            if let Some(pat) = pattern {
-                match self.match_pattern(&pat, &item)? {
-                    Some(binds) => {
-                        for (name, value) in binds {
-                            self.env.declare(&name, value, false);
-                        }
-                    }
-                    None => {
-                        self.env.pop();
-                        continue;
-                    }
-                }
-            } else if let Some(name) = &var_name {
-                self.env.declare(name, item, false);
-            }
-            if let Some(w) = where_clause {
-                match self.eval_condition(&w) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.env.pop();
-                        continue;
-                    }
-                    Err(e) => {
-                        self.env.pop();
-                        return Err(e);
-                    }
-                }
-            }
-            let value = self.eval_result_builder_block(builder, &body);
-            self.env.pop();
-            match value {
-                Ok(v) => parts.push(v),
-                Err(Signal::Continue(l)) if l.is_none() || l == label => continue,
-                Err(Signal::Break(l)) if l.is_none() || l == label => break,
-                Err(e) => return Err(e),
-            }
-        }
-        self.result_builder_build_array(builder, parts)
-    }
-
-    fn result_builder_build_expression(&mut self, builder: &str, value: SwiftValue) -> Eval {
-        if self.result_builder_has_method(builder, "buildExpression") {
-            self.call_result_builder_static(builder, "buildExpression", None, vec![value])
-        } else {
-            Ok(value)
-        }
-    }
-
-    fn result_builder_build_block(&mut self, builder: &str, parts: Vec<SwiftValue>) -> Eval {
-        if self.result_builder_has_method(builder, "buildBlock") {
-            self.call_result_builder_static(builder, "buildBlock", None, parts)
-        } else {
-            match parts.as_slice() {
-                [] => Ok(SwiftValue::Void),
-                [one] => Ok(one.clone()),
-                _ => Ok(SwiftValue::Array(Rc::new(parts))),
-            }
-        }
-    }
-
-    fn result_builder_build_optional(&mut self, builder: &str, value: SwiftValue) -> Eval {
-        if self.result_builder_has_method(builder, "buildOptional") {
-            self.call_result_builder_static(builder, "buildOptional", None, vec![value])
-        } else {
-            Ok(value)
-        }
-    }
-
-    fn result_builder_build_array(&mut self, builder: &str, parts: Vec<SwiftValue>) -> Eval {
-        if self.result_builder_has_method(builder, "buildArray") {
-            self.call_result_builder_static(
-                builder,
-                "buildArray",
-                None,
-                vec![SwiftValue::Array(Rc::new(parts))],
-            )
-        } else {
-            Ok(SwiftValue::Array(Rc::new(parts)))
-        }
-    }
-
-    fn result_builder_has_method(&self, builder: &str, method: &str) -> bool {
-        self.result_builder_methods
-            .keys()
-            .any(|(b, m, _)| b == builder && m == method)
-            || self
-                .structs
-                .get(builder)
-                .is_some_and(|def| def.methods.contains_key(method))
-    }
-
-    fn call_result_builder_static(
-        &mut self,
-        builder: &str,
-        method: &str,
-        first_label: Option<&str>,
-        values: Vec<SwiftValue>,
-    ) -> Eval {
-        if !self.result_builders.contains_key(builder) {
-            return Err(EvalError::Type(format!("{builder} is not a result builder")).into());
-        }
-        let key = (
-            builder.to_string(),
-            method.to_string(),
-            first_label.map(str::to_string),
-        );
-        let (params, body) = if let Some(def) = self.result_builder_methods.get(&key) {
-            (clone_params(&def.params), def.body)
-        } else if first_label.is_none() {
-            self.structs
-                .get(builder)
-                .and_then(|def| def.methods.get(method))
-                .map(|def| (clone_params(&def.params), def.body))
-                .ok_or_else(|| {
-                    EvalError::Unsupported(format!("{builder}.{method} is not declared"))
-                })?
-        } else {
-            return Err(EvalError::Unsupported(format!(
-                "{builder}.{method}({}:) is not declared",
-                first_label.unwrap()
-            ))
-            .into());
-        };
-        self.static_ctx.push(builder.to_string());
-        let saved_env = self.env.enter_isolated();
-        let args = values
-            .into_iter()
-            .map(|value| CallArg {
-                label: None,
-                value,
-                place: None,
-            })
-            .collect();
-        let bound = self.bind_params(&params, args);
-        let result = match bound {
-            Ok(_) => match body {
-                Some(b) => self.eval(&b),
-                None => Ok(SwiftValue::Void),
-            },
-            Err(e) => Err(e),
-        };
-        self.env.restore(saved_env);
-        self.static_ctx.pop();
-        match result {
-            Ok(v) => Ok(v),
-            Err(Signal::Return(v)) => Ok(v),
-            Err(e) => Err(e),
-        }
-    }
-
     /// `do { … } catch <pattern> { … } …` — run the body; on a thrown error,
     /// dispatch to the first matching catch clause.
     fn eval_do(&mut self, node: &Node<'static>) -> Eval {
@@ -1111,19 +793,6 @@ impl<'w> Interpreter<'w> {
     /// Pre-declare function and struct declarations in `node` so forward
     /// references resolve.
     fn hoist(&mut self, node: &Node<'static>) {
-        // Pre-scan result-builder type names so a function annotated with a
-        // builder declared later in the same scope still transforms its body.
-        for child in node.children() {
-            if child.kind() == NodeKind::StructDecl
-                && child.children().any(|c| {
-                    c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("resultBuilder")
-                })
-            {
-                if let Some(name) = child.text() {
-                    self.result_builders.insert(name, ());
-                }
-            }
-        }
         // First pass: type and protocol declarations.
         for child in node.children() {
             match child.kind() {
@@ -1203,13 +872,6 @@ impl<'w> Interpreter<'w> {
         if !components.is_empty() {
             self.protocol_aliases.insert(name, components);
         }
-    }
-
-    fn result_builder_attribute(&self, node: &Node<'static>) -> Option<String> {
-        node.children()
-            .filter(|c| c.kind() == NodeKind::Attribute)
-            .filter_map(|c| c.text())
-            .find(|name| self.result_builders.contains_key(name))
     }
 
     /// Record the protocols a type conforms to from its `Conformance` children.
@@ -1711,12 +1373,6 @@ impl<'w> Interpreter<'w> {
         {
             self.main_type = Some(name.clone());
         }
-        let is_result_builder = node.children().any(|c| {
-            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("resultBuilder")
-        });
-        if is_result_builder {
-            self.result_builders.insert(name.clone(), ());
-        }
         // `@dynamicMemberLookup` routes unresolved member access through the
         // type's `subscript(dynamicMember:)`.
         let dynamic_member_lookup = node.children().any(|c| {
@@ -1733,6 +1389,8 @@ impl<'w> Interpreter<'w> {
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
+        let mut method_overloads: std::collections::HashMap<String, Vec<MethodDef>> =
+            std::collections::HashMap::new();
         let mut wrappers = std::collections::HashMap::new();
         let mut subscripts: Vec<SubscriptDef> = Vec::new();
         let mut static_subscript = None;
@@ -1779,40 +1437,17 @@ impl<'w> Interpreter<'w> {
                         let body = member.children().find(|c| c.kind() == NodeKind::Block);
                         let mutating = mods & MOD_MUTATING != 0;
                         let is_static = mods & MOD_STATIC != 0;
-                        if is_result_builder && is_static {
-                            let first_label = params.first().and_then(|p| p.label.clone());
-                            self.result_builder_methods.insert(
-                                (name.clone(), mname.clone(), first_label.clone()),
-                                MethodDef {
-                                    params: clone_params(&params),
-                                    body,
-                                    mutating,
-                                    is_static,
-                                },
-                            );
-                            if mname == "buildEither" && first_label.is_none() {
-                                if let Some(first_name) = params.first().map(|p| p.name.clone()) {
-                                    self.result_builder_methods.insert(
-                                        (name.clone(), mname.clone(), Some(first_name)),
-                                        MethodDef {
-                                            params: clone_params(&params),
-                                            body,
-                                            mutating,
-                                            is_static,
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                        methods.insert(
-                            mname,
-                            MethodDef {
-                                params,
-                                body,
-                                mutating,
-                                is_static,
-                            },
-                        );
+                        let def = MethodDef {
+                            params,
+                            body,
+                            mutating,
+                            is_static,
+                        };
+                        method_overloads
+                            .entry(mname.clone())
+                            .or_default()
+                            .push(clone_method(&def));
+                        methods.insert(mname, def);
                     }
                 }
                 NodeKind::VarDecl | NodeKind::LetDecl => {
@@ -1885,6 +1520,7 @@ impl<'w> Interpreter<'w> {
                 stored,
                 computed,
                 methods,
+                method_overloads,
                 subscripts,
                 static_subscript,
                 init,
@@ -1957,7 +1593,6 @@ impl<'w> Interpreter<'w> {
             captured,
             generic_params,
             ret_tuple_labels,
-            result_builder: self.result_builder_attribute(node),
         });
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
@@ -2759,7 +2394,6 @@ impl<'w> Interpreter<'w> {
                         variadic: info.variadic,
                         inout_: info.is_inout,
                         autoclosure: false,
-                        result_builder: None,
                         default: None,
                     });
                     last_param = Some(child);
@@ -2803,14 +2437,8 @@ impl<'w> Interpreter<'w> {
             captured.push(scope);
         }
         let id = self.closures.len();
-        self.closures.push((
-            ClosureDef::User {
-                params,
-                body,
-                result_builder: None,
-            },
-            captured,
-        ));
+        self.closures
+            .push((ClosureDef::User { params, body }, captured));
         Ok(SwiftValue::Closure(id))
     }
 
@@ -2833,20 +2461,10 @@ impl<'w> Interpreter<'w> {
             self.depth -= 1;
             return Err(trap("stack overflow: recursion too deep".into()));
         }
-        let (params, body, result_builder, captured) = match &self.closures[id] {
-            (
-                ClosureDef::User {
-                    params,
-                    body,
-                    result_builder,
-                },
-                cap,
-            ) => (
-                clone_params(params),
-                body.clone(),
-                result_builder.clone(),
-                cap.clone(),
-            ),
+        let (params, body, captured) = match &self.closures[id] {
+            (ClosureDef::User { params, body }, cap) => {
+                (clone_params(params), body.clone(), cap.clone())
+            }
             _ => unreachable!("operator/non-user closure has no inout params"),
         };
         let call_env = Env::with_captured(captured);
@@ -2869,23 +2487,17 @@ impl<'w> Interpreter<'w> {
             self.env.declare(&format!("${i}"), a.value.clone(), false);
         }
 
-        let mut result = if let Some(builder) = result_builder.as_deref() {
-            self.eval_result_builder_nodes(builder, &body)
-        } else {
-            Ok(SwiftValue::Void)
-        };
-        if result_builder.is_none() {
-            for stmt in &body {
-                match self.eval(stmt) {
-                    Ok(v) => result = Ok(v),
-                    Err(Signal::Return(v)) => {
-                        result = Ok(v);
-                        break;
-                    }
-                    Err(e) => {
-                        result = Err(e);
-                        break;
-                    }
+        let mut result = Ok(SwiftValue::Void);
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(v) => result = Ok(v),
+                Err(Signal::Return(v)) => {
+                    result = Ok(v);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
                 }
             }
         }
@@ -2944,19 +2556,12 @@ impl<'w> Interpreter<'w> {
             })?;
             return self.apply_keypath(root, &components);
         }
-        let (params, body, result_builder, captured) = {
+        let (params, body, captured) = {
             let (def, cap) = &self.closures[id];
             match def {
-                ClosureDef::User {
-                    params,
-                    body,
-                    result_builder,
-                } => (
-                    clone_params(params),
-                    body.clone(),
-                    result_builder.clone(),
-                    cap.clone(),
-                ),
+                ClosureDef::User { params, body } => {
+                    (clone_params(params), body.clone(), cap.clone())
+                }
                 ClosureDef::Operator(_) | ClosureDef::KeyPath(_) => {
                     unreachable!("operator/key-path handled above")
                 }
@@ -2975,23 +2580,17 @@ impl<'w> Interpreter<'w> {
         }
 
         // Evaluate the closure body statements, yielding the last value.
-        let mut result = if let Some(builder) = result_builder.as_deref() {
-            self.eval_result_builder_nodes(builder, &body)
-        } else {
-            Ok(SwiftValue::Void)
-        };
-        if result_builder.is_none() {
-            for stmt in &body {
-                match self.eval(stmt) {
-                    Ok(v) => result = Ok(v),
-                    Err(Signal::Return(v)) => {
-                        result = Ok(v);
-                        break;
-                    }
-                    Err(e) => {
-                        result = Err(e);
-                        break;
-                    }
+        let mut result = Ok(SwiftValue::Void);
+        for stmt in &body {
+            match self.eval(stmt) {
+                Ok(v) => result = Ok(v),
+                Err(Signal::Return(v)) => {
+                    result = Ok(v);
+                    break;
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
                 }
             }
         }
@@ -3044,7 +2643,6 @@ impl<'w> Interpreter<'w> {
             ClosureDef::User {
                 params: Vec::new(),
                 body: vec![expr],
-                result_builder: None,
             },
             captured,
         ));
@@ -5928,7 +5526,6 @@ impl<'w> Interpreter<'w> {
                     ClosureDef::User {
                         params: Vec::new(),
                         body: vec![*arg],
-                        result_builder: None,
                     },
                     captured,
                 ));
@@ -6338,6 +5935,44 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Select a struct method overload by the call's argument labels. Returns
+    /// `None` unless the type declares more than one method of that name and
+    /// exactly one of them matches the labels — keeping single-method dispatch
+    /// and unresolved (type-only) overloads on the existing path.
+    fn select_struct_overload(
+        &self,
+        type_name: &str,
+        method: &str,
+        args: &[CallArg],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+        let overloads = self.structs.get(type_name)?.method_overloads.get(method)?;
+        if overloads.len() < 2 {
+            return None;
+        }
+        // First narrow by argument labels (`buildEither(first:)` vs `(second:)`).
+        let label_matches: Vec<&MethodDef> = overloads
+            .iter()
+            .filter(|def| args_select_params(args, &def.params))
+            .collect();
+        let chosen = match label_matches.as_slice() {
+            [one] => *one,
+            [] => return None,
+            many => {
+                // Type-only overloads (`buildExpression(String)` vs `(Int)`):
+                // disambiguate by the argument values' runtime types.
+                let type_matches: Vec<&&MethodDef> = many
+                    .iter()
+                    .filter(|def| args_match_param_types(args, &def.params))
+                    .collect();
+                match type_matches.as_slice() {
+                    [one] => **one,
+                    _ => return None, // unresolved by label or type; defer.
+                }
+            }
+        };
+        Some((clone_params(&chosen.params), chosen.body, chosen.mutating))
+    }
+
     /// The declared parameters of a user method on `type_name`, across class,
     /// struct, and enum types (used to spot `@autoclosure` params before the
     /// arguments are evaluated).
@@ -6379,16 +6014,21 @@ impl<'w> Interpreter<'w> {
         args: Vec<CallArg>,
         base_place: Option<Place>,
     ) -> Eval {
+        // Prefer a label-selected overload (`buildEither(first:)` vs
+        // `(second:)`); fall back to the single stored method otherwise.
         let own = self
-            .structs
-            .get(type_name)
-            .and_then(|d| d.methods.get(method))
+            .select_struct_overload(type_name, method, &args)
             .or_else(|| {
-                self.enums
+                self.structs
                     .get(type_name)
                     .and_then(|d| d.methods.get(method))
-            })
-            .map(|def| (clone_params(&def.params), def.body, def.mutating));
+                    .or_else(|| {
+                        self.enums
+                            .get(type_name)
+                            .and_then(|d| d.methods.get(method))
+                    })
+                    .map(|def| (clone_params(&def.params), def.body, def.mutating))
+            });
         let (params, body, mutating) = match own {
             Some(m) => m,
             None => self
@@ -6564,7 +6204,6 @@ impl<'w> Interpreter<'w> {
         // Bind parameters in a fresh scope over the function's captured chain.
         let params = clone_params(&self.funcs[id].params);
         let body = self.funcs[id].body;
-        let result_builder = self.funcs[id].result_builder.clone();
         let captured = self.funcs[id].captured.clone();
         let generics = self.funcs[id].generic_params.clone();
         let call_env = Env::with_captured(captured);
@@ -6579,17 +6218,11 @@ impl<'w> Interpreter<'w> {
         let outcome = match bound {
             Ok(inout_binds) => {
                 let result = match body {
-                    Some(b) => {
-                        let evaluated = match result_builder.as_deref() {
-                            Some(builder) => self.eval_result_builder_block(builder, &b),
-                            None => self.eval(&b),
-                        };
-                        match evaluated {
-                            Ok(v) => Ok(v),
-                            Err(Signal::Return(v)) => Ok(v),
-                            Err(other) => Err(other),
-                        }
-                    }
+                    Some(b) => match self.eval(&b) {
+                        Ok(v) => Ok(v),
+                        Err(Signal::Return(v)) => Ok(v),
+                        Err(other) => Err(other),
+                    },
                     None => Ok(SwiftValue::Void),
                 };
                 // Capture inout finals before tearing down the call scope.
@@ -6718,7 +6351,6 @@ impl<'w> Interpreter<'w> {
                 // `inout` params are mutable and write back to the caller.
                 // Coerce an integer literal argument into a floating parameter.
                 let value = coerce_numeric(arg.value.clone(), p.ty.as_deref());
-                let value = self.apply_result_builder_parameter(p, value);
                 self.env.declare(&p.name, value, p.inout_);
                 if p.inout_ {
                     if let Some(place) = arg.place.clone() {
@@ -6734,34 +6366,6 @@ impl<'w> Interpreter<'w> {
             }
         }
         Ok(inout_binds)
-    }
-
-    fn apply_result_builder_parameter(&mut self, param: &Param, value: SwiftValue) -> SwiftValue {
-        let Some(builder) = param.result_builder.as_ref() else {
-            return value;
-        };
-        if !self.result_builders.contains_key(builder) {
-            return value;
-        }
-        if let SwiftValue::Closure(id) = value {
-            let Some((def, captured)) = self.closures.get(id) else {
-                return SwiftValue::Closure(id);
-            };
-            let cloned = match def {
-                ClosureDef::User { params, body, .. } => ClosureDef::User {
-                    params: clone_params(params),
-                    body: body.clone(),
-                    result_builder: Some(builder.clone()),
-                },
-                ClosureDef::Operator(op) => ClosureDef::Operator(op.clone()),
-                ClosureDef::KeyPath(components) => ClosureDef::KeyPath(components.clone()),
-            };
-            let new_id = self.closures.len();
-            self.closures.push((cloned, captured.clone()));
-            SwiftValue::Closure(new_id)
-        } else {
-            value
-        }
     }
 
     /// Draw the next 64-bit value from the SplitMix64 builtin RNG.
@@ -7293,11 +6897,48 @@ fn tuple_type_labels(text: &str) -> Option<Vec<Option<String>>> {
     any.then_some(labels)
 }
 
-fn result_builder_attr(node: &Node<'static>) -> Option<String> {
-    node.children()
-        .filter(|c| c.kind() == NodeKind::Attribute)
-        .filter_map(|c| c.text())
-        .find(|name| !matches!(name.as_str(), "discardableResult" | "main" | "available"))
+fn clone_method(m: &MethodDef) -> MethodDef {
+    MethodDef {
+        params: clone_params(&m.params),
+        body: m.body,
+        mutating: m.mutating,
+        is_static: m.is_static,
+    }
+}
+
+/// Whether a call's argument labels select `params` as the matching overload.
+///
+/// A parameter's *effective* label is its explicit argument label, or its name
+/// when none is written (Swift's rule: a bare `name:` parameter has label
+/// `name`). A positional (unlabeled) argument is treated as matching any
+/// parameter, since the runtime cannot separate overloads by type. The caller
+/// only commits to a selection when exactly one candidate matches.
+fn args_select_params(args: &[CallArg], params: &[Param]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    args.iter()
+        .zip(params)
+        .all(|(arg, param)| match &arg.label {
+            Some(label) => {
+                let effective = param.label.as_deref().unwrap_or(param.name.as_str());
+                label == effective
+            }
+            None => true,
+        })
+}
+
+/// Whether each argument's runtime type matches its parameter's declared type,
+/// used to disambiguate overloads separable only by type. A parameter with no
+/// written type accepts any argument.
+fn args_match_param_types(args: &[CallArg], params: &[Param]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    args.iter().zip(params).all(|(arg, param)| match &param.ty {
+        Some(ty) => arg.value.type_name() == ty.trim().trim_end_matches('?'),
+        None => true,
+    })
 }
 
 fn clone_params(params: &[Param]) -> Vec<Param> {
@@ -7310,7 +6951,6 @@ fn clone_params(params: &[Param]) -> Vec<Param> {
             variadic: p.variadic,
             inout_: p.inout_,
             autoclosure: p.autoclosure,
-            result_builder: p.result_builder.clone(),
             default: p.default,
         })
         .collect()
@@ -7335,7 +6975,6 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
                 variadic: info.variadic,
                 inout_: info.is_inout,
                 autoclosure: info.autoclosure,
-                result_builder: result_builder_attr(&child),
                 default,
             });
         }
@@ -7633,6 +7272,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn static_method_overloads_dispatch_by_argument_label() {
+        // Two same-named static methods separable only by argument label must
+        // each be reachable (the result-builder transform relies on this for
+        // `buildEither(first:)` vs `(second:)`).
+        let out = run("struct B {\n\
+             static func pick(first: String) -> String { \"F:\" + first }\n\
+             static func pick(second: String) -> String { \"S:\" + second }\n\
+             }\n\
+             print(B.pick(first: \"a\"))\n\
+             print(B.pick(second: \"b\"))\n")
+        .unwrap();
+        assert_eq!(out, "F:a\nS:b\n");
+    }
+
+    #[test]
+    fn static_overloads_dispatch_by_argument_type() {
+        // Two same-named static methods separable only by parameter type are
+        // each selected by the argument's runtime type (Tier B, #124).
+        let out = run("struct B {\n\
+             static func describe(_ v: String) -> String { \"str:\" + v }\n\
+             static func describe(_ v: Int) -> String { \"int:\\(v)\" }\n\
+             }\n\
+             print(B.describe(\"a\"))\n\
+             print(B.describe(7))\n")
+        .unwrap();
+        assert_eq!(out, "str:a\nint:7\n");
     }
 
     #[test]
