@@ -191,6 +191,10 @@ struct StructDef {
     stored: Vec<StoredProp>,
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
+    /// Same-named methods that differ by argument label (`buildEither(first:)`
+    /// vs `(second:)`). `methods` keeps only the last such declaration; this
+    /// records the full overload set so a call can be dispatched by its labels.
+    method_overloads: std::collections::HashMap<String, Vec<MethodDef>>,
     subscripts: Vec<SubscriptDef>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
@@ -1733,6 +1737,8 @@ impl<'w> Interpreter<'w> {
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
+        let mut method_overloads: std::collections::HashMap<String, Vec<MethodDef>> =
+            std::collections::HashMap::new();
         let mut wrappers = std::collections::HashMap::new();
         let mut subscripts: Vec<SubscriptDef> = Vec::new();
         let mut static_subscript = None;
@@ -1804,15 +1810,17 @@ impl<'w> Interpreter<'w> {
                                 }
                             }
                         }
-                        methods.insert(
-                            mname,
-                            MethodDef {
-                                params,
-                                body,
-                                mutating,
-                                is_static,
-                            },
-                        );
+                        let def = MethodDef {
+                            params,
+                            body,
+                            mutating,
+                            is_static,
+                        };
+                        method_overloads
+                            .entry(mname.clone())
+                            .or_default()
+                            .push(clone_method(&def));
+                        methods.insert(mname, def);
                     }
                 }
                 NodeKind::VarDecl | NodeKind::LetDecl => {
@@ -1885,6 +1893,7 @@ impl<'w> Interpreter<'w> {
                 stored,
                 computed,
                 methods,
+                method_overloads,
                 subscripts,
                 static_subscript,
                 init,
@@ -6338,6 +6347,30 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Select a struct method overload by the call's argument labels. Returns
+    /// `None` unless the type declares more than one method of that name and
+    /// exactly one of them matches the labels — keeping single-method dispatch
+    /// and unresolved (type-only) overloads on the existing path.
+    fn select_struct_overload(
+        &self,
+        type_name: &str,
+        method: &str,
+        args: &[CallArg],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool)> {
+        let overloads = self.structs.get(type_name)?.method_overloads.get(method)?;
+        if overloads.len() < 2 {
+            return None;
+        }
+        let mut matches = overloads
+            .iter()
+            .filter(|def| args_select_params(args, &def.params));
+        let chosen = matches.next()?;
+        if matches.next().is_some() {
+            return None; // ambiguous by label alone; defer to the fallback.
+        }
+        Some((clone_params(&chosen.params), chosen.body, chosen.mutating))
+    }
+
     /// The declared parameters of a user method on `type_name`, across class,
     /// struct, and enum types (used to spot `@autoclosure` params before the
     /// arguments are evaluated).
@@ -6379,16 +6412,21 @@ impl<'w> Interpreter<'w> {
         args: Vec<CallArg>,
         base_place: Option<Place>,
     ) -> Eval {
+        // Prefer a label-selected overload (`buildEither(first:)` vs
+        // `(second:)`); fall back to the single stored method otherwise.
         let own = self
-            .structs
-            .get(type_name)
-            .and_then(|d| d.methods.get(method))
+            .select_struct_overload(type_name, method, &args)
             .or_else(|| {
-                self.enums
+                self.structs
                     .get(type_name)
                     .and_then(|d| d.methods.get(method))
-            })
-            .map(|def| (clone_params(&def.params), def.body, def.mutating));
+                    .or_else(|| {
+                        self.enums
+                            .get(type_name)
+                            .and_then(|d| d.methods.get(method))
+                    })
+                    .map(|def| (clone_params(&def.params), def.body, def.mutating))
+            });
         let (params, body, mutating) = match own {
             Some(m) => m,
             None => self
@@ -7300,6 +7338,37 @@ fn result_builder_attr(node: &Node<'static>) -> Option<String> {
         .find(|name| !matches!(name.as_str(), "discardableResult" | "main" | "available"))
 }
 
+fn clone_method(m: &MethodDef) -> MethodDef {
+    MethodDef {
+        params: clone_params(&m.params),
+        body: m.body,
+        mutating: m.mutating,
+        is_static: m.is_static,
+    }
+}
+
+/// Whether a call's argument labels select `params` as the matching overload.
+///
+/// A parameter's *effective* label is its explicit argument label, or its name
+/// when none is written (Swift's rule: a bare `name:` parameter has label
+/// `name`). A positional (unlabeled) argument is treated as matching any
+/// parameter, since the runtime cannot separate overloads by type. The caller
+/// only commits to a selection when exactly one candidate matches.
+fn args_select_params(args: &[CallArg], params: &[Param]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    args.iter()
+        .zip(params)
+        .all(|(arg, param)| match &arg.label {
+            Some(label) => {
+                let effective = param.label.as_deref().unwrap_or(param.name.as_str());
+                label == effective
+            }
+            None => true,
+        })
+}
+
 fn clone_params(params: &[Param]) -> Vec<Param> {
     params
         .iter()
@@ -7633,6 +7702,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "A\n");
+    }
+
+    #[test]
+    fn static_method_overloads_dispatch_by_argument_label() {
+        // Two same-named static methods separable only by argument label must
+        // each be reachable (the result-builder transform relies on this for
+        // `buildEither(first:)` vs `(second:)`).
+        let out = run("struct B {\n\
+             static func pick(first: String) -> String { \"F:\" + first }\n\
+             static func pick(second: String) -> String { \"S:\" + second }\n\
+             }\n\
+             print(B.pick(first: \"a\"))\n\
+             print(B.pick(second: \"b\"))\n")
+        .unwrap();
+        assert_eq!(out, "F:a\nS:b\n");
     }
 
     #[test]

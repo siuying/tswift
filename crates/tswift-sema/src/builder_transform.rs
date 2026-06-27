@@ -7,11 +7,11 @@
 //! so the interpreter sees plain static calls and needs no builder-specific
 //! evaluation.
 //!
-//! This is the walking skeleton (issue #119): it handles a body of declarations
-//! and expression statements with `buildExpression` + `buildBlock`. A body
-//! containing control flow it does not yet lower is **left untouched** (attribute
-//! intact) so the legacy runtime transform still handles it — keeping every
-//! fixture green while later slices grow the handled set.
+//! Handled so far: declarations and expression statements (`buildExpression` +
+//! `buildBlock`, #119) and `if`/`else`/`if let` conditionals (`buildEither` +
+//! `buildOptional`, #120). A body containing control flow not yet lowered is
+//! **left untouched** (attribute intact) so the legacy runtime transform still
+//! handles it — keeping every fixture green while later slices grow the set.
 
 use tswift_ast::{Ast, NodeId, NodeKind};
 
@@ -79,68 +79,208 @@ fn transform_func(ast: &mut Ast, func: NodeId, builder: &str, symbols: &Symbols)
         return; // contains a construct a later slice will lower; defer.
     }
 
-    let new_body = rewrite_body(ast, body, &stmts, builder, methods);
+    let (line, col) = (ast.node(body).line(), ast.node(body).col());
+    let mut lowering = Lowering {
+        ast,
+        builder,
+        methods,
+        counter: 0,
+    };
+    let (mut new_body, value) = lowering.lower_block(&stmts, line, col);
+    let ret = astbuild::return_stmt(lowering.ast, value, line, col);
+    new_body.push(ret);
     ast.set_children(body, new_body);
     erase_attribute(ast, func, builder);
 }
 
-/// Whether the skeleton can lower statement `stmt`: a declaration (kept in
-/// place) or a bare expression statement (a component). Control flow is deferred
-/// to later slices.
+/// Whether the transform can lower statement `stmt` (recursively): a declaration
+/// (kept in place), a bare expression statement (a component), or an `if` whose
+/// branches are themselves handleable. Other control flow is deferred to later
+/// slices, deferring the whole function to the runtime path.
 fn is_handleable(ast: &Ast, stmt: NodeId) -> bool {
-    matches!(
-        ast.node(stmt).kind(),
-        NodeKind::ExprStmt | NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::FuncDecl
-    )
+    match ast.node(stmt).kind() {
+        NodeKind::ExprStmt | NodeKind::LetDecl | NodeKind::VarDecl | NodeKind::FuncDecl => true,
+        NodeKind::IfStmt => {
+            child_ids(ast, stmt)
+                .into_iter()
+                .all(|c| match ast.node(c).kind() {
+                    // Each nested then/else block must be fully handleable.
+                    NodeKind::Block => child_ids(ast, c).iter().all(|&s| is_handleable(ast, s)),
+                    // An `else if` chain.
+                    NodeKind::IfStmt => is_handleable(ast, c),
+                    // Conditions (expressions / `let` bindings) are always fine.
+                    _ => true,
+                })
+        }
+        _ => false,
+    }
 }
 
-/// Build the rewritten statement list: declarations passed through, each
-/// expression statement bound to a fresh `$buildN`, and a trailing
-/// `return Builder.buildBlock($build0, …)`.
-fn rewrite_body(
-    ast: &mut Ast,
-    body: NodeId,
-    stmts: &[NodeId],
-    builder: &str,
-    methods: &BuilderMethods,
-) -> Vec<NodeId> {
-    let has_expr_hook = methods.has("buildExpression");
-    let mut new_stmts = Vec::new();
-    let mut components = Vec::new();
-    for &stmt in stmts {
-        if ast.node(stmt).kind() != NodeKind::ExprStmt {
-            new_stmts.push(stmt); // declaration: leave in place.
-            continue;
+/// The recursive lowering state: the arena, the builder being lowered, its
+/// method set, and a monotonic counter for fresh `$buildN` names.
+struct Lowering<'a> {
+    ast: &'a mut Ast,
+    builder: &'a str,
+    methods: &'a BuilderMethods,
+    counter: usize,
+}
+
+impl Lowering<'_> {
+    /// Mint the next `$buildN` name.
+    fn fresh(&mut self) -> String {
+        let name = astbuild::fresh_name(self.counter);
+        self.counter += 1;
+        name
+    }
+
+    /// Lower a builder statement sequence. Returns the statements to emit and the
+    /// expression for the block's folded value (`Builder.buildBlock(c0, …)`).
+    /// Each component value is bound to a fresh variable so control-flow bodies
+    /// run as real statements.
+    fn lower_block(&mut self, stmts: &[NodeId], line: u32, col: u32) -> (Vec<NodeId>, NodeId) {
+        let mut out = Vec::new();
+        let mut components = Vec::new();
+        for &stmt in stmts {
+            match self.ast.node(stmt).kind() {
+                NodeKind::ExprStmt => {
+                    let (l, c) = (self.ast.node(stmt).line(), self.ast.node(stmt).col());
+                    let expr = child_ids(self.ast, stmt)[0];
+                    let arg = if self.methods.has("buildExpression") {
+                        astbuild::static_call(
+                            self.ast,
+                            self.builder,
+                            "buildExpression",
+                            vec![(None, expr)],
+                            l,
+                            c,
+                        )
+                    } else {
+                        expr
+                    };
+                    let name = self.fresh();
+                    out.push(astbuild::fresh_let(self.ast, &name, arg, l, c));
+                    components.push(name);
+                }
+                NodeKind::IfStmt => {
+                    let (stmts, name) = self.lower_if(stmt);
+                    out.extend(stmts);
+                    components.push(name);
+                }
+                // A declaration is not a component: leave it in place.
+                _ => out.push(stmt),
+            }
         }
-        let (line, col) = (ast.node(stmt).line(), ast.node(stmt).col());
-        // The expression statement's sole child is the component expression.
-        let expr = child_ids(ast, stmt)[0];
-        let arg = if has_expr_hook {
+        let args: Vec<(Option<&str>, NodeId)> = components
+            .iter()
+            .map(|name| (None, astbuild::ident(self.ast, name, line, col)))
+            .collect();
+        let value = astbuild::static_call(self.ast, self.builder, "buildBlock", args, line, col);
+        (out, value)
+    }
+
+    /// Lower an `if` to a fresh component var assigned in every branch. Returns
+    /// `(var-decl + rebuilt-if, component-name)`.
+    ///
+    /// `if c { A } else { B }` → `buildEither(first:)` / `buildEither(second:)`;
+    /// a bare `if c { A }` → `buildOptional` (value when taken, `nil` otherwise);
+    /// an `else if` nests as a further `buildEither(second:)` over the chain.
+    fn lower_if(&mut self, if_node: NodeId) -> (Vec<NodeId>, String) {
+        let comp = self.fresh();
+        let (line, col) = (self.ast.node(if_node).line(), self.ast.node(if_node).col());
+        let kids = child_ids(self.ast, if_node);
+        let then_idx = kids
+            .iter()
+            .position(|&c| self.ast.node(c).kind() == NodeKind::Block)
+            .expect("if has a then-block");
+        let conds = kids[..then_idx].to_vec();
+        let then_block = kids[then_idx];
+        let els = kids.get(then_idx + 1).copied();
+        let has_else = els.is_some();
+
+        // Then branch: lower its block, then assign the chosen component value.
+        let then_stmts = child_ids(self.ast, then_block);
+        let (mut tstmts, tvalue) = self.lower_block(&then_stmts, line, col);
+        let then_value = if has_else {
             astbuild::static_call(
-                ast,
-                builder,
-                "buildExpression",
-                vec![(None, expr)],
+                self.ast,
+                self.builder,
+                "buildEither",
+                vec![(Some("first"), tvalue)],
                 line,
                 col,
             )
         } else {
-            expr
+            self.build_optional(tvalue, line, col)
         };
-        let name = astbuild::fresh_name(components.len());
-        let decl = astbuild::fresh_let(ast, &name, arg, line, col);
-        new_stmts.push(decl);
-        components.push(name);
+        tstmts.push(astbuild::assign(self.ast, &comp, then_value, line, col));
+        let new_then = astbuild::block(self.ast, tstmts, line, col);
+
+        // Else branch: a block, an `else if` chain, or a synthesized `nil` arm.
+        let new_else = match els.map(|e| (e, self.ast.node(e).kind())) {
+            Some((e, NodeKind::Block)) => {
+                let estmts = child_ids(self.ast, e);
+                let (mut estmts, evalue) = self.lower_block(&estmts, line, col);
+                let value = astbuild::static_call(
+                    self.ast,
+                    self.builder,
+                    "buildEither",
+                    vec![(Some("second"), evalue)],
+                    line,
+                    col,
+                );
+                estmts.push(astbuild::assign(self.ast, &comp, value, line, col));
+                astbuild::block(self.ast, estmts, line, col)
+            }
+            Some((e, NodeKind::IfStmt)) => {
+                let (mut estmts, ecomp) = self.lower_if(e);
+                let ident = astbuild::ident(self.ast, &ecomp, line, col);
+                let value = astbuild::static_call(
+                    self.ast,
+                    self.builder,
+                    "buildEither",
+                    vec![(Some("second"), ident)],
+                    line,
+                    col,
+                );
+                estmts.push(astbuild::assign(self.ast, &comp, value, line, col));
+                astbuild::block(self.ast, estmts, line, col)
+            }
+            _ => {
+                // Bare `if`: the not-taken arm contributes `buildOptional(nil)`.
+                let nil = astbuild::nil_literal(self.ast, line, col);
+                let value = self.build_optional(nil, line, col);
+                let assign = astbuild::assign(self.ast, &comp, value, line, col);
+                astbuild::block(self.ast, vec![assign], line, col)
+            }
+        };
+
+        let new_if = self.ast.add(NodeKind::IfStmt, None, line, col);
+        for cond in conds {
+            self.ast.append_child(new_if, cond);
+        }
+        self.ast.append_child(new_if, new_then);
+        self.ast.append_child(new_if, new_else);
+
+        let var = astbuild::var_decl(self.ast, &comp, line, col);
+        (vec![var, new_if], comp)
     }
 
-    let (line, col) = (ast.node(body).line(), ast.node(body).col());
-    let args: Vec<(Option<&str>, NodeId)> = components
-        .iter()
-        .map(|name| (None, astbuild::ident(ast, name, line, col)))
-        .collect();
-    let block_call = astbuild::static_call(ast, builder, "buildBlock", args, line, col);
-    new_stmts.push(astbuild::return_stmt(ast, block_call, line, col));
-    new_stmts
+    /// `Builder.buildOptional(value)` when the builder declares it; otherwise the
+    /// value passes through (matching the runtime's structural selection).
+    fn build_optional(&mut self, value: NodeId, line: u32, col: u32) -> NodeId {
+        if self.methods.has("buildOptional") {
+            astbuild::static_call(
+                self.ast,
+                self.builder,
+                "buildOptional",
+                vec![(None, value)],
+                line,
+                col,
+            )
+        } else {
+            value
+        }
+    }
 }
 
 /// Drop the `@builder` attribute child from `func`, so the interpreter no longer
@@ -290,10 +430,131 @@ mod tests {
         );
     }
 
+    const COND_BUILDER: &str = "@resultBuilder\nstruct B {\n\
+        static func buildExpression(_ v: String) -> String { v }\n\
+        static func buildBlock(_ parts: String...) -> String { \"\" }\n\
+        static func buildEither(first: String) -> String { first }\n\
+        static func buildEither(second: String) -> String { second }\n\
+        static func buildOptional(_ part: String?) -> String { part ?? \"\" }\n}\n";
+
+    fn analyzed_cond(extra: &str) -> Ast {
+        let mut ast = parse(&format!("{COND_BUILDER}{extra}")).expect("parse ok");
+        let diags = analyze(&mut ast);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        ast
+    }
+
+    /// The member name of a synthesized `Builder.method(...)` call expr.
+    fn call_method<'a>(call: tswift_ast::Node<'a>) -> Option<&'a str> {
+        call.children().next().and_then(|callee| callee.text())
+    }
+
+    #[test]
+    fn if_else_lowers_to_build_either_first_and_second() {
+        let ast =
+            analyzed_cond("@B\nfunc g(_ f: Bool) -> String {\n if f { \"a\" } else { \"b\" }\n}");
+        let body = func_body(&ast, "g");
+        // var $c ; if { ... } ; return buildBlock($c)
+        let kids: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![NodeKind::VarDecl, NodeKind::IfStmt, NodeKind::ReturnStmt]
+        );
+        let if_stmt = body.children().nth(1).unwrap();
+        let blocks: Vec<_> = if_stmt
+            .children()
+            .filter(|c| c.kind() == NodeKind::Block)
+            .collect();
+        // then-branch ends in `$c = B.buildEither(first: ...)`
+        let then_assign = blocks[0].children().last().unwrap();
+        assert_eq!(then_assign.kind(), NodeKind::AssignExpr);
+        let first_call = then_assign.children().nth(1).unwrap();
+        assert_eq!(call_method(first_call), Some("buildEither"));
+        assert_eq!(
+            first_call.children().nth(1).unwrap().arg_label(),
+            Some("first")
+        );
+        // else-branch ends in `$c = B.buildEither(second: ...)`
+        let else_assign = blocks[1].children().last().unwrap();
+        let second_call = else_assign.children().nth(1).unwrap();
+        assert_eq!(
+            second_call.children().nth(1).unwrap().arg_label(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn bare_if_lowers_to_build_optional_with_a_nil_arm() {
+        let ast = analyzed_cond("@B\nfunc g(_ f: Bool) -> String {\n if f { \"a\" }\n}");
+        let body = func_body(&ast, "g");
+        let if_stmt = body.children().nth(1).unwrap();
+        let blocks: Vec<_> = if_stmt
+            .children()
+            .filter(|c| c.kind() == NodeKind::Block)
+            .collect();
+        assert_eq!(blocks.len(), 2, "a synthesized else arm is added");
+        let then_call = blocks[0]
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        assert_eq!(call_method(then_call), Some("buildOptional"));
+        // The else arm assigns buildOptional(nil).
+        let else_call = blocks[1]
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        assert_eq!(call_method(else_call), Some("buildOptional"));
+        assert_eq!(
+            else_call.children().nth(1).unwrap().kind(),
+            NodeKind::NilLiteral
+        );
+    }
+
+    #[test]
+    fn if_let_condition_is_preserved() {
+        let ast = analyzed_cond(
+            "@B\nfunc g(_ m: String?) -> String {\n if let m = m { m } else { \"x\" }\n}",
+        );
+        let body = func_body(&ast, "g");
+        let if_stmt = body.children().nth(1).unwrap();
+        // The `if let` binding survives as the first condition child.
+        let cond = if_stmt.children().next().unwrap();
+        assert_eq!(cond.kind(), NodeKind::LetDecl);
+    }
+
+    #[test]
+    fn else_if_chain_nests_under_build_either_second() {
+        let ast = analyzed_cond(
+            "@B\nfunc g(_ n: Int) -> String {\n if n > 1 { \"a\" } else if n > 0 { \"b\" } else { \"c\" }\n}",
+        );
+        let body = func_body(&ast, "g");
+        let outer_if = body.children().nth(1).unwrap();
+        let else_block = outer_if
+            .children()
+            .filter(|c| c.kind() == NodeKind::Block)
+            .nth(1)
+            .unwrap();
+        // The nested else-if lowers to its own `var $c2; if ...` plus the
+        // `$c = buildEither(second: $c2)` assignment.
+        assert!(else_block.children().any(|c| c.kind() == NodeKind::VarDecl));
+        assert!(else_block.children().any(|c| c.kind() == NodeKind::IfStmt));
+        let assign = else_block.children().last().unwrap();
+        assert_eq!(assign.kind(), NodeKind::AssignExpr);
+        let call = assign.children().nth(1).unwrap();
+        assert_eq!(call_method(call), Some("buildEither"));
+        assert_eq!(call.children().nth(1).unwrap().arg_label(), Some("second"));
+    }
+
     #[test]
     fn control_flow_body_is_left_for_the_runtime_path() {
-        // An `if` is not yet handled, so the body and its attribute are intact.
-        let ast = analyzed("@B\nfunc g(_ f: Bool) -> String {\n \"a\"\n if f { \"b\" }\n}");
+        // A `for` is not yet handled, so the body and its attribute are intact.
+        let ast = analyzed("@B\nfunc g() -> String {\n \"a\"\n for w in [\"x\"] { w }\n}");
         fn find_func(ast: &Ast, parent: NodeId) -> Option<NodeId> {
             for c in child_ids(ast, parent) {
                 if ast.node(c).kind() == NodeKind::FuncDecl && ast.node(c).text() == Some("g") {
@@ -312,8 +573,8 @@ mod tests {
                 .any(|c| c.kind() == NodeKind::Attribute),
             "unhandled body keeps its builder attribute"
         );
-        // Body still has the original `if` statement.
+        // Body still has the original `for` statement.
         let body = func_body(&ast, "g");
-        assert!(body.children().any(|c| c.kind() == NodeKind::IfStmt));
+        assert!(body.children().any(|c| c.kind() == NodeKind::ForStmt));
     }
 }
