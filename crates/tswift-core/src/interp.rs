@@ -543,6 +543,20 @@ impl<'w> Interpreter<'w> {
         self.read_struct_member(value, name).map_err(signal_eval)
     }
 
+    /// Invoke the closure value with table id `id` and already-evaluated `args`,
+    /// the public entry point a render host uses to run an event handler (a
+    /// `Button`'s captured `action`).
+    pub fn invoke_closure(
+        &mut self,
+        id: usize,
+        args: Vec<SwiftValue>,
+    ) -> Result<SwiftValue, EvalError> {
+        match Interpreter::call_closure(self, id, args) {
+            Ok(v) | Err(Signal::Return(v)) => Ok(v),
+            Err(sig) => Err(signal_eval(sig)),
+        }
+    }
+
     /// Register a method intrinsic on a builtin receiver type.
     pub fn register_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
         self.intrinsics.insert((recv, name.to_string()), entry);

@@ -17,6 +17,7 @@
 
 use std::rc::Rc;
 
+pub mod session;
 pub mod uiir;
 
 use tswift_core::{
@@ -74,6 +75,19 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
 /// `Color` and a `FontWeight`) is ambiguous without contextual typing; write
 /// the qualified form (`Color.black`) in that case.
 pub const PRELUDE: &str = r#"
+class _StateBox<Value> {
+    var value: Value
+    init(_ v: Value) { value = v }
+}
+@propertyWrapper
+struct State<Value> {
+    let box: _StateBox<Value>
+    var wrappedValue: Value {
+        get { box.value }
+        set { box.value = newValue }
+    }
+    init(wrappedValue: Value) { box = _StateBox(wrappedValue) }
+}
 struct Color {
     let token: String
     static let primary = Color(token: "primary")
