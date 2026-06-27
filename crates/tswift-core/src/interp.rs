@@ -197,6 +197,9 @@ struct StructDef {
     /// `@dynamicMemberLookup`: an unresolved member name routes through the
     /// type's `subscript(dynamicMember:)`.
     dynamic_member_lookup: bool,
+    /// `@dynamicCallable`: calling an instance routes through the type's
+    /// `dynamicallyCall(withArguments:)` / `dynamicallyCall(withKeywordArguments:)`.
+    dynamic_callable: bool,
 }
 
 /// One case of an enum.
@@ -1371,6 +1374,11 @@ impl<'w> Interpreter<'w> {
         let dynamic_member_lookup = node.children().any(|c| {
             c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicMemberLookup")
         });
+        // `@dynamicCallable` routes call syntax through the type's
+        // `dynamicallyCall(...)` method.
+        let dynamic_callable = node.children().any(|c| {
+            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicCallable")
+        });
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
@@ -1505,6 +1513,7 @@ impl<'w> Interpreter<'w> {
                 init,
                 wrappers,
                 dynamic_member_lookup,
+                dynamic_callable,
             },
         );
         // Now that the struct is registered, evaluate its static initializers
@@ -3431,6 +3440,58 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Whether `value` is an instance of a `@dynamicCallable` struct type.
+    fn is_dynamic_callable(&self, value: &SwiftValue) -> bool {
+        matches!(value, SwiftValue::Struct(obj)
+            if self.structs.get(&obj.type_name).is_some_and(|d| d.dynamic_callable))
+    }
+
+    /// `@dynamicCallable`: route call syntax on a struct instance through its
+    /// `dynamicallyCall(withArguments:)` (all positional) or
+    /// `dynamicallyCall(withKeywordArguments:)` (any labelled) method.
+    fn dynamic_call(&mut self, receiver: SwiftValue, args: Vec<CallArg>) -> Eval {
+        let SwiftValue::Struct(obj) = &receiver else {
+            return Err(EvalError::Type("dynamicallyCall on a non-struct".into()).into());
+        };
+        let type_name = obj.type_name.clone();
+        // The declared `dynamicallyCall` parameter type decides the packing
+        // form: a dictionary parameter (`[Key: Value]`) is the keyword form,
+        // anything else is the positional array form. Fall back to the call
+        // site's labels when the type is not introspectable.
+        let keyword_param = self
+            .structs
+            .get(&type_name)
+            .and_then(|d| d.methods.get("dynamicallyCall"))
+            .and_then(|m| m.params.first())
+            .and_then(|p| p.ty.as_deref())
+            .map(|ty| ty.contains(':'));
+        let use_keyword = keyword_param.unwrap_or_else(|| args.iter().any(|a| a.label.is_some()));
+        // `withKeywordArguments:` receives the call's (label, value) pairs as a
+        // dictionary keyed by the argument label (unlabelled → empty string);
+        // `withArguments:` receives the positional values as an array.
+        let (label, packed) = if use_keyword {
+            let pairs: Vec<(SwiftValue, SwiftValue)> = args
+                .into_iter()
+                .map(|a| {
+                    (
+                        SwiftValue::Str(a.label.unwrap_or_default()),
+                        a.value,
+                    )
+                })
+                .collect();
+            ("withKeywordArguments", SwiftValue::Dict(Rc::new(pairs)))
+        } else {
+            let items: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+            ("withArguments", SwiftValue::Array(Rc::new(items)))
+        };
+        let call_args = vec![CallArg {
+            label: Some(label.to_string()),
+            value: packed,
+            place: None,
+        }];
+        self.call_struct_method(receiver, &type_name, "dynamicallyCall", call_args, None)
+    }
+
     /// Build a struct instance from a memberwise initializer call.
     fn instantiate_struct(
         &mut self,
@@ -5262,6 +5323,13 @@ impl<'w> Interpreter<'w> {
                     .map(|a| (a.label.clone(), a.value.clone()))
                     .collect();
                 return self.instantiate_struct(&name, &simple);
+            }
+            // `@dynamicCallable`: calling a struct instance routes through its
+            // `dynamicallyCall(...)` method.
+            if let Some(value @ SwiftValue::Struct(_)) = self.env.get(&name) {
+                if self.is_dynamic_callable(&value) {
+                    return self.dynamic_call(value, args);
+                }
             }
             // A bound function or closure value (incl. recursion).
             match self.env.get(&name) {

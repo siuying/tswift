@@ -271,7 +271,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Key paths `\Root.path` | ✅ | ★★★ | R6+ |
 | [x] | Key-path expressions as functions | ⚠️ | ★★★ | R6+ |
 | [x] | `@dynamicMemberLookup` | ✅ | ★★★ | R6+ |
-| [ ] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
+| [x] | `@dynamicCallable` | ⚠️ | ★★★ | R6+ |
 | [ ] | `#selector` / `#keyPath` | ⚠️ | ★★ | R6+ |
 | [x] | Self type | ✅ | ★★ | R4 |
 | [x] | Implicit member expr `.foo` | ✅ | ★★ | R2 |
@@ -366,9 +366,9 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [ ] | `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [ ] | `@resultBuilder` | ⚠️ | ★★★★ | R6+ |
 | [ ] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
-| [ ] | `@Sendable` | ✅ | ★★ | R6+ |
+| [x] | `@Sendable` | ✅ | ★★ | R6+ |
 | [ ] | `@autoclosure` / `@escaping` / `@convention` | ✅ | ★★ | R3 |
-| [ ] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
+| [x] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
 | [ ] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
 | [ ] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |
 | [ ] | `@backDeployed` / `@_specialize` | ⚠️ | ★ | R6+ |
