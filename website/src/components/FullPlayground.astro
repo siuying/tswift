@@ -388,7 +388,8 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
 
   async function initWasm() {
     try {
-      const mod = await import(/* @vite-ignore */ '/wasm/tswift_wasm.js');
+      const wasmJsUrl = (await import('/wasm/tswift_wasm.js?url')).default;
+      const mod = await import(/* @vite-ignore */ wasmJsUrl);
       await mod.default();
       runSwift = mod.runSwift;
       runBtn.disabled = false;
