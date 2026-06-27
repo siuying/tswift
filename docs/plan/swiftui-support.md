@@ -521,7 +521,13 @@ continuous gestures need a streaming event channel, not the discrete protocol of
       (+ `scripts/validate.mjs` offline check and `example/` editor preview).
 - [x] **Layer B harness** (`crates/tswift-cli/tests/swiftui_goldens.rs`) + Counter `*.uiir.json`.
 - [x] **Layer C harness** (same file) + Counter `*.events.json`/`*.patches.json`.
-- [ ] Layer D macOS screenshot-diff CI job (non-gating artifact).
+- [~] Layer D screenshot diff. **iOS renderer half landed**
+      (`ios/UiirRenderer/` SwiftPM package + `UiirRendererTests` snapshot harness;
+      builds real SwiftUI from UIIR JSON, replays patch streams, snapshots each
+      step via swift-snapshot-testing; baselines committed via Git LFS; runs
+      locally on iPhone 16 Pro/iOS 18.5 — see
+      `docs/plan/layer-d-ios-renderer.md`). Remaining: Playwright web-screenshot
+      half, perceptual-diff tooling, and the non-gating CI job.
 - [ ] `framework-coverage`/`stdlib-coverage`-style skill note for SwiftUI, or
       extend the existing `framework-coverage` skill workflow.
 - [ ] Tier 2 fixtures (Greeting/Stack/Profile) once v1 is green.
