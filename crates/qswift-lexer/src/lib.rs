@@ -343,6 +343,10 @@ impl<'a> Lexer<'a> {
                     self.single(TokenKind::Question)
                 }
             }
+            // A bare backslash begins a key-path expression (`\Root.path`,
+            // `\.path`). In-string interpolation `\(…)` is handled by the string
+            // lexer, so a `\` reaching here is always a key-path sigil.
+            b'\\' => self.single(TokenKind::Oper),
             b'0'..=b'9' => self.number(),
             _ if is_ident_start(c) => {
                 while self.peek().is_some_and(is_ident_continue) {
@@ -1009,10 +1013,20 @@ mod tests {
 
     #[test]
     fn unexpected_character_is_an_error() {
-        // A bare backslash is neither an operator, identifier, nor structural token.
-        let err = tokenize("\\").unwrap_err();
+        // A control character is neither an operator, identifier, nor structural
+        // token, so it is rejected.
+        let err = tokenize("\u{7}").unwrap_err();
         assert!(err.message.contains("unexpected"), "{}", err.message);
         assert_eq!(err.line, 1);
+    }
+
+    #[test]
+    fn bare_backslash_is_a_key_path_sigil() {
+        // A backslash outside a string begins a key-path expression; it lexes as
+        // a single operator token rather than an error.
+        let toks = tokenize("\\Root.name").unwrap();
+        assert_eq!(toks[0].kind, TokenKind::Oper);
+        assert_eq!(toks[0].text, "\\");
     }
 
     #[test]

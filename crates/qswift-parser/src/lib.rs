@@ -2191,6 +2191,10 @@ impl<'a> Parser<'a> {
     /// A prefix unary operator, else a primary with trailing call/member suffixes.
     fn parse_prefix(&mut self) -> Result<NodeId, ParseError> {
         let t = self.peek();
+        // A key-path expression `\Root.path` / `\.path`.
+        if t.kind == TokenKind::Oper && t.text == "\\" {
+            return self.parse_keypath();
+        }
         // A bare operator used as a value — an operator function reference such
         // as the `+` in `reduce(0, +)` or the `>` in `sorted(by: >)`.
         if t.kind == TokenKind::Oper
@@ -2273,6 +2277,48 @@ impl<'a> Parser<'a> {
                 | TokenKind::Colon
                 | TokenKind::Eof
         )
+    }
+
+    /// `\Root.path.subpath` or `\.path` (the root type is inferred). The result
+    /// is a `KeyPathExpr` whose optional leading `TypeRef` child names the root
+    /// type, followed by one `IdentExpr` child per path component.
+    fn parse_keypath(&mut self) -> Result<NodeId, ParseError> {
+        let bs = self.bump(); // the `\` sigil
+        let node = self.ast.add(NodeKind::KeyPathExpr, None, bs.line, bs.col);
+        // An optional root type precedes the first `.component`. `\.path` omits
+        // it (the root is inferred from context).
+        if self.peek().kind == TokenKind::Identifier {
+            let root = self.bump();
+            let r = self
+                .ast
+                .add(NodeKind::TypeRef, Some(root.text), root.line, root.col);
+            self.ast.append_child(node, r);
+        }
+        // Path components: `.name` (a property) repeated. `self` is a valid
+        // component naming the whole value.
+        while self.peek().kind == TokenKind::Dot {
+            self.bump();
+            let comp = self.peek();
+            if comp.kind != TokenKind::Identifier
+                && !(comp.kind == TokenKind::Keyword && comp.text == "self")
+            {
+                return self.error(format!(
+                    "expected a key-path component, found {:?}",
+                    comp.kind
+                ));
+            }
+            self.bump();
+            let c = self
+                .ast
+                .add(NodeKind::IdentExpr, Some(comp.text), comp.line, comp.col);
+            self.ast.append_child(node, c);
+            // Optional-chaining marker in a key path (`\.a?.b`): ignored, the
+            // runtime treats nil access as nil.
+            if self.peek().kind == TokenKind::Question {
+                self.bump();
+            }
+        }
+        Ok(node)
     }
 
     fn parse_primary(&mut self) -> Result<NodeId, ParseError> {
@@ -3452,6 +3498,41 @@ mod tests {
         // The parameter and accessor still parse after the generic clause.
         let kinds: Vec<_> = sub.children().map(|c| c.kind()).collect();
         assert!(kinds.contains(&NodeKind::Param));
+    }
+
+    #[test]
+    fn key_path_expression() {
+        // `\Person.name` → KeyPathExpr with a TypeRef root and one IdentExpr.
+        let ast = ast_of("let k = \\Person.address.city");
+        let decl = first_stmt(&ast);
+        let kp = decl
+            .children()
+            .find(|c| c.kind() == NodeKind::KeyPathExpr)
+            .expect("key-path expr");
+        let kinds: Vec<_> = kp.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![NodeKind::TypeRef, NodeKind::IdentExpr, NodeKind::IdentExpr]
+        );
+        let comps: Vec<_> = kp
+            .children()
+            .filter(|c| c.kind() == NodeKind::IdentExpr)
+            .filter_map(|c| c.text())
+            .collect();
+        assert_eq!(comps, vec!["address", "city"]);
+    }
+
+    #[test]
+    fn inferred_root_key_path() {
+        // `\.count` omits the root type: no leading TypeRef child.
+        let ast = ast_of("let k = \\.count");
+        let decl = first_stmt(&ast);
+        let kp = decl
+            .children()
+            .find(|c| c.kind() == NodeKind::KeyPathExpr)
+            .expect("key-path expr");
+        let kinds: Vec<_> = kp.children().map(|c| c.kind()).collect();
+        assert_eq!(kinds, vec![NodeKind::IdentExpr]);
     }
 
     #[test]

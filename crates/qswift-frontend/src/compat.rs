@@ -541,6 +541,7 @@ fn map_kind(kind: qswift_ast::NodeKind) -> NodeKind {
         K::DictLiteral => NodeKind::DictLiteral,
         K::SubscriptExpr => NodeKind::SubscriptExpr,
         K::MemberExpr => NodeKind::MemberExpr,
+        K::KeyPathExpr => NodeKind::KeyPathExpr,
         K::LetDecl => NodeKind::LetDecl,
         K::VarDecl => NodeKind::VarDecl,
         K::FuncDecl => NodeKind::FuncDecl,

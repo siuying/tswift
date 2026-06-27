@@ -40,6 +40,10 @@ pub enum NodeKind {
     SubscriptExpr,
     /// A member or tuple-index access `base.member` / `base.0`.
     MemberExpr,
+    /// A key-path expression `\Root.path.subpath` (`\.path` infers the root).
+    /// An optional leading `TypeRef` child names the root type; the remaining
+    /// children are the path components.
+    KeyPathExpr,
     /// A `let` binding declaration.
     LetDecl,
     /// A `var` binding declaration.
@@ -186,6 +190,7 @@ impl NodeKind {
             NodeKind::DictLiteral => "dict_literal",
             NodeKind::SubscriptExpr => "subscript_expr",
             NodeKind::MemberExpr => "member_expr",
+            NodeKind::KeyPathExpr => "key_path_expr",
             NodeKind::LetDecl => "let_decl",
             NodeKind::VarDecl => "var_decl",
             NodeKind::FuncDecl => "func_decl",

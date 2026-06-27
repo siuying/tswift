@@ -251,6 +251,11 @@ enum ClosureDef {
         body: Vec<Node<'static>>,
     },
     Operator(String),
+    /// A key path `\Root.a.b`, represented as a callable value. Calling it with
+    /// one argument walks the path from that argument; used both as a function
+    /// (`names.map(\.count)`) and via `root[keyPath:]` subscripting. An empty
+    /// component list is the identity key path (`\.self`).
+    KeyPath(Vec<String>),
 }
 
 /// An assignable storage location: a root variable plus a field path.
@@ -651,6 +656,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::ParenExpr => self.eval_only_child(node),
             NodeKind::TernaryExpr => self.eval_ternary(node),
             NodeKind::MemberExpr => self.eval_member(node),
+            NodeKind::KeyPathExpr => self.eval_keypath(node),
             NodeKind::IdentExpr => self.eval_ident(node),
             NodeKind::IntegerLiteral => Ok(self.eval_int_literal(node)),
             NodeKind::BoolLiteral => Ok(SwiftValue::Bool(node.bool().unwrap_or(false))),
@@ -2501,13 +2507,28 @@ impl<'w> Interpreter<'w> {
                 .into()),
             };
         }
+        // A key-path value used as a function: walk the path from its single
+        // argument (`names.map(\.count)`).
+        if let (ClosureDef::KeyPath(components), _) = &self.closures[id] {
+            let components = components.clone();
+            self.depth -= 1;
+            let [root] = <[SwiftValue; 1]>::try_from(args).map_err(|args| {
+                EvalError::Unsupported(format!(
+                    "key-path function expects exactly one argument, got {}",
+                    args.len()
+                ))
+            })?;
+            return self.apply_keypath(root, &components);
+        }
         let (params, body, captured) = {
             let (def, cap) = &self.closures[id];
             match def {
                 ClosureDef::User { params, body } => {
                     (clone_params(params), body.clone(), cap.clone())
                 }
-                ClosureDef::Operator(_) => unreachable!("operator handled above"),
+                ClosureDef::Operator(_) | ClosureDef::KeyPath(_) => {
+                    unreachable!("operator/key-path handled above")
+                }
             }
         };
         let call_env = Env::with_captured(captured);
@@ -3055,7 +3076,23 @@ impl<'w> Interpreter<'w> {
             ops::binary(op.trim_end_matches('='), &cur_elem, &r).map_err(trap)?
         };
 
+        // Remember the original class identity (if any) so an in-place mutation
+        // can be told apart from a whole-value replacement below.
+        let prev_ref = match &current {
+            SwiftValue::Object(o) => Some(o.clone()),
+            _ => None,
+        };
         let updated = self.set_subscript_element(current, &index_values, new_value)?;
+        // A class instance is a reference: when the write mutated *the same*
+        // instance in place, there is nothing to rebind (and re-assigning to a
+        // `let` binding would be illegal). A whole-value replacement
+        // (`obj[keyPath: \.self] = other`) yields a different instance and still
+        // writes back.
+        if let (Some(prev), SwiftValue::Object(now)) = (&prev_ref, &updated) {
+            if StdRc::ptr_eq(prev, now) {
+                return Ok(SwiftValue::Void);
+            }
+        }
         self.assign_value_to(&base, updated)
     }
 
@@ -3071,6 +3108,12 @@ impl<'w> Interpreter<'w> {
             !indices.is_empty(),
             "set_subscript_element requires at least one index"
         );
+        // `container[keyPath: kp] = value` — write through a (writable) key path.
+        if let [idx] = indices {
+            if let Some(components) = self.keypath_components(idx) {
+                return self.set_keypath(container, &components, value);
+            }
+        }
         // A user `subscript { set }` on a struct runs the setter with `self`
         // mutable, the index parameters, and the `newValue` binding.
         if let SwiftValue::Struct(obj) = &container {
@@ -3180,6 +3223,12 @@ impl<'w> Interpreter<'w> {
 
     /// Read `base[indices]`.
     fn read_subscript(&mut self, base: &SwiftValue, indices: &[SwiftValue]) -> Eval {
+        // `base[keyPath: kp]` — a key-path subscript walks the path from `base`.
+        if let [idx] = indices {
+            if let Some(components) = self.keypath_components(idx) {
+                return self.apply_keypath(base.clone(), &components);
+            }
+        }
         match base {
             SwiftValue::Array(items) => {
                 let i = subscript_index(indices)?;
@@ -4876,6 +4925,136 @@ impl<'w> Interpreter<'w> {
                 }
                 Err(EvalError::Unsupported(format!("member .{member} on {tn}")).into())
             }
+        }
+    }
+
+    /// Evaluate a key-path literal `\Root.a.b` into a `KeyPath` value. The root
+    /// type (a leading `TypeRef` child) is only needed at type-check time; the
+    /// runtime keeps the ordered list of component names. `\.self` (and an
+    /// embedded `.self`) is the identity path and contributes no component.
+    fn eval_keypath(&mut self, node: &Node<'static>) -> Eval {
+        let components: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::IdentExpr)
+            .filter_map(|c| c.text())
+            .filter(|n| n != "self")
+            .collect();
+        let id = self.closures.len();
+        self.closures
+            .push((ClosureDef::KeyPath(components), Vec::new()));
+        Ok(SwiftValue::Closure(id))
+    }
+
+    /// The path components of a key-path closure value, if `value` is one.
+    fn keypath_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
+        if let SwiftValue::Closure(id) = value {
+            if let Some((ClosureDef::KeyPath(components), _)) = self.closures.get(*id) {
+                return Some(components.clone());
+            }
+        }
+        None
+    }
+
+    /// Read `root[keyPath: kp]` by walking each component in turn. A `nil`
+    /// encountered mid-path short-circuits to `nil` (optional-chained access).
+    fn apply_keypath(&mut self, root: SwiftValue, components: &[String]) -> Eval {
+        let mut value = root;
+        for name in components {
+            if matches!(value, SwiftValue::Nil) {
+                return Ok(SwiftValue::Nil);
+            }
+            value = self.read_named_member(value, name)?;
+        }
+        Ok(value)
+    }
+
+    /// Read the member named `name` from an already-evaluated `value`. Shared by
+    /// key-path traversal; mirrors the value-dispatch tail of `eval_member`
+    /// (struct/class/enum members, plus builtin `count`/`isEmpty` and labelled
+    /// tuple elements).
+    fn read_named_member(&mut self, value: SwiftValue, name: &str) -> Eval {
+        if matches!(value, SwiftValue::Nil) {
+            return Ok(SwiftValue::Nil);
+        }
+        match &value {
+            SwiftValue::Object(_) => self.read_object_member(&value, name),
+            SwiftValue::Struct(_) => self.read_struct_member(&value, name),
+            SwiftValue::Enum(e) => {
+                if name == "rawValue" {
+                    return self.enum_raw_value(&e.type_name, &e.case);
+                }
+                if let Some(v) = self.read_enum_computed(&value, name)? {
+                    return Ok(v);
+                }
+                Err(EvalError::Unsupported(format!(
+                    "key-path member .{name} on {}",
+                    e.type_name
+                ))
+                .into())
+            }
+            _ => {
+                if let Some(kind) = BuiltinReceiver::of(&value) {
+                    if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
+                        return func(value).map_err(Self::std_error_to_signal);
+                    }
+                }
+                match (&value, name) {
+                    (SwiftValue::Str(s), "count") => {
+                        Ok(SwiftValue::int(crate::graphemes(s).len() as i128))
+                    }
+                    (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
+                    (SwiftValue::Tuple(items, labels), n)
+                        if SwiftValue::tuple_label_index(labels, n).is_some() =>
+                    {
+                        let i = SwiftValue::tuple_label_index(labels, n).unwrap();
+                        Ok(items[i].clone())
+                    }
+                    _ => Err(EvalError::Unsupported(format!(
+                        "key-path member .{name} on {}",
+                        value.type_name()
+                    ))
+                    .into()),
+                }
+            }
+        }
+    }
+
+    /// Write `container[keyPath: kp] = value`, returning the updated container
+    /// (value types are rebuilt copy-on-write; class instances mutate in place
+    /// and are returned unchanged). An empty path is the identity path, so the
+    /// whole value is replaced.
+    fn set_keypath(
+        &mut self,
+        container: SwiftValue,
+        components: &[String],
+        value: SwiftValue,
+    ) -> Eval {
+        match components {
+            [] => Ok(value),
+            [name] => self.set_named_member(container, name, value),
+            [name, rest @ ..] => {
+                let child = self.read_named_member(container.clone(), name)?;
+                let new_child = self.set_keypath(child, rest, value)?;
+                self.set_named_member(container, name, new_child)
+            }
+        }
+    }
+
+    /// Set the member `name` on `container` to `value`. Structs are rebuilt via
+    /// `set_struct_field` (copy-on-write); class instances are mutated through
+    /// their shared storage.
+    fn set_named_member(&mut self, container: SwiftValue, name: &str, value: SwiftValue) -> Eval {
+        match &container {
+            SwiftValue::Struct(_) => self.set_struct_field(container.clone(), name, value),
+            SwiftValue::Object(obj) => {
+                self.set_object_field(obj, name, value);
+                Ok(container)
+            }
+            other => Err(EvalError::Type(format!(
+                "cannot set key-path member .{name} on {}",
+                other.type_name()
+            ))
+            .into()),
         }
     }
 
@@ -6731,6 +6910,53 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "8 8 8\n1 1 4\n16 16 8\n");
+    }
+
+    #[test]
+    fn key_paths_read_write_and_function() {
+        let out = run(
+            "struct Address { var city: String }\n\
+             struct Person { var name: String; var address: Address }\n\
+             var p = Person(name: \"Ada\", address: Address(city: \"London\"))\n\
+             print(p[keyPath: \\Person.name])\n\
+             print(p[keyPath: \\Person.address.city])\n\
+             p[keyPath: \\Person.address.city] = \"Paris\"\n\
+             print(p.address.city)\n\
+             print([\"a\", \"bb\"].map(\\.count))\n\
+             print([1, 2, 3].map(\\.self))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "Ada\nLondon\nParis\n[1, 2]\n[1, 2, 3]\n");
+    }
+
+    #[test]
+    fn key_path_writes_through_let_class_reference() {
+        // A class is a reference type: a writable key path mutates it in place
+        // even when it is held in a `let` binding.
+        let out = run(
+            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+             let b = Box(1)\n\
+             b[keyPath: \\Box.n] = 9\n\
+             print(b.n)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "9\n");
+    }
+
+    #[test]
+    fn key_path_identity_replacement_on_var_class() {
+        // `obj[keyPath: \.self] = other` replaces the whole reference (a
+        // different instance), so the `var` binding is rebound.
+        let out = run(
+            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+             var b = Box(1)\n\
+             b[keyPath: \\Box.n] = 5\n\
+             print(b.n)\n\
+             b[keyPath: \\Box.self] = Box(99)\n\
+             print(b.n)\n",
+        )
+        .unwrap();
+        assert_eq!(out, "5\n99\n");
     }
 
     #[test]
