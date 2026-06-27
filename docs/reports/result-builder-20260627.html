@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Result Builder Implementation Report</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; margin: 2rem; color: #1f2937; }
+    h1, h2 { color: #111827; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 0.25rem; }
+    .ok { color: #047857; font-weight: 600; }
+    .partial { color: #b45309; font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #d1d5db; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; }
+  </style>
+</head>
+<body>
+  <h1>Result Builder Implementation Report</h1>
+  <p><strong>Date:</strong> 2026-06-27</p>
+  <p><strong>Commit:</strong> <code>df6dd85</code> (<code>feat(runtime): add result builder transform</code>)</p>
+  <p><strong>Push:</strong> <span class="ok">pushed to <code>origin/main</code></span></p>
+
+  <h2>Implemented</h2>
+  <ul>
+    <li>Accepted declaration attributes on function parameters, including <code>@StringBuilder</code> closure parameters.</li>
+    <li>Preserved external parameter labels in frontend <code>ParamInfo</code>.</li>
+    <li>Registered structs marked <code>@resultBuilder</code>.</li>
+    <li>Applied result-builder body transforms for <code>@Builder func</code> declarations.</li>
+    <li>Applied contextual result-builder transforms for builder-annotated closure parameters without mutating the original closure value.</li>
+    <li>Supported core builder methods: <code>buildExpression</code>, <code>buildBlock</code>, <code>buildEither(first:)</code>, <code>buildEither(second:)</code>, <code>buildOptional</code>, and <code>buildArray</code>.</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>cargo run -q -p tswift-cli -- run crates/tswift-cli/tests/fixtures/result_builder.swift</code></td><td class="ok">Passed</td></tr>
+      <tr><td><code>cargo test -q -p tswift-cli --test golden</code></td><td class="ok">Passed</td></tr>
+      <tr><td><code>cargo test -q -p tswift-frontend --test golden_fixtures</code></td><td class="ok">Passed</td></tr>
+      <tr><td><code>cargo test -q -p tswift-parser</code></td><td class="ok">Passed</td></tr>
+      <tr><td><code>scripts/presubmit</code></td><td class="ok">Passed</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Review</h2>
+  <p>Subagent review was requested with provider <code>openai-codex</code> and model <code>gpt-5.5</code>. No critical issues were found. Important findings were addressed before commit, including single-name <code>buildEither(first:)</code> support, contextual closure handling, and a scope-pop fix on result-builder loop condition errors.</p>
+
+  <h2>Checklist Status</h2>
+  <p class="partial">Marked result-builder checklist entries as in progress (<code>[~]</code>) because this implements the core DSL transform subset but not the entire Swift result-builder surface.</p>
+</body>
+</html>
