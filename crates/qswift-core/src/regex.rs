@@ -21,6 +21,10 @@
 
 use std::rc::Rc;
 
+/// Upper bound on a counted-quantifier repeat (`{n}` / `{n,m}`). Larger counts
+/// are rejected so a pattern cannot expand into an unbounded amount of bytecode.
+const MAX_REPEAT: usize = 1000;
+
 /// A compiled regular expression: its source pattern, byte-code program, and
 /// capture-group count (group 0 is the whole match).
 #[derive(Debug, Clone)]
@@ -273,7 +277,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a `{n}` / `{n,}` / `{n,m}` quantifier. Returns `Ok(None)` to treat
-    /// a `{` that is not a valid counted quantifier as a literal brace.
+    /// a `{` that is not a valid counted quantifier as a literal brace, and
+    /// `Err` for a well-formed but invalid range (`max < min`) or counts that
+    /// would expand to an unreasonable amount of bytecode.
     fn parse_counted(&mut self) -> Result<Option<(usize, Option<usize>)>, String> {
         let save = self.pos;
         self.bump(); // '{'
@@ -295,10 +301,25 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        if result.is_none() {
-            self.pos = save; // not a quantifier; rewind so `{` is literal
+        match result {
+            None => {
+                self.pos = save; // not a quantifier; rewind so `{` is literal
+                Ok(None)
+            }
+            Some((min, max)) => {
+                if let Some(max) = max {
+                    if max < min {
+                        return Err(format!("invalid quantifier range {{{min},{max}}}"));
+                    }
+                }
+                if min > MAX_REPEAT || max.is_some_and(|m| m > MAX_REPEAT) {
+                    return Err(format!(
+                        "quantifier count exceeds the maximum of {MAX_REPEAT}"
+                    ));
+                }
+                Ok(Some((min, max)))
+            }
         }
-        Ok(result)
     }
 
     fn parse_int(&mut self) -> Option<usize> {
@@ -306,7 +327,9 @@ impl<'a> Parser<'a> {
         let mut n: usize = 0;
         while let Some(c) = self.peek() {
             if let Some(d) = c.to_digit(10) {
-                n = n * 10 + d as usize;
+                // Saturate rather than overflow; `parse_counted` rejects counts
+                // above `MAX_REPEAT` anyway.
+                n = n.saturating_mul(10).saturating_add(d as usize);
                 self.bump();
             } else {
                 break;
@@ -762,6 +785,19 @@ mod tests {
     fn lazy_quantifier() {
         let re = Regex::compile(r"a+?").unwrap();
         assert_eq!(matched(&re, "aaa").as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn counted_quantifier_validation() {
+        // Well-formed range works.
+        assert!(Regex::compile(r"a{2,3}").is_ok());
+        // max < min is rejected.
+        assert!(Regex::compile(r"a{3,2}").is_err());
+        // Excessive counts are rejected rather than expanded.
+        assert!(Regex::compile(r"a{100000}").is_err());
+        assert!(Regex::compile(r"a{0,100000}").is_err());
+        // A `{` that is not a quantifier stays a literal brace.
+        assert_eq!(matched(&Regex::compile(r"a{b").unwrap(), "a{b").as_deref(), Some("a{b"));
     }
 
     #[test]
