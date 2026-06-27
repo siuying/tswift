@@ -344,6 +344,12 @@ pub struct Interpreter<'w> {
     /// SplitMix64 state for builtin randomness (`Bool.random()`, …). Seeded
     /// from wall-clock time so runs vary; advanced per draw.
     rng_state: u64,
+    /// Stack of expected (contextual) parameter types for the arguments
+    /// currently being evaluated. Pushed per-argument by `eval_args_with` so an
+    /// implicit-member expression (`.custom("x")`) can resolve against the
+    /// call-site parameter type when its own node lacks an inferred type. The
+    /// top of the stack is the active hint; `None` entries mean "no hint".
+    type_hint: Vec<Option<String>>,
 }
 
 /// A spawned structured-concurrency task: a zero-argument closure producing the
@@ -423,6 +429,7 @@ impl<'w> Interpreter<'w> {
             // SplitMix64 tolerates any seed (including 0), so the wall-clock
             // nanos are used as-is rather than forcing the low bit.
             rng_state: initial_rng_seed(),
+            type_hint: Vec::new(),
         }
     }
 
@@ -1958,12 +1965,23 @@ impl<'w> Interpreter<'w> {
         }))))
     }
 
-    /// Resolve the enum type for a shorthand `.case` member from msf's resolved
-    /// type, falling back to the unique enum declaring that case.
+    /// The active call-site contextual type, if an argument is currently being
+    /// evaluated under a known parameter type (top of the hint stack).
+    fn contextual_type(&self) -> Option<&str> {
+        self.type_hint.last().and_then(|o| o.as_deref())
+    }
+
+    /// Resolve the enum type for a shorthand `.case` member from the resolved
+    /// type or call-site contextual type, falling back to the unique enum
+    /// declaring that case.
     fn resolve_member_enum(&self, member: &Node<'static>, case: &str) -> Option<String> {
-        // msf often resolves the member's type to the enum (or a function
-        // returning it); match a registered enum name within that string.
-        if let Some(ty) = member.type_name() {
+        // The member's resolved type (the enum or a function returning it), then
+        // the call-site contextual type; match a registered enum name within.
+        for ty in member
+            .type_name()
+            .into_iter()
+            .chain(self.contextual_type().map(String::from))
+        {
             for name in self.enums.keys() {
                 if ty
                     .split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -1991,8 +2009,12 @@ impl<'w> Interpreter<'w> {
     /// member node's inferred contextual type; otherwise accepts a unique
     /// registered static whose member name matches.
     fn resolve_implicit_static(&self, node: &Node<'static>, name: &str) -> Option<SwiftValue> {
-        // Contextual type, if the frontend resolved one.
-        if let Some(ty) = node.type_name() {
+        // The node's inferred type, then the call-site contextual type.
+        for ty in node
+            .type_name()
+            .into_iter()
+            .chain(self.contextual_type().map(String::from))
+        {
             for type_name in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 if let Some(v) = self.statics.get(&format!("{type_name}.{name}")) {
                     return Some(v.clone());
@@ -2028,8 +2050,12 @@ impl<'w> Interpreter<'w> {
             m.and_then(|methods| methods.get(method))
                 .is_some_and(|def| def.is_static)
         };
-        // Contextual type, if the frontend resolved one.
-        if let Some(ty) = node.type_name() {
+        // The node's inferred type, then the call-site contextual type.
+        for ty in node
+            .type_name()
+            .into_iter()
+            .chain(self.contextual_type().map(String::from))
+        {
             for type_name in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 if declares(type_name) {
                     return Some(type_name.to_string());
@@ -5542,6 +5568,9 @@ impl<'w> Interpreter<'w> {
         params: Option<&[Param]>,
     ) -> Result<Vec<CallArg>, Signal> {
         let autoclosure = params.map(|p| autoclosure_flags(p, arg_nodes));
+        // Expected parameter type per argument, so an implicit-member argument
+        // can resolve against the call-site contextual type.
+        let hints = params.map(|p| param_type_hints(p, arg_nodes));
         let mut args = Vec::new();
         for (i, arg) in arg_nodes.iter().enumerate() {
             let label = arg.arg_label();
@@ -5563,20 +5592,27 @@ impl<'w> Interpreter<'w> {
                 });
                 continue;
             }
+            let hint = hints.as_ref().and_then(|h| h[i].clone());
             if arg.kind() == NodeKind::InoutExpr {
                 let inner = arg
                     .children()
                     .next()
                     .ok_or_else(|| EvalError::Unsupported("inout without an lvalue".into()))?;
                 let place = self.resolve_place(&inner);
-                let value = self.eval(&inner)?;
+                self.type_hint.push(hint);
+                let value = self.eval(&inner);
+                self.type_hint.pop();
+                let value = value?;
                 args.push(CallArg {
                     label,
                     value,
                     place,
                 });
             } else {
-                let value = self.eval(arg)?;
+                self.type_hint.push(hint);
+                let value = self.eval(arg);
+                self.type_hint.pop();
+                let value = value?;
                 args.push(CallArg {
                     label,
                     value,
@@ -7009,6 +7045,31 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
     params
 }
 
+/// Map each call argument to its declared parameter type, mirroring the
+/// positional/labeled matching of [`autoclosure_flags`]. Variadic parameters
+/// absorb the remaining positional arguments and keep their element type as the
+/// hint. Used to push a contextual type while evaluating an argument.
+fn param_type_hints(params: &[Param], args: &[Node<'static>]) -> Vec<Option<String>> {
+    let mut hints = vec![None; args.len()];
+    let mut pi = 0usize;
+    for (i, arg) in args.iter().enumerate() {
+        let target = match arg.arg_label() {
+            Some(l) => params
+                .iter()
+                .enumerate()
+                .find(|(_, p)| p.label.as_deref() == Some(l.as_str()) || p.name == l),
+            None => params.get(pi).map(|p| (pi, p)),
+        };
+        if let Some((idx, p)) = target {
+            hints[i] = p.ty.clone();
+            if !p.variadic {
+                pi = idx + 1;
+            }
+        }
+    }
+    hints
+}
+
 /// For each call argument, whether its target parameter is `@autoclosure`
 /// (and so its expression must be deferred into a thunk). Arguments are aligned
 /// to parameters positionally, with labelled arguments matched by name — enough
@@ -7285,6 +7346,57 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn implicit_static_method_disambiguated_by_param_type() {
+        // Two types each declare `static func custom(_:)`; the call-site
+        // parameter type disambiguates the implicit member.
+        let out = run("struct Color { let name: String\n\
+               static func custom(_ n: String) -> Color { Color(name: n) } }\n\
+             struct Font { let name: String\n\
+               static func custom(_ n: String) -> Font { Font(name: n) } }\n\
+             func describe(_ c: Color) -> String { \"color:\\(c.name)\" }\n\
+             print(describe(.custom(\"green\")))\n")
+        .unwrap();
+        assert_eq!(out, "color:green\n");
+    }
+
+    #[test]
+    fn implicit_enum_case_disambiguated_by_param_type() {
+        // `.red` is a case of both enums; the parameter type picks `Color`.
+        let out = run("enum Color { case red, green }\n\
+             enum Mood { case red, calm }\n\
+             func describe(_ c: Color) -> String { \"\\(c)\" }\n\
+             print(describe(.red))\n")
+        .unwrap();
+        assert_eq!(out, "red\n");
+    }
+
+    #[test]
+    fn implicit_static_property_disambiguated_by_param_type() {
+        // `static let light` exists on both types; the param type picks `Theme`.
+        let out = run(
+            "struct Theme { static let light = Theme(); let tag = \"T\" }\n\
+             struct Page { static let light = Page() }\n\
+             func render(_ t: Theme) -> String { t.tag }\n\
+             print(render(.light))\n",
+        )
+        .unwrap();
+        assert_eq!(out, "T\n");
+    }
+
+    #[test]
+    fn implicit_member_disambiguated_in_variadic_arg() {
+        // The contextual type propagates into each variadic argument.
+        let out = run("struct Tag { let v: String\n\
+               static func custom(_ s: String) -> Tag { Tag(v: s) } }\n\
+             struct Mark { let v: String\n\
+               static func custom(_ s: String) -> Mark { Mark(v: s) } }\n\
+             func join(_ items: Tag...) -> Int { items.count }\n\
+             print(join(.custom(\"a\"), .custom(\"b\")))\n")
+        .unwrap();
+        assert_eq!(out, "2\n");
     }
 
     #[test]
