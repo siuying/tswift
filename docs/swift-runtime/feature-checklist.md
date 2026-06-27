@@ -417,7 +417,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
 | [ ] | `Collection` / `BidirectionalCollection` / `RandomAccess` | ★★★★ | R4 |
 | [ ] | `RangeReplaceableCollection` | ★★★ | R4 |
-| [ ] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |
+| [x] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |
 | [x] | `CustomStringConvertible` / `Debug…` | ★★ | R2 |
 | [x] | `RawRepresentable` / `CaseIterable` | ★★ | R2 |
 | [x] | `Codable` / `Encodable` / `Decodable` | ★★★★ | R5 |

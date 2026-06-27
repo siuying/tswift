@@ -1582,12 +1582,80 @@ impl<'w> Interpreter<'w> {
         let value = match children.last() {
             Some(init) if is_expr(init) => {
                 let v = self.eval(init)?;
+                let v = self.coerce_to_literal_type(node, v)?;
                 self.coerce_to_decl_type(node, v)
             }
             _ => SwiftValue::Void,
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
+    }
+
+    /// If the declaration is annotated with a user type that conforms to an
+    /// `ExpressibleBy*Literal` protocol and the initializer is the matching
+    /// literal kind, build the value through that type's literal initializer
+    /// (`let s: Stack = [1, 2, 3]` → `Stack(arrayLiteral: 1, 2, 3)`).
+    fn coerce_to_literal_type(&mut self, node: &Node<'static>, value: SwiftValue) -> Eval {
+        let Some(ty) = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeIdent)
+            .and_then(|c| c.text())
+        else {
+            return Ok(value);
+        };
+        // Conversion only applies to *literal syntax*, never to an arbitrary
+        // expression that happens to evaluate to a matching value kind.
+        let Some(init_kind) = node
+            .children()
+            .filter(|c| is_expr(c))
+            .last()
+            .map(|c| c.kind())
+        else {
+            return Ok(value);
+        };
+        let ty = ty.trim();
+        // An optional annotation (`T?`): a `nil` literal stays the absent
+        // optional rather than constructing `T(nilLiteral:)`.
+        let optional = ty.ends_with('?');
+        let ty = ty.trim_end_matches('?').trim();
+        let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
+        if !is_user_type {
+            return Ok(value);
+        }
+        // The literal protocol implied by the initializer's syntax, plus the
+        // positional argument(s) its initializer takes.
+        let (proto, args): (&str, Vec<SwiftValue>) = match init_kind {
+            NodeKind::ArrayLiteral => match &value {
+                SwiftValue::Array(items) => {
+                    ("ExpressibleByArrayLiteral", items.as_ref().clone())
+                }
+                _ => return Ok(value),
+            },
+            NodeKind::StringLiteral => ("ExpressibleByStringLiteral", vec![value.clone()]),
+            NodeKind::IntegerLiteral => ("ExpressibleByIntegerLiteral", vec![value.clone()]),
+            NodeKind::FloatLiteral => ("ExpressibleByFloatLiteral", vec![value.clone()]),
+            NodeKind::BoolLiteral => ("ExpressibleByBooleanLiteral", vec![value.clone()]),
+            NodeKind::NilLiteral if !optional => ("ExpressibleByNilLiteral", vec![SwiftValue::Void]),
+            _ => return Ok(value),
+        };
+        if !self.all_protocols(ty).iter().any(|p| p == proto) {
+            return Ok(value);
+        }
+        let call_args: Vec<(Option<String>, SwiftValue)> =
+            args.into_iter().map(|v| (None, v)).collect();
+        if self.structs.contains_key(ty) {
+            self.instantiate_struct(ty, &call_args)
+        } else {
+            let call_args = call_args
+                .into_iter()
+                .map(|(label, value)| CallArg {
+                    label,
+                    value,
+                    place: None,
+                })
+                .collect();
+            self.instantiate_class(ty, call_args)
+        }
     }
 
     /// Bind the names in a tuple pattern to the elements of a tuple value.
@@ -3246,7 +3314,7 @@ impl<'w> Interpreter<'w> {
                     place: None,
                 })
                 .collect();
-            self.env.push();
+            let saved_env = self.env.enter_isolated();
             self.env.declare("self", this, true);
             let bound = self.bind_params(&params, call_args);
             let result = match bound {
@@ -3257,7 +3325,7 @@ impl<'w> Interpreter<'w> {
                 Err(e) => Err(e),
             };
             let built = self.env.get("self").unwrap_or(SwiftValue::Void);
-            self.env.pop();
+            self.env.restore(saved_env);
             return match result {
                 // A failable initializer that runs `return nil` produces the
                 // absent optional rather than the half-built value.
