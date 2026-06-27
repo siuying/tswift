@@ -7723,8 +7723,7 @@ mod tests {
     fn conditional_compilation_expands_in_scopes() {
         // `#if` active branches expand at top level, in type bodies, in
         // function bodies, and in closure bodies.
-        let out = run(
-            "#if DEBUG
+        let out = run("#if DEBUG
 let tag = \"d\"
 struct Box { func v() -> String { \"box:\\(tag)\" } }
 #endif
@@ -7744,8 +7743,7 @@ let c = {
   #endif
 }
 c()
-",
-        )
+")
         .unwrap();
         assert_eq!(out, "d\nbox:d\n1\nclo\n");
     }
@@ -7753,14 +7751,12 @@ c()
     #[test]
     fn optional_binding_conditions_unwrap_and_match() {
         // Simple optional binding unwraps and binds; nil fails the branch.
-        let out = run(
-            "let a: Int? = 7
+        let out = run("let a: Int? = 7
 let b: Int? = nil
 if let x = a { print(\"a=\\(x)\") } else { print(\"a-none\") }
 if let _ = b { print(\"b-some\") } else { print(\"b-none\") }
 if let _ = a { print(\"a-some\") } else { print(\"a-none2\") }
-",
-        )
+")
         .unwrap();
         assert_eq!(out, "a=7\nb-none\na-some\n");
     }
@@ -7768,13 +7764,11 @@ if let _ = a { print(\"a-some\") } else { print(\"a-none2\") }
     #[test]
     fn case_condition_binds_associated_value() {
         // `if case` matches a refutable pattern and binds its payload.
-        let out = run(
-            "enum E { case a(Int), b }
+        let out = run("enum E { case a(Int), b }
 let e = E.a(42)
 if case .a(let n) = e { print(n) } else { print(\"no\") }
 if case .b = e { print(\"b\") } else { print(\"not-b\") }
-",
-        )
+")
         .unwrap();
         assert_eq!(out, "42\nnot-b\n");
     }

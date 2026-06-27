@@ -86,7 +86,6 @@ pub struct Node<'a> {
 }
 
 impl<'a> Node<'a> {
-
     /// The kind of syntax this node represents.
     pub fn kind(&self) -> NodeKind {
         self.inner.kind()
@@ -667,9 +666,9 @@ mod tests {
             .children()
             .find(|c| c.kind() == NodeKind::IfStmt)
             .unwrap();
-        assert!(if_stmt.children().any(|c| {
-            c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("v")
-        }));
+        assert!(if_stmt
+            .children()
+            .any(|c| { c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("v") }));
 
         let sw = root
             .children()
