@@ -6,6 +6,7 @@
 //! integer-width overflow/wrap semantics.
 
 mod env;
+pub mod grapheme;
 mod interp;
 mod json;
 mod ops;
@@ -16,6 +17,7 @@ pub mod suspend;
 mod value;
 
 pub use env::{BindError, Binding, Env};
+pub use grapheme::graphemes;
 pub use interp::{EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{

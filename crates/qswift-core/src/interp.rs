@@ -2692,9 +2692,12 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Str(s) => {
                 let i = subscript_index(indices)?;
-                s.chars()
+                // Index by extended grapheme cluster (Swift `Character`), so
+                // string indexing agrees with `count` and iteration.
+                crate::graphemes(s)
+                    .into_iter()
                     .nth(i)
-                    .map(|c| SwiftValue::Str(c.to_string()))
+                    .map(SwiftValue::Str)
                     .ok_or_else(|| trap(format!("string index {i} out of range")))
             }
             SwiftValue::Struct(obj) => {
@@ -3479,7 +3482,7 @@ impl<'w> Interpreter<'w> {
                 .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
                 .collect()),
             SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Str(s) => Ok(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+            SwiftValue::Str(s) => Ok(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
             }
@@ -4003,7 +4006,7 @@ impl<'w> Interpreter<'w> {
         }
         match (&value, member.as_str()) {
             // Array `count`/`isEmpty` are served by the property registry (S4).
-            (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(s.chars().count() as i128)),
+            (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(crate::graphemes(s).len() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
             (SwiftValue::Tuple(items, _), idx) if idx.parse::<usize>().is_ok() => {
                 let i: usize = idx.parse().unwrap();
@@ -5136,7 +5139,7 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             let end = if *inclusive { *hi + 1 } else { *hi };
             Some((*lo..end).map(SwiftValue::int).collect())
         }
-        SwiftValue::Str(s) => Some(s.chars().map(|c| SwiftValue::Str(c.to_string())).collect()),
+        SwiftValue::Str(s) => Some(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
         // A dictionary is a sequence of `(key, value)` tuples.
         SwiftValue::Dict(pairs) => Some(
             pairs
