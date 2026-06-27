@@ -135,7 +135,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Read-only computed properties | ✅ | ★ | R2 |
 | [x] | Property observers `willSet`/`didSet` | ✅ | ★★ | R3 |
 | [x] | `lazy` stored properties | ✅ | ★★ | R3 |
-| [~] | Type properties `static`/`class` | ✅ | ★★ | R2 |
+| [x] | Type properties `static`/`class` | ✅ | ★★ | R2 |
 | [x] | Property wrappers `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [x] | Projected values `$wrapper` | ⚠️ | ★★★ | R5 |
 | [ ] | Global & local variables (lazy globals) | ✅ | ★★ | R2 |
