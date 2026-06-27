@@ -639,7 +639,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::ExtensionDecl
             | NodeKind::OperatorDecl
             | NodeKind::PrecedenceGroupDecl
-            | NodeKind::TypealiasDecl
+            | NodeKind::TypeAliasDecl
             | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
@@ -683,9 +683,8 @@ impl<'w> Interpreter<'w> {
             NodeKind::VarDecl => self.eval_decl(node, true),
             NodeKind::CallExpr => self.eval_call(node),
             NodeKind::BinaryExpr => self.eval_binary(node),
-            NodeKind::UnaryExpr => self.eval_unary(node),
+            NodeKind::PrefixExpr => self.eval_unary(node),
             NodeKind::AssignExpr => self.eval_assign(node),
-            NodeKind::ParenExpr => self.eval_only_child(node),
             NodeKind::TernaryExpr => self.eval_ternary(node),
             NodeKind::MemberExpr => self.eval_member(node),
             NodeKind::KeyPathExpr => self.eval_keypath(node),
@@ -696,9 +695,8 @@ impl<'w> Interpreter<'w> {
             NodeKind::StringLiteral => self.eval_string_literal(node),
             NodeKind::RegexLiteral => self.eval_regex_literal(node),
             NodeKind::NilLiteral => Ok(SwiftValue::Nil),
-            NodeKind::MacroExpansion => self.eval_macro(node),
-            NodeKind::ForceUnwrap => self.eval_force_unwrap(node),
-            NodeKind::OptionalChain => self.eval_only_child(node),
+            NodeKind::CompilerDirective => self.eval_macro(node),
+            NodeKind::PostfixExpr => self.eval_force_unwrap(node),
             NodeKind::SubscriptExpr => self.eval_subscript(node),
             NodeKind::ArrayLiteral => self.eval_array_literal(node),
             NodeKind::DictLiteral => self.eval_dict_literal(node),
@@ -816,7 +814,7 @@ impl<'w> Interpreter<'w> {
     /// references resolve.
     fn hoist(&mut self, node: &Node<'static>) {
         // First pass: type and protocol declarations.
-        for child in node.children() {
+        for child in expand_directives(node) {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
                 NodeKind::StructDecl => {
@@ -835,12 +833,12 @@ impl<'w> Interpreter<'w> {
                     self.register_nested_types(&child);
                 }
                 NodeKind::ProtocolDecl => self.register_protocol(&child),
-                NodeKind::TypealiasDecl => self.register_typealias(&child),
+                NodeKind::TypeAliasDecl => self.register_typealias(&child),
                 _ => {}
             }
         }
         // Second pass: extensions (they add to already-registered types).
-        for child in node.children() {
+        for child in expand_directives(node) {
             if child.kind() == NodeKind::ExtensionDecl {
                 self.register_extension(&child);
             }
@@ -850,10 +848,11 @@ impl<'w> Interpreter<'w> {
     /// Register type declarations nested inside a type body so they resolve by
     /// their simple name (e.g. `B` referenced inside `A`, or `A.B` qualified).
     fn register_nested_types(&mut self, node: &Node<'static>) {
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
-        for member in body.children() {
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::StructDecl => {
                     self.register_struct(&member);
@@ -878,7 +877,7 @@ impl<'w> Interpreter<'w> {
         let Some(name) = node.text() else { return };
         let Some(rhs) = node
             .children()
-            .find(|c| c.kind() == NodeKind::TypeIdent)
+            .find(|c| c.kind() == NodeKind::TypeRef)
             .and_then(|c| c.text())
         else {
             return;
@@ -896,11 +895,12 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-    /// Record the protocols a type conforms to from its `Conformance` children.
+    /// Record the protocols a type conforms to from its inherited-type
+    /// (`TypeRef`) children.
     fn record_conformances(&mut self, type_name: &str, node: &Node<'static>) {
         let conf: Vec<String> = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeRef)
             .filter_map(|c| c.text())
             .collect();
         if !conf.is_empty() {
@@ -916,7 +916,7 @@ impl<'w> Interpreter<'w> {
         let Some(name) = node.text() else { return };
         let inherited: Vec<String> = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeRef)
             .filter_map(|c| c.text())
             .collect();
         self.protocols.entry(name).or_insert_with(|| ProtoDef {
@@ -932,12 +932,13 @@ impl<'w> Interpreter<'w> {
     fn register_extension(&mut self, node: &Node<'static>) {
         let Some(target) = node.text() else { return };
         self.record_conformances(&target, node);
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut methods = std::collections::HashMap::new();
         let mut computed = std::collections::HashMap::new();
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
@@ -1151,13 +1152,14 @@ impl<'w> Interpreter<'w> {
             return;
         }
         self.record_conformances(&name, node);
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
-        // Determine the raw-value backing type from the conformance list.
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        // Determine the raw-value backing type from the inherited-type list.
         let raw_kind = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeRef)
             .find_map(|c| match c.text().as_deref() {
                 Some("String") => Some(RawKind::Str),
                 Some(t) if IntWidth::from_type_name(t).is_some() => Some(RawKind::Int),
@@ -1167,49 +1169,43 @@ impl<'w> Interpreter<'w> {
         let mut cases = Vec::new();
         let mut methods = std::collections::HashMap::new();
         let mut computed = std::collections::HashMap::new();
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
+                // Each `case` element is a flat `EnumCaseDecl(name)`: its
+                // expression child (if any) is the raw value (`case c = 1`);
+                // its `TypeIdent` children are associated-value types.
                 NodeKind::EnumCaseDecl => {
-                    for element in member.children() {
-                        if element.kind() != NodeKind::EnumElementDecl {
-                            continue;
+                    let Some(cname) = member.text() else {
+                        continue;
+                    };
+                    let explicit = member
+                        .children()
+                        .find(|ec| is_expr(ec))
+                        .and_then(|n| self.eval(&n).ok());
+                    let raw = match raw_kind {
+                        Some(RawKind::Int) => {
+                            let v = match &explicit {
+                                Some(SwiftValue::Int(i)) => i.raw,
+                                _ => next_int,
+                            };
+                            next_int = v + 1;
+                            Some(SwiftValue::int(v))
                         }
-                        let Some(cname) = element.text() else {
-                            continue;
-                        };
-                        let explicit = element
-                            .children()
-                            .find(|ec| ec.kind() != NodeKind::Param)
-                            .and_then(|n| self.eval(&n).ok());
-                        let raw = match raw_kind {
-                            Some(RawKind::Int) => {
-                                let v = match &explicit {
-                                    Some(SwiftValue::Int(i)) => i.raw,
-                                    _ => next_int,
-                                };
-                                next_int = v + 1;
-                                Some(SwiftValue::int(v))
-                            }
-                            Some(RawKind::Str) => {
-                                Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
-                            }
-                            None => explicit,
-                        };
-                        let payload_types: Vec<Option<String>> = element
-                            .children()
-                            .filter(|ec| ec.kind() == NodeKind::Param)
-                            .map(|p| {
-                                p.children()
-                                    .find(|c| c.kind() == NodeKind::TypeIdent)
-                                    .and_then(|c| c.text())
-                            })
-                            .collect();
-                        cases.push(EnumCaseDef {
-                            name: cname,
-                            raw,
-                            payload_types,
-                        });
-                    }
+                        Some(RawKind::Str) => {
+                            Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
+                        }
+                        None => explicit,
+                    };
+                    let payload_types: Vec<Option<String>> = member
+                        .children()
+                        .filter(|ec| ec.kind() == NodeKind::TypeRef)
+                        .map(|c| c.text())
+                        .collect();
+                    cases.push(EnumCaseDef {
+                        name: cname,
+                        raw,
+                        payload_types,
+                    });
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
@@ -1263,11 +1259,12 @@ impl<'w> Interpreter<'w> {
         self.record_conformances(&name, node);
         let superclass = node
             .children()
-            .find(|c| c.kind() == NodeKind::Conformance)
+            .find(|c| c.kind() == NodeKind::TypeRef)
             .and_then(|c| c.text());
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut stored = Vec::new();
         let mut weak_fields = Vec::new();
         let mut computed = std::collections::HashMap::new();
@@ -1278,7 +1275,7 @@ impl<'w> Interpreter<'w> {
         let mut static_subscript = None;
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
@@ -1425,9 +1422,10 @@ impl<'w> Interpreter<'w> {
         let dynamic_callable = node.children().any(|c| {
             c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicCallable")
         });
-        let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
-            return;
-        };
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
         let mut stored = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
@@ -1440,7 +1438,7 @@ impl<'w> Interpreter<'w> {
         let mut init_overloads = Vec::new();
         let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
 
-        for member in body.children() {
+        for member in expand_directives(body) {
             match member.kind() {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
@@ -1601,19 +1599,10 @@ impl<'w> Interpreter<'w> {
     /// Evaluate each child in order, yielding the last value.
     fn eval_seq(&mut self, node: &Node<'static>) -> Eval {
         let mut last = SwiftValue::Void;
-        for child in node.children() {
+        for child in expand_directives(node) {
             last = self.eval(&child)?;
         }
         Ok(last)
-    }
-
-    /// Evaluate the single meaningful child of a wrapper node (e.g. paren).
-    fn eval_only_child(&mut self, node: &Node<'static>) -> Eval {
-        let child = node
-            .children()
-            .next()
-            .ok_or_else(|| EvalError::Unsupported("empty wrapper node".into()))?;
-        self.eval(&child)
     }
 
     /// Register a function declaration as a first-class value in the current
@@ -1630,7 +1619,7 @@ impl<'w> Interpreter<'w> {
         let body = node.children().find(|c| c.kind() == NodeKind::Block);
         let ret_tuple_labels = node
             .children()
-            .find(|c| matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeTuple))
+            .find(|c| c.kind() == NodeKind::TypeRef)
             .and_then(|t| t.text())
             .and_then(|t| tuple_type_labels(&t));
         let captured = self.env.capture();
@@ -1657,7 +1646,7 @@ impl<'w> Interpreter<'w> {
         let init_expr = children.iter().rev().find(|c| is_expr(c)).copied();
 
         // Tuple-pattern binding: `let (a, b) = expr`.
-        if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::PatternTuple) {
+        if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::TuplePattern) {
             let init = init_expr.ok_or_else(|| {
                 EvalError::Unsupported("tuple binding without initializer".into())
             })?;
@@ -1699,7 +1688,7 @@ impl<'w> Interpreter<'w> {
     fn coerce_to_literal_type(&mut self, node: &Node<'static>, value: SwiftValue) -> Eval {
         let Some(ty) = node
             .children()
-            .find(|c| c.kind() == NodeKind::TypeIdent)
+            .find(|c| c.kind() == NodeKind::TypeRef)
             .and_then(|c| c.text())
         else {
             return Ok(value);
@@ -1826,8 +1815,8 @@ impl<'w> Interpreter<'w> {
         let elems: Vec<Node<'static>> = pattern.children().collect();
         for (sub, item) in elems.iter().zip(items.iter()) {
             match sub.kind() {
-                NodeKind::PatternWildcard => {}
-                NodeKind::PatternTuple => self.bind_tuple_pattern(sub, item, mutable)?,
+                NodeKind::WildcardPattern => {}
+                NodeKind::TuplePattern => self.bind_tuple_pattern(sub, item, mutable)?,
                 _ => {
                     if let Some(name) = sub.text() {
                         if name != "_" {
@@ -1847,7 +1836,7 @@ impl<'w> Interpreter<'w> {
         // A `Set<…>`-annotated array literal becomes a deduplicated set.
         if let SwiftValue::Array(items) = &value {
             for child in node.children() {
-                if child.kind() == NodeKind::TypeIdent
+                if child.kind() == NodeKind::TypeRef
                     && child
                         .text()
                         .as_deref()
@@ -1864,7 +1853,7 @@ impl<'w> Interpreter<'w> {
             return value;
         };
         for child in node.children() {
-            if child.kind() == NodeKind::TypeIdent {
+            if child.kind() == NodeKind::TypeRef {
                 let ty = child.text();
                 // An integer literal in a `Double`/`Float` context coerces to
                 // floating point (`let r: Double = 5`).
@@ -2548,7 +2537,7 @@ impl<'w> Interpreter<'w> {
                         captured_overrides.push((name, v));
                     }
                 }
-                NodeKind::TypeIdent | NodeKind::TypeOptional => {}
+                NodeKind::TypeRef => {}
                 _ => body.push(child),
             }
         }
@@ -2556,12 +2545,16 @@ impl<'w> Interpreter<'w> {
         if body.is_empty() {
             if let Some(p) = last_param {
                 for c in p.children() {
-                    if !matches!(c.kind(), NodeKind::TypeIdent | NodeKind::TypeOptional) {
+                    if c.kind() != NodeKind::TypeRef {
                         body.push(c);
                     }
                 }
             }
         }
+
+        // A closure body is collected here rather than executed through
+        // `eval_block`, so expand any `#if` wrappers in it now.
+        let body = expand_directive_list(body);
 
         let mut captured = self.env.capture();
         if !captured_overrides.is_empty() {
@@ -4155,45 +4148,69 @@ impl<'w> Interpreter<'w> {
     fn eval_cond_list(&mut self, conds: &[Node<'static>]) -> Result<bool, Signal> {
         for cond in conds {
             match cond.kind() {
-                NodeKind::OptionalBinding => {
-                    let name = cond
-                        .text()
-                        .ok_or_else(|| EvalError::Unsupported("binding without a name".into()))?;
-                    let value = match cond.children().next() {
-                        Some(init) => self.eval(&init)?,
-                        None => self
-                            .env
-                            .get(&name)
-                            .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?,
-                    };
-                    if matches!(value, SwiftValue::Nil) {
-                        return Ok(false);
-                    }
-                    self.env.declare(&name, value, false);
-                }
-                // `if case <pattern> = <expr>` (and the `guard`/`while` forms):
-                // evaluate the subject, match the pattern, and bind on success.
-                NodeKind::CaseCondition => {
-                    let mut kids = cond.children();
-                    let pattern = kids.next().ok_or_else(|| {
-                        EvalError::Unsupported("case condition without a pattern".into())
+                // A `let`/`var` binding condition. The binding pattern is the
+                // first child; an optional type annotation and the
+                // initializer/subject follow.
+                //
+                // - simple optional binding (`if let x = e`, `if let x`): a
+                //   `NamePattern` pattern — unwrap the optional (fail on
+                //   nil) and bind the name.
+                // - refutable match (`if case .a(let v) = e`): any other
+                //   pattern — match it against the subject and bind on success.
+                NodeKind::LetDecl | NodeKind::VarDecl => {
+                    let pattern = cond.children().next().ok_or_else(|| {
+                        EvalError::Unsupported("condition binding without a pattern".into())
                     })?;
-                    let subject = match kids.next() {
-                        Some(expr) => self.eval(&expr)?,
-                        None => {
-                            return Err(EvalError::Unsupported(
-                                "case condition without a subject".into(),
-                            )
-                            .into())
-                        }
-                    };
-                    match self.match_pattern(&pattern, &subject)? {
-                        Some(binds) => {
-                            for (name, value) in binds {
-                                self.env.declare(&name, value, false);
+                    // The subject/initializer follows the pattern (and any type
+                    // annotation). Search *past* the first child so a value
+                    // pattern (`if case 1 = x`) is never mistaken for the subject.
+                    let init = cond.children().skip(1).find(|c| is_expr(c));
+                    match pattern.kind() {
+                        // Simple optional binding: `if let x = e`, `if let x`
+                        // (shorthand), `if let _ = e`. Unwrap the optional
+                        // (fail on nil); a value binding binds its name, a
+                        // wildcard binds nothing.
+                        NodeKind::NamePattern | NodeKind::WildcardPattern => {
+                            let value = match init {
+                                Some(expr) => self.eval(&expr)?,
+                                None => {
+                                    let name = pattern.text().ok_or_else(|| {
+                                        EvalError::Unsupported("binding without a name".into())
+                                    })?;
+                                    self.env
+                                        .get(&name)
+                                        .ok_or_else(|| EvalError::UnknownVariable(name))?
+                                }
+                            };
+                            if matches!(value, SwiftValue::Nil) {
+                                return Ok(false);
+                            }
+                            if pattern.kind() == NodeKind::NamePattern {
+                                if let Some(name) = pattern.text() {
+                                    self.env.declare(&name, value, false);
+                                }
                             }
                         }
-                        None => return Ok(false),
+                        // Refutable match: `if case .a(let v) = e`.
+                        _ => {
+                            let subject = match init {
+                                Some(expr) => self.eval(&expr)?,
+                                None => {
+                                    return Err(EvalError::Unsupported(
+                                        "case condition without a subject".into(),
+                                    )
+                                    .into())
+                                }
+                            };
+                            match self.match_pattern(&pattern, &subject)? {
+                                Some(binds) => {
+                                    for (name, value) in binds {
+                                        self.env.declare(&name, value, false);
+                                    }
+                                }
+                                None => return Ok(false),
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -4265,19 +4282,13 @@ impl<'w> Interpreter<'w> {
 
     /// `for v in seq [where cond] { … }` over an integer range or array.
     fn eval_for(&mut self, node: &Node<'static>) -> Eval {
-        let mut var_name = node.text();
-        // `for await r in seq`: msf anchors the node on the `await` keyword, so
-        // the binding name is the next token (ADR-0005).
-        let is_for_await = var_name.as_deref() == Some("await");
-        if is_for_await {
-            var_name = Some(
-                node.token_text_offset(1)
-                    .ok_or_else(|| EvalError::Unsupported("for-await without a binding".into()))?,
-            );
-        }
-        // `for case <pattern> in seq`: a refutable pattern child filters and
-        // destructures each element (the simple binding lowered into the node's
-        // text instead). The pattern is the first pattern-kind child.
+        // `for await r in seq`: the loop carries the `async` effect modifier.
+        let is_for_await = node.is_async();
+        // The binding is the first pattern child, before the iterable. A simple
+        // `for x in` / `for _ in` yields a name/wildcard binding read directly
+        // into `var_name`; a refutable `for case <pattern> in` keeps the pattern
+        // child so it can filter and destructure each element.
+        let mut var_name = None;
         let mut pattern = None;
         let mut iterable = None;
         let mut where_clause = None;
@@ -4286,7 +4297,21 @@ impl<'w> Interpreter<'w> {
             match child.kind() {
                 NodeKind::Param => {}
                 NodeKind::Block => body = Some(child),
-                k if is_pattern_node(k) && pattern.is_none() && iterable.is_none() => {
+                NodeKind::NamePattern
+                    if var_name.is_none() && pattern.is_none() && iterable.is_none() =>
+                {
+                    var_name = Some(child.text().unwrap_or_else(|| "_".to_string()));
+                }
+                NodeKind::WildcardPattern
+                    if var_name.is_none() && pattern.is_none() && iterable.is_none() =>
+                {
+                    var_name = Some("_".to_string());
+                }
+                k if is_pattern_node(k)
+                    && pattern.is_none()
+                    && var_name.is_none()
+                    && iterable.is_none() =>
+                {
                     pattern = Some(child);
                 }
                 _ => {
@@ -4793,12 +4818,12 @@ impl<'w> Interpreter<'w> {
         subject: &SwiftValue,
     ) -> Result<Option<Vec<(String, SwiftValue)>>, Signal> {
         match pattern.kind() {
-            NodeKind::PatternWildcard => Ok(Some(Vec::new())),
-            NodeKind::PatternValueBinding => {
+            NodeKind::WildcardPattern => Ok(Some(Vec::new())),
+            NodeKind::NamePattern => {
                 let name = pattern.text().unwrap_or_default();
                 Ok(Some(vec![(name, subject.clone())]))
             }
-            NodeKind::PatternRange => {
+            NodeKind::RangePattern => {
                 let bounds: Vec<Node<'static>> = pattern.children().collect();
                 let marker = pattern.text();
                 // One-sided range patterns carry a single bound tagged by
@@ -4835,13 +4860,13 @@ impl<'w> Interpreter<'w> {
                 }
                 Ok(None)
             }
-            NodeKind::PatternEnum => {
+            NodeKind::EnumCasePattern => {
                 let case_name = pattern.op_text().unwrap_or_default();
                 // The leading `TypeIdent` (e.g. the `E` in `E.bad`) is not a
                 // sub-pattern; only payload bindings are.
                 let subs: Vec<Node<'static>> = pattern
                     .children()
-                    .filter(|c| c.kind() != NodeKind::TypeIdent)
+                    .filter(|c| c.kind() != NodeKind::TypeRef)
                     .collect();
                 // Optional patterns desugar to `.some`/`.none`.
                 if case_name == "some" {
@@ -4892,7 +4917,7 @@ impl<'w> Interpreter<'w> {
                     Ok(None)
                 }
             }
-            NodeKind::PatternTuple => {
+            NodeKind::TuplePattern => {
                 let SwiftValue::Tuple(items, _) = subject else {
                     return Ok(None);
                 };
@@ -5256,7 +5281,7 @@ impl<'w> Interpreter<'w> {
                     if type_name == "MemoryLayout" {
                         if let Some(ty) = base
                             .children()
-                            .find(|c| c.kind() == NodeKind::TypeIdent)
+                            .find(|c| c.kind() == NodeKind::TypeRef)
                             .and_then(|c| c.text())
                         {
                             return self.memory_layout_member(&ty, &member);
@@ -6711,7 +6736,7 @@ impl<'w> Interpreter<'w> {
                 self.assign_destructured(&nested, value)
             }
             // `_` discards its element.
-            NodeKind::PatternWildcard => Ok(()),
+            NodeKind::WildcardPattern => Ok(()),
             NodeKind::IdentExpr if target.text().as_deref() == Some("_") => Ok(()),
             NodeKind::MemberExpr => {
                 // A class-instance member mutates in place (reference semantics).
@@ -6769,7 +6794,6 @@ impl<'w> Interpreter<'w> {
                     path: Vec::new(),
                 })
             }
-            NodeKind::ParenExpr => node.children().next().and_then(|c| self.resolve_place(&c)),
             NodeKind::MemberExpr => {
                 let member = node.text()?;
                 let base = node.children().next()?;
@@ -7101,7 +7125,7 @@ fn array_element_type(name: &str) -> Option<&str> {
 fn field_type_name(member: &Node<'static>) -> Option<String> {
     member
         .children()
-        .find(|c| c.kind() == NodeKind::TypeIdent)
+        .find(|c| c.kind() == NodeKind::TypeRef)
         .and_then(|c| c.text())
 }
 
@@ -7318,7 +7342,7 @@ fn parse_params(node: &Node<'static>) -> Vec<Param> {
             let default = child.children().find(is_value_node);
             let ty = child
                 .children()
-                .find(|c| c.kind() == NodeKind::TypeIdent)
+                .find(|c| c.kind() == NodeKind::TypeRef)
                 .and_then(|c| c.text());
             params.push(Param {
                 label: info.label,
@@ -7389,11 +7413,11 @@ fn autoclosure_flags(params: &[Param], args: &[Node<'static>]) -> Vec<bool> {
 fn is_pattern_node(kind: NodeKind) -> bool {
     matches!(
         kind,
-        NodeKind::PatternEnum
-            | NodeKind::PatternTuple
-            | NodeKind::PatternRange
-            | NodeKind::PatternWildcard
-            | NodeKind::PatternValueBinding
+        NodeKind::EnumCasePattern
+            | NodeKind::TuplePattern
+            | NodeKind::RangePattern
+            | NodeKind::WildcardPattern
+            | NodeKind::NamePattern
     )
 }
 
@@ -7406,7 +7430,7 @@ enum LoopFlow {
 /// Whether a node is an expression (vs. a type annotation or other non-value
 /// child appearing under a declaration).
 fn is_expr(node: &Node) -> bool {
-    is_value_node(node) && node.kind() != NodeKind::PatternTuple
+    is_value_node(node)
 }
 
 /// The literal syntax kind represented by `node`, including Swift's treatment
@@ -7420,7 +7444,7 @@ fn literal_syntax_kind(node: &Node) -> Option<NodeKind> {
         | NodeKind::FloatLiteral
         | NodeKind::BoolLiteral
         | NodeKind::NilLiteral => Some(node.kind()),
-        NodeKind::UnaryExpr if node.op_text().as_deref() == Some("-") => {
+        NodeKind::PrefixExpr if node.op_text().as_deref() == Some("-") => {
             node.children().next().and_then(|child| match child.kind() {
                 NodeKind::IntegerLiteral | NodeKind::FloatLiteral => Some(child.kind()),
                 _ => None,
@@ -7458,16 +7482,13 @@ fn dedup_preserving_order(items: Vec<SwiftValue>) -> Vec<SwiftValue> {
 /// Whether a node is a value expression (not a type annotation, accessor, or
 /// pattern node that can appear as a declaration child).
 fn is_value_node(node: &Node) -> bool {
-    !matches!(
-        node.kind(),
-        NodeKind::TypeIdent
-            | NodeKind::TypeOptional
-            | NodeKind::TypeInout
-            | NodeKind::AccessorDecl
-            | NodeKind::Conformance
-            | NodeKind::TypeFunc
-            | NodeKind::Attribute
-    )
+    // Binding patterns (`let x`, `let (a, b)`, …) sit as children of a
+    // declaration alongside its value; they are never the value themselves.
+    !is_pattern_node(node.kind())
+        && !matches!(
+            node.kind(),
+            NodeKind::TypeRef | NodeKind::Accessor | NodeKind::Attribute
+        )
 }
 
 /// Whether a node kind is a statement (as opposed to a `switch` pattern).
@@ -7492,6 +7513,41 @@ fn is_statement_kind(kind: NodeKind) -> bool {
     )
 }
 
+/// Expand `#if` conditional-compilation wrappers inline so the active branch's
+/// statements, declarations, and members belong to the enclosing scope. The
+/// parser already selected the active branch; this only flattens the
+/// `CompilerDirective("if")` wrapper (recursively, for nested `#if`). Other
+/// directives (`#warning`, `#line`, …) are left untouched.
+fn expand_directives(node: &Node<'static>) -> Vec<Node<'static>> {
+    let mut out = Vec::new();
+    for child in node.children() {
+        push_active_branch(child, &mut out);
+    }
+    out
+}
+
+/// Like [`expand_directives`], but over an already-collected list of nodes
+/// (e.g. a closure body whose statements were gathered before execution).
+fn expand_directive_list(nodes: Vec<Node<'static>>) -> Vec<Node<'static>> {
+    let mut out = Vec::new();
+    for node in nodes {
+        push_active_branch(node, &mut out);
+    }
+    out
+}
+
+/// Push `node` into `out`, flattening a `MacroExpansion("if")` wrapper into its
+/// active-branch children (recursively, for nested `#if`).
+fn push_active_branch(node: Node<'static>, out: &mut Vec<Node<'static>>) {
+    if node.kind() == NodeKind::CompilerDirective && node.text().as_deref() == Some("if") {
+        for child in node.children() {
+            push_active_branch(child, out);
+        }
+    } else {
+        out.push(node);
+    }
+}
+
 /// Split a `case` clause into (patterns, body-statements). Patterns are the
 /// leading non-statement children; the body is everything from the first
 /// statement onward.
@@ -7500,6 +7556,11 @@ fn case_parts(case: &Node<'static>) -> (Vec<Node<'static>>, Vec<Node<'static>>) 
     let mut body = Vec::new();
     let mut in_body = false;
     for child in case.children() {
+        // The `where` guard is read separately via `case_info()`, not matched
+        // as a pattern.
+        if child.kind() == NodeKind::WhereClause {
+            continue;
+        }
         if !in_body && is_statement_kind(child.kind()) {
             in_body = true;
         }
@@ -7656,6 +7717,60 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn conditional_compilation_expands_in_scopes() {
+        // `#if` active branches expand at top level, in type bodies, in
+        // function bodies, and in closure bodies.
+        let out = run("#if DEBUG
+let tag = \"d\"
+struct Box { func v() -> String { \"box:\\(tag)\" } }
+#endif
+print(tag)
+print(Box().v())
+func f() -> Int {
+  #if DEBUG
+  return 1
+  #else
+  return 2
+  #endif
+}
+print(f())
+let c = {
+  #if DEBUG
+  print(\"clo\")
+  #endif
+}
+c()
+")
+        .unwrap();
+        assert_eq!(out, "d\nbox:d\n1\nclo\n");
+    }
+
+    #[test]
+    fn optional_binding_conditions_unwrap_and_match() {
+        // Simple optional binding unwraps and binds; nil fails the branch.
+        let out = run("let a: Int? = 7
+let b: Int? = nil
+if let x = a { print(\"a=\\(x)\") } else { print(\"a-none\") }
+if let _ = b { print(\"b-some\") } else { print(\"b-none\") }
+if let _ = a { print(\"a-some\") } else { print(\"a-none2\") }
+")
+        .unwrap();
+        assert_eq!(out, "a=7\nb-none\na-some\n");
+    }
+
+    #[test]
+    fn case_condition_binds_associated_value() {
+        // `if case` matches a refutable pattern and binds its payload.
+        let out = run("enum E { case a(Int), b }
+let e = E.a(42)
+if case .a(let n) = e { print(n) } else { print(\"no\") }
+if case .b = e { print(\"b\") } else { print(\"not-b\") }
+")
+        .unwrap();
+        assert_eq!(out, "42\nnot-b\n");
     }
 
     #[test]

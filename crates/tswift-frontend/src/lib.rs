@@ -2,24 +2,27 @@
 //!
 //! This crate is the **only** runtime-facing seam onto the Swift frontend. It
 //! drives the pure-Rust pipeline (`tswift-lexer` → `tswift-parser` → `tswift-sema`)
-//! and lowers the result, through the compatibility lowerer in [`compat`], into
-//! the stable runtime-facing AST contract the runtime (`tswift-core` /
-//! `-std`) consumes: [`Analysis`], [`Node`], and [`NodeKind`].
+//! and exposes its result — the `tswift_ast` parse AST — directly as the stable
+//! runtime-facing contract the runtime (`tswift-core` / `-std`) consumes:
+//! [`Analysis`], [`Node`], and [`NodeKind`] (which is `tswift_ast::NodeKind`).
 //!
-//! There is no C dependency and no `unsafe`: the AST lives in an owned arena
-//! ([`compat::RuntimeAst`]); a [`Node`] is a cheap cursor borrowing the
-//! [`Analysis`] so it can never dangle.
+//! There is no C dependency and no `unsafe`: [`Analysis`] owns the parse AST,
+//! and a [`Node`] is a cheap cursor over it (decoding modifier/literal payloads
+//! on the fly) so it can never dangle.
 
 #![forbid(unsafe_code)]
 
-mod compat;
-mod kind;
-pub use kind::NodeKind;
+mod decode;
 
-/// An owned Swift analysis result: the typed, runtime-facing AST plus
-/// diagnostics for one Swift source file.
+/// The syntactic category of a [`Node`]. Re-exported from `tswift_ast`: the
+/// frontend and the parse AST now share one node vocabulary.
+pub use tswift_ast::NodeKind;
+
+/// An owned Swift analysis result: the parse AST (parsed and type-resolved)
+/// plus diagnostics for one Swift source file.
 pub struct Analysis {
-    rust: compat::RuntimeAst,
+    ast: tswift_ast::Ast,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Analysis {
@@ -31,121 +34,159 @@ impl Analysis {
         if source.as_bytes().contains(&0) || filename.as_bytes().contains(&0) {
             return Err(AnalyzeError::InteriorNul);
         }
-        Ok(Analysis {
-            rust: compat::RuntimeAst::analyze(source),
-        })
+        let (ast, diagnostics) = match tswift_parser::parse(source) {
+            Ok(mut ast) => {
+                let diagnostics = tswift_sema::analyze(&mut ast)
+                    .into_iter()
+                    .map(|d| Diagnostic {
+                        message: d.message,
+                        line: d.line,
+                        col: d.col,
+                    })
+                    .collect();
+                (ast, diagnostics)
+            }
+            // A parse error leaves an empty `source_file` root carrying the
+            // single syntax diagnostic.
+            Err(e) => (
+                tswift_ast::Ast::new(),
+                vec![Diagnostic {
+                    message: e.message,
+                    line: e.line,
+                    col: e.col,
+                }],
+            ),
+        };
+        Ok(Analysis { ast, diagnostics })
     }
 
     /// The root `source_file` node of the AST.
     pub fn root(&self) -> Node<'_> {
         Node {
-            rust: self.rust.root(),
-            analysis: self,
+            inner: self.ast.node(self.ast.root()),
         }
     }
 
     /// Semantic/syntactic errors produced during analysis, in source order.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        self.rust.diagnostics()
+        self.diagnostics.clone()
     }
 
     /// Returns `true` if analysis produced no errors.
     pub fn is_ok(&self) -> bool {
-        self.rust.is_ok()
+        self.diagnostics.is_empty()
     }
 }
 
-/// A borrowed view of one AST node. Tied to its [`Analysis`] by lifetime `'a`,
-/// so it can never outlive the arena that backs it.
+/// A borrowed cursor over one parse-AST node. Tied to its [`Analysis`] by
+/// lifetime `'a`, so it can never outlive the arena that backs it.
 #[derive(Clone, Copy)]
 pub struct Node<'a> {
-    rust: compat::NodeId,
-    analysis: &'a Analysis,
+    inner: tswift_ast::Node<'a>,
 }
 
 impl<'a> Node<'a> {
-    fn cursor(&self, id: compat::NodeId) -> Node<'a> {
-        Node {
-            rust: id,
-            analysis: self.analysis,
-        }
-    }
-
     /// The kind of syntax this node represents.
     pub fn kind(&self) -> NodeKind {
-        self.analysis.rust.kind(self.rust)
+        self.inner.kind()
     }
 
     /// Iterator over this node's direct children, in source order.
     pub fn children(&self) -> Children<'a> {
         Children {
-            inner: self.analysis.rust.children(self.rust),
-            analysis: self.analysis,
+            inner: self.inner.children().collect::<Vec<_>>().into_iter(),
         }
     }
 
     /// The source text of this node's primary token (identifier name, literal
-    /// text, operator), if any.
+    /// text, operator), if any. A `#`-directive (`#line`, `#warning`, `#if`)
+    /// drops its leading `#` to match the runtime's `eval_macro` keys.
     pub fn text(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        match self.inner.kind() {
+            // A `for` loop's text is its statement label, exposed via
+            // `loop_label()`; `text()` stays `None` (its binding is a child).
+            NodeKind::ForStmt => None,
+            NodeKind::CompilerDirective => self
+                .inner
+                .text()
+                .map(|t| t.trim_start_matches('#').to_string()),
+            _ => self.inner.text().map(ToOwned::to_owned),
+        }
     }
 
-    /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`/`PatternEnum`, the
+    /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`/`EnumCasePattern`, the
     /// operator's (or case's) text.
     pub fn op_text(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        self.text()
     }
 
     /// For a declaration node (var/let/func/param), its name.
     pub fn decl_name(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        // `let`/`var` carry their name in a binding-pattern child; every other
+        // declaration (func/struct/enum/…) carries it as the node's own text.
+        for child in self.children() {
+            match child.kind() {
+                NodeKind::NamePattern => return child.text(),
+                NodeKind::WildcardPattern => return Some("_".to_string()),
+                _ => {}
+            }
+        }
+        self.text()
     }
 
     /// The integer value of an `IntegerLiteral` node, else `None`.
     pub fn int(&self) -> Option<i64> {
-        self.analysis.rust.int(self.rust)
+        if self.inner.kind() != NodeKind::IntegerLiteral {
+            return None;
+        }
+        decode::parse_int_literal(self.inner.text()?)
     }
 
     /// The value of a `BoolLiteral` node, else `None`.
     pub fn bool(&self) -> Option<bool> {
-        self.analysis.rust.bool(self.rust)
+        if self.inner.kind() != NodeKind::BoolLiteral {
+            return None;
+        }
+        match self.inner.text()? {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
     }
 
     /// The value of a `FloatLiteral` node, else `None`.
     pub fn float(&self) -> Option<f64> {
-        self.analysis.rust.float(self.rust)
+        if self.inner.kind() != NodeKind::FloatLiteral {
+            return None;
+        }
+        decode::parse_float_literal(self.inner.text()?)
     }
 
     /// The 1-based source line of this node's first token.
     pub fn line(&self) -> u32 {
-        self.analysis.rust.line(self.rust)
+        self.inner.line()
     }
 
     /// The resolved type name of this node (e.g. `Int`, `String`), if any.
     pub fn type_name(&self) -> Option<String> {
-        self.analysis.rust.type_name(self.rust)
+        self.inner.type_name().map(ToOwned::to_owned)
     }
 
-    /// The source text at `offset` tokens past this node's anchor. The Rust
-    /// backend only models `offset == 1`: the `for await` loop binding, which
-    /// sits one token past the `await` sentinel (ADR-0005).
-    pub fn token_text_offset(&self, offset: u32) -> Option<String> {
-        if offset == 1 {
-            self.analysis.rust.for_await_binding(self.rust)
-        } else {
-            None
-        }
+    /// Whether this node carries the `async` effect modifier — `async let`
+    /// on a binding, or `for await` on a loop.
+    pub fn is_async(&self) -> bool {
+        const MOD_ASYNC: u32 = 1 << 13;
+        self.modifiers() & MOD_ASYNC != 0
     }
 
     /// For a `LetDecl`/`VarDecl`, whether it was written `async let`.
     pub fn is_async_let(&self) -> bool {
-        const MOD_ASYNC: u32 = 1 << 13;
-        self.analysis.rust.modifiers(self.rust) & MOD_ASYNC != 0
+        self.is_async()
     }
 
     /// For a `break`/`continue` statement, its target loop label, if any.
     pub fn jump_label(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        self.text()
     }
 
     /// For a `var`/`let` property, the ownership keyword (`weak`/`unowned`).
@@ -160,36 +201,59 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// For a `for`/`while`/`repeat` loop, its statement label, if any.
+    /// For a `for`/`while`/`repeat` loop, its statement label (`outer:`), if
+    /// any — carried as the loop node's own text.
     pub fn loop_label(&self) -> Option<String> {
-        self.analysis.rust.loop_label(self.rust)
+        match self.inner.kind() {
+            NodeKind::ForStmt | NodeKind::WhileStmt | NodeKind::RepeatStmt => {
+                self.inner.text().map(ToOwned::to_owned)
+            }
+            _ => None,
+        }
     }
 
-    /// For a `CaseClause`, whether it is `default` and its optional `where` guard.
+    /// For a `CaseClause`, whether it is `default` and its optional `where`
+    /// guard. The `default` clause is marked by the clause's `"default"` text;
+    /// the guard is the condition inside a `WhereClause` child.
     pub fn case_info(&self) -> CaseInfo<'a> {
         CaseInfo {
-            is_default: self.analysis.rust.case_is_default(self.rust),
+            is_default: self.text().as_deref() == Some("default"),
             where_expr: self
-                .analysis
-                .rust
-                .case_where(self.rust)
-                .map(|id| self.cursor(id)),
+                .children()
+                .find(|c| c.kind() == NodeKind::WhereClause)
+                .and_then(|w| w.children().next()),
         }
     }
 
     /// The declaration modifier bitmask.
     pub fn modifiers(&self) -> u32 {
-        self.analysis.rust.modifiers(self.rust)
+        let mut bits = decode::modifier_bits(self.inner.modifiers());
+        // The runtime reads the optional-cast flag (`as?`) from bit 0x800 on a
+        // CastExpr, not from its operator text.
+        if self.inner.kind() == NodeKind::CastExpr && self.inner.text() == Some("as?") {
+            bits |= 0x800;
+        }
+        bits
     }
 
     /// The argument label of a call argument, if present.
     pub fn arg_label(&self) -> Option<String> {
-        self.analysis.rust.arg_label(self.rust)
+        self.inner.arg_label().map(ToOwned::to_owned)
     }
 
-    /// For an `AST_PARAM` node, its label/name/variadic/inout info.
+    /// For a `Param` node, its label/name/variadic/inout info.
     pub fn param_info(&self) -> ParamInfo {
-        self.analysis.rust.param_info(self.rust)
+        const MOD_VARIADIC: u32 = 1 << 28;
+        const MOD_INOUT: u32 = 1 << 30;
+        const MOD_AUTOCLOSURE: u32 = 1 << 27;
+        let bits = self.modifiers();
+        ParamInfo {
+            label: self.arg_label(),
+            name: self.text().unwrap_or_default(),
+            variadic: bits & MOD_VARIADIC != 0,
+            autoclosure: bits & MOD_AUTOCLOSURE != 0,
+            is_inout: bits & MOD_INOUT != 0,
+        }
     }
 
     /// For a `var`/`let`/`subscript`, its computed-accessor and observer bodies.
@@ -206,7 +270,7 @@ impl<'a> Node<'a> {
             did_set_param: None,
         };
         for child in self.children() {
-            if child.kind() != NodeKind::AccessorDecl {
+            if child.kind() != NodeKind::Accessor {
                 continue;
             }
             let body = child.children().find(|c| c.kind() == NodeKind::Block);
@@ -287,11 +351,7 @@ impl<'a> Node<'a> {
         use std::fmt::Write as _;
         let indent = "  ".repeat(depth);
         let kind = self.kind();
-        let raw = match kind {
-            NodeKind::Other(n) => format!("Other({n})"),
-            k => format!("{k:?}"),
-        };
-        let _ = write!(out, "{indent}{raw}");
+        let _ = write!(out, "{indent}{kind:?}");
         if let Some(text) = self.text() {
             if !text.is_empty() {
                 let _ = write!(out, " {text:?}");
@@ -325,9 +385,6 @@ impl<'a> Node<'a> {
     fn dump_json_into(&self, out: &mut String) {
         use std::fmt::Write as _;
         let _ = write!(out, "{{\"kind\":\"{}\"", self.kind().name());
-        if let NodeKind::Other(n) = self.kind() {
-            let _ = write!(out, ",\"raw\":{n}");
-        }
         if let Some(text) = self.text() {
             if !text.is_empty() {
                 let _ = write!(out, ",\"text\":{}", json_string(&text));
@@ -380,18 +437,14 @@ fn json_string(s: &str) -> String {
 
 /// Iterator over a node's children produced by [`Node::children`].
 pub struct Children<'a> {
-    inner: compat::Children,
-    analysis: &'a Analysis,
+    inner: std::vec::IntoIter<tswift_ast::Node<'a>>,
 }
 
 impl<'a> Iterator for Children<'a> {
     type Item = Node<'a>;
 
     fn next(&mut self) -> Option<Node<'a>> {
-        self.inner.next().map(|id| Node {
-            rust: id,
-            analysis: self.analysis,
-        })
+        self.inner.next().map(|inner| Node { inner })
     }
 }
 
@@ -496,9 +549,6 @@ mod tests {
             .next()
             .unwrap()
             .children()
-            .find(|c| c.kind() == NodeKind::Block)
-            .unwrap()
-            .children()
             .find(|c| c.kind() == NodeKind::FuncDecl)
             .expect("func decl");
         let mods = func.modifier_names();
@@ -524,8 +574,8 @@ mod tests {
     }
 
     /// Nominal declarations lower into the runtime-facing shape: name as text,
-    /// inherited types as `Conformance` (with a `TypeIdent` child), members in a
-    /// `Block`.
+    /// inherited types as plain `TypeIdent` children, members as direct
+    /// children in source order.
     #[test]
     fn lowers_struct_codable_shape() {
         let a = Analysis::analyze(
@@ -536,15 +586,7 @@ mod tests {
         assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
         assert_eq!(
             a.root().dump(),
-            "SourceFile L1\n  \
-               StructDecl \"User\" L1\n    \
-                 Conformance \"Codable\" L1\n      \
-                   TypeIdent \"Codable\" L1\n    \
-                 Block \"{\" L1\n      \
-                   LetDecl \"name\" L2 :String\n        \
-                     TypeIdent \"String\" L2\n      \
-                   VarDecl \"age\" L3 :Int\n        \
-                     TypeIdent \"Int\" L3\n"
+            "SourceFile L1\n  StructDecl \"User\" L1\n    TypeRef \"Codable\" L1\n    LetDecl L2 :String\n      NamePattern \"name\" L2 :String\n      TypeRef \"String\" L2\n    VarDecl L3 :Int\n      NamePattern \"age\" L3 :Int\n      TypeRef \"Int\" L3\n"
         );
     }
 
@@ -565,10 +607,8 @@ mod tests {
         assert!(app
             .children()
             .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main")));
-        let body = app
-            .children()
-            .find(|c| c.kind() == NodeKind::Block)
-            .unwrap();
+        // Members are direct children of the nominal decl.
+        let body = app;
         let member = |name: &str| {
             body.children()
                 .find(|c| c.decl_name().as_deref() == Some(name))
@@ -611,12 +651,16 @@ mod tests {
             .children()
             .find(|c| c.kind() == NodeKind::EnumDecl)
             .unwrap();
-        let block = e.children().find(|c| c.kind() == NodeKind::Block).unwrap();
-        let case = block.children().next().unwrap();
-        assert_eq!(case.kind(), NodeKind::EnumCaseDecl);
-        let element = case.children().next().unwrap();
-        assert_eq!(element.kind(), NodeKind::EnumElementDecl);
-        assert_eq!(element.text().as_deref(), Some("a"));
+        let case = e
+            .children()
+            .find(|c| c.kind() == NodeKind::EnumCaseDecl)
+            .unwrap();
+        // A flat `EnumCaseDecl(name)` with associated-value types as direct
+        // `TypeIdent` children.
+        assert_eq!(case.text().as_deref(), Some("a"));
+        assert!(case
+            .children()
+            .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("Int")));
 
         let if_stmt = root
             .children()
@@ -624,7 +668,7 @@ mod tests {
             .unwrap();
         assert!(if_stmt
             .children()
-            .any(|c| c.kind() == NodeKind::OptionalBinding));
+            .any(|c| { c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("v") }));
 
         let sw = root
             .children()
@@ -635,12 +679,12 @@ mod tests {
             .filter(|c| c.kind() == NodeKind::CaseClause)
             .collect();
         let enum_pat = clauses[0].children().next().unwrap();
-        assert_eq!(enum_pat.kind(), NodeKind::PatternEnum);
+        assert_eq!(enum_pat.kind(), NodeKind::EnumCasePattern);
         assert_eq!(enum_pat.op_text().as_deref(), Some("a"));
         assert!(clauses[0].case_info().where_expr.is_some());
         assert_eq!(
             clauses[1].children().next().unwrap().kind(),
-            NodeKind::PatternTuple
+            NodeKind::TuplePattern
         );
         assert!(clauses[2].case_info().is_default);
     }
@@ -654,7 +698,13 @@ mod tests {
         )
         .unwrap();
         let root = a.root();
-        assert!(root
+        // `#if` stays as a `MacroExpansion("if")` wrapper whose children are the
+        // active branch; the runtime expands it inline.
+        let if_dir = root
+            .children()
+            .find(|c| c.kind() == NodeKind::CompilerDirective && c.text().as_deref() == Some("if"))
+            .unwrap();
+        assert!(if_dir
             .children()
             .any(|c| c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("mode")));
         let body = root
@@ -669,15 +719,19 @@ mod tests {
         assert_eq!(try_expr.kind(), NodeKind::TryExpr);
         assert_eq!(try_expr.op_text().as_deref(), Some("?"));
         let line_macro = stmts[1].children().last().unwrap();
-        assert_eq!(line_macro.kind(), NodeKind::MacroExpansion);
+        assert_eq!(line_macro.kind(), NodeKind::CompilerDirective);
         assert_eq!(line_macro.text().as_deref(), Some("line"));
         assert_eq!(
             stmts[2].children().last().unwrap().kind(),
             NodeKind::AwaitExpr
         );
         let for_stmt = stmts[3];
-        assert_eq!(for_stmt.text().as_deref(), Some("await"));
-        assert_eq!(for_stmt.token_text_offset(1).as_deref(), Some("x"));
+        assert!(for_stmt.is_async());
+        let binding = for_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::NamePattern)
+            .unwrap();
+        assert_eq!(binding.text().as_deref(), Some("x"));
     }
 
     /// Calls, accessors, subscripts, and custom operators lower into the
@@ -693,9 +747,6 @@ mod tests {
         let body = root
             .children()
             .find(|c| c.kind() == NodeKind::StructDecl)
-            .unwrap()
-            .children()
-            .find(|c| c.kind() == NodeKind::Block)
             .unwrap();
         let first = body
             .children()
