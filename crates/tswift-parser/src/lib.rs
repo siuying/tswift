@@ -1651,7 +1651,8 @@ impl<'a> Parser<'a> {
                     | TokenKind::LParen
                     | TokenKind::RParen
             ) || (t.kind == TokenKind::Oper && t.text == "->")
-                || (t.kind == TokenKind::Keyword && t.text == "inout");
+                || (t.kind == TokenKind::Keyword
+                    && matches!(t.text, "inout" | "throws" | "rethrows" | "async"));
             if !signature_like {
                 self.pos = save;
                 return false;
@@ -1667,6 +1668,10 @@ impl<'a> Parser<'a> {
                         last.3 = true;
                     }
                 }
+                // Effect keywords (`throws`/`rethrows`/`async`) in the closure
+                // signature are consumed and ignored; the body's actual
+                // throwing/async-ness is inferred during evaluation.
+                TokenKind::Keyword if matches!(t.text, "throws" | "rethrows" | "async") => {}
                 TokenKind::Comma => {
                     expect_name = true;
                     in_type = false;
@@ -3815,6 +3820,20 @@ mod tests {
         assert_eq!(clo.kind(), NodeKind::ClosureExpr);
         // Body statement present after the signature.
         assert!(clo.children().count() >= 1);
+    }
+
+    #[test]
+    fn closure_signature_accepts_inout_and_throws() {
+        // `throws` after the parameter list no longer aborts signature parsing;
+        // the `inout` parameter is still recorded.
+        let ast = ast_of("let g = { (n: inout Int) throws in n += 1 }");
+        let clo = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(clo.kind(), NodeKind::ClosureExpr);
+        let param = clo
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .expect("closure has a Param");
+        assert_eq!(param.text(), Some("n"));
     }
 
     #[test]
