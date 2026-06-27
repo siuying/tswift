@@ -4161,45 +4161,69 @@ impl<'w> Interpreter<'w> {
     fn eval_cond_list(&mut self, conds: &[Node<'static>]) -> Result<bool, Signal> {
         for cond in conds {
             match cond.kind() {
-                NodeKind::OptionalBinding => {
-                    let name = cond
-                        .text()
-                        .ok_or_else(|| EvalError::Unsupported("binding without a name".into()))?;
-                    let value = match cond.children().next() {
-                        Some(init) => self.eval(&init)?,
-                        None => self
-                            .env
-                            .get(&name)
-                            .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?,
-                    };
-                    if matches!(value, SwiftValue::Nil) {
-                        return Ok(false);
-                    }
-                    self.env.declare(&name, value, false);
-                }
-                // `if case <pattern> = <expr>` (and the `guard`/`while` forms):
-                // evaluate the subject, match the pattern, and bind on success.
-                NodeKind::CaseCondition => {
-                    let mut kids = cond.children();
-                    let pattern = kids.next().ok_or_else(|| {
-                        EvalError::Unsupported("case condition without a pattern".into())
+                // A `let`/`var` binding condition. The binding pattern is the
+                // first child; an optional type annotation and the
+                // initializer/subject follow.
+                //
+                // - simple optional binding (`if let x = e`, `if let x`): a
+                //   `PatternValueBinding` pattern — unwrap the optional (fail on
+                //   nil) and bind the name.
+                // - refutable match (`if case .a(let v) = e`): any other
+                //   pattern — match it against the subject and bind on success.
+                NodeKind::LetDecl | NodeKind::VarDecl => {
+                    let pattern = cond.children().next().ok_or_else(|| {
+                        EvalError::Unsupported("condition binding without a pattern".into())
                     })?;
-                    let subject = match kids.next() {
-                        Some(expr) => self.eval(&expr)?,
-                        None => {
-                            return Err(EvalError::Unsupported(
-                                "case condition without a subject".into(),
-                            )
-                            .into())
-                        }
-                    };
-                    match self.match_pattern(&pattern, &subject)? {
-                        Some(binds) => {
-                            for (name, value) in binds {
-                                self.env.declare(&name, value, false);
+                    // The subject/initializer follows the pattern (and any type
+                    // annotation). Search *past* the first child so a value
+                    // pattern (`if case 1 = x`) is never mistaken for the subject.
+                    let init = cond.children().skip(1).find(|c| is_expr(c));
+                    match pattern.kind() {
+                        // Simple optional binding: `if let x = e`, `if let x`
+                        // (shorthand), `if let _ = e`. Unwrap the optional
+                        // (fail on nil); a value binding binds its name, a
+                        // wildcard binds nothing.
+                        NodeKind::PatternValueBinding | NodeKind::PatternWildcard => {
+                            let value = match init {
+                                Some(expr) => self.eval(&expr)?,
+                                None => {
+                                    let name = pattern.text().ok_or_else(|| {
+                                        EvalError::Unsupported("binding without a name".into())
+                                    })?;
+                                    self.env
+                                        .get(&name)
+                                        .ok_or_else(|| EvalError::UnknownVariable(name))?
+                                }
+                            };
+                            if matches!(value, SwiftValue::Nil) {
+                                return Ok(false);
+                            }
+                            if pattern.kind() == NodeKind::PatternValueBinding {
+                                if let Some(name) = pattern.text() {
+                                    self.env.declare(&name, value, false);
+                                }
                             }
                         }
-                        None => return Ok(false),
+                        // Refutable match: `if case .a(let v) = e`.
+                        _ => {
+                            let subject = match init {
+                                Some(expr) => self.eval(&expr)?,
+                                None => {
+                                    return Err(EvalError::Unsupported(
+                                        "case condition without a subject".into(),
+                                    )
+                                    .into())
+                                }
+                            };
+                            match self.match_pattern(&pattern, &subject)? {
+                                Some(binds) => {
+                                    for (name, value) in binds {
+                                        self.env.declare(&name, value, false);
+                                    }
+                                }
+                                None => return Ok(false),
+                            }
+                        }
                     }
                 }
                 _ => {
@@ -7673,6 +7697,35 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn optional_binding_conditions_unwrap_and_match() {
+        // Simple optional binding unwraps and binds; nil fails the branch.
+        let out = run(
+            "let a: Int? = 7
+let b: Int? = nil
+if let x = a { print(\"a=\\(x)\") } else { print(\"a-none\") }
+if let _ = b { print(\"b-some\") } else { print(\"b-none\") }
+if let _ = a { print(\"a-some\") } else { print(\"a-none2\") }
+",
+        )
+        .unwrap();
+        assert_eq!(out, "a=7\nb-none\na-some\n");
+    }
+
+    #[test]
+    fn case_condition_binds_associated_value() {
+        // `if case` matches a refutable pattern and binds its payload.
+        let out = run(
+            "enum E { case a(Int), b }
+let e = E.a(42)
+if case .a(let n) = e { print(n) } else { print(\"no\") }
+if case .b = e { print(\"b\") } else { print(\"not-b\") }
+",
+        )
+        .unwrap();
+        assert_eq!(out, "42\nnot-b\n");
     }
 
     #[test]

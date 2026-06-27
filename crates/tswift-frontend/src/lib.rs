@@ -615,9 +615,9 @@ mod tests {
             .children()
             .find(|c| c.kind() == NodeKind::IfStmt)
             .unwrap();
-        assert!(if_stmt
-            .children()
-            .any(|c| c.kind() == NodeKind::OptionalBinding));
+        assert!(if_stmt.children().any(|c| {
+            c.kind() == NodeKind::LetDecl && c.decl_name().as_deref() == Some("v")
+        }));
 
         let sw = root
             .children()
