@@ -15,6 +15,8 @@ use std::collections::HashMap;
 
 use tswift_ast::{Ast, Node, NodeId, NodeKind, Type};
 
+mod astbuild;
+mod builder_transform;
 mod passes;
 mod symbols;
 

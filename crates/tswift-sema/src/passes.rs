@@ -9,6 +9,7 @@
 
 use tswift_ast::Ast;
 
+use crate::builder_transform::BuilderTransform;
 use crate::symbols::Symbols;
 use crate::{annotate, Diagnostic};
 
@@ -19,6 +20,8 @@ use crate::{annotate, Diagnostic};
 /// rewrite) or leave it unchanged (a pure check); either way it reports
 /// diagnostics in source order.
 pub(crate) trait Pass {
+    // NOTE: implemented by passes in sibling modules (e.g. `BuilderTransform`).
+
     /// Run the pass over `ast`, reading declarations from `symbols`, and return
     /// any diagnostics in source order.
     fn run(&self, ast: &mut Ast, symbols: &Symbols) -> Vec<Diagnostic>;
@@ -38,10 +41,10 @@ impl Pass for Annotate {
 
 /// The ordered analysis pipeline.
 ///
-/// Future AST→AST transforms (such as the result-builder rewrite) slot in
-/// *before* [`Annotate`], because annotation must see the rewritten tree.
+/// AST→AST transforms (such as the result-builder rewrite) slot in *before*
+/// [`Annotate`], because annotation must see the rewritten tree.
 fn pipeline() -> Vec<Box<dyn Pass>> {
-    vec![Box::new(Annotate)]
+    vec![Box::new(BuilderTransform), Box::new(Annotate)]
 }
 
 /// Run every analysis pass over `ast` in pipeline order, returning the
