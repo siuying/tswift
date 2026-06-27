@@ -109,6 +109,32 @@ struct State<Value> {
     var projectedValue: Binding<Value> { Binding(box: box) }
     init(wrappedValue: Value) { box = _StateBox(wrappedValue) }
 }
+// Observation. The render host re-evaluates `body` after every event, so a
+// mutated `@Published` property is reflected on the next render without any
+// Combine publisher — these wrappers only need reference-stable storage.
+protocol ObservableObject {}
+@propertyWrapper
+struct Published<Value> {
+    var wrappedValue: Value
+    init(wrappedValue: Value) { self.wrappedValue = wrappedValue }
+}
+// `@StateObject` owns its `ObservableObject`; `@ObservedObject` receives one it
+// does not own. Both hold a class instance, so *interior* mutations through
+// `wrappedValue` (`model.x = …`, `model.method()`) persist by reference and the
+// next render sees them. v1 limits (see plan §4.1): the root view instance is
+// the only one kept across renders, so a nested custom view's inline
+// `@StateObject` is re-created each render; and reassigning the whole object
+// (`model = Model()`) does not persist — mutate through the reference instead.
+@propertyWrapper
+struct StateObject<ObjectType> {
+    var wrappedValue: ObjectType
+    init(wrappedValue: ObjectType) { self.wrappedValue = wrappedValue }
+}
+@propertyWrapper
+struct ObservedObject<ObjectType> {
+    var wrappedValue: ObjectType
+    init(wrappedValue: ObjectType) { self.wrappedValue = wrappedValue }
+}
 struct Color {
     let token: String
     static let primary = Color(token: "primary")

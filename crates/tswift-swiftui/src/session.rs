@@ -328,6 +328,111 @@ struct FormView: View {
     }
 
     #[test]
+    fn state_object_observes_published_mutations_across_renders() {
+        // An `ObservableObject` (a class) owned by `@StateObject` is mutated
+        // through its reference by a `Button` action; because the root view
+        // instance is reused and the model is a reference, the next render
+        // reflects it — no Combine publisher needed.
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+class CounterModel: ObservableObject {
+    @Published var count = 0
+    func increment() { count += 1 }
+}
+struct CounterView: View {
+    @StateObject var model = CounterModel()
+    var body: some View {
+        VStack {
+            Text("Count: \(model.count)")
+            Button("Increment") { model.increment() }
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let mut session = Session::new(&mut interp, "CounterView").expect("session");
+
+        let first = session.render().expect("render");
+        assert!(uiir::to_json(&first).contains("Count: 0"));
+
+        // Two taps on the Increment button (id "0.1") drive the @Published count.
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        session.dispatch(&tap).expect("dispatch");
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Count: 2"),
+            "observed object should persist and reflect mutations: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn observed_object_shares_state_between_parent_and_child() {
+        // A parent's `@StateObject` passed to a child's `@ObservedObject` is one
+        // shared reference: a mutation from the child updates both views.
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+class Model: ObservableObject {
+    @Published var count = 0
+    func bump() { count += 1 }
+}
+struct ChildView: View {
+    @ObservedObject var model: Model
+    var body: some View {
+        Button("Child \(model.count)") { model.bump() }
+    }
+}
+struct ParentView: View {
+    @StateObject var model = Model()
+    var body: some View {
+        VStack {
+            Text("Parent \(model.count)")
+            ChildView(model: model)
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let mut session = Session::new(&mut interp, "ParentView").expect("session");
+        session.render().expect("render");
+
+        // Tap the child's button (id "0.1"); the shared model updates both.
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains("Parent 1"),
+            "parent reflects shared model: {json}"
+        );
+        assert!(
+            json.contains("Child 1"),
+            "child reflects shared model: {json}"
+        );
+    }
+
+    #[test]
     fn slider_set_writes_double_through_binding() {
         let src = format!(
             "{PRELUDE}\n{}",

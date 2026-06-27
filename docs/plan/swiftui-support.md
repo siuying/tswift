@@ -190,6 +190,18 @@ hook, so the "single load-bearing core change" above is **not** what landed:
   so no fixture hits this; the identity-keyed render-node store of §4 is deferred
   to whenever child `@State` / `ForEach` rows land (Tier 3), and is the real
   reason that store still earns its place in the roadmap.
+- **Tier 5 observation (revision):** `ObservableObject`/`@Published`/
+  `@StateObject`/`@ObservedObject` also land **prelude-only**, with no engine
+  change. `@Published` is a transparent wrapper; the object is a class
+  (reference), so interior mutations (`model.x = …`, `model.method()`) persist
+  and the full re-render reflects them. A parent's `@StateObject` passed to a
+  child's `@ObservedObject` is one shared reference, so a child mutation updates
+  both views. **Bounded limits:** (1) the same root-only structural-identity
+  rule applies — a *nested* custom view's inline `@StateObject` is re-created
+  each render (resets), the same deferral as child `@State` above; (2)
+  reassigning the whole object (`model = Model()`) from an action does **not**
+  persist (it rebinds a value-type copy, not the reused root instance) — mutate
+  through the reference instead.
 - The sanctioned core seams that *did* land are generic, not SwiftUI-specific:
   `register_struct_method` (the view-modifier dispatch fallback) and
   `eval_block_values` (the `@ViewBuilder` shim). Two caveats, accepted for v1:
