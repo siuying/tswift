@@ -1630,9 +1630,13 @@ impl<'a> Parser<'a> {
         let mut names: Vec<(&'a str, u32, u32, bool)> = Vec::new();
         let mut expect_name = true;
         let mut in_type = false;
+        // Parenthesis depth: the closure's `in` separator sits at depth 0. An
+        // `in:` argument label inside a nested call (e.g. `Slider(value: x, in:
+        // 0...1)`) is at depth > 0 and must not be mistaken for the separator.
+        let mut depth = 0i32;
         loop {
             let t = self.peek();
-            if t.kind == TokenKind::Keyword && t.text == "in" {
+            if depth == 0 && t.kind == TokenKind::Keyword && t.text == "in" {
                 self.bump();
                 for (name, line, col, is_inout) in names {
                     let p = self.ast.add(NodeKind::Param, Some(name), line, col);
@@ -1676,8 +1680,14 @@ impl<'a> Parser<'a> {
                     expect_name = true;
                     in_type = false;
                 }
-                TokenKind::LParen => expect_name = true,
-                TokenKind::RParen => in_type = false,
+                TokenKind::LParen => {
+                    depth += 1;
+                    expect_name = true;
+                }
+                TokenKind::RParen => {
+                    depth -= 1;
+                    in_type = false;
+                }
                 TokenKind::Colon => in_type = true,
                 TokenKind::Oper => in_type = true, // `->`
                 _ => {}
@@ -3129,6 +3139,16 @@ mod tests {
     /// The first statement under the source file.
     fn first_stmt(ast: &Ast) -> tswift_ast::Node<'_> {
         ast.node(ast.root()).children().next().unwrap()
+    }
+
+    #[test]
+    fn closure_in_label_is_not_mistaken_for_the_in_separator() {
+        // A nested call's `in:` argument label inside a trailing closure must not
+        // be parsed as the closure's `in` parameter separator.
+        ast_of("f { Slider(value: x, in: 0...1) }");
+        // A genuine closure signature still parses.
+        ast_of("let c = { x, y in x + y }");
+        ast_of("let c = { (a: Int) in a }");
     }
 
     #[test]

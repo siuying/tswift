@@ -225,6 +225,49 @@ export class PatchApplier {
         );
         return input;
       }
+      case "Slider": {
+        // A range input emitting `set` with its numeric value as the user drags.
+        const input = document.createElement("input");
+        input.type = "range";
+        input.addEventListener("input", () =>
+          this.emit(node.id, "set", Number(input.value)),
+        );
+        return input;
+      }
+      case "Stepper": {
+        // A label plus -/+ buttons; each click computes the clamped next value
+        // from the node's args and emits `set` with it.
+        const el = document.createElement("div");
+        el.style.cssText = "display:flex;flex-direction:row;align-items:center;gap:8px;";
+        const label = document.createElement("span");
+        label.className = "stepper-label";
+        const dec = document.createElement("button");
+        dec.textContent = "\u2212";
+        const inc = document.createElement("button");
+        inc.textContent = "+";
+        const bump = (dir: number) => {
+          // The current value/step/bounds live on the element's dataset, kept
+          // fresh by `applyArgs`. We optimistically advance the dataset before
+          // emitting so a rapid second click computes from the new value (not
+          // the stale one that a not-yet-applied `setArgs` would carry); the
+          // runtime's authoritative `setArgs` reconciles afterward.
+          const cur = Number(el.dataset.value ?? "0");
+          const step = Number(el.dataset.step ?? "1");
+          let next = cur + dir * step;
+          if (el.dataset.lowerBound !== undefined)
+            next = Math.max(next, Number(el.dataset.lowerBound));
+          if (el.dataset.upperBound !== undefined)
+            next = Math.min(next, Number(el.dataset.upperBound));
+          if (next !== cur) {
+            el.dataset.value = String(next);
+            this.emit(node.id, "set", next);
+          }
+        };
+        dec.addEventListener("click", () => bump(-1));
+        inc.addEventListener("click", () => bump(1));
+        el.append(label, dec, inc);
+        return el;
+      }
       case "Text":
       default:
         return document.createElement("span");
@@ -273,6 +316,28 @@ export class PatchApplier {
           el.value = args.text;
         }
         if (typeof args.title === "string") el.placeholder = args.title;
+      }
+    } else if (kind === "Slider" && el instanceof HTMLInputElement) {
+      if (typeof args.lowerBound === "number") el.min = String(args.lowerBound);
+      if (typeof args.upperBound === "number") el.max = String(args.upperBound);
+      // Always set step: `"any"` restores continuous dragging when a previous
+      // `step:` is removed, instead of leaving the browser default of `1`.
+      el.step = typeof args.step === "number" ? String(args.step) : "any";
+      if (typeof args.value === "number" && Number(el.value) !== args.value) {
+        el.value = String(args.value);
+      }
+    } else if (kind === "Stepper") {
+      // Stash the live value/step/bounds for the button handlers; reflect label.
+      el.dataset.value = String(typeof args.value === "number" ? args.value : 0);
+      el.dataset.step = String(typeof args.step === "number" ? args.step : 1);
+      if (typeof args.lowerBound === "number") el.dataset.lowerBound = String(args.lowerBound);
+      else delete el.dataset.lowerBound;
+      if (typeof args.upperBound === "number") el.dataset.upperBound = String(args.upperBound);
+      else delete el.dataset.upperBound;
+      const label = el.querySelector(".stepper-label");
+      if (label && typeof args.title === "string") {
+        label.textContent =
+          typeof args.value === "number" ? `${args.title}: ${args.value}` : args.title;
       }
     }
   }

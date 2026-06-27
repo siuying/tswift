@@ -328,6 +328,42 @@ struct FormView: View {
     }
 
     #[test]
+    fn slider_set_writes_double_through_binding() {
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct DimmerView: View {
+    @State private var level = 0.25
+    var body: some View {
+        VStack {
+            Slider(value: $level, in: 0...1)
+            Text("\(level)")
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let mut session = Session::new(&mut interp, "DimmerView").expect("session");
+        session.render().expect("render");
+
+        let set = Event {
+            id: "0.0".into(),
+            event: "set".into(),
+            value: Some(SwiftValue::Double(0.75)),
+        };
+        let after = session.dispatch(&set).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(json.contains(r#""value":0.75"#), "slider value: {json}");
+        assert!(json.contains("0.75"), "binding drives the text: {json}");
+    }
+
+    #[test]
     fn dispatch_routes_to_a_keyed_foreach_row_control() {
         // A control nested inside a keyed `ForEach` row must be reachable by its
         // keyed id (`0.0.row.0`), exercising the child_id walker fix.

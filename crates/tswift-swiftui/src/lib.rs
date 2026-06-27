@@ -186,6 +186,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Toggle", toggle_init);
     interp.register_free_fn("TextField", text_field_init);
     interp.register_free_fn("SecureField", secure_field_init);
+    interp.register_free_fn("Slider", slider_init);
+    interp.register_free_fn("Stepper", stepper_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -224,8 +226,10 @@ pub fn registered_keys() -> Vec<String> {
         .into_iter()
         .filter_map(|key| match key.as_str() {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
-            | "Button" | "Toggle" | "TextField" | "SecureField" | "Circle" | "Rectangle"
-            | "RoundedRectangle" | "Capsule" | "Ellipse" => Some(format!("{key}.init")),
+            | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
+            | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
+                Some(format!("{key}.init"))
+            }
             _ => None,
         })
         .collect();
@@ -397,6 +401,115 @@ fn section_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     }
     fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
     Ok(view_value("Section", fields))
+}
+
+/// `Slider(value: Binding<Double>, in: range, step:)` — a continuous value
+/// control. The current value (read from the binding) plus the range bounds and
+/// optional step are serialized as args so the host can render an `<input
+/// type=range>`; a `set` event writes the new double through the binding.
+fn slider_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut binding: Option<SwiftValue> = None;
+    let mut range: Option<SwiftValue> = None;
+    let mut step: Option<f64> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("value") => binding = Some(arg.value),
+            Some("in") => range = Some(arg.value),
+            Some("step") => step = number_f64(&arg.value),
+            _ => {}
+        }
+    }
+    let (lo, hi) = range_bounds(range.as_ref(), 0.0, 1.0);
+    let value = match &binding {
+        Some(b) => number_f64(&ctx.get_member(b, "wrappedValue")?).unwrap_or(lo),
+        None => lo,
+    };
+    let mut fields = vec![
+        ("value".into(), SwiftValue::Double(value)),
+        ("lowerBound".into(), SwiftValue::Double(lo)),
+        ("upperBound".into(), SwiftValue::Double(hi)),
+    ];
+    if let Some(step) = step {
+        fields.push(("step".into(), SwiftValue::Double(step)));
+    }
+    if let Some(b) = binding {
+        fields.push((BINDING_FIELD.into(), b));
+    }
+    Ok(view_value("Slider", fields))
+}
+
+/// `Stepper(_ title, value: Binding<Int>, in: range, step:)` — a +/- numeric
+/// control. Current value (from the binding), bounds, and step are serialized
+/// so the host computes the clamped next value and writes it back via `set`.
+fn stepper_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut title = String::new();
+    let mut binding: Option<SwiftValue> = None;
+    let mut range: Option<SwiftValue> = None;
+    let mut step: i128 = 1;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("value") => binding = Some(arg.value),
+            Some("in") => range = Some(arg.value),
+            Some("step") => {
+                if let SwiftValue::Int(i) = &arg.value {
+                    step = i.raw;
+                }
+            }
+            _ => {
+                if let SwiftValue::Str(s) = &arg.value {
+                    if title.is_empty() {
+                        title = s.clone();
+                    }
+                }
+            }
+        }
+    }
+    let value = match &binding {
+        Some(b) => match ctx.get_member(b, "wrappedValue")? {
+            SwiftValue::Int(i) => i.raw,
+            other => number_f64(&other).map(|d| d as i128).unwrap_or(0),
+        },
+        None => 0,
+    };
+    let mut fields = vec![
+        ("title".into(), SwiftValue::Str(title)),
+        ("value".into(), SwiftValue::int(value)),
+        ("step".into(), SwiftValue::int(step)),
+    ];
+    // Bounds are optional for a `Stepper`; emit them only when given and
+    // non-empty (an exclusive `0..<n` is normalized to a closed upper bound,
+    // and a degenerate empty range is dropped rather than emitting lo > hi).
+    if let Some(SwiftValue::Range { lo, hi, inclusive }) = &range {
+        let upper = if *inclusive { *hi } else { *hi - 1 };
+        if upper >= *lo {
+            fields.push(("lowerBound".into(), SwiftValue::int(*lo)));
+            fields.push(("upperBound".into(), SwiftValue::int(upper)));
+        }
+    }
+    if let Some(b) = binding {
+        fields.push((BINDING_FIELD.into(), b));
+    }
+    Ok(view_value("Stepper", fields))
+}
+
+/// Read a Swift numeric value as `f64` (int widened, double as-is).
+fn number_f64(value: &SwiftValue) -> Option<f64> {
+    match value {
+        SwiftValue::Int(i) => Some(i.raw as f64),
+        SwiftValue::Double(d) => Some(*d),
+        _ => None,
+    }
+}
+
+/// Resolve `(lower, upper)` bounds from an `in:` range argument, falling back to
+/// the given defaults when absent or not a range. v1 limitation: the runtime
+/// represents only integer ranges, so a `Slider` range is written as `0...1`
+/// (not `0.0...1.0`); the integer endpoints are widened to `f64` here.
+fn range_bounds(range: Option<&SwiftValue>, def_lo: f64, def_hi: f64) -> (f64, f64) {
+    match range {
+        Some(SwiftValue::Range { lo, hi, .. }) => (*lo as f64, *hi as f64),
+        _ => (def_lo, def_hi),
+    }
 }
 
 /// Materialize a ForEach data argument into an ordered element list. Supports
@@ -815,7 +928,9 @@ mod tests {
                 "RoundedRectangle.init",
                 "Section.init",
                 "SecureField.init",
+                "Slider.init",
                 "Spacer.init",
+                "Stepper.init",
                 "Text.init",
                 "TextField.init",
                 "Toggle.init",
@@ -1093,6 +1208,50 @@ struct V: View {
             keys,
             vec![Some("a_0"), Some("a_1"), Some("b_0"), Some("b_1")]
         );
+    }
+
+    #[test]
+    fn slider_serializes_value_and_bounds_from_binding() {
+        let src = r#"
+struct V: View {
+    @State private var level = 0.25
+    var body: some View {
+        Slider(value: $level, in: 0...1, step: 0.05)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("Slider"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("value"), Some(&SwiftValue::Double(0.25)));
+        assert_eq!(obj.get("lowerBound"), Some(&SwiftValue::Double(0.0)));
+        assert_eq!(obj.get("upperBound"), Some(&SwiftValue::Double(1.0)));
+        assert_eq!(obj.get("step"), Some(&SwiftValue::Double(0.05)));
+        assert!(obj.get(BINDING_FIELD).is_some());
+    }
+
+    #[test]
+    fn stepper_serializes_value_step_and_bounds() {
+        let src = r#"
+struct V: View {
+    @State private var count = 3
+    var body: some View {
+        Stepper("Count", value: $count, in: 0...10, step: 2)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("Stepper"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("title"), Some(&SwiftValue::Str("Count".into())));
+        assert_eq!(obj.get("value"), Some(&SwiftValue::int(3)));
+        assert_eq!(obj.get("step"), Some(&SwiftValue::int(2)));
+        assert_eq!(obj.get("lowerBound"), Some(&SwiftValue::int(0)));
+        assert_eq!(obj.get("upperBound"), Some(&SwiftValue::int(10)));
     }
 
     #[test]

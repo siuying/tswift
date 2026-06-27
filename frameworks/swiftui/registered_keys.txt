@@ -9,7 +9,9 @@ Rectangle.init
 RoundedRectangle.init
 Section.init
 SecureField.init
+Slider.init
 Spacer.init
+Stepper.init
 Text.init
 TextField.init
 Toggle.init
