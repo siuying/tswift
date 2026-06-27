@@ -20,4 +20,5 @@ See docs/swift-runtime/blocked-features.md
 | 8 | 86f8a4c | `for case` / `case let x?` refutable patterns | keep | for-loop matches patterns; `x?`→`.some` so switch/for/if filter nil |
 | 9 | c3ce916 | multi-binding & while-let conditions | keep | single-binding cond parser; eval_while uses eval_cond_list |
 | 10 | 2da5046 | static stored properties + type methods | keep | struct+class statics read/write; static_ctx for unqualified access; static mutating collections. Gap: static computed props |
-| 11 | pending | required init + implicitly-unwrapped optionals | keep | already worked; added runtime fixtures + flipped checklist |
+| 11 | b16cc0b | required init + implicitly-unwrapped optionals | keep | already worked; added runtime fixtures + flipped checklist |
+| 12 | 018276e | as/is patterns + custom Error types | keep | `catch let e as T`, `case is T`, `case let x as T`; match_pattern CastExpr |

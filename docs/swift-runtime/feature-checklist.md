@@ -247,7 +247,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 
 | ✓ | Feature | FE | RT | Phase |
 |---|---|----|----|-------|
-| [ ] | `Error` protocol + custom errors | ✅ | ★★ | R5 |
+| [x] | `Error` protocol + custom errors | ✅ | ★★ | R5 |
 | [x] | `throws` functions | ✅ | ★★★ | R5 |
 | [x] | `throw` statement | ✅ | ★★ | R5 |
 | [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
