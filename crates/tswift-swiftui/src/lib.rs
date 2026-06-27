@@ -53,6 +53,7 @@ modifier!(modifier_font, "font");
 modifier!(modifier_font_weight, "fontWeight");
 modifier!(modifier_foreground_color, "foregroundColor");
 modifier!(modifier_background, "background");
+modifier!(modifier_fill, "fill");
 
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
@@ -64,6 +65,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("fontWeight", modifier_font_weight),
     ("foregroundColor", modifier_foreground_color),
     ("background", modifier_background),
+    ("fill", modifier_fill),
 ];
 
 /// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
@@ -171,9 +173,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Text", text_init);
     interp.register_free_fn("VStack", vstack_init);
     interp.register_free_fn("HStack", hstack_init);
+    interp.register_free_fn("ZStack", zstack_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
+    interp.register_free_fn("Circle", circle_init);
+    interp.register_free_fn("Rectangle", rectangle_init);
+    interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
+    interp.register_free_fn("Capsule", capsule_init);
+    interp.register_free_fn("Ellipse", ellipse_init);
 
     for (name, func) in MODIFIER_FNS {
         interp.register_struct_method(name, *func);
@@ -206,7 +214,8 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| match key.as_str() {
-            "Text" | "VStack" | "HStack" | "Spacer" | "Button" | "Toggle" => {
+            "Text" | "VStack" | "HStack" | "ZStack" | "Spacer" | "Button" | "Toggle" | "Circle"
+            | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
                 Some(format!("{key}.init"))
             }
             _ => None,
@@ -265,6 +274,46 @@ fn vstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// `HStack { ... }` — horizontal container.
 fn hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(container_value("HStack", collect_children(ctx, args)?))
+}
+
+/// `ZStack { ... }` — depth (overlay) container; children stack back-to-front.
+fn zstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("ZStack", collect_children(ctx, args)?))
+}
+
+/// `Circle()` — a circular shape leaf.
+fn circle_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Circle", Vec::new()))
+}
+
+/// `Rectangle()` — a rectangular shape leaf.
+fn rectangle_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Rectangle", Vec::new()))
+}
+
+/// `RoundedRectangle(cornerRadius:)` — a rounded-rectangle shape leaf carrying
+/// its corner radius for the host. Accepts the labelled `cornerRadius:` form or
+/// a single positional radius; an unrelated `style:` argument is ignored.
+fn rounded_rectangle_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let radius = args
+        .into_iter()
+        .find(|a| a.label.as_deref() == Some("cornerRadius") || a.label.is_none())
+        .map(|a| a.value)
+        .unwrap_or(SwiftValue::int(0));
+    Ok(view_value(
+        "RoundedRectangle",
+        vec![("cornerRadius".into(), radius)],
+    ))
+}
+
+/// `Capsule()` — a capsule (stadium) shape leaf.
+fn capsule_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Capsule", Vec::new()))
+}
+
+/// `Ellipse()` — an elliptical shape leaf.
+fn ellipse_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Ellipse", Vec::new()))
 }
 
 /// `Spacer()` — flexible empty space.
@@ -504,18 +553,25 @@ mod tests {
             keys,
             vec![
                 "Button.init",
+                "Capsule.init",
+                "Circle.init",
+                "Ellipse.init",
                 "HStack.init",
+                "Rectangle.init",
+                "RoundedRectangle.init",
                 "Spacer.init",
                 "Text.init",
                 "Toggle.init",
                 "VStack.init",
                 "View.background",
                 "View.cornerRadius",
+                "View.fill",
                 "View.font",
                 "View.fontWeight",
                 "View.foregroundColor",
                 "View.frame",
                 "View.padding",
+                "ZStack.init",
             ]
         );
     }
@@ -715,6 +771,83 @@ struct Loop: View {
             format!("{err:?}").contains("composition exceeded depth"),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn render_root_builds_zstack_of_shapes() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.blue)
+            RoundedRectangle(cornerRadius: 12)
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("ZStack"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children");
+        };
+        assert_eq!(children.len(), 2);
+        assert_eq!(view_type_name(&children[0]), Some("Circle"));
+        // The circle carries a `fill` modifier with a Color token.
+        let fill = modifiers_of(&children[0]);
+        assert_eq!(fill.len(), 1);
+        let SwiftValue::Struct(m) = &fill[0] else {
+            panic!("expected modifier struct");
+        };
+        assert_eq!(m.get("name"), Some(&SwiftValue::Str("fill".into())));
+        assert_eq!(m.get("value").and_then(token_of), Some(("Color", "blue")));
+        // The rounded rectangle keeps its corner radius as a visible arg.
+        assert_eq!(view_type_name(&children[1]), Some("RoundedRectangle"));
+        let SwiftValue::Struct(rr) = &children[1] else {
+            panic!("expected struct");
+        };
+        assert_eq!(rr.get("cornerRadius"), Some(&SwiftValue::int(12)));
+    }
+
+    #[test]
+    fn render_root_builds_remaining_shape_leaves() {
+        // Rectangle/Capsule/Ellipse are parameterless leaves; positional
+        // RoundedRectangle(8) is accepted too.
+        let src = r#"
+struct V: View {
+    var body: some View {
+        HStack {
+            Rectangle()
+            Capsule()
+            Ellipse()
+            RoundedRectangle(cornerRadius: 8)
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected children");
+        };
+        let kinds: Vec<Option<&str>> = children.iter().map(view_type_name).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                Some("Rectangle"),
+                Some("Capsule"),
+                Some("Ellipse"),
+                Some("RoundedRectangle"),
+            ]
+        );
+        let SwiftValue::Struct(rr) = &children[3] else {
+            panic!("expected struct");
+        };
+        assert_eq!(rr.get("cornerRadius"), Some(&SwiftValue::int(8)));
     }
 
     #[test]

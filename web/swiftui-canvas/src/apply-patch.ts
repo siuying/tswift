@@ -57,6 +57,8 @@ export class PatchApplier {
         const parent = this.nodes.get(patch.parentId);
         if (!parent) return;
         const el = this.build(patch.node);
+        // A child inserted under a ZStack must overlap like the others.
+        if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         const ref = parent.children[patch.index] ?? null;
         parent.insertBefore(el, ref);
         break;
@@ -90,7 +92,12 @@ export class PatchApplier {
       }
       case "setArgs": {
         const el = this.nodes.get(patch.id);
-        if (el) this.applyArgs(el, el.dataset.kind ?? "", patch.args);
+        if (el) {
+          this.applyArgs(el, el.dataset.kind ?? "", patch.args);
+          // Keep arg-derived styling in the base so a later `setModifiers`
+          // reset preserves it.
+          el.dataset.baseStyle = el.style.cssText;
+        }
         break;
       }
     }
@@ -108,11 +115,19 @@ export class PatchApplier {
   private build(node: UiirNode): HTMLElement {
     const el = this.element(node);
     el.dataset.kind = node.kind;
-    el.dataset.baseStyle = el.style.cssText;
     this.applyArgs(el, node.kind, node.args);
+    // Capture the base style *after* args so arg-derived styling (e.g. a
+    // RoundedRectangle's corner radius) survives the idempotent reset that
+    // `applyModifiers`/`setModifiers` performs.
+    el.dataset.baseStyle = el.style.cssText;
     applyModifiers(el, node.modifiers);
     this.nodes.set(node.id, el);
-    for (const child of node.children) el.appendChild(this.build(child));
+    for (const child of node.children) {
+      const childEl = this.build(child);
+      // ZStack overlays its children: place each in the same grid cell.
+      if (el.dataset.zstack === "1") childEl.style.gridArea = "1 / 1";
+      el.appendChild(childEl);
+    }
     return el;
   }
 
@@ -127,6 +142,22 @@ export class PatchApplier {
       case "HStack": {
         const el = document.createElement("div");
         el.style.cssText = "display:flex;flex-direction:row;align-items:center;gap:8px;";
+        return el;
+      }
+      case "ZStack": {
+        // Depth container: children overlap, centered, back-to-front.
+        const el = document.createElement("div");
+        el.style.cssText = "display:grid;place-items:center;";
+        el.dataset.zstack = "1";
+        return el;
+      }
+      case "Circle":
+      case "Ellipse":
+      case "Rectangle":
+      case "RoundedRectangle":
+      case "Capsule": {
+        const el = document.createElement("div");
+        el.style.cssText = `${shapeRadius(node)}background:currentColor;width:40px;height:40px;`;
         return el;
       }
       case "Spacer": {
@@ -162,6 +193,8 @@ export class PatchApplier {
       el.textContent = args.verbatim;
     } else if (kind === "Button" && typeof args.title === "string") {
       el.textContent = args.title;
+    } else if (kind === "RoundedRectangle" && typeof args.cornerRadius === "number") {
+      el.style.borderRadius = `${args.cornerRadius}px`;
     } else if (kind === "Toggle") {
       const input = el.querySelector("input");
       const label = el.querySelector("span");
@@ -172,6 +205,19 @@ export class PatchApplier {
         label.textContent = args.title;
       }
     }
+  }
+}
+
+/** The intrinsic corner radius for a shape primitive, as a CSS declaration. */
+function shapeRadius(node: UiirNode): string {
+  switch (node.kind) {
+    case "Circle":
+    case "Ellipse":
+      return "border-radius:50%;";
+    case "Capsule":
+      return "border-radius:9999px;";
+    default:
+      return "";
   }
 }
 

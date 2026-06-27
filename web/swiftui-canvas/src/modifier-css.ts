@@ -125,6 +125,12 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
         if (c) el.style.backgroundColor = c;
         break;
       }
+      case "fill": {
+        // A shape's fill drives `currentColor` (shape backgrounds use it).
+        const c = cssColor(value);
+        if (c) el.style.color = c;
+        break;
+      }
       case "cornerRadius": {
         const r = cssLength(value);
         if (r) el.style.borderRadius = r;
