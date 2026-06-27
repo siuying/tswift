@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Doc.astro
 title: Frontend Pipeline
-description: The pure-Rust Swift frontend — lexer, AST, parser, semantic analysis, and compat lowerer.
+description: The pure-Rust Swift frontend — lexer, AST, parser, semantic analysis, and the runtime-facing AST facade.
 section: how-it-works
 ---
 
@@ -96,19 +96,26 @@ The output is a **typed AST** where each expression node carries its resolved
 
 ---
 
-## Stage 5 — Compat Lowerer (`tswift-frontend`)
+## Stage 5 — Runtime-facing AST (`tswift-frontend`)
 
-The compat lowerer is the bridge between the typed frontend AST and the
-**runtime-facing AST** (`Analysis` / `Node` / `NodeKind`). Its job:
+`tswift-frontend` is the **only seam** between the frontend and the runtime. It:
 
-1. Drive the full pipeline (lexer → parser → sema) for one or more source files.
-2. Lower the typed frontend AST into the stable `NodeKind` enum the runtime
-   has always depended on.
-3. Expose a single `Analysis::analyze(sources)` entry point.
+1. Drives the full pipeline (lexer → parser → sema) behind a single
+   `Analysis::analyze(source)` entry point.
+2. Exposes the result as `Analysis` / `Node` / `NodeKind` — where `NodeKind`
+   **is** `tswift_ast::NodeKind`. The frontend and the runtime share **one node
+   vocabulary**, not two.
 
-This decoupling means the runtime never depends on frontend internals — it only
-sees `NodeKind` variants and `SwiftType` tags. Upgrading the frontend (e.g. adding
-a new parse rule) does not require touching the runtime.
+A `Node` is a **thin cursor** straight over the parse AST — there is no separate
+lowered tree or arena copy. The payloads the runtime reads (modifier bitmasks,
+numeric literal values, the `#`-directive name) are decoded on the fly. Because
+the seam is just a cursor, the runtime never depends on frontend internals, and
+the parse AST stays the single source of truth.
+
+> Historically the runtime was written against the decommissioned **msf** C
+> frontend's tree shape, so this crate carried a structural *compat lowerer* that
+> reproduced it. That layer has been removed: the runtime now consumes the clean
+> parse AST directly.
 
 ---
 
