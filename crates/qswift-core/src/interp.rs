@@ -3099,6 +3099,21 @@ impl<'w> Interpreter<'w> {
                         ];
                         return self.call_struct_method(SwiftValue::Void, &tn, &op, args, None);
                     }
+                    // Comparable derives `>`, `<=`, `>=` (and `<`) from a single
+                    // `static func <`, so a type that defines only `<` still
+                    // supports the other ordering operators.
+                    if matches!(op.as_str(), "<" | ">" | "<=" | ">=") {
+                        let derived = match op.as_str() {
+                            "<" => self.value_less_than(&l, &r),
+                            ">" => self.value_less_than(&r, &l),
+                            "<=" => self.value_less_than(&r, &l).map(|gt| !gt),
+                            ">=" => self.value_less_than(&l, &r).map(|lt| !lt),
+                            _ => None,
+                        };
+                        if let Some(b) = derived {
+                            return Ok(SwiftValue::Bool(b));
+                        }
+                    }
                 }
                 // A user-defined (custom) operator is a function named after it.
                 if let Some(SwiftValue::Function(id)) = self.env.get(&op) {
