@@ -1173,47 +1173,41 @@ impl<'w> Interpreter<'w> {
         let mut computed = std::collections::HashMap::new();
         for member in body.children() {
             match member.kind() {
+                // Each `case` element is a flat `EnumCaseDecl(name)`: its
+                // expression child (if any) is the raw value (`case c = 1`);
+                // its `TypeIdent` children are associated-value types.
                 NodeKind::EnumCaseDecl => {
-                    for element in member.children() {
-                        if element.kind() != NodeKind::EnumElementDecl {
-                            continue;
+                    let Some(cname) = member.text() else {
+                        continue;
+                    };
+                    let explicit = member
+                        .children()
+                        .find(|ec| is_expr(ec))
+                        .and_then(|n| self.eval(&n).ok());
+                    let raw = match raw_kind {
+                        Some(RawKind::Int) => {
+                            let v = match &explicit {
+                                Some(SwiftValue::Int(i)) => i.raw,
+                                _ => next_int,
+                            };
+                            next_int = v + 1;
+                            Some(SwiftValue::int(v))
                         }
-                        let Some(cname) = element.text() else {
-                            continue;
-                        };
-                        let explicit = element
-                            .children()
-                            .find(|ec| ec.kind() != NodeKind::Param)
-                            .and_then(|n| self.eval(&n).ok());
-                        let raw = match raw_kind {
-                            Some(RawKind::Int) => {
-                                let v = match &explicit {
-                                    Some(SwiftValue::Int(i)) => i.raw,
-                                    _ => next_int,
-                                };
-                                next_int = v + 1;
-                                Some(SwiftValue::int(v))
-                            }
-                            Some(RawKind::Str) => {
-                                Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
-                            }
-                            None => explicit,
-                        };
-                        let payload_types: Vec<Option<String>> = element
-                            .children()
-                            .filter(|ec| ec.kind() == NodeKind::Param)
-                            .map(|p| {
-                                p.children()
-                                    .find(|c| c.kind() == NodeKind::TypeIdent)
-                                    .and_then(|c| c.text())
-                            })
-                            .collect();
-                        cases.push(EnumCaseDef {
-                            name: cname,
-                            raw,
-                            payload_types,
-                        });
-                    }
+                        Some(RawKind::Str) => {
+                            Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
+                        }
+                        None => explicit,
+                    };
+                    let payload_types: Vec<Option<String>> = member
+                        .children()
+                        .filter(|ec| ec.kind() == NodeKind::TypeIdent)
+                        .map(|c| c.text())
+                        .collect();
+                    cases.push(EnumCaseDef {
+                        name: cname,
+                        raw,
+                        payload_types,
+                    });
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {

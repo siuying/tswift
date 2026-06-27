@@ -103,7 +103,6 @@ impl RuntimeAst {
             | K::ExtensionDecl => return self.lower_nominal(node),
             K::LetDecl | K::VarDecl => return self.lower_binding(node),
             K::ForStmt => return self.lower_for(node),
-            K::EnumCaseDecl => return self.lower_enum_case(node),
             K::IfStmt | K::GuardStmt | K::WhileStmt => return self.lower_conditional(node),
             _ => {}
         }
@@ -170,40 +169,6 @@ impl RuntimeAst {
         let children = self.lower_child_list(node.children());
         self.set_children(id, children);
         id
-    }
-
-    /// Lower an enum `case` into the runtime-facing nesting the interpreter's
-    /// `register_enum` walks: `EnumCaseDecl("case") > EnumElementDecl(name)`,
-    /// where associated-value types become `Param > TypeIdent` children and a
-    /// raw value stays as a plain value child.
-    fn lower_enum_case(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
-        use tswift_ast::NodeKind as K;
-        let outer = self.alloc(
-            NodeKind::EnumCaseDecl,
-            Some("case".to_string()),
-            node.line(),
-        );
-        let element = self.alloc(
-            NodeKind::EnumElementDecl,
-            node.text().map(ToOwned::to_owned),
-            node.line(),
-        );
-        let mut element_children: Vec<NodeId> = Vec::new();
-        for child in node.children() {
-            if child.kind() == K::TypeRef {
-                // An associated value: wrap its type in a `Param`.
-                let ident = self.lower_node(child); // -> TypeIdent
-                let param = self.alloc(NodeKind::Param, None, child.line());
-                self.set_children(param, vec![ident]);
-                element_children.push(param);
-            } else {
-                // A raw value expression (`case a = 1`).
-                element_children.push(self.lower_node(child));
-            }
-        }
-        self.set_children(element, element_children);
-        self.set_children(outer, vec![element]);
-        outer
     }
 
     /// Lower an `if`/`guard`/`while` statement. Conditions stay as-is: a

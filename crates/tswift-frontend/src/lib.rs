@@ -601,10 +601,12 @@ mod tests {
             .children()
             .find(|c| c.kind() == NodeKind::EnumCaseDecl)
             .unwrap();
-        assert_eq!(case.kind(), NodeKind::EnumCaseDecl);
-        let element = case.children().next().unwrap();
-        assert_eq!(element.kind(), NodeKind::EnumElementDecl);
-        assert_eq!(element.text().as_deref(), Some("a"));
+        // A flat `EnumCaseDecl(name)` with associated-value types as direct
+        // `TypeIdent` children.
+        assert_eq!(case.text().as_deref(), Some("a"));
+        assert!(case
+            .children()
+            .any(|c| c.kind() == NodeKind::TypeIdent && c.text().as_deref() == Some("Int")));
 
         let if_stmt = root
             .children()
