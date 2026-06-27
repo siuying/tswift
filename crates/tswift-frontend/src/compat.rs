@@ -168,9 +168,10 @@ impl RuntimeAst {
     }
 
     /// Lower a nominal declaration (struct/enum/class/protocol/extension) into
-    /// the runtime-facing shape: name as text, inherited types as `Conformance`
-    /// children, attributes as `Attribute` children, and members wrapped in a
-    /// `Block`. This is the shape `tswift-core`'s `register_*` expects.
+    /// the runtime-facing shape: name as text, inherited types as plain
+    /// `TypeIdent` children, attributes as `Attribute` children, and members
+    /// wrapped in a `Block`. This is the shape `tswift-core`'s `register_*`
+    /// expects.
     fn lower_nominal(&mut self, node: tswift_ast::Node<'_>) -> NodeId {
         use tswift_ast::NodeKind as K;
         let kind = map_kind(node.kind());
@@ -187,15 +188,10 @@ impl RuntimeAst {
                 K::Attribute => children.push(self.lower_node(child)),
                 // Generic parameters stay as direct children.
                 K::GenericParam => children.push(self.lower_node(child)),
-                // Inherited protocols / superclass / raw type lower into
-                // `Conformance` nodes the runtime reads via `record_conformances`.
-                K::TypeRef => {
-                    let name = child.text().map(ToOwned::to_owned);
-                    let conf = self.alloc(NodeKind::Conformance, name.clone(), child.line());
-                    let ident = self.alloc(NodeKind::TypeIdent, name, child.line());
-                    self.set_children(conf, vec![ident]);
-                    children.push(conf);
-                }
+                // Inherited protocols / superclass / raw type stay as plain
+                // `TypeIdent` children the runtime reads directly via
+                // `record_conformances`.
+                K::TypeRef => children.push(self.lower_node(child)),
                 // Everything else is a member of the type body.
                 _ => members.push(self.lower_node(child)),
             }

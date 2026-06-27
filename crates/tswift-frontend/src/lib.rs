@@ -528,7 +528,7 @@ mod tests {
     }
 
     /// Nominal declarations lower into the runtime-facing shape: name as text,
-    /// inherited types as `Conformance` (with a `TypeIdent` child), members in a
+    /// inherited types as plain `TypeIdent` children, members in a
     /// `Block`.
     #[test]
     fn lowers_struct_codable_shape() {
@@ -542,7 +542,6 @@ mod tests {
             a.root().dump(),
             "SourceFile L1\n  \
                StructDecl \"User\" L1\n    \
-                 Conformance \"Codable\" L1\n      \
                    TypeIdent \"Codable\" L1\n    \
                  Block \"{\" L1\n      \
                    LetDecl L2 :String\n        \

@@ -1,7 +1,6 @@
 SourceFile L1
   StructDecl "User" L1
-    Conformance "Codable" L1
-      TypeIdent "Codable" L1
+    TypeIdent "Codable" L1
     Block "{" L1
       LetDecl L2 :String
         PatternValueBinding "name" L2 :String

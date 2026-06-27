@@ -896,11 +896,12 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-    /// Record the protocols a type conforms to from its `Conformance` children.
+    /// Record the protocols a type conforms to from its inherited-type
+    /// (`TypeIdent`) children.
     fn record_conformances(&mut self, type_name: &str, node: &Node<'static>) {
         let conf: Vec<String> = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeIdent)
             .filter_map(|c| c.text())
             .collect();
         if !conf.is_empty() {
@@ -916,7 +917,7 @@ impl<'w> Interpreter<'w> {
         let Some(name) = node.text() else { return };
         let inherited: Vec<String> = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeIdent)
             .filter_map(|c| c.text())
             .collect();
         self.protocols.entry(name).or_insert_with(|| ProtoDef {
@@ -1154,10 +1155,10 @@ impl<'w> Interpreter<'w> {
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
         };
-        // Determine the raw-value backing type from the conformance list.
+        // Determine the raw-value backing type from the inherited-type list.
         let raw_kind = node
             .children()
-            .filter(|c| c.kind() == NodeKind::Conformance)
+            .filter(|c| c.kind() == NodeKind::TypeIdent)
             .find_map(|c| match c.text().as_deref() {
                 Some("String") => Some(RawKind::Str),
                 Some(t) if IntWidth::from_type_name(t).is_some() => Some(RawKind::Int),
@@ -1263,7 +1264,7 @@ impl<'w> Interpreter<'w> {
         self.record_conformances(&name, node);
         let superclass = node
             .children()
-            .find(|c| c.kind() == NodeKind::Conformance)
+            .find(|c| c.kind() == NodeKind::TypeIdent)
             .and_then(|c| c.text());
         let Some(body) = node.children().find(|c| c.kind() == NodeKind::Block) else {
             return;
