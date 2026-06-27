@@ -29,9 +29,13 @@ use crate::{child_ids, parse_type_name};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuilderMethod {
     pub(crate) name: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // recorded for label-based selection; not read yet.
     pub(crate) first_label: Option<String>,
     pub(crate) arity: usize,
+    /// The written type of the first parameter (`String` in
+    /// `buildExpression(_ v: String)`), used to reason about type-only
+    /// overloads.
+    pub(crate) first_param_type: Option<String>,
 }
 
 /// The static-method set declared by one `@resultBuilder` type — the menu the
@@ -179,10 +183,17 @@ fn collect_builder_methods_into(ast: &Ast, parent: NodeId, methods: &mut Vec<Bui
                     let first_label = params
                         .first()
                         .and_then(|p| ast.node(*p).arg_label().map(str::to_string));
+                    let first_param_type = params.first().and_then(|p| {
+                        child_ids(ast, *p)
+                            .into_iter()
+                            .find(|c| ast.node(*c).kind() == NodeKind::TypeRef)
+                            .and_then(|c| ast.node(c).text().map(str::to_string))
+                    });
                     methods.push(BuilderMethod {
                         name: name.to_string(),
                         first_label,
                         arity: params.len(),
+                        first_param_type,
                     });
                 }
             }

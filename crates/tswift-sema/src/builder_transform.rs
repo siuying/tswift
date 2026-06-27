@@ -106,6 +106,7 @@ fn validate_builder_type(ast: &Ast, decl: NodeId, symbols: &Symbols, diags: &mut
                 ),
             ));
         }
+        check_overload_ambiguity(ast, decl, methods, diags);
     }
     // Signature checks on each declared build method.
     for func in builder_member_funcs(ast, decl) {
@@ -135,6 +136,60 @@ fn validate_builder_type(ast: &Ast, decl: NodeId, symbols: &Symbols, diags: &mut
                     "'buildEither' must take a single 'first:' or 'second:' parameter".to_string(),
                 ));
             }
+        }
+    }
+}
+
+/// Diagnose build-method overloads the forward-only pipeline cannot resolve
+/// (Tier B/C, plan §4.1). Overloads of the same name/arity/first-label are
+/// resolvable only when separable by **distinct modelled scalar** parameter
+/// types (the interpreter then dispatches by the argument's runtime type).
+/// Overloads on unmodelled (user/contextual) types, or with duplicate scalar
+/// types, are ambiguous and diagnosed rather than silently miscompiled.
+fn check_overload_ambiguity(
+    ast: &Ast,
+    decl: NodeId,
+    methods: &BuilderMethods,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use std::collections::HashMap;
+    // `buildEither` / `buildPartialBlock` overloads are discriminated by label
+    // and arity by design, not by type, so they are never type-only ambiguous.
+    // The parser does not preserve whether a bare `name:` parameter carried a
+    // label, so grouping the rest by (name, arity) is the reliable key.
+    let mut groups: HashMap<(&str, usize), Vec<Option<&str>>> = HashMap::new();
+    for m in methods.methods() {
+        if matches!(m.name.as_str(), "buildEither" | "buildPartialBlock") {
+            continue;
+        }
+        groups
+            .entry((m.name.as_str(), m.arity))
+            .or_default()
+            .push(m.first_param_type.as_deref());
+    }
+    for ((name, _), param_types) in groups {
+        if param_types.len() < 2 {
+            continue;
+        }
+        // Resolvable iff every overload has a distinct modelled scalar type.
+        let mut seen: Vec<tswift_ast::Type> = Vec::new();
+        let resolvable = param_types.iter().all(|t| {
+            match t.and_then(|t| crate::parse_type_name(t.trim().trim_end_matches('?'))) {
+                Some(scalar) if !seen.contains(&scalar) => {
+                    seen.push(scalar);
+                    true
+                }
+                _ => false,
+            }
+        });
+        if !resolvable {
+            diags.push(diag(
+                ast,
+                decl,
+                format!(
+                    "ambiguous result-builder method '{name}': overloads separable only by type cannot be resolved by the forward-only type checker"
+                ),
+            ));
         }
     }
 }
@@ -1576,6 +1631,50 @@ mod tests {
             !diags
                 .iter()
                 .any(|d| d.message.contains("explicit 'return'")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn distinct_scalar_build_expression_overloads_are_not_ambiguous() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct B {\n\
+             static func buildExpression(_ v: String) -> String { v }\n\
+             static func buildExpression(_ v: Int) -> String { \"\" }\n\
+             static func buildBlock(_ p: String...) -> String { \"\" } }",
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains("ambiguous")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn type_only_overloads_on_unmodelled_types_are_ambiguous() {
+        let diags = diags_of(
+            "struct Foo {}\nstruct Bar {}\n@resultBuilder\nstruct B {\n\
+             static func buildExpression(_ v: Foo) -> String { \"\" }\n\
+             static func buildExpression(_ v: Bar) -> String { \"\" }\n\
+             static func buildBlock(_ p: String...) -> String { \"\" } }",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("ambiguous result-builder method")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn build_either_overloads_are_not_flagged_ambiguous() {
+        let diags = diags_of(
+            "@resultBuilder\nstruct B {\n\
+             static func buildBlock(_ p: String...) -> String { \"\" }\n\
+             static func buildEither(first: String) -> String { first }\n\
+             static func buildEither(second: String) -> String { second } }",
+        );
+        assert!(
+            !diags.iter().any(|d| d.message.contains("ambiguous")),
             "{diags:?}"
         );
     }

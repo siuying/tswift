@@ -6361,13 +6361,27 @@ impl<'w> Interpreter<'w> {
         if overloads.len() < 2 {
             return None;
         }
-        let mut matches = overloads
+        // First narrow by argument labels (`buildEither(first:)` vs `(second:)`).
+        let label_matches: Vec<&MethodDef> = overloads
             .iter()
-            .filter(|def| args_select_params(args, &def.params));
-        let chosen = matches.next()?;
-        if matches.next().is_some() {
-            return None; // ambiguous by label alone; defer to the fallback.
-        }
+            .filter(|def| args_select_params(args, &def.params))
+            .collect();
+        let chosen = match label_matches.as_slice() {
+            [one] => *one,
+            [] => return None,
+            many => {
+                // Type-only overloads (`buildExpression(String)` vs `(Int)`):
+                // disambiguate by the argument values' runtime types.
+                let type_matches: Vec<&&MethodDef> = many
+                    .iter()
+                    .filter(|def| args_match_param_types(args, &def.params))
+                    .collect();
+                match type_matches.as_slice() {
+                    [one] => **one,
+                    _ => return None, // unresolved by label or type; defer.
+                }
+            }
+        };
         Some((clone_params(&chosen.params), chosen.body, chosen.mutating))
     }
 
@@ -7369,6 +7383,19 @@ fn args_select_params(args: &[CallArg], params: &[Param]) -> bool {
         })
 }
 
+/// Whether each argument's runtime type matches its parameter's declared type,
+/// used to disambiguate overloads separable only by type. A parameter with no
+/// written type accepts any argument.
+fn args_match_param_types(args: &[CallArg], params: &[Param]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    args.iter().zip(params).all(|(arg, param)| match &param.ty {
+        Some(ty) => arg.value.type_name() == ty.trim().trim_end_matches('?'),
+        None => true,
+    })
+}
+
 fn clone_params(params: &[Param]) -> Vec<Param> {
     params
         .iter()
@@ -7717,6 +7744,20 @@ mod tests {
              print(B.pick(second: \"b\"))\n")
         .unwrap();
         assert_eq!(out, "F:a\nS:b\n");
+    }
+
+    #[test]
+    fn static_overloads_dispatch_by_argument_type() {
+        // Two same-named static methods separable only by parameter type are
+        // each selected by the argument's runtime type (Tier B, #124).
+        let out = run("struct B {\n\
+             static func describe(_ v: String) -> String { \"str:\" + v }\n\
+             static func describe(_ v: Int) -> String { \"int:\\(v)\" }\n\
+             }\n\
+             print(B.describe(\"a\"))\n\
+             print(B.describe(7))\n")
+        .unwrap();
+        assert_eq!(out, "str:a\nint:7\n");
     }
 
     #[test]
