@@ -36,7 +36,10 @@ const MAX_CALL_DEPTH: usize = 5000;
 /// Maximum number of elements a custom sequence algorithm may eagerly
 /// materialize before trapping. `for-in` remains lazy and can still terminate an
 /// unbounded sequence with `break`; eager algorithms like `map` cannot.
+#[cfg(not(test))]
 const MAX_SEQUENCE_MATERIALIZE: usize = 100_000;
+#[cfg(test)]
+const MAX_SEQUENCE_MATERIALIZE: usize = 32;
 
 /// A native (Rust-implemented) Swift function. It receives the output sink and
 /// the already-evaluated arguments, and returns its result value.
@@ -8490,5 +8493,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn custom_sequence_algorithm_traps_when_materialization_limit_is_exceeded() {
+        let err = run(
+            "struct Naturals: Sequence, IteratorProtocol {\n  var n: Int\n  mutating func next() -> Int? { n += 1; return n }\n  func makeIterator() -> Naturals { self }\n}\nlet xs = Naturals(n: 0).map { $0 }\nprint(xs.count)\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Trap(ref msg) if msg.contains("custom sequence algorithm exceeded")),
+            "got {err:?}"
+        );
     }
 }
