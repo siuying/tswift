@@ -414,7 +414,7 @@ biggest sustained effort. Scope deliberately.*
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
 | [x] | `Equatable` / `Hashable` / `Comparable` | ★★★ | R4 |
-| [ ] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
+| [x] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
 | [ ] | `Collection` / `BidirectionalCollection` / `RandomAccess` | ★★★★ | R4 |
 | [ ] | `RangeReplaceableCollection` | ★★★ | R4 |
 | [ ] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |

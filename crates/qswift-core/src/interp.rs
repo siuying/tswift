@@ -3761,6 +3761,18 @@ impl<'w> Interpreter<'w> {
                 let name = var_name.as_deref().unwrap_or("_");
                 return self.run_async_sequence(&seq, name, where_clause, &body, &label);
             }
+            // A user type conforming to `Sequence`/`IteratorProtocol`: drive its
+            // iterator lazily so infinite sequences with `break` terminate.
+            _ if !is_builtin_iterable(&seq) && self.is_custom_sequence(&seq) => {
+                return self.run_sync_sequence(
+                    &seq,
+                    var_name.as_deref(),
+                    pattern,
+                    where_clause,
+                    &body,
+                    &label,
+                );
+            }
             _ => self.iterate(&seq)?,
         };
 
@@ -3866,6 +3878,132 @@ impl<'w> Interpreter<'w> {
             }
             self.env.push();
             self.env.declare(var_name, next, false);
+            if let Some(w) = where_clause {
+                match self.eval_condition(&w) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.env.pop();
+                        continue;
+                    }
+                    Err(s) => {
+                        self.env.pop();
+                        break Err(s);
+                    }
+                }
+            }
+            let flow = self.run_loop_body(body, label);
+            self.env.pop();
+            match flow {
+                Ok(LoopFlow::Continue) => {}
+                Ok(LoopFlow::Break) => break Ok(SwiftValue::Void),
+                Err(s) => break Err(s),
+            }
+        };
+        self.env.pop();
+        outcome
+    }
+
+    /// Whether `value` is a user type conforming to `Sequence` or
+    /// `IteratorProtocol`: it exposes a `next()` or `makeIterator()` method
+    /// (structurally, on a struct, enum, or class). This is duck-typed rather
+    /// than checked against a declared conformance.
+    fn is_custom_sequence(&self, value: &SwiftValue) -> bool {
+        self.value_type_name(value).is_some_and(|t| {
+            self.seq_type_has_method(&t, "next") || self.seq_type_has_method(&t, "makeIterator")
+        })
+    }
+
+    /// `type_has_method` extended to class declarations (walking the chain), for
+    /// custom-sequence detection over struct/enum/class conformers.
+    fn seq_type_has_method(&self, type_name: &str, method: &str) -> bool {
+        self.type_has_method(type_name, method)
+            || (self.classes.contains_key(type_name)
+                && self.lookup_method(type_name, method).is_some())
+    }
+
+    /// Dispatch `next()`/`makeIterator()` on a sequence/iterator value, routing
+    /// a class receiver through dynamic dispatch and a struct/enum receiver
+    /// through the value-method path (writing the mutated iterator back to
+    /// `place`).
+    fn call_sequence_method(
+        &mut self,
+        receiver: SwiftValue,
+        type_name: &str,
+        method: &str,
+        place: Option<Place>,
+    ) -> Eval {
+        if self.classes.contains_key(type_name) {
+            // A class iterator mutates through its reference; no write-back.
+            self.dispatch_class_method(receiver, type_name, method, Vec::new())
+        } else {
+            self.call_struct_method(receiver, type_name, method, Vec::new(), place)
+        }
+    }
+
+    /// `for x in seq` over a custom `Sequence`/`IteratorProtocol`: obtain the
+    /// iterator (the value itself if it has `next()`, else `makeIterator()`),
+    /// then drive the mutating `next()` until it yields `nil`, running the loop
+    /// body for each element. Supports a binding name or a `for case` pattern.
+    fn run_sync_sequence(
+        &mut self,
+        seq: &SwiftValue,
+        var_name: Option<&str>,
+        pattern: Option<Node<'static>>,
+        where_clause: Option<Node<'static>>,
+        body: &Node<'static>,
+        label: &Option<String>,
+    ) -> Eval {
+        const ITER: &str = "$synciter";
+        let seq_ty = self
+            .value_type_name(seq)
+            .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
+        // A type that *is* its own iterator skips `makeIterator`.
+        let iter = if self.seq_type_has_method(&seq_ty, "next") {
+            seq.clone()
+        } else {
+            self.call_sequence_method(seq.clone(), &seq_ty, "makeIterator", None)?
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("iterator has no type".into()))?;
+
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let outcome = loop {
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            let next = match self.call_sequence_method(current, &iter_ty, "next", Some(place)) {
+                Ok(v) => v,
+                Err(e) => break Err(e),
+            };
+            // `next()` returns `Element?`: `nil` ends the sequence.
+            if matches!(next, SwiftValue::Nil) {
+                break Ok(SwiftValue::Void);
+            }
+            self.env.push();
+            // A `for case` pattern that fails to match skips the element.
+            if let Some(pat) = pattern {
+                match self.match_pattern(&pat, &next) {
+                    Ok(Some(binds)) => {
+                        for (name, value) in binds {
+                            self.env.declare(&name, value, false);
+                        }
+                    }
+                    Ok(None) => {
+                        self.env.pop();
+                        continue;
+                    }
+                    Err(s) => {
+                        self.env.pop();
+                        break Err(s);
+                    }
+                }
+            } else if let Some(name) = var_name {
+                self.env.declare(name, next, false);
+            }
             if let Some(w) = where_clause {
                 match self.eval_condition(&w) {
                     Ok(true) => {}
