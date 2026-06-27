@@ -172,6 +172,33 @@ core change is `@State`:
 Explicit `id`-based identity (for `ForEach` rows) is added in Tier 3; v1/Tier 2
 use structural identity only.
 
+### 4.1 What v1 actually shipped (revision)
+
+The v1 slice reaches the same observable behaviour **without** a `tswift-core`
+hook, so the "single load-bearing core change" above is **not** what landed:
+
+- `@State` is a prelude `@propertyWrapper struct State<Value>` backed by a
+  **shared reference box** (`_StateBox`, a class). Because the box is a reference
+  type, every copy of the view struct (and every closure that captured it) shares
+  one cell, so `count += 1` in a `Button` action is visible on the next render.
+- The `Session` instantiates the **root view once** and reuses that instance
+  across `render`/`dispatch`, so the disposable-`body` reset problem never
+  arises for the root. This is the structural-identity guarantee **for the root
+  only**.
+- **Bounded limitation:** a *child* view constructed inside `body` is recreated
+  each render, so its `@State` would reset. v1 has no view composition (Tier 2),
+  so no fixture hits this; the identity-keyed render-node store of §4 is deferred
+  to whenever child `@State` / `ForEach` rows land (Tier 3), and is the real
+  reason that store still earns its place in the roadmap.
+- The sanctioned core seams that *did* land are generic, not SwiftUI-specific:
+  `register_struct_method` (the view-modifier dispatch fallback) and
+  `eval_block_values` (the `@ViewBuilder` shim). Two caveats, accepted for v1:
+  the modifier fallback matches **any** struct receiver by method name (only
+  active when SwiftUI is installed; user `View` composition isn't in v1 anyway),
+  and leading-dot tokens shared across namespaces (`.black` is both `Color` and
+  `FontWeight`) are ambiguous without contextual typing — write the qualified
+  form (`Color.black`).
+
 ---
 
 ## 5. Autonomous verification loop (the core requirement)

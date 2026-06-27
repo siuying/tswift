@@ -70,9 +70,12 @@ export class PatchApplier {
       case "replace": {
         const old = this.nodes.get(patch.id);
         if (!old) return;
+        // Forget the old subtree's ids *before* building the replacement, which
+        // re-registers the same ids — otherwise `forget` would delete the new
+        // entries and later patches/events for the subtree become no-ops.
+        this.forget(patch.id);
         const el = this.build(patch.node);
         old.replaceWith(el);
-        this.forget(patch.id);
         break;
       }
       case "setText": {

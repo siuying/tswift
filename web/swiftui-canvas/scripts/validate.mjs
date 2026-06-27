@@ -6,7 +6,7 @@
 //
 // Exit 0 = the goldens are a valid wire payload for this host.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -51,7 +51,10 @@ function checkUiir(name) {
 }
 
 function checkPatches(name) {
-  const streams = JSON.parse(readFileSync(join(fixtures, `${name}.patches.json`), "utf8"));
+  const path = join(fixtures, `${name}.patches.json`);
+  // A fixture without scripted events (no patch golden) is valid — skip it.
+  if (!existsSync(path)) return;
+  const streams = JSON.parse(readFileSync(path, "utf8"));
   if (!Array.isArray(streams)) return fail(`${name}.patches: must be an array of streams`);
   streams.forEach((stream, i) => {
     if (!Array.isArray(stream)) return fail(`${name}.patches[${i}]: stream must be an array`);
@@ -61,8 +64,14 @@ function checkPatches(name) {
   });
 }
 
-// The committed v1 fixture set. New fixtures get a line here.
-for (const name of ["counter"]) {
+// Discover every fixture with a committed UIIR golden (mirrors the Rust
+// harness) so the check can't drift as fixtures are added.
+const names = readdirSync(fixtures)
+  .filter((f) => f.endsWith(".uiir.json"))
+  .map((f) => f.slice(0, -".uiir.json".length))
+  .sort();
+if (names.length === 0) fail("no *.uiir.json fixtures found");
+for (const name of names) {
   checkUiir(name);
   checkPatches(name);
 }

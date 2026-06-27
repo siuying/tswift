@@ -405,6 +405,23 @@ mod tests {
     }
 
     #[test]
+    fn qualified_token_resolves_when_leading_dot_is_ambiguous() {
+        // `.black` is shared by `Color` and `FontWeight`, so the leading-dot
+        // form is ambiguous without contextual typing; the qualified
+        // `Color.black` resolves. This documents the accepted v1 limitation.
+        let view = render_to_string(
+            r#"struct V: View { var body: some View { Text("x").foregroundColor(Color.black) } }"#,
+            "V",
+        );
+        let mods = modifiers_of(&view);
+        assert_eq!(mods.len(), 1);
+        let SwiftValue::Struct(m) = &mods[0] else {
+            panic!("expected modifier struct");
+        };
+        assert_eq!(m.get("value").and_then(token_of), Some(("Color", "black")));
+    }
+
+    #[test]
     fn render_root_captures_button_title_and_action() {
         let src = r#"
 struct V: View {
