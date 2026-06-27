@@ -331,8 +331,8 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
 | [~] | `#warning` / `#error` | ⚠️ | ★ | R1 |
 | [ ] | `@freestanding` / `@attached` roles | ⚠️ | ★★★★ | R6+ |
-| [~] | `@resultBuilder` (DSL transform) | ⚠️ | ★★★★ | R6+ |
-| [~] | Result-builder method synthesis | ❌ | ★★★★ | R6+ |
+| [~] | `@resultBuilder` (DSL transform) | ✅ | ★★★★ | R6+ |
+| [~] | Result-builder method synthesis | ⚠️ | ★★★★ | R6+ |
 
 ---
 
@@ -364,7 +364,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
 | [x] | `@discardableResult` | ✅ | ★ | R1 |
 | [x] | `@propertyWrapper` | ✅ | ★★★ | R5 |
-| [~] | `@resultBuilder` | ⚠️ | ★★★★ | R6+ |
+| [~] | `@resultBuilder` | ✅ | ★★★★ | R6+ |
 | [x] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
 | [x] | `@Sendable` | ✅ | ★★ | R6+ |
 | [~] | `@autoclosure` / `@escaping` / `@convention` | ✅/⚠️ | ★★ | R3 |
