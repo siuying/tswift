@@ -33,7 +33,7 @@ all cost time to rediscover.
 
 - The `edit` tool takes `oldText`/`newText` only — do **not** emit a stray
   `newText2`; it's rejected. Merge nearby changes into one edit instead.
-- `request-code-review` is not installed; do a self-review against
+- `requesting-code-review` is not installed; do a self-review against
   `scripts/presubmit` and the feature checklist.
 - To inspect how msf parses a construct, use `tswift dump <file>` rather
   than writing throwaway AST-walker test modules. See
