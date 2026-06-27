@@ -2,26 +2,27 @@
 //!
 //! This crate is the **only** runtime-facing seam onto the Swift frontend. It
 //! drives the pure-Rust pipeline (`tswift-lexer` → `tswift-parser` → `tswift-sema`)
-//! and lowers the result, through the compatibility lowerer in [`compat`], into
-//! the stable runtime-facing AST contract the runtime (`tswift-core` /
-//! `-std`) consumes: [`Analysis`], [`Node`], and [`NodeKind`].
+//! and exposes its result — the `tswift_ast` parse AST — directly as the stable
+//! runtime-facing contract the runtime (`tswift-core` / `-std`) consumes:
+//! [`Analysis`], [`Node`], and [`NodeKind`] (which is `tswift_ast::NodeKind`).
 //!
-//! There is no C dependency and no `unsafe`: the AST lives in an owned arena
-//! ([`compat::RuntimeAst`]); a [`Node`] is a cheap cursor borrowing the
-//! [`Analysis`] so it can never dangle.
+//! There is no C dependency and no `unsafe`: [`Analysis`] owns the parse AST,
+//! and a [`Node`] is a cheap cursor over it (decoding modifier/literal payloads
+//! on the fly) so it can never dangle.
 
 #![forbid(unsafe_code)]
 
-mod compat;
+mod decode;
 
 /// The syntactic category of a [`Node`]. Re-exported from `tswift_ast`: the
 /// frontend and the parse AST now share one node vocabulary.
 pub use tswift_ast::NodeKind;
 
-/// An owned Swift analysis result: the typed, runtime-facing AST plus
-/// diagnostics for one Swift source file.
+/// An owned Swift analysis result: the parse AST (parsed and type-resolved)
+/// plus diagnostics for one Swift source file.
 pub struct Analysis {
-    rust: compat::RuntimeAst,
+    ast: tswift_ast::Ast,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Analysis {
@@ -33,63 +34,91 @@ impl Analysis {
         if source.as_bytes().contains(&0) || filename.as_bytes().contains(&0) {
             return Err(AnalyzeError::InteriorNul);
         }
-        Ok(Analysis {
-            rust: compat::RuntimeAst::analyze(source),
-        })
+        let (ast, diagnostics) = match tswift_parser::parse(source) {
+            Ok(mut ast) => {
+                let diagnostics = tswift_sema::analyze(&mut ast)
+                    .into_iter()
+                    .map(|d| Diagnostic {
+                        message: d.message,
+                        line: d.line,
+                        col: d.col,
+                    })
+                    .collect();
+                (ast, diagnostics)
+            }
+            // A parse error leaves an empty `source_file` root carrying the
+            // single syntax diagnostic.
+            Err(e) => (
+                tswift_ast::Ast::new(),
+                vec![Diagnostic {
+                    message: e.message,
+                    line: e.line,
+                    col: e.col,
+                }],
+            ),
+        };
+        Ok(Analysis { ast, diagnostics })
     }
 
     /// The root `source_file` node of the AST.
     pub fn root(&self) -> Node<'_> {
         Node {
-            rust: self.rust.root(),
-            analysis: self,
+            inner: self.ast.node(self.ast.root()),
         }
     }
 
     /// Semantic/syntactic errors produced during analysis, in source order.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        self.rust.diagnostics()
+        self.diagnostics.clone()
     }
 
     /// Returns `true` if analysis produced no errors.
     pub fn is_ok(&self) -> bool {
-        self.rust.is_ok()
+        self.diagnostics.is_empty()
     }
 }
 
-/// A borrowed view of one AST node. Tied to its [`Analysis`] by lifetime `'a`,
-/// so it can never outlive the arena that backs it.
+/// A borrowed cursor over one parse-AST node. Tied to its [`Analysis`] by
+/// lifetime `'a`, so it can never outlive the arena that backs it.
 #[derive(Clone, Copy)]
 pub struct Node<'a> {
-    rust: compat::NodeId,
-    analysis: &'a Analysis,
+    inner: tswift_ast::Node<'a>,
 }
 
 impl<'a> Node<'a> {
 
     /// The kind of syntax this node represents.
     pub fn kind(&self) -> NodeKind {
-        self.analysis.rust.kind(self.rust)
+        self.inner.kind()
     }
 
     /// Iterator over this node's direct children, in source order.
     pub fn children(&self) -> Children<'a> {
         Children {
-            inner: self.analysis.rust.children(self.rust),
-            analysis: self.analysis,
+            inner: self.inner.children().collect::<Vec<_>>().into_iter(),
         }
     }
 
     /// The source text of this node's primary token (identifier name, literal
-    /// text, operator), if any.
+    /// text, operator), if any. A `#`-directive (`#line`, `#warning`, `#if`)
+    /// drops its leading `#` to match the runtime's `eval_macro` keys.
     pub fn text(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        match self.inner.kind() {
+            // A `for` loop's text is its statement label, exposed via
+            // `loop_label()`; `text()` stays `None` (its binding is a child).
+            NodeKind::ForStmt => None,
+            NodeKind::CompilerDirective => self
+                .inner
+                .text()
+                .map(|t| t.trim_start_matches('#').to_string()),
+            _ => self.inner.text().map(ToOwned::to_owned),
+        }
     }
 
     /// For a [`NodeKind::BinaryExpr`]/`AssignExpr`/`CastExpr`/`EnumCasePattern`, the
     /// operator's (or case's) text.
     pub fn op_text(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        self.text()
     }
 
     /// For a declaration node (var/let/func/param), its name.
@@ -103,39 +132,52 @@ impl<'a> Node<'a> {
                 _ => {}
             }
         }
-        self.analysis.rust.text(self.rust)
+        self.text()
     }
 
     /// The integer value of an `IntegerLiteral` node, else `None`.
     pub fn int(&self) -> Option<i64> {
-        self.analysis.rust.int(self.rust)
+        if self.inner.kind() != NodeKind::IntegerLiteral {
+            return None;
+        }
+        decode::parse_int_literal(self.inner.text()?)
     }
 
     /// The value of a `BoolLiteral` node, else `None`.
     pub fn bool(&self) -> Option<bool> {
-        self.analysis.rust.bool(self.rust)
+        if self.inner.kind() != NodeKind::BoolLiteral {
+            return None;
+        }
+        match self.inner.text()? {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
     }
 
     /// The value of a `FloatLiteral` node, else `None`.
     pub fn float(&self) -> Option<f64> {
-        self.analysis.rust.float(self.rust)
+        if self.inner.kind() != NodeKind::FloatLiteral {
+            return None;
+        }
+        decode::parse_float_literal(self.inner.text()?)
     }
 
     /// The 1-based source line of this node's first token.
     pub fn line(&self) -> u32 {
-        self.analysis.rust.line(self.rust)
+        self.inner.line()
     }
 
     /// The resolved type name of this node (e.g. `Int`, `String`), if any.
     pub fn type_name(&self) -> Option<String> {
-        self.analysis.rust.type_name(self.rust)
+        self.inner.type_name().map(ToOwned::to_owned)
     }
 
     /// Whether this node carries the `async` effect modifier — `async let`
     /// on a binding, or `for await` on a loop.
     pub fn is_async(&self) -> bool {
         const MOD_ASYNC: u32 = 1 << 13;
-        self.analysis.rust.modifiers(self.rust) & MOD_ASYNC != 0
+        self.modifiers() & MOD_ASYNC != 0
     }
 
     /// For a `LetDecl`/`VarDecl`, whether it was written `async let`.
@@ -145,7 +187,7 @@ impl<'a> Node<'a> {
 
     /// For a `break`/`continue` statement, its target loop label, if any.
     pub fn jump_label(&self) -> Option<String> {
-        self.analysis.rust.text(self.rust)
+        self.text()
     }
 
     /// For a `var`/`let` property, the ownership keyword (`weak`/`unowned`).
@@ -160,9 +202,15 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// For a `for`/`while`/`repeat` loop, its statement label, if any.
+    /// For a `for`/`while`/`repeat` loop, its statement label (`outer:`), if
+    /// any — carried as the loop node's own text.
     pub fn loop_label(&self) -> Option<String> {
-        self.analysis.rust.loop_label(self.rust)
+        match self.inner.kind() {
+            NodeKind::ForStmt | NodeKind::WhileStmt | NodeKind::RepeatStmt => {
+                self.inner.text().map(ToOwned::to_owned)
+            }
+            _ => None,
+        }
     }
 
     /// For a `CaseClause`, whether it is `default` and its optional `where`
@@ -180,17 +228,33 @@ impl<'a> Node<'a> {
 
     /// The declaration modifier bitmask.
     pub fn modifiers(&self) -> u32 {
-        self.analysis.rust.modifiers(self.rust)
+        let mut bits = decode::modifier_bits(self.inner.modifiers());
+        // The runtime reads the optional-cast flag (`as?`) from bit 0x800 on a
+        // CastExpr, not from its operator text.
+        if self.inner.kind() == NodeKind::CastExpr && self.inner.text() == Some("as?") {
+            bits |= 0x800;
+        }
+        bits
     }
 
     /// The argument label of a call argument, if present.
     pub fn arg_label(&self) -> Option<String> {
-        self.analysis.rust.arg_label(self.rust)
+        self.inner.arg_label().map(ToOwned::to_owned)
     }
 
-    /// For an `AST_PARAM` node, its label/name/variadic/inout info.
+    /// For a `Param` node, its label/name/variadic/inout info.
     pub fn param_info(&self) -> ParamInfo {
-        self.analysis.rust.param_info(self.rust)
+        const MOD_VARIADIC: u32 = 1 << 28;
+        const MOD_INOUT: u32 = 1 << 30;
+        const MOD_AUTOCLOSURE: u32 = 1 << 27;
+        let bits = self.modifiers();
+        ParamInfo {
+            label: self.arg_label(),
+            name: self.text().unwrap_or_default(),
+            variadic: bits & MOD_VARIADIC != 0,
+            autoclosure: bits & MOD_AUTOCLOSURE != 0,
+            is_inout: bits & MOD_INOUT != 0,
+        }
     }
 
     /// For a `var`/`let`/`subscript`, its computed-accessor and observer bodies.
@@ -374,18 +438,14 @@ fn json_string(s: &str) -> String {
 
 /// Iterator over a node's children produced by [`Node::children`].
 pub struct Children<'a> {
-    inner: compat::Children,
-    analysis: &'a Analysis,
+    inner: std::vec::IntoIter<tswift_ast::Node<'a>>,
 }
 
 impl<'a> Iterator for Children<'a> {
     type Item = Node<'a>;
 
     fn next(&mut self) -> Option<Node<'a>> {
-        self.inner.next().map(|id| Node {
-            rust: id,
-            analysis: self.analysis,
-        })
+        self.inner.next().map(|inner| Node { inner })
     }
 }
 
