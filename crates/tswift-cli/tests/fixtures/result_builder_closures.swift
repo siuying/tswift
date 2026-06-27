@@ -38,7 +38,11 @@ print(makeGeneric {
     "g2"
 })
 
-// A closure passed by name (not a literal) is transformed by the runtime.
+// A closure formed without builder context is an ordinary multi-statement
+// closure (it returns its last value). Passing it by name does NOT re-apply the
+// parameter's result builder — matching swiftc, since the result-builder
+// transform only rewrites closure *literals* at the call site. So `content()`
+// here yields "last", and `wrap(plain)` prints `wrapped(last)`.
 let plain = {
     "plain"
     "last"

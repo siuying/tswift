@@ -331,8 +331,8 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
 | [~] | `#warning` / `#error` | ⚠️ | ★ | R1 |
 | [ ] | `@freestanding` / `@attached` roles | ⚠️ | ★★★★ | R6+ |
-| [~] | `@resultBuilder` (DSL transform) | ✅ | ★★★★ | R6+ |
-| [~] | Result-builder method synthesis | ⚠️ | ★★★★ | R6+ |
+| [x] | `@resultBuilder` (DSL transform) | ✅ | ✅ | R6+ |
+| [x] | Result-builder method synthesis | ✅ | ✅ | R6+ |
 
 ---
 

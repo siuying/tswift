@@ -52,6 +52,9 @@ print(wrap {
     "one"
     "two"
 })
+// A closure formed without builder context returns its last value; passing it
+// by name does not re-apply `wrap`'s result builder, so `wrap(plain)` prints
+// `wrapped(last)` (matches swiftc — only closure literals are transformed).
 let plain = {
     "plain"
     "last"
