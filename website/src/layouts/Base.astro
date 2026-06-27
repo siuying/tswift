@@ -23,7 +23,7 @@ const {
     <title>{title}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <!-- Mermaid (loaded only when needed via data-mermaid attribute) -->
   </head>
   <body>
@@ -37,15 +37,16 @@ const {
         mermaid.initialize({
           startOnLoad: true,
           theme: 'dark',
+          fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
           themeVariables: {
             darkMode: true,
-            background: '#16161c',
-            primaryColor: '#1e1e27',
-            primaryTextColor: '#eeeef5',
-            primaryBorderColor: 'rgba(255,255,255,.2)',
-            lineColor: '#8888a0',
-            secondaryColor: '#262632',
-            tertiaryColor: '#1e1e27',
+            background: '#0e1014',
+            primaryColor: '#15171c',
+            primaryTextColor: '#e7e9f0',
+            primaryBorderColor: 'rgba(255,255,255,.22)',
+            lineColor: '#7b8092',
+            secondaryColor: '#1b1d24',
+            tertiaryColor: '#15171c',
           },
         });
         mermaid.run();

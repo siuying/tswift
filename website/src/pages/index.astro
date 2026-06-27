@@ -10,15 +10,15 @@ import CoverageBar from '../components/CoverageBar.astro';
 >
   <!-- ── Hero ─────────────────────────────────────────────────────── -->
   <section class="hero">
-    <p class="hero-eyebrow">Swift · Rust · WebAssembly</p>
-    <h1>Swift in the browser,<br /><span class="accent">powered by Rust.</span></h1>
+    <p class="hero-eyebrow">swift → rust → wasm</p>
+    <h1>Run Swift in the browser,<br /><span class="accent">compiled by Rust.</span></h1>
     <p class="lead">
       tswift parses, type-checks, and runs Swift source entirely in Rust —
       no LLVM, no Clang, no Swift toolchain. The same Rust binary compiles
       to WebAssembly so you can run Swift code right here in the browser.
     </p>
     <div class="hero-ctas">
-      <a href="/playground" class="btn btn-primary">⚡ Open Playground</a>
+      <a href="/playground" class="btn btn-primary">Open Playground</a>
       <a href="/how-it-works" class="btn btn-secondary">How it works →</a>
       <a href="https://github.com/siuying/tswift" target="_blank" rel="noopener" class="btn btn-secondary">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -134,11 +134,11 @@ import CoverageBar from '../components/CoverageBar.astro';
             </tr>
           </thead>
           <tbody>
-            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>Value-type CoW</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Rc::clone + Rc::make_mut</td></tr>
-            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>class ARC</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Rc&lt;RefCell&lt;Object&gt;&gt;</td></tr>
-            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>deinit</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">Drop at strong-count 0</td></tr>
-            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>weak (zeroing)</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">rc::Weak + .upgrade()</td></tr>
-            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)"><code>overflow trap</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);color:var(--muted)">checked_add / wrapping_add</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line)"><code>Value-type CoW</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line);color:var(--muted)">Rc::clone + Rc::make_mut</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line)"><code>class ARC</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line);color:var(--muted)">Rc&lt;RefCell&lt;Object&gt;&gt;</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line)"><code>deinit</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line);color:var(--muted)">Drop at strong-count 0</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line)"><code>weak (zeroing)</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line);color:var(--muted)">rc::Weak + .upgrade()</td></tr>
+            <tr><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line)"><code>overflow trap</code></td><td style="padding:.3rem .5rem;border-bottom:1px solid var(--line);color:var(--muted)">checked_add / wrapping_add</td></tr>
             <tr><td style="padding:.3rem .5rem"><code>UTF-8 String</code></td><td style="padding:.3rem .5rem;color:var(--muted)">Rust String</td></tr>
           </tbody>
         </table>
