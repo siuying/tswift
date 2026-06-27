@@ -51,6 +51,11 @@ impl<'i, 'w> Session<'i, 'w> {
         Ok(tree)
     }
 
+    /// The most recently rendered UIIR tree, if any (for diffing).
+    pub fn current_tree(&self) -> Option<&SwiftValue> {
+        self.current.as_ref()
+    }
+
     /// Route `event` to the matching node's action and re-render. Unknown ids or
     /// nodes without an action are a no-op that still re-renders (the runtime
     /// stays the single source of truth).

@@ -1,0 +1,295 @@
+//! The diff engine — two UIIR trees → a keyed patch stream (plan §3.2).
+//!
+//! v1 is deliberately replace-heavy: there is no `move` op (keyed reconciliation
+//! arrives with `ForEach` in Tier 3) and `setModifiers` replaces the whole
+//! ordered list. Nodes are matched by structural id, so a changed `Text` emits a
+//! `setText` fast-path, an arg change emits `setArgs`, a modifier-list change
+//! emits `setModifiers`, a kind change emits `replace`, and child-count changes
+//! emit `insert`/`remove`.
+
+use tswift_core::SwiftValue;
+
+use crate::{uiir, CHILDREN_FIELD, MODIFIERS_FIELD};
+
+/// One patch operation against the host tree.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Patch {
+    /// Initial render: insert the whole subtree into an empty host.
+    Mount { node: SwiftValue },
+    /// Insert `node` (carrying its subtree) as child `index` of `parent`.
+    Insert {
+        parent: String,
+        index: usize,
+        node: SwiftValue,
+    },
+    /// Remove the node at `id` (and its subtree).
+    Remove { id: String },
+    /// Replace the node at `id` wholesale (kind changed).
+    Replace { id: String, node: SwiftValue },
+    /// `Text` fast-path: set the node's verbatim string.
+    SetText { id: String, text: String },
+    /// Replace the node's whole ordered modifier list.
+    SetModifiers {
+        id: String,
+        modifiers: Vec<SwiftValue>,
+    },
+    /// Replace the node's constructor args.
+    SetArgs { id: String, node: SwiftValue },
+}
+
+/// The kind (SwiftUI type name) of a view node.
+fn kind(node: &SwiftValue) -> &str {
+    match node {
+        SwiftValue::Struct(obj) => obj.type_name.as_str(),
+        _ => "",
+    }
+}
+
+/// The ordered modifier list of a node.
+fn modifiers(node: &SwiftValue) -> Vec<SwiftValue> {
+    match node {
+        SwiftValue::Struct(obj) => match obj.get(MODIFIERS_FIELD) {
+            Some(SwiftValue::Array(items)) => items.iter().cloned().collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// The ordered child views of a node.
+fn children(node: &SwiftValue) -> Vec<SwiftValue> {
+    match node {
+        SwiftValue::Struct(obj) => match obj.get(CHILDREN_FIELD) {
+            Some(SwiftValue::Array(items)) => items.iter().cloned().collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// A node's `Text` verbatim string, if it is a `Text`.
+fn text(node: &SwiftValue) -> Option<String> {
+    match node {
+        SwiftValue::Struct(obj) if obj.type_name == "Text" => match obj.get("verbatim") {
+            Some(SwiftValue::Str(s)) => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether two nodes' visible constructor args (excluding internal fields and
+/// modifiers/children) are equal.
+fn args_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
+    fn visible(node: &SwiftValue) -> Vec<(String, SwiftValue)> {
+        match node {
+            SwiftValue::Struct(obj) => obj
+                .fields
+                .iter()
+                .filter(|(k, _)| !k.starts_with('_'))
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+    visible(a) == visible(b)
+}
+
+/// The initial mount patch for a freshly rendered tree.
+pub fn mount(tree: &SwiftValue) -> Vec<Patch> {
+    vec![Patch::Mount { node: tree.clone() }]
+}
+
+/// Diff `old` into `new`, emitting the patch stream that transforms the host
+/// tree rooted at `old` into `new`.
+pub fn diff(old: &SwiftValue, new: &SwiftValue) -> Vec<Patch> {
+    let mut patches = Vec::new();
+    diff_node(old, new, "0", &mut patches);
+    patches
+}
+
+fn diff_node(old: &SwiftValue, new: &SwiftValue, id: &str, patches: &mut Vec<Patch>) {
+    // A kind change can't be patched incrementally — replace wholesale.
+    if kind(old) != kind(new) {
+        patches.push(Patch::Replace {
+            id: id.to_string(),
+            node: new.clone(),
+        });
+        return;
+    }
+
+    // Args: a `Text` change uses the fast-path; any other arg change replaces
+    // the node's args.
+    match (text(old), text(new)) {
+        (Some(a), Some(b)) if a != b => patches.push(Patch::SetText {
+            id: id.to_string(),
+            text: b,
+        }),
+        _ if !args_equal(old, new) => patches.push(Patch::SetArgs {
+            id: id.to_string(),
+            node: new.clone(),
+        }),
+        _ => {}
+    }
+
+    // Modifiers: whole-list replacement when the ordered list differs.
+    let (old_mods, new_mods) = (modifiers(old), modifiers(new));
+    if old_mods != new_mods {
+        patches.push(Patch::SetModifiers {
+            id: id.to_string(),
+            modifiers: new_mods,
+        });
+    }
+
+    // Children: positional diff (no keyed `move` until Tier 3).
+    let (old_children, new_children) = (children(old), children(new));
+    let common = old_children.len().min(new_children.len());
+    for i in 0..common {
+        diff_node(
+            &old_children[i],
+            &new_children[i],
+            &format!("{id}.{i}"),
+            patches,
+        );
+    }
+    for (i, child) in new_children.iter().enumerate().skip(common) {
+        patches.push(Patch::Insert {
+            parent: id.to_string(),
+            index: i,
+            node: child.clone(),
+        });
+    }
+    // Remove trailing old children high-index-first so earlier ids stay valid.
+    for i in (common..old_children.len()).rev() {
+        patches.push(Patch::Remove {
+            id: format!("{id}.{i}"),
+        });
+    }
+}
+
+/// Serialize a patch stream as a canonical JSON array (the Layer-C wire format).
+pub fn to_json(patches: &[Patch]) -> String {
+    let mut out = String::new();
+    out.push('[');
+    for (i, p) in patches.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&patch_json(p));
+    }
+    out.push(']');
+    out
+}
+
+fn patch_json(patch: &Patch) -> String {
+    match patch {
+        Patch::Mount { node } => {
+            format!(r#"{{"op":"mount","node":{}}}"#, uiir::node_json(node, "0"))
+        }
+        Patch::Insert {
+            parent,
+            index,
+            node,
+        } => format!(
+            r#"{{"op":"insert","parentId":{},"index":{},"node":{}}}"#,
+            json_string(parent),
+            index,
+            uiir::node_json(node, &format!("{parent}.{index}")),
+        ),
+        Patch::Remove { id } => format!(r#"{{"op":"remove","id":{}}}"#, json_string(id)),
+        Patch::Replace { id, node } => format!(
+            r#"{{"op":"replace","id":{},"node":{}}}"#,
+            json_string(id),
+            uiir::node_json(node, id),
+        ),
+        Patch::SetText { id, text } => format!(
+            r#"{{"op":"setText","id":{},"text":{}}}"#,
+            json_string(id),
+            json_string(text),
+        ),
+        Patch::SetModifiers { id, modifiers } => format!(
+            r#"{{"op":"setModifiers","id":{},"modifiers":{}}}"#,
+            json_string(id),
+            uiir::modifiers_json(modifiers),
+        ),
+        Patch::SetArgs { id, node } => format!(
+            r#"{{"op":"setArgs","id":{},"args":{}}}"#,
+            json_string(id),
+            uiir::args_json(node),
+        ),
+    }
+}
+
+/// Minimal JSON string escaping (mirrors `uiir`).
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{Event, Session};
+    use crate::{install, PRELUDE};
+    use tswift_core::Interpreter;
+
+    fn counter_session_json() -> String {
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct CounterView: View {
+    @State var count = 0
+    var body: some View {
+        VStack {
+            Text("\(count)")
+            Button("Increment") { count += 1 }
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let interp: &'static mut Interpreter<'static> = Box::leak(Box::new(interp));
+        let mut session = Session::new(interp, "CounterView").expect("session");
+
+        let first = session.render().expect("render");
+        let mount_patches = mount(&first);
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let before = session.current_tree().expect("tree").clone();
+        let after = session.dispatch(&tap).expect("dispatch");
+        let patches = diff(&before, &after);
+        format!("{}\n{}", to_json(&mount_patches), to_json(&patches))
+    }
+
+    #[test]
+    fn counter_tap_emits_set_text_patch() {
+        let json = counter_session_json();
+        let lines: Vec<&str> = json.lines().collect();
+        // The mount carries the whole VStack subtree.
+        assert!(lines[0].starts_with(r#"[{"op":"mount""#));
+        // The tap changes only the Text child "0.0" from "0" to "1".
+        assert_eq!(lines[1], r#"[{"op":"setText","id":"0.0","text":"1"}]"#);
+    }
+}

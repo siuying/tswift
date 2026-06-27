@@ -17,6 +17,7 @@
 
 use std::rc::Rc;
 
+pub mod diff;
 pub mod session;
 pub mod uiir;
 

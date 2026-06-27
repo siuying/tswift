@@ -17,8 +17,54 @@ use crate::{
 /// Serialize a view-value tree rooted at `view` into canonical UIIR JSON, with
 /// the root node assigned id `"0"`.
 pub fn to_json(view: &SwiftValue) -> String {
+    node_json(view, "0")
+}
+
+/// Serialize `view` (and its subtree) as a UIIR node rooted at structural path
+/// `id` — used by patch ops that carry a full subtree (`mount`/`insert`/
+/// `replace`).
+pub fn node_json(view: &SwiftValue, id: &str) -> String {
     let mut out = String::new();
-    write_node(view, "0", &mut out);
+    write_node(view, id, &mut out);
+    out
+}
+
+/// Serialize an ordered modifier list as a JSON array (the `setModifiers`
+/// payload).
+pub fn modifiers_json(mods: &[SwiftValue]) -> String {
+    let mut out = String::new();
+    out.push('[');
+    for (i, m) in mods.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_modifier(m, &mut out);
+    }
+    out.push(']');
+    out
+}
+
+/// Serialize the visible (non-internal) constructor args of `view` as a JSON
+/// object (the `setArgs` payload).
+pub fn args_json(view: &SwiftValue) -> String {
+    let mut out = String::new();
+    out.push('{');
+    if let SwiftValue::Struct(obj) = view {
+        let mut first = true;
+        for (key, value) in &obj.fields {
+            if key.starts_with('_') {
+                continue;
+            }
+            if !first {
+                out.push(',');
+            }
+            first = false;
+            write_string(key, &mut out);
+            out.push(':');
+            write_value(value, &mut out);
+        }
+    }
+    out.push('}');
     out
 }
 
