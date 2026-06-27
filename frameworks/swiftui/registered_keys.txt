@@ -19,6 +19,7 @@ Toggle.init
 VStack.init
 View.background
 View.cornerRadius
+View.environmentObject
 View.fill
 View.font
 View.fontWeight

@@ -202,6 +202,20 @@ hook, so the "single load-bearing core change" above is **not** what landed:
   reassigning the whole object (`model = Model()`) from an action does **not**
   persist (it rebinds a value-type copy, not the reused root instance) — mutate
   through the reference instead.
+- **`@EnvironmentObject`** is injected before a custom view's `body` runs: a
+  view's `.environmentObject(_)` provisions (stored in a private `_env` field,
+  never serialized) are threaded down `resolve_root`/`expand_into` and written
+  into matching `@EnvironmentObject` slots (matched by declared type) via the
+  `inject_environment_objects` core seam. A no-default property wrapper is now
+  also synthesized via its own `init()` (the memberwise-init exemption that lets
+  `@EnvironmentObject var x: T` construct without a value). **Bounded limit:**
+  because containers build their children *eagerly* at construction — before an
+  outer `.environmentObject` modifier is applied, and before the env is known —
+  injection reaches a view expanded directly in the resolve/expand chain (the
+  common `ContentView().environmentObject(model)` root pattern) but does **not**
+  deep-propagate through a builtin container's eagerly-built children. Reading
+  an un-injected `@EnvironmentObject` traps cleanly (its force-unwrap), matching
+  SwiftUI's missing-object precondition.
 - The sanctioned core seams that *did* land are generic, not SwiftUI-specific:
   `register_struct_method` (the view-modifier dispatch fallback) and
   `eval_block_values` (the `@ViewBuilder` shim). Two caveats, accepted for v1:

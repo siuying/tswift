@@ -378,6 +378,61 @@ struct CounterView: View {
     }
 
     #[test]
+    fn environment_object_is_injected_into_a_child_view() {
+        // A root provides an `ObservableObject` via `.environmentObject(_)`; the
+        // child reads it through `@EnvironmentObject` and a mutation through it
+        // (no owner reference in scope) is reflected on the next render.
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+class Settings: ObservableObject {
+    @Published var theme = "dark"
+    func toggle() { theme = theme == "dark" ? "light" : "dark" }
+}
+struct ChildView: View {
+    @EnvironmentObject var settings: Settings
+    var body: some View {
+        Button("Theme: \(settings.theme)") { settings.toggle() }
+    }
+}
+struct RootView: View {
+    @StateObject var settings = Settings()
+    var body: some View {
+        ChildView().environmentObject(settings)
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+
+        let first = session.render().expect("render");
+        assert!(
+            uiir::to_json(&first).contains("Theme: dark"),
+            "environment object injected: {}",
+            uiir::to_json(&first)
+        );
+
+        // Tapping the child button toggles the injected object's @Published.
+        let tap = Event {
+            id: "0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Theme: light"),
+            "mutation through the environment object is reflected: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
     fn observed_object_shares_state_between_parent_and_child() {
         // A parent's `@StateObject` passed to a child's `@ObservedObject` is one
         // shared reference: a mutation from the child updates both views.

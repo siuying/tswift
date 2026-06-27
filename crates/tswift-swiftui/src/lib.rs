@@ -60,6 +60,53 @@ modifier!(modifier_background, "background");
 modifier!(modifier_fill, "fill");
 modifier!(modifier_tag, "tag");
 
+/// Field holding the `ObservableObject`s a view provides to its subtree via
+/// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
+/// UIIR — it is consumed by the renderer to inject `@EnvironmentObject` slots.
+/// Stored separately from `_modifiers` so a custom `View` (which has no
+/// `_modifiers`) can still carry it without looking like a builtin view value.
+pub const ENV_FIELD: &str = "_env";
+
+/// `.environmentObject(_ object)` — provide an `ObservableObject` to this view
+/// and its subtree. The object is appended to the view's `_env` list (not
+/// `_modifiers`), to be injected into descendant `@EnvironmentObject` slots.
+fn modifier_environment_object(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let object = args
+        .into_iter()
+        .next()
+        .map(|a| a.value)
+        .unwrap_or(SwiftValue::Nil);
+    let SwiftValue::Struct(obj) = &recv else {
+        return Err(type_error(format!(
+            "environmentObject applied to non-view value `{}`",
+            recv.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    if !fields.iter().any(|(k, _)| k == ENV_FIELD) {
+        fields.push((ENV_FIELD.into(), SwiftValue::Array(Rc::new(Vec::new()))));
+    }
+    let slot = fields
+        .iter_mut()
+        .find(|(k, _)| k == ENV_FIELD)
+        .map(|(_, v)| v)
+        .expect("_env slot ensured above");
+    let mut list = match slot {
+        SwiftValue::Array(items) => (**items).clone(),
+        _ => Vec::new(),
+    };
+    list.push(object);
+    *slot = SwiftValue::Array(Rc::new(list));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
 const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
@@ -72,6 +119,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("background", modifier_background),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
+    ("environmentObject", modifier_environment_object),
 ];
 
 /// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
@@ -134,6 +182,17 @@ struct StateObject<ObjectType> {
 struct ObservedObject<ObjectType> {
     var wrappedValue: ObjectType
     init(wrappedValue: ObjectType) { self.wrappedValue = wrappedValue }
+}
+// `@EnvironmentObject var x: T` has no initializer — it is injected from an
+// ancestor's `.environmentObject(_)`. The wrapper's no-argument `init()` lets
+// the view be constructed with the slot empty; the render host fills `store`
+// before evaluating `body`. Reading it before injection traps (force-unwrap),
+// matching SwiftUI's "no ObservableObject of type … found" precondition.
+@propertyWrapper
+struct EnvironmentObject<ObjectType> {
+    var store: ObjectType?
+    var wrappedValue: ObjectType { store! }
+    init() { store = nil }
 }
 struct Color {
     let token: String
@@ -372,7 +431,7 @@ fn keyed_rows(
         // *every* produced sibling view, not just the last statement.
         let built = ctx.eval_block_values_with_args(content, vec![item])?;
         let mut rows = Vec::new();
-        expand_into(ctx, built, &mut rows, 0)?;
+        expand_into(ctx, built, &mut rows, 0, &[])?;
         // A single produced view takes the row key directly; multiple views
         // (a `Group`-like body) get an `_<j>` suffix so keys stay unique. The
         // separator is `_`, which `key_string` always escapes, so a suffixed
@@ -818,12 +877,43 @@ fn collect_children(ctx: &mut dyn StdContext, args: Vec<Arg>) -> Result<Vec<Swif
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                expand_into(ctx, block, &mut out, 0)?;
+                expand_into(ctx, block, &mut out, 0, &[])?;
             }
-            other => expand_into(ctx, other, &mut out, 0)?,
+            other => expand_into(ctx, other, &mut out, 0, &[])?,
         }
     }
     Ok(out)
+}
+
+/// The `ObservableObject`s a view provides to its subtree via
+/// `.environmentObject(_)`, read from its `_env` list.
+fn environment_objects(view: &SwiftValue) -> Vec<SwiftValue> {
+    match view {
+        SwiftValue::Struct(obj) => match obj.get(ENV_FIELD) {
+            Some(SwiftValue::Array(objects)) => objects.iter().cloned().collect(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Inject the accumulated environment into a custom view before its `body` is
+/// evaluated: add the view's own `.environmentObject(_)` provisions, then fill
+/// its `@EnvironmentObject` slots. Returns the (possibly updated) view and the
+/// environment to pass down its subtree.
+fn apply_environment(
+    ctx: &mut dyn StdContext,
+    view: SwiftValue,
+    env: &[SwiftValue],
+) -> Result<(SwiftValue, Vec<SwiftValue>), StdError> {
+    let mut child_env = env.to_vec();
+    child_env.extend(environment_objects(&view));
+    let injected = if child_env.is_empty() {
+        view
+    } else {
+        ctx.inject_environment_objects(&view, "EnvironmentObject", &child_env)?
+    };
+    Ok((injected, child_env))
 }
 
 /// Maximum custom-`View` composition depth before bailing. Bounds the `body`
@@ -839,23 +929,27 @@ fn expand_into(
     value: SwiftValue,
     out: &mut Vec<SwiftValue>,
     depth: usize,
+    env: &[SwiftValue],
 ) -> Result<(), StdError> {
     match value {
         SwiftValue::Array(items) => {
             for item in items.iter() {
-                expand_into(ctx, item.clone(), out, depth)?;
+                expand_into(ctx, item.clone(), out, depth, env)?;
             }
         }
         v if view_type_name(&v).is_some() => out.push(v),
         // Scalar / non-struct non-views are dropped; a struct-shaped candidate
         // must be a composed custom `View` (neither a builtin view value nor a
-        // token), collapsed to its own `body`, recursively.
+        // token), collapsed to its own `body`, recursively. The environment is
+        // injected into the view before `body` runs and carried down its
+        // subtree (`@EnvironmentObject` support).
         v @ SwiftValue::Struct(_) if is_custom_view(ctx, &v) => {
             if depth >= MAX_VIEW_DEPTH {
                 return Err(recursion_error(&v));
             }
+            let (v, child_env) = apply_environment(ctx, v, env)?;
             let body = ctx.get_member(&v, "body")?;
-            expand_into(ctx, body, out, depth + 1)?;
+            expand_into(ctx, body, out, depth + 1, &child_env)?;
         }
         _ => {}
     }
@@ -883,12 +977,17 @@ fn is_custom_view(_ctx: &mut dyn StdContext, value: &SwiftValue) -> bool {
 /// down to the first builtin view value.
 pub fn resolve_root(ctx: &mut dyn StdContext, value: SwiftValue) -> Result<SwiftValue, StdError> {
     let mut current = value;
+    let mut env: Vec<SwiftValue> = Vec::new();
     let mut depth = 0;
     while is_custom_view(ctx, &current) {
         if depth >= MAX_VIEW_DEPTH {
             return Err(recursion_error(&current));
         }
-        current = ctx.get_member(&current, "body")?;
+        // Inject the environment provided so far (plus this view's own
+        // `.environmentObject(_)`) before evaluating its `body`.
+        let (injected, child_env) = apply_environment(ctx, current, &env)?;
+        env = child_env;
+        current = ctx.get_member(&injected, "body")?;
         depth += 1;
     }
     Ok(current)
@@ -1025,6 +1124,7 @@ mod tests {
                 "VStack.init",
                 "View.background",
                 "View.cornerRadius",
+                "View.environmentObject",
                 "View.fill",
                 "View.font",
                 "View.fontWeight",
@@ -1357,6 +1457,25 @@ struct V: View {
         assert_eq!(options.len(), 3);
         assert!(options.iter().all(|o| view_type_name(o) == Some("Text")));
         assert_eq!(key_of(&options[1]), Some("b"));
+    }
+
+    #[test]
+    fn environment_object_read_without_injection_traps_cleanly() {
+        // Rendering a view whose `@EnvironmentObject` was never injected (no
+        // ancestor `.environmentObject`) surfaces a clean error — the wrapper's
+        // force-unwrap precondition — rather than panicking the host.
+        let src = r#"
+class Settings: ObservableObject { @Published var theme = "dark" }
+struct V: View {
+    @EnvironmentObject var settings: Settings
+    var body: some View { Text(settings.theme) }
+}
+"#;
+        let err = render_err(src, "V");
+        assert!(
+            err.to_lowercase().contains("nil") || err.to_lowercase().contains("unwrap"),
+            "expected a force-unwrap trap, got: {err}"
+        );
     }
 
     #[test]

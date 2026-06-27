@@ -4019,6 +4019,12 @@ impl<'w> Interpreter<'w> {
                 .iter()
                 .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
                 .map(|(_, v)| v.clone());
+            // The `@propertyWrapper` type backing this field, if any.
+            let wrapper = self
+                .structs
+                .get(type_name)
+                .and_then(|d| d.wrappers.get(&pname))
+                .cloned();
             let value = if let Some(v) = labeled {
                 coerce_numeric(v, field_ty.as_deref())
             } else if let Some((_, v)) = positional.next() {
@@ -4028,6 +4034,14 @@ impl<'w> Interpreter<'w> {
                 continue;
             } else if let Some(def) = default {
                 self.eval(&def)?
+            } else if let Some(wt) = &wrapper {
+                // A wrapped property with no provided value and no default (e.g.
+                // `@EnvironmentObject var x: T`) is synthesized via the
+                // wrapper's own no-argument `init()` — its value is injected
+                // later (by the environment) rather than supplied here.
+                let synthesized = self.instantiate_struct(wt, &[])?;
+                fields.push((pname, synthesized));
+                continue;
             } else {
                 return Err(EvalError::Type(format!(
                     "missing value for property `{pname}` of {type_name}"
@@ -4035,15 +4049,8 @@ impl<'w> Interpreter<'w> {
                 .into());
             };
             // Wrap `@propertyWrapper` fields in their wrapper instance.
-            let wrapper = self
-                .structs
-                .get(type_name)
-                .and_then(|d| d.wrappers.get(&pname))
-                .cloned();
-            let value = match wrapper {
-                Some(wt) => {
-                    self.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
-                }
+            let value = match &wrapper {
+                Some(wt) => self.instantiate_struct(wt, &[(Some("wrappedValue".into()), value)])?,
                 None => value,
             };
             fields.push((pname, value));
@@ -7322,6 +7329,59 @@ impl StdContext for Interpreter<'_> {
     fn get_member(&mut self, value: &SwiftValue, name: &str) -> crate::stdlib::StdResult {
         self.read_struct_member(value, name)
             .map_err(Self::signal_to_std_error)
+    }
+
+    fn inject_environment_objects(
+        &mut self,
+        view: &SwiftValue,
+        wrapper_type: &str,
+        objects: &[SwiftValue],
+    ) -> crate::stdlib::StdResult {
+        let SwiftValue::Struct(obj) = view else {
+            return Ok(view.clone());
+        };
+        // The fields wrapped by `wrapper_type` (e.g. `EnvironmentObject`), with
+        // each field's declared type for matching the right object.
+        let plan: Vec<(String, Option<String>)> = self
+            .structs
+            .get(&obj.type_name)
+            .map(|d| {
+                d.stored
+                    .iter()
+                    .filter(|p| d.wrappers.get(&p.name).map(String::as_str) == Some(wrapper_type))
+                    .map(|p| (p.name.clone(), p.ty.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if plan.is_empty() {
+            return Ok(view.clone());
+        }
+        let mut updated = (**obj).clone();
+        for (field, declared) in plan {
+            // Match by declared type name; only when the declared type is
+            // unknown do we fall back to the sole environment object — never
+            // inject a type-mismatched object into a typed slot.
+            let chosen = objects
+                .iter()
+                .find(|o| self.value_type_name(o).as_deref() == declared.as_deref())
+                .or(if declared.is_none() && objects.len() == 1 {
+                    objects.first()
+                } else {
+                    None
+                });
+            let Some(object) = chosen else { continue };
+            // Set the wrapper instance's single stored slot to the object.
+            if let Some(slot) = updated.fields.iter_mut().find(|(k, _)| k == &field) {
+                if let SwiftValue::Struct(wrapper) = &slot.1 {
+                    let mut w = (**wrapper).clone();
+                    if let Some(inner) = w.fields.first_mut() {
+                        inner.1 = object.clone();
+                    }
+                    slot.1 = SwiftValue::Struct(Rc::new(w));
+                }
+            }
+        }
+        Ok(SwiftValue::Struct(Rc::new(updated)))
     }
 
     fn out(&mut self) -> &mut dyn Write {

@@ -74,6 +74,19 @@ pub trait StdContext {
             "unknown member `{name}`"
         ))))
     }
+    /// Inject environment `objects` into `view`'s property-wrapper fields of
+    /// type `wrapper_type` (SwiftUI's `@EnvironmentObject` injection): each such
+    /// field whose declared type matches an object's type (or the sole object)
+    /// has the wrapper's stored slot set to that object. Returns the updated
+    /// view. The default leaves the view unchanged; the interpreter overrides.
+    fn inject_environment_objects(
+        &mut self,
+        view: &SwiftValue,
+        _wrapper_type: &str,
+        _objects: &[SwiftValue],
+    ) -> StdResult {
+        Ok(view.clone())
+    }
 
     /// The program output sink (`print` and friends write here).
     fn out(&mut self) -> &mut dyn Write;
