@@ -6414,7 +6414,14 @@ impl<'w> Interpreter<'w> {
             self.statics.insert(place.root.clone(), updated);
             return Ok(());
         }
+        // A class instance is mutated in place through its shared storage, so
+        // the root binding need not (and, for an immutable `self`, must not) be
+        // reassigned — its identity is unchanged.
+        let root_is_object = matches!(root_val, SwiftValue::Object(_));
         let updated = self.set_in(root_val, &place.path, value)?;
+        if root_is_object {
+            return Ok(());
+        }
         match self.env.assign(&place.root, updated) {
             Ok(()) => Ok(()),
             Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
@@ -6426,6 +6433,20 @@ impl<'w> Interpreter<'w> {
     /// observers/computed setters at each struct level.
     fn set_in(&mut self, container: SwiftValue, path: &[String], value: SwiftValue) -> Eval {
         let (head, rest) = path.split_first().expect("non-empty path");
+        // A class instance is mutated in place through its shared storage (its
+        // identity is preserved), so writing a field — possibly nested through a
+        // value member — does not rebuild the object.
+        if let SwiftValue::Object(obj) = &container {
+            let obj = obj.clone();
+            if rest.is_empty() {
+                self.set_object_field(&obj, head, value);
+            } else {
+                let sub = self.read_object_member(&container, head)?;
+                let new_sub = self.set_in(sub, rest, value)?;
+                self.set_object_field(&obj, head, new_sub);
+            }
+            return Ok(container);
+        }
         if rest.is_empty() {
             return self.set_struct_field(container, head, value);
         }
