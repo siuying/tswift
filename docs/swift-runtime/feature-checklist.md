@@ -212,7 +212,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `Self` requirements | ✅ | ★★★ | R4 |
 | [x] | Protocol witness for operators | ✅ | ★★ | R4 |
 | [ ] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
-| [ ] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
+| [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [ ] | Conditional conformance | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
