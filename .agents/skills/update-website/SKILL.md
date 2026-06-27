@@ -21,11 +21,11 @@ The website lives in `website/`. Content is in MDX — easy to edit. See [FILE-M
 
 In each status MDX file, change the status column:
 
-| Symbol | Meaning |
-|--------|---------|
-| `✅` | Fully done |
-| `🟡` | Partial |
-| `⬜` | Todo |
+| Symbol | Meaning    |
+| ------ | ---------- |
+| `✅`   | Fully done |
+| `🟡`   | Partial    |
+| `⬜`   | Todo       |
 
 ### 3. Update coverage bar numbers
 
@@ -39,13 +39,8 @@ To count: grep the MDX file for `| ✅` (done) and `| 🟡` (partial counts as d
 ### 4. Update WASM (if runtime changed)
 
 ```sh
-# Option A — rebuild from source
 wasm-pack build crates/tswift-wasm --target web \
   --out-dir website/public/wasm --out-name tswift_wasm
-
-# Option B — copy from prototype build
-cp prototype/web-sandbox/src/wasm/tswift_wasm.js    website/public/wasm/
-cp prototype/web-sandbox/src/wasm/tswift_wasm_bg.wasm website/public/wasm/
 ```
 
 ### 5. Build and verify

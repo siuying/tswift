@@ -4667,6 +4667,11 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("unary without operand".into()))?;
         let v = self.eval(&operand)?;
+        // Ownership operators are transparent in the tree-walker: `consume x`,
+        // `copy x`, and `borrow x` evaluate to the operand's value.
+        if matches!(op.as_str(), "consume" | "copy" | "borrow") {
+            return Ok(v);
+        }
         ops::unary(&op, &v).map_err(trap)
     }
 

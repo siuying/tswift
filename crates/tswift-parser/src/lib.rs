@@ -320,6 +320,21 @@ impl<'a> Parser<'a> {
             if w == "actor" && self.tokens[self.pos + 1].kind == TokenKind::Identifier {
                 return self.parse_nominal(NodeKind::ActorDecl);
             }
+            // `discard self` / `discard expr` — ends a value's lifetime without
+            // running its deinit. A no-op in the tree-walker: parse the operand
+            // as a discarded expression statement so it is evaluated and dropped.
+            if w == "discard"
+                && !self.tokens[self.pos + 1].leading_newline
+                && (self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                    || (self.tokens[self.pos + 1].kind == TokenKind::Keyword
+                        && self.tokens[self.pos + 1].text == "self"))
+            {
+                let kw = self.bump();
+                let operand = self.parse_expr(0)?;
+                let stmt = self.ast.add(NodeKind::ExprStmt, None, kw.line, kw.col);
+                self.ast.append_child(stmt, operand);
+                return Ok(stmt);
+            }
         }
         if self.peek().kind == TokenKind::Keyword {
             match self.peek().text {
@@ -646,6 +661,16 @@ impl<'a> Parser<'a> {
         if self.at_keyword("inout") {
             self.bump();
             self.ast.add_modifier(param, "inout");
+        }
+        // Ownership parameter modifiers (`borrowing`/`consuming`, and the older
+        // `__shared`/`__owned`). They do not change tree-walk evaluation, so
+        // accept and discard them before the parameter type.
+        while matches!(
+            self.peek().text,
+            "borrowing" | "consuming" | "__shared" | "__owned"
+        ) && self.peek().kind == TokenKind::Identifier
+        {
+            self.bump();
         }
         // Type attributes on the parameter type (`@autoclosure`, `@escaping`).
         // They are recorded as modifiers on the parameter so the runtime can
@@ -2244,6 +2269,22 @@ impl<'a> Parser<'a> {
             self.ast.append_child(node, operand);
             return Ok(node);
         }
+        // Ownership prefix operators `consume`/`copy`/`borrow expr`. They are
+        // contextual keywords; treat them as a transparent prefix only when an
+        // expression follows (otherwise the word is an ordinary identifier).
+        if t.kind == TokenKind::Identifier
+            && matches!(t.text, "consume" | "copy" | "borrow")
+            && !self.tokens[self.pos + 1].leading_newline
+            && (self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                || (self.tokens[self.pos + 1].kind == TokenKind::Keyword
+                    && self.tokens[self.pos + 1].text == "self"))
+        {
+            self.bump();
+            let operand = self.parse_prefix()?;
+            let node = self.ast.add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
+            self.ast.append_child(node, operand);
+            return Ok(node);
+        }
         // `&place` — an inout argument (write-back location at a call site).
         if t.kind == TokenKind::Oper && t.text == "&" {
             self.bump();
@@ -2873,6 +2914,9 @@ fn is_modifier_word(w: &str) -> bool {
             | "unowned"
             | "indirect"
             | "dynamic"
+            // Ownership method modifiers (`consuming func`, `borrowing func`).
+            | "consuming"
+            | "borrowing"
             // Operator fixity words form a modifier run before `func` (`prefix
             // func -`); a bare `prefix operator …` is handled separately and is
             // not treated as a modifier because `operator` is not a decl keyword.
