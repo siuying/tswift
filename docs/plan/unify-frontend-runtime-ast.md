@@ -57,7 +57,7 @@ Each box = one atomic commit; full suite green before the next.
 - [x] 4. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
       — `eval_cond_list` reads the `LetDecl`/`VarDecl` + pattern; delete
       `OptionalBinding`/`CaseCondition` synthesis.
-- [ ] 5. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
+- [x] 5. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
       child and `default` marker directly; drop `case_info` synthesis.
 - [ ] 6. **enum case** (`lower_enum_case`) — runtime reads the flat
       `EnumCaseDecl` + `TypeRef` children; delete the `EnumElementDecl`/`Param`
@@ -81,6 +81,10 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 5 done (e4ab227). `case_info()` reads the `"default"` text
+  and the `WhereClause` child directly; `case_parts()` skips the guard. Removed
+  the synthesized fields + `lower_case_clause` + dead `cursor()`. Codex: Yes.
+  446 green.
 - 2026-06-27 — step 4 done (80dfb58). Condition bindings stay as `LetDecl`/
   `VarDecl`; `eval_cond_list` has one unified arm (optional-unwrap vs refutable
   match). Codex flagged 2 Important issues (subject self-selection; wildcard
