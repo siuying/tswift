@@ -59,7 +59,7 @@ Each box = one atomic commit; full suite green before the next.
       `OptionalBinding`/`CaseCondition` synthesis.
 - [x] 5. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
       child and `default` marker directly; drop `case_info` synthesis.
-- [ ] 6. **enum case** (`lower_enum_case`) — runtime reads the flat
+- [x] 6. **enum case** (`lower_enum_case`) — runtime reads the flat
       `EnumCaseDecl` + `TypeRef` children; delete the `EnumElementDecl`/`Param`
       nesting.
 - [ ] 7. **`#if` splice** (`lower_child_list`) — runtime expands the
@@ -81,6 +81,9 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 6 done. Enum cases read as flat `EnumCaseDecl(name)` with
+  `TypeIdent` payload children / raw-value expr; deleted `lower_enum_case`.
+  Verified int/str raw values + assoc destructuring. Codex: Yes. 446 green.
 - 2026-06-27 — step 5 done (e4ab227). `case_info()` reads the `"default"` text
   and the `WhereClause` child directly; `case_parts()` skips the guard. Removed
   the synthesized fields + `lower_case_clause` + dead `cursor()`. Codex: Yes.
