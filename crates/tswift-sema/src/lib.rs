@@ -1,7 +1,9 @@
 //! Semantic analysis for the tswift frontend.
 //!
-//! [`resolve`] walks a parsed [`tswift_ast::Ast`], infers and records a [`Type`]
-//! on each expression node, and returns any [`Diagnostic`]s. Coverage today is
+//! [`analyze`] runs an ordered pipeline of [`passes`] over a parsed
+//! [`tswift_ast::Ast`], sharing one [`Symbols`] declaration registry. The sole
+//! pass today is [`annotate`], which walks the tree, infers and records a
+//! [`Type`] on each expression node, and returns any [`Diagnostic`]s. Coverage
 //! **Tier 0 + Tier 1a/1b/1c**: literal and operator types, lexically-scoped name
 //! resolution against `let`/`var` bindings and function parameters, type-
 //! annotation checking, and structural resolution of functions, blocks, and all
@@ -13,7 +15,10 @@ use std::collections::HashMap;
 
 use tswift_ast::{Ast, Node, NodeId, NodeKind, Type};
 
+mod passes;
 mod symbols;
+
+pub use passes::analyze;
 use symbols::Symbols;
 
 /// One semantic diagnostic with its 1-based source location.
@@ -24,14 +29,16 @@ pub struct Diagnostic {
     pub col: u32,
 }
 
-/// Resolve types over `ast` in place, returning diagnostics in source order.
-pub fn resolve(ast: &mut Ast) -> Vec<Diagnostic> {
+/// The annotate pass: resolve names and record a [`Type`] on each expression
+/// node of `ast` in place, returning diagnostics in source order. Reads
+/// declarations from the shared `symbols` registry; does not rewrite the tree.
+pub(crate) fn annotate(ast: &mut Ast, symbols: &Symbols) -> Vec<Diagnostic> {
     let mut r = Resolver {
         scopes: vec![HashMap::new()],
         types: Vec::new(),
         diags: Vec::new(),
         in_type_body: false,
-        symbols: Symbols::collect(ast),
+        symbols,
     };
     let root = ast.root();
     r.prebind_func_decls(ast, root);
@@ -52,7 +59,7 @@ struct Binding {
     mutable: bool,
 }
 
-struct Resolver {
+struct Resolver<'a> {
     /// A lexical scope stack; the last entry is the innermost scope.
     scopes: Vec<HashMap<String, Binding>>,
     /// Pending `(node, type)` annotations, applied after the walk.
@@ -63,11 +70,12 @@ struct Resolver {
     /// the type's initializer, so the local-`let` constant check must not fire.
     in_type_body: bool,
     /// The program's declaration registry: enum cases, function return types,
-    /// and other "what does the program declare?" facts, collected once.
-    symbols: Symbols,
+    /// and other "what does the program declare?" facts, collected once and
+    /// shared across passes.
+    symbols: &'a Symbols,
 }
 
-impl Resolver {
+impl Resolver<'_> {
     /// Bind the functions declared directly under `parent` into the current
     /// scope, reading each return type from the declaration registry. Binding
     /// (not the registry) controls visibility, so block-local functions stay
@@ -687,7 +695,7 @@ mod tests {
 
     fn resolved(src: &str) -> (Ast, Vec<Diagnostic>) {
         let mut ast = parse(src).expect("parse ok");
-        let diags = resolve(&mut ast);
+        let diags = analyze(&mut ast);
         (ast, diags)
     }
 
