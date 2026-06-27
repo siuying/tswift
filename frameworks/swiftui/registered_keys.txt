@@ -5,6 +5,7 @@ Ellipse.init
 ForEach.init
 HStack.init
 List.init
+Picker.init
 Rectangle.init
 RoundedRectangle.init
 Section.init
@@ -24,4 +25,5 @@ View.fontWeight
 View.foregroundColor
 View.frame
 View.padding
+View.tag
 ZStack.init

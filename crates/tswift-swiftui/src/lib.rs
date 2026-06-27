@@ -58,6 +58,7 @@ modifier!(modifier_font_weight, "fontWeight");
 modifier!(modifier_foreground_color, "foregroundColor");
 modifier!(modifier_background, "background");
 modifier!(modifier_fill, "fill");
+modifier!(modifier_tag, "tag");
 
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
@@ -70,6 +71,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("foregroundColor", modifier_foreground_color),
     ("background", modifier_background),
     ("fill", modifier_fill),
+    ("tag", modifier_tag),
 ];
 
 /// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
@@ -188,6 +190,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("SecureField", secure_field_init);
     interp.register_free_fn("Slider", slider_init);
     interp.register_free_fn("Stepper", stepper_init);
+    interp.register_free_fn("Picker", picker_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -227,7 +230,7 @@ pub fn registered_keys() -> Vec<String> {
         .filter_map(|key| match key.as_str() {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
             | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
-            | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
+            | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
                 Some(format!("{key}.init"))
             }
             _ => None,
@@ -401,6 +404,64 @@ fn section_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     }
     fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
     Ok(view_value("Section", fields))
+}
+
+/// `Picker(_ title, selection: Binding) { options }` — a choice control. Each
+/// option view carries a `.tag(value)` modifier; the host renders a `<select>`
+/// and emits `set` with the chosen tag. The current selection (read from the
+/// binding) is serialized so the host marks the active option. v1 limitation:
+/// the selection round-trips as a string, so string-tagged pickers are
+/// supported; non-string tags are out of scope.
+fn picker_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut title = String::new();
+    let mut binding: Option<SwiftValue> = None;
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("selection") => binding = Some(arg.value),
+            Some("content") => content_args.push(arg),
+            _ => match arg.value {
+                SwiftValue::Closure(_) => content_args.push(arg),
+                SwiftValue::Str(ref s) if title.is_empty() => title = s.clone(),
+                _ => {}
+            },
+        }
+    }
+    let Some(binding) = binding else {
+        return Err(type_error("Picker requires a `selection:` binding"));
+    };
+    // Flatten `ForEach`-generated rows up into direct option views, so the
+    // common `Picker { ForEach(data) { Text(..).tag(..) } }` pattern yields one
+    // option per row instead of a single opaque container.
+    let children = flatten_picker_options(collect_children(ctx, content_args)?);
+    let selection = ctx.get_member(&binding, "wrappedValue")?;
+    Ok(view_value(
+        "Picker",
+        vec![
+            ("title".into(), SwiftValue::Str(title)),
+            ("selection".into(), selection),
+            (CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))),
+            (BINDING_FIELD.into(), binding),
+        ],
+    ))
+}
+
+/// Expand any `ForEach` container among a Picker's content into its rows, so
+/// each tagged option becomes a direct child of the `Picker`.
+fn flatten_picker_options(children: Vec<SwiftValue>) -> Vec<SwiftValue> {
+    let mut out = Vec::new();
+    for child in children {
+        if view_type_name(&child) == Some("ForEach") {
+            if let SwiftValue::Struct(obj) = &child {
+                if let Some(SwiftValue::Array(rows)) = obj.get(CHILDREN_FIELD) {
+                    out.extend(rows.iter().cloned());
+                    continue;
+                }
+            }
+        }
+        out.push(child);
+    }
+    out
 }
 
 /// `Slider(value: Binding<Double>, in: range, step:)` — a continuous value
@@ -924,6 +985,7 @@ mod tests {
                 "ForEach.init",
                 "HStack.init",
                 "List.init",
+                "Picker.init",
                 "Rectangle.init",
                 "RoundedRectangle.init",
                 "Section.init",
@@ -943,6 +1005,7 @@ mod tests {
                 "View.foregroundColor",
                 "View.frame",
                 "View.padding",
+                "View.tag",
                 "ZStack.init",
             ]
         );
@@ -1211,6 +1274,82 @@ struct V: View {
     }
 
     #[test]
+    fn picker_serializes_selection_and_tagged_options() {
+        let src = r#"
+struct V: View {
+    @State private var flavor = "choc"
+    var body: some View {
+        Picker("Flavor", selection: $flavor) {
+            Text("Vanilla").tag("van")
+            Text("Chocolate").tag("choc")
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        assert_eq!(view_type_name(&view), Some("Picker"));
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        assert_eq!(obj.get("title"), Some(&SwiftValue::Str("Flavor".into())));
+        assert_eq!(obj.get("selection"), Some(&SwiftValue::Str("choc".into())));
+        let Some(SwiftValue::Array(options)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected options");
+        };
+        assert_eq!(options.len(), 2);
+        // Each option carries a `tag` modifier with its selection value.
+        let tag1 = modifiers_of(&options[1]);
+        let SwiftValue::Struct(m) = &tag1[0] else {
+            panic!("expected tag modifier");
+        };
+        assert_eq!(m.get("name"), Some(&SwiftValue::Str("tag".into())));
+        assert_eq!(m.get("value"), Some(&SwiftValue::Str("choc".into())));
+        assert!(obj.get(BINDING_FIELD).is_some());
+    }
+
+    #[test]
+    fn picker_flattens_foreach_options_into_direct_children() {
+        let src = r#"
+struct V: View {
+    @State private var choice = "b"
+    let opts = ["a", "b", "c"]
+    var body: some View {
+        Picker("Pick", selection: $choice) {
+            ForEach(opts, id: \.self) { o in Text(o).tag(o) }
+        }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Array(options)) = obj.get(CHILDREN_FIELD) else {
+            panic!("expected options");
+        };
+        // ForEach rows became three direct option views (not one container).
+        assert_eq!(options.len(), 3);
+        assert!(options.iter().all(|o| view_type_name(o) == Some("Text")));
+        assert_eq!(key_of(&options[1]), Some("b"));
+    }
+
+    #[test]
+    fn picker_without_selection_is_an_error() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Picker("Pick") { Text("x").tag("x") }
+    }
+}
+"#;
+        let err = render_err(src, "V");
+        assert!(
+            err.contains("selection"),
+            "expected a selection-binding error, got: {err}"
+        );
+    }
+
+    #[test]
     fn slider_serializes_value_and_bounds_from_binding() {
         let src = r#"
 struct V: View {
@@ -1435,6 +1574,21 @@ struct V: View {
         install(&mut interp);
         interp.run(analysis).expect("run");
         render_root(&mut interp, root_type).expect("render")
+    }
+
+    /// Render `root_type` expecting a failure, returning the error message.
+    fn render_err(src: &str, root_type: &str) -> String {
+        let program = format!("{PRELUDE}\n{src}");
+        let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        match render_root(&mut interp, root_type) {
+            Ok(v) => panic!("expected a render error, got {v:?}"),
+            Err(e) => format!("{e:?}"),
+        }
     }
 
     fn modifiers_of(view: &SwiftValue) -> Vec<SwiftValue> {

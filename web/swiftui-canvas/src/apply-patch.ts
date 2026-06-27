@@ -57,7 +57,11 @@ export class PatchApplier {
       case "insert": {
         const parent = this.nodes.get(patch.parentId);
         if (!parent) return;
-        const el = this.build(patch.node);
+        // A child inserted under a Picker is an <option>, not a nested view.
+        const el =
+          parent instanceof HTMLSelectElement
+            ? this.buildOption(patch.node)
+            : this.build(patch.node);
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         parent.insertBefore(el, patchRef(parent, patch.index));
@@ -88,7 +92,11 @@ export class PatchApplier {
         // re-registers the same ids — otherwise `forget` would delete the new
         // entries and later patches/events for the subtree become no-ops.
         this.forget(patch.id);
-        const el = this.build(patch.node);
+        // Replacing a Picker option keeps it an <option>.
+        const el =
+          old instanceof HTMLOptionElement
+            ? this.buildOption(patch.node)
+            : this.build(patch.node);
         old.replaceWith(el);
         break;
       }
@@ -99,7 +107,16 @@ export class PatchApplier {
       }
       case "setModifiers": {
         const el = this.nodes.get(patch.id);
-        if (el) applyModifiers(el, patch.modifiers);
+        if (!el) break;
+        // A Picker option's identity is its `tag` value, not CSS styling.
+        if (el instanceof HTMLOptionElement) {
+          const tag = patch.modifiers.find((m) => m.name === "tag");
+          if (tag && (typeof tag.value === "string" || typeof tag.value === "number")) {
+            el.value = String(tag.value);
+          }
+        } else {
+          applyModifiers(el, patch.modifiers);
+        }
         break;
       }
       case "setArgs": {
@@ -134,13 +151,37 @@ export class PatchApplier {
     el.dataset.baseStyle = el.style.cssText;
     applyModifiers(el, node.modifiers);
     this.nodes.set(node.id, el);
-    for (const child of node.children) {
-      const childEl = this.build(child);
-      // ZStack overlays its children: place each in the same grid cell.
-      if (el.dataset.zstack === "1") childEl.style.gridArea = "1 / 1";
-      el.appendChild(childEl);
+    if (node.kind === "Picker" && el instanceof HTMLSelectElement) {
+      // A Picker's tagged children become <option>s, not nested views.
+      for (const child of node.children) {
+        el.appendChild(this.buildOption(child));
+      }
+      if (typeof node.args.selection === "string") el.value = node.args.selection;
+    } else {
+      for (const child of node.children) {
+        const childEl = this.build(child);
+        // ZStack overlays its children: place each in the same grid cell.
+        if (el.dataset.zstack === "1") childEl.style.gridArea = "1 / 1";
+        el.appendChild(childEl);
+      }
     }
     return el;
+  }
+
+  /** Build a Picker `<option>` from a tagged child view (label + tag value). */
+  private buildOption(child: UiirNode): HTMLOptionElement {
+    const opt = document.createElement("option");
+    const tag = child.modifiers.find((m) => m.name === "tag");
+    if (tag && (typeof tag.value === "string" || typeof tag.value === "number")) {
+      opt.value = String(tag.value);
+    } else {
+      // Untagged option: an empty value, so selecting it can't write the label
+      // text into the binding.
+      opt.value = "";
+    }
+    if (typeof child.args.verbatim === "string") opt.textContent = child.args.verbatim;
+    this.nodes.set(child.id, opt);
+    return opt;
   }
 
   /** Create the host primitive for a SwiftUI concept (the lowering boundary). */
@@ -268,6 +309,13 @@ export class PatchApplier {
         el.append(label, dec, inc);
         return el;
       }
+      case "Picker": {
+        // A choice control: a <select> whose options are the tagged children.
+        // It emits `set` with the chosen option's tag value.
+        const sel = document.createElement("select");
+        sel.addEventListener("change", () => this.emit(node.id, "set", sel.value));
+        return sel;
+      }
       case "Text":
       default:
         return document.createElement("span");
@@ -326,6 +374,9 @@ export class PatchApplier {
       if (typeof args.value === "number" && Number(el.value) !== args.value) {
         el.value = String(args.value);
       }
+    } else if (kind === "Picker" && el instanceof HTMLSelectElement) {
+      // Options are built in `build`; here we only reflect the active tag.
+      if (typeof args.selection === "string") el.value = args.selection;
     } else if (kind === "Stepper") {
       // Stash the live value/step/bounds for the button handlers; reflect label.
       el.dataset.value = String(typeof args.value === "number" ? args.value : 0);
