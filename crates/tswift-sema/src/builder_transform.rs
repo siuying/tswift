@@ -130,6 +130,20 @@ fn is_handleable(ast: &Ast, methods: &BuilderMethods, stmt: NodeId) -> bool {
                             .all(|&s| is_handleable(ast, methods, s))
                 })
         }
+        NodeKind::SwitchStmt => {
+            // A switch lowers to a buildEither tree, so the builder must declare
+            // buildEither and every case body must be handleable.
+            methods.has("buildEither")
+                && child_ids(ast, stmt).into_iter().all(|c| {
+                    ast.node(c).kind() != NodeKind::CaseClause
+                        || child_ids(ast, c).into_iter().all(|cc| {
+                            ast.node(cc).kind() != NodeKind::Block
+                                || child_ids(ast, cc)
+                                    .iter()
+                                    .all(|&s| is_handleable(ast, methods, s))
+                        })
+                })
+        }
         _ => false,
     }
 }
@@ -186,6 +200,11 @@ impl Lowering<'_> {
                 }
                 NodeKind::ForStmt => {
                     let (stmts, name) = self.lower_for(stmt);
+                    out.extend(stmts);
+                    components.push(name);
+                }
+                NodeKind::SwitchStmt => {
+                    let (stmts, name) = self.lower_switch(stmt);
                     out.extend(stmts);
                     components.push(name);
                 }
@@ -393,6 +412,89 @@ impl Lowering<'_> {
         );
         let comp_decl = astbuild::fresh_let(self.ast, &comp, build_array, line, col);
         (vec![acc_decl, new_for, comp_decl], comp)
+    }
+
+    /// Lower a `switch` to a fresh component var assigned in every case, wrapping
+    /// each case's value in a balanced `buildEither(first:)`/`(second:)` tree by
+    /// its position. The `switch` stays a real statement — patterns, `where`
+    /// guards, and bindings are preserved; `default` is the last case, so it
+    /// lands on the final `second`.
+    fn lower_switch(&mut self, switch_node: NodeId) -> (Vec<NodeId>, String) {
+        let comp = self.fresh();
+        let (line, col) = (
+            self.ast.node(switch_node).line(),
+            self.ast.node(switch_node).col(),
+        );
+        let label = self.ast.node(switch_node).text().map(str::to_string);
+        let kids = child_ids(self.ast, switch_node);
+        let subject = kids[0];
+        let clauses = &kids[1..];
+        let count = clauses.len();
+
+        let new_switch = self
+            .ast
+            .add(NodeKind::SwitchStmt, label.as_deref(), line, col);
+        self.ast.append_child(new_switch, subject);
+        for (idx, &clause) in clauses.iter().enumerate() {
+            let ckids = child_ids(self.ast, clause);
+            let body_idx = ckids
+                .iter()
+                .rposition(|&c| self.ast.node(c).kind() == NodeKind::Block)
+                .expect("case has a body block");
+            let preserved = ckids[..body_idx].to_vec();
+            let body_block = ckids[body_idx];
+
+            let body_stmts = child_ids(self.ast, body_block);
+            let (mut bstmts, bvalue) = self.lower_block(&body_stmts, line, col);
+            let injected = self.inject_either(bvalue, 0, count, idx, line, col);
+            bstmts.push(astbuild::assign(self.ast, &comp, injected, line, col));
+            let new_body = astbuild::block(self.ast, bstmts, line, col);
+
+            let clause_text = self.ast.node(clause).text().map(str::to_string);
+            let new_clause = self
+                .ast
+                .add(NodeKind::CaseClause, clause_text.as_deref(), line, col);
+            for p in preserved {
+                self.ast.append_child(new_clause, p);
+            }
+            self.ast.append_child(new_clause, new_body);
+            self.ast.append_child(new_switch, new_clause);
+        }
+
+        let var = astbuild::var_decl(self.ast, &comp, line, col);
+        (vec![var, new_switch], comp)
+    }
+
+    /// Wrap `value` for case `idx` of `count` in a balanced buildEither tree:
+    /// cases in the lower half take `buildEither(first:)`, the upper half
+    /// `buildEither(second:)`, recursively. A singleton leaf is the value
+    /// itself.
+    fn inject_either(
+        &mut self,
+        value: NodeId,
+        lo: usize,
+        hi: usize,
+        idx: usize,
+        line: u32,
+        col: u32,
+    ) -> NodeId {
+        if hi - lo <= 1 {
+            return value;
+        }
+        let mid = lo + (hi - lo).div_ceil(2);
+        let (label, inner) = if idx < mid {
+            ("first", self.inject_either(value, lo, mid, idx, line, col))
+        } else {
+            ("second", self.inject_either(value, mid, hi, idx, line, col))
+        };
+        astbuild::static_call(
+            self.ast,
+            self.builder,
+            "buildEither",
+            vec![(Some(label), inner)],
+            line,
+            col,
+        )
     }
 
     /// `Builder.buildOptional(value)` when the builder declares it; otherwise the
@@ -819,6 +921,88 @@ mod tests {
         // Its sole arg is the buildBlock value (wrapped exactly once).
         let inner = ret_call.children().nth(1).unwrap();
         assert_eq!(inner.children().next().unwrap().text(), Some("buildBlock"));
+    }
+
+    #[test]
+    fn switch_lowers_to_a_balanced_build_either_tree() {
+        // 3 cases: first(first(c0)), first(second(c1)), second(c2/default).
+        let mut ast = parse(&format!(
+            "{COND_BUILDER}@B\nfunc g(_ n: Int) -> String {{\n\
+             switch n {{\n case 0: \"a\"\n case 1: \"b\"\n default: \"c\" }}\n}}"
+        ))
+        .expect("parse ok");
+        let diags = analyze(&mut ast);
+        assert!(diags.is_empty(), "{diags:?}");
+        let body = func_body(&ast, "g");
+        let kids: Vec<_> = body.children().map(|c| c.kind()).collect();
+        assert_eq!(
+            kids,
+            vec![
+                NodeKind::VarDecl,
+                NodeKind::SwitchStmt,
+                NodeKind::ReturnStmt
+            ]
+        );
+        let switch = body.children().nth(1).unwrap();
+        let clauses: Vec<_> = switch
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        assert_eq!(clauses.len(), 3);
+
+        // The default clause (last) assigns buildEither(second: c2) — one level.
+        let default_clause = clauses[2];
+        assert_eq!(default_clause.text(), Some("default"));
+        let assign = default_clause
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .last()
+            .unwrap();
+        assert_eq!(assign.kind(), NodeKind::AssignExpr);
+        let call = assign.children().nth(1).unwrap();
+        assert_eq!(call.children().next().unwrap().text(), Some("buildEither"));
+        assert_eq!(call.children().nth(1).unwrap().arg_label(), Some("second"));
+        // Case 0 nests two levels: first(first(c0)).
+        let case0_call = clauses[0]
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        assert_eq!(
+            case0_call.children().nth(1).unwrap().arg_label(),
+            Some("first")
+        );
+        let inner = case0_call.children().nth(1).unwrap();
+        assert_eq!(inner.children().next().unwrap().text(), Some("buildEither"));
+    }
+
+    #[test]
+    fn switch_preserves_patterns_and_where_guards() {
+        let mut ast = parse(&format!(
+            "{COND_BUILDER}@B\nfunc g(_ n: Int) -> String {{\n\
+             switch n {{\n case let x where x > 0: \"a\"\n default: \"b\" }}\n}}"
+        ))
+        .expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let switch = body.children().nth(1).unwrap();
+        let first_case = switch
+            .children()
+            .find(|c| c.kind() == NodeKind::CaseClause)
+            .unwrap();
+        assert!(first_case
+            .children()
+            .any(|c| c.kind() == NodeKind::WhereClause));
+        assert!(first_case
+            .children()
+            .any(|c| c.kind() == NodeKind::NamePattern));
     }
 
     #[test]

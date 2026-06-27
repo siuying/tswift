@@ -1,0 +1,7 @@
+[n =] F(F([zero]))
+[n =] F(S([neg]))
+[n =] S([pos])
+F(F([A]))
+F(S([B]))
+S(F([C]))
+S(S([F]))
