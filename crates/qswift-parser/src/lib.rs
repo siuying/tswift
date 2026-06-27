@@ -1904,11 +1904,19 @@ impl<'a> Parser<'a> {
     fn parse_subscript(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::SubscriptDecl, None, kw.line, kw.col);
+        // Generic subscripts: `subscript<T>(...) -> ...`.
+        if self.at_oper("<") {
+            self.parse_generic_clause(node);
+        }
         self.parse_param_list(node)?;
         if self.at_oper("->") {
             self.bump();
             let ret = self.parse_type()?;
             self.ast.append_child(node, ret);
+        }
+        // Generic constraint clause: `subscript<T>(...) -> ... where T: P`.
+        if self.at_keyword("where") {
+            self.skip_where_clause();
         }
         self.parse_accessor_block(node)?;
         Ok(node)
@@ -3393,6 +3401,29 @@ mod tests {
         let s = first_stmt(&ast);
         let kinds: Vec<_> = s.children().map(|c| c.kind()).collect();
         assert_eq!(kinds, vec![NodeKind::InitDecl, NodeKind::SubscriptDecl]);
+    }
+
+    #[test]
+    fn generic_subscript() {
+        // A `<T>` clause and a `where` constraint on a subscript parse into a
+        // `GenericParam` child plus the usual params/return/accessors.
+        let src = "struct Box {\n\
+                   var items: [Int]\n\
+                   subscript<T>(map f: (Int) -> T) -> [T] where T: P { return items.map(f) }\n\
+                   }";
+        let ast = ast_of(src);
+        let s = first_stmt(&ast);
+        let sub = s
+            .children()
+            .find(|c| c.kind() == NodeKind::SubscriptDecl)
+            .expect("subscript decl");
+        assert_eq!(
+            sub.children().next().unwrap().kind(),
+            NodeKind::GenericParam
+        );
+        // The parameter and accessor still parse after the generic clause.
+        let kinds: Vec<_> = sub.children().map(|c| c.kind()).collect();
+        assert!(kinds.contains(&NodeKind::Param));
     }
 
     #[test]

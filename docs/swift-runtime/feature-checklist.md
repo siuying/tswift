@@ -225,7 +225,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
 | [~] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
 | [x] | Associated-type constraints | ✅ | ★★★ | R4 |
-| [ ] | Generic subscripts | ✅ | ★★ | R4 |
+| [x] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
