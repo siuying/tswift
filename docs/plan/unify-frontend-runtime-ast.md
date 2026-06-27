@@ -54,7 +54,7 @@ Each box = one atomic commit; full suite green before the next.
       inherited `TypeRef`s directly; stop synthesizing the `Block` wrapper and
       `Conformance`/`TypeIdent` nodes. *(Split into 3a conformances→TypeIdent,
       3b drop Block wrapper.)*
-- [ ] 4. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
+- [x] 4. **conditional bindings** (`lower_conditional` / `lower_optional_binding`)
       — `eval_cond_list` reads the `LetDecl`/`VarDecl` + pattern; delete
       `OptionalBinding`/`CaseCondition` synthesis.
 - [ ] 5. **case clause** (`lower_case_clause`) — runtime reads the `WhereClause`
@@ -81,6 +81,10 @@ Each box = one atomic commit; full suite green before the next.
   first as the lower-risk loop validator.
 - 2026-06-27 — reordered `#if` splice to step 7 (broadest blast radius — every
   child-list site — so it runs after the localized quirks, per simple→complex).
+- 2026-06-27 — step 4 done (80dfb58). Condition bindings stay as `LetDecl`/
+  `VarDecl`; `eval_cond_list` has one unified arm (optional-unwrap vs refutable
+  match). Codex flagged 2 Important issues (subject self-selection; wildcard
+  nil-check) — both fixed + regression tests added. 446 green.
 - 2026-06-27 — step 3b done (bfac697). Removed the synthesized nominal `Block`;
   members are direct children. 5 register sites iterate direct children. Codex:
   no issues. 444 green.
