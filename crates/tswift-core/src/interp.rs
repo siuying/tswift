@@ -1580,12 +1580,17 @@ impl<'w> Interpreter<'w> {
     fn eval_decl(&mut self, node: &Node<'static>, mutable: bool) -> Eval {
         let children: Vec<Node<'static>> = node.children().collect();
 
+        // The initializer is the last value child. A trailing declaration
+        // `Attribute` (e.g. `@usableFromInline let g = 5`) is not a value, so
+        // search from the end for the actual expression.
+        let init_expr = children.iter().rev().find(|c| is_expr(c)).copied();
+
         // Tuple-pattern binding: `let (a, b) = expr`.
         if let Some(pat) = children.iter().find(|c| c.kind() == NodeKind::PatternTuple) {
-            let init = children.last().filter(|c| is_expr(c)).ok_or_else(|| {
+            let init = init_expr.ok_or_else(|| {
                 EvalError::Unsupported("tuple binding without initializer".into())
             })?;
-            let value = self.eval(init)?;
+            let value = self.eval(&init)?;
             self.bind_tuple_pattern(pat, &value, mutable)?;
             return Ok(SwiftValue::Void);
         }
@@ -1597,20 +1602,20 @@ impl<'w> Interpreter<'w> {
         // `async let name = expr` spawns a child task; the binding holds its
         // handle and `await name` later retrieves the result (ADR-0005).
         if node.is_async_let() {
-            if let Some(init) = children.last().filter(|c| is_expr(c)) {
-                let id = self.spawn_expr_task(*init);
+            if let Some(init) = init_expr {
+                let id = self.spawn_expr_task(init);
                 self.env.declare(&name, SwiftValue::Task(id), mutable);
                 return Ok(SwiftValue::Void);
             }
         }
 
-        let value = match children.last() {
-            Some(init) if is_expr(init) => {
-                let v = self.eval(init)?;
+        let value = match init_expr {
+            Some(init) => {
+                let v = self.eval(&init)?;
                 let v = self.coerce_to_literal_type(node, v)?;
                 self.coerce_to_decl_type(node, v)
             }
-            _ => SwiftValue::Void,
+            None => SwiftValue::Void,
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
@@ -6830,6 +6835,7 @@ fn is_value_node(node: &Node) -> bool {
             | NodeKind::AccessorDecl
             | NodeKind::Conformance
             | NodeKind::TypeFunc
+            | NodeKind::Attribute
     )
 }
 

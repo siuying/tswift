@@ -360,8 +360,8 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [ ] | `@available` (+ availability conditions `#available`) | ✅ | ★★ | R5 |
 | [ ] | `@objc` / `@nonobjc` / `@objcMembers` | ⚠️ | ★★ | R6+ |
 | [x] | `@main` entry point | ✅ | ★★ | R5 |
-| [ ] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
-| [ ] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
+| [x] | `@frozen` / `@inlinable` / `@usableFromInline` | ⚠️ | ★ | R6+ |
+| [x] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
 | [ ] | `@discardableResult` | ✅ | ★ | R1 |
 | [ ] | `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [ ] | `@resultBuilder` | ⚠️ | ★★★★ | R6+ |
