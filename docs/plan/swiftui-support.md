@@ -216,6 +216,16 @@ hook, so the "single load-bearing core change" above is **not** what landed:
   deep-propagate through a builtin container's eagerly-built children. Reading
   an un-injected `@EnvironmentObject` traps cleanly (its force-unwrap), matching
   SwiftUI's missing-object precondition.
+- **`@Environment(\.keyPath)` is deferred** (the one Tier 5 item not yet built).
+  It needs *property-wrapper arguments*: `@Environment(\.colorScheme)` passes the
+  key path to the wrapper's `init(_:)`, but the parser's `collect_decl_meta`
+  currently `skip_balanced_parens()`-discards an attribute's `(…)` arguments, so
+  no argument reaches the wrapper. Shipping it requires a cross-layer change
+  — parser `DeclMeta` capturing the attribute argument expression → frontend
+  exposing it → core `wrappers` storing the arg and `build_struct` calling the
+  wrapper `init(_:)` with it (instead of the no-arg `init()` exemption). That
+  general capability (`@Clamped(0...10)` &c.) is worth doing on its own, under
+  the normal review gate; it is tracked as the remaining UI5 task.
 - The sanctioned core seams that *did* land are generic, not SwiftUI-specific:
   `register_struct_method` (the view-modifier dispatch fallback) and
   `eval_block_values` (the `@ViewBuilder` shim). Two caveats, accepted for v1:
