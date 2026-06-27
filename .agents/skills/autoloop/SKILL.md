@@ -58,7 +58,7 @@ Create a check list for each of the four gates, and **do not proceed to the next
 
 #### Gate 2 — Review
 
-- Dispatch a code reviewer subagent to review code (See `/skill:requesting-code-review`)
+- Dispatch a code reviewer subagent (`gpt-5.5`) to review code (See `/skill:requesting-code-review`)
 - Fix Important issues before proceeding
 - Note Minor issues for later
 - Push back if reviewer is wrong (with reasoning)
