@@ -43,6 +43,10 @@ macro_rules! modifier {
 modifier!(modifier_frame, "frame");
 modifier!(modifier_padding, "padding");
 modifier!(modifier_corner_radius, "cornerRadius");
+modifier!(modifier_font, "font");
+modifier!(modifier_font_weight, "fontWeight");
+modifier!(modifier_foreground_color, "foregroundColor");
+modifier!(modifier_background, "background");
 
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
@@ -50,7 +54,85 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("frame", modifier_frame),
     ("padding", modifier_padding),
     ("cornerRadius", modifier_corner_radius),
+    ("font", modifier_font),
+    ("fontWeight", modifier_font_weight),
+    ("foregroundColor", modifier_foreground_color),
+    ("background", modifier_background),
 ];
+
+/// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
+/// `.bold` resolve to lightweight token structs the host later interprets
+/// (the semantic-token value encoding from the plan, §3.1). Each token is a
+/// `static let` carrying a single `token` string; leading-dot forms resolve via
+/// the runtime's unique-static lookup. Prepended to user source before running.
+///
+/// Note: a leading-dot token shared by two namespaces (e.g. `.black` is both a
+/// `Color` and a `FontWeight`) is ambiguous without contextual typing; write
+/// the qualified form (`Color.black`) in that case.
+pub const PRELUDE: &str = r#"
+struct Color {
+    let token: String
+    static let primary = Color(token: "primary")
+    static let secondary = Color(token: "secondary")
+    static let white = Color(token: "white")
+    static let black = Color(token: "black")
+    static let red = Color(token: "red")
+    static let orange = Color(token: "orange")
+    static let yellow = Color(token: "yellow")
+    static let green = Color(token: "green")
+    static let mint = Color(token: "mint")
+    static let teal = Color(token: "teal")
+    static let cyan = Color(token: "cyan")
+    static let blue = Color(token: "blue")
+    static let indigo = Color(token: "indigo")
+    static let purple = Color(token: "purple")
+    static let pink = Color(token: "pink")
+    static let brown = Color(token: "brown")
+    static let gray = Color(token: "gray")
+    static let clear = Color(token: "clear")
+}
+struct Font {
+    let token: String
+    static let largeTitle = Font(token: "largeTitle")
+    static let title = Font(token: "title")
+    static let title2 = Font(token: "title2")
+    static let title3 = Font(token: "title3")
+    static let headline = Font(token: "headline")
+    static let subheadline = Font(token: "subheadline")
+    static let body = Font(token: "body")
+    static let callout = Font(token: "callout")
+    static let caption = Font(token: "caption")
+    static let caption2 = Font(token: "caption2")
+    static let footnote = Font(token: "footnote")
+}
+struct FontWeight {
+    let token: String
+    static let ultraLight = FontWeight(token: "ultraLight")
+    static let thin = FontWeight(token: "thin")
+    static let light = FontWeight(token: "light")
+    static let regular = FontWeight(token: "regular")
+    static let medium = FontWeight(token: "medium")
+    static let semibold = FontWeight(token: "semibold")
+    static let bold = FontWeight(token: "bold")
+    static let heavy = FontWeight(token: "heavy")
+    static let black = FontWeight(token: "black")
+}
+"#;
+
+/// The token string carried by a prelude token struct (`Color`/`Font`/
+/// `FontWeight`), if `value` is one.
+pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
+    let SwiftValue::Struct(obj) = value else {
+        return None;
+    };
+    if !matches!(obj.type_name.as_str(), "Color" | "Font" | "FontWeight") {
+        return None;
+    }
+    match obj.get("token") {
+        Some(SwiftValue::Str(s)) => Some((obj.type_name.as_str(), s.as_str())),
+        _ => None,
+    }
+}
 
 /// Register every currently-supported SwiftUI view constructor and modifier
 /// into `interp`.
@@ -288,9 +370,49 @@ mod tests {
                 "Spacer.init",
                 "Text.init",
                 "VStack.init",
+                "View.background",
                 "View.cornerRadius",
+                "View.font",
+                "View.fontWeight",
+                "View.foregroundColor",
                 "View.frame",
                 "View.padding",
+            ]
+        );
+    }
+
+    #[test]
+    fn render_root_captures_color_and_font_tokens() {
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Text("x")
+            .font(.largeTitle)
+            .fontWeight(.bold)
+            .foregroundColor(.white)
+            .background(Color.blue)
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let mods = modifiers_of(&view);
+        let tokens: Vec<(String, String)> = mods
+            .iter()
+            .filter_map(|m| match m {
+                SwiftValue::Struct(o) => o
+                    .get("value")
+                    .and_then(token_of)
+                    .map(|(t, n)| (t.to_string(), n.to_string())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                ("Font".to_string(), "largeTitle".to_string()),
+                ("FontWeight".to_string(), "bold".to_string()),
+                ("Color".to_string(), "white".to_string()),
+                ("Color".to_string(), "blue".to_string()),
             ]
         );
     }
@@ -370,9 +492,11 @@ struct V: View {
         assert_eq!(m.get("name"), Some(&SwiftValue::Str("frame".into())));
     }
 
-    /// Render `root_type`'s `body` from `src` for assertions.
+    /// Render `root_type`'s `body` from `src` for assertions, with the token
+    /// prelude prepended (as the render CLI will do).
     fn render_to_string(src: &str, root_type: &str) -> SwiftValue {
-        let analysis = tswift_frontend::Analysis::analyze(src, "test.swift").expect("analyze");
+        let program = format!("{PRELUDE}\n{src}");
+        let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
         let mut interp = Interpreter::new(&mut sink);
