@@ -32,7 +32,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
 }
 
 fn entry() -> MethodEntry {
-    MethodEntry { mutating: false, func: map_or_flat_map }
+    MethodEntry {
+        mutating: false,
+        func: map_or_flat_map,
+    }
 }
 
 /// `Optional.map(_:)` / `Optional.flatMap(_:)`.
@@ -46,7 +49,10 @@ fn map_or_flat_map(
     args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     if matches!(recv, SwiftValue::Nil) {
-        return Ok(Outcome { result: SwiftValue::Nil, receiver: recv });
+        return Ok(Outcome {
+            result: SwiftValue::Nil,
+            receiver: recv,
+        });
     }
     let id = args.iter().find_map(|a| match a {
         SwiftValue::Closure(id) => Some(*id),
@@ -58,7 +64,10 @@ fn map_or_flat_map(
         )));
     };
     let result = ctx.call_closure(id, vec![recv.clone()])?;
-    Ok(Outcome { result, receiver: recv })
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
 }
 
 #[cfg(test)]

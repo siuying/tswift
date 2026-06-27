@@ -253,6 +253,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "qswift-core",
+ "qswift-foundation",
  "qswift-frontend",
  "qswift-std",
 ]
@@ -263,6 +264,13 @@ version = "0.0.0"
 dependencies = [
  "corosensei",
  "qswift-frontend",
+]
+
+[[package]]
+name = "qswift-foundation"
+version = "0.0.0"
+dependencies = [
+ "qswift-core",
 ]
 
 [[package]]
@@ -307,6 +315,7 @@ name = "qswift-wasm"
 version = "0.0.0"
 dependencies = [
  "qswift-core",
+ "qswift-foundation",
  "qswift-frontend",
  "qswift-std",
  "wasm-bindgen",

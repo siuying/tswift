@@ -18,7 +18,14 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "isEmpty", is_empty);
 
     let mut mutating = |name: &str, f: qswift_core::IntrinsicFn| {
-        interp.register_intrinsic(s, name, MethodEntry { mutating: true, func: f });
+        interp.register_intrinsic(
+            s,
+            name,
+            MethodEntry {
+                mutating: true,
+                func: f,
+            },
+        );
     };
     mutating("insert", insert);
     mutating("remove", remove);
@@ -29,7 +36,14 @@ pub fn install(interp: &mut Interpreter<'_>) {
     mutating("formSymmetricDifference", form_symmetric_difference);
 
     let mut pure = |name: &str, f: qswift_core::IntrinsicFn| {
-        interp.register_intrinsic(s, name, MethodEntry { mutating: false, func: f });
+        interp.register_intrinsic(
+            s,
+            name,
+            MethodEntry {
+                mutating: false,
+                func: f,
+            },
+        );
     };
     pure("union", union);
     pure("intersection", intersection);
@@ -108,7 +122,10 @@ fn insert(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
             Some("memberAfterInsert".to_string()),
         ],
     );
-    Ok(Outcome { result, receiver: SwiftValue::Set(Rc::new(items)) })
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
 }
 
 /// `remove(_:)` — returns the removed element, or `nil` if absent.
@@ -119,7 +136,10 @@ fn remove(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
         Some(i) => items.remove(i),
         None => SwiftValue::Nil,
     };
-    Ok(Outcome { result, receiver: SwiftValue::Set(Rc::new(items)) })
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
 }
 
 /// `update(with:)` — insert, returning the replaced element (or `nil`).
@@ -133,7 +153,10 @@ fn update(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
             SwiftValue::Nil
         }
     };
-    Ok(Outcome { result, receiver: SwiftValue::Set(Rc::new(items)) })
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
 }
 
 // ---- algebra (non-mutating) ------------------------------------------------
@@ -146,17 +169,27 @@ fn union(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Ou
 
 fn intersection(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let other = other_elements(&args)?;
-    let kept = elements(&recv)?.into_iter().filter(|x| other.contains(x)).collect();
+    let kept = elements(&recv)?
+        .into_iter()
+        .filter(|x| other.contains(x))
+        .collect();
     Ok(value_outcome(set(kept), recv))
 }
 
 fn subtracting(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let other = other_elements(&args)?;
-    let kept = elements(&recv)?.into_iter().filter(|x| !other.contains(x)).collect();
+    let kept = elements(&recv)?
+        .into_iter()
+        .filter(|x| !other.contains(x))
+        .collect();
     Ok(value_outcome(set(kept), recv))
 }
 
-fn symmetric_difference(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+fn symmetric_difference(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
     let a = elements(&recv)?;
     let b = other_elements(&args)?;
     let mut out: Vec<SwiftValue> = a.iter().filter(|x| !b.contains(x)).cloned().collect();
@@ -178,7 +211,11 @@ fn subtract(c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> 
     Ok(mutate(subtracting(c, recv, args)?))
 }
 
-fn form_symmetric_difference(c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+fn form_symmetric_difference(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
     Ok(mutate(symmetric_difference(c, recv, args)?))
 }
 
@@ -200,7 +237,11 @@ fn is_strict_subset(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftVa
     Ok(bool_outcome(subset && a.len() < b.len(), recv))
 }
 
-fn is_strict_superset(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+fn is_strict_superset(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
     let (a, b) = (elements(&recv)?, other_elements(&args)?);
     let superset = b.iter().all(|x| a.contains(x));
     Ok(bool_outcome(superset && a.len() > b.len(), recv))
@@ -230,13 +271,19 @@ fn value_outcome(result: SwiftValue, receiver: SwiftValue) -> Outcome {
 }
 
 fn bool_outcome(b: bool, receiver: SwiftValue) -> Outcome {
-    Outcome { result: SwiftValue::Bool(b), receiver }
+    Outcome {
+        result: SwiftValue::Bool(b),
+        receiver,
+    }
 }
 
 /// Turn a non-mutating result set into a mutating outcome: the computed set
 /// becomes the new receiver and the call result is `Void`.
 fn mutate(out: Outcome) -> Outcome {
-    Outcome { receiver: out.result, result: SwiftValue::Void }
+    Outcome {
+        receiver: out.result,
+        result: SwiftValue::Void,
+    }
 }
 
 #[cfg(test)]
@@ -291,18 +338,57 @@ mod tests {
     #[test]
     fn algebra() {
         let mut m = M;
-        assert_eq!(sorted_ints(union(&mut m, s(&[1, 2]), vec![s(&[2, 3])]).unwrap().result), vec![1, 2, 3]);
-        assert_eq!(sorted_ints(intersection(&mut m, s(&[1, 2, 3]), vec![s(&[2, 3, 4])]).unwrap().result), vec![2, 3]);
-        assert_eq!(sorted_ints(subtracting(&mut m, s(&[1, 2, 3]), vec![s(&[2])]).unwrap().result), vec![1, 3]);
-        assert_eq!(sorted_ints(symmetric_difference(&mut m, s(&[1, 2]), vec![s(&[2, 3])]).unwrap().result), vec![1, 3]);
+        assert_eq!(
+            sorted_ints(union(&mut m, s(&[1, 2]), vec![s(&[2, 3])]).unwrap().result),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            sorted_ints(
+                intersection(&mut m, s(&[1, 2, 3]), vec![s(&[2, 3, 4])])
+                    .unwrap()
+                    .result
+            ),
+            vec![2, 3]
+        );
+        assert_eq!(
+            sorted_ints(
+                subtracting(&mut m, s(&[1, 2, 3]), vec![s(&[2])])
+                    .unwrap()
+                    .result
+            ),
+            vec![1, 3]
+        );
+        assert_eq!(
+            sorted_ints(
+                symmetric_difference(&mut m, s(&[1, 2]), vec![s(&[2, 3])])
+                    .unwrap()
+                    .result
+            ),
+            vec![1, 3]
+        );
     }
 
     #[test]
     fn predicates_and_form_mutation() {
         let mut m = M;
-        assert_eq!(is_subset(&mut m, s(&[1, 2]), vec![s(&[1, 2, 3])]).unwrap().result, SwiftValue::Bool(true));
-        assert_eq!(is_superset(&mut m, s(&[1, 2, 3]), vec![s(&[1])]).unwrap().result, SwiftValue::Bool(true));
-        assert_eq!(is_disjoint(&mut m, s(&[1, 2]), vec![s(&[3, 4])]).unwrap().result, SwiftValue::Bool(true));
+        assert_eq!(
+            is_subset(&mut m, s(&[1, 2]), vec![s(&[1, 2, 3])])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            is_superset(&mut m, s(&[1, 2, 3]), vec![s(&[1])])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            is_disjoint(&mut m, s(&[1, 2]), vec![s(&[3, 4])])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
         // formUnion replaces the receiver, returning Void.
         let fu = form_union(&mut m, s(&[1]), vec![s(&[2])]).unwrap();
         assert_eq!(fu.result, SwiftValue::Void);

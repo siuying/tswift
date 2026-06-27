@@ -44,6 +44,7 @@ fn run_swift_impl(source: &str) -> String {
     let mut stdout = Vec::new();
     let mut interp = Interpreter::new(&mut stdout);
     qswift_std::install(&mut interp);
+    qswift_foundation::install(&mut interp);
     interp.set_filename("main.swift");
 
     let run_result = interp.run(analysis);
@@ -227,7 +228,7 @@ mod tests {
         // A multibyte character straddling the limit must not panic; truncation
         // falls back to the previous char boundary.
         let s = "a\u{1F600}b"; // 'a' + 4-byte emoji + 'b'
-        // max=2 lands inside the emoji (bytes 1..5); expect only "a" kept.
+                               // max=2 lands inside the emoji (bytes 1..5); expect only "a" kept.
         let out = truncate(s, 2);
         assert!(out.starts_with('a'), "out={out}");
         assert!(out.contains("truncated"), "out={out}");

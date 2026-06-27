@@ -1636,16 +1636,16 @@ impl<'w> Interpreter<'w> {
         // positional argument(s) its initializer takes.
         let (proto, args): (&str, Vec<SwiftValue>) = match init_kind {
             NodeKind::ArrayLiteral => match &value {
-                SwiftValue::Array(items) => {
-                    ("ExpressibleByArrayLiteral", items.as_ref().clone())
-                }
+                SwiftValue::Array(items) => ("ExpressibleByArrayLiteral", items.as_ref().clone()),
                 _ => return Ok(value),
             },
             NodeKind::StringLiteral => ("ExpressibleByStringLiteral", vec![value.clone()]),
             NodeKind::IntegerLiteral => ("ExpressibleByIntegerLiteral", vec![value.clone()]),
             NodeKind::FloatLiteral => ("ExpressibleByFloatLiteral", vec![value.clone()]),
             NodeKind::BoolLiteral => ("ExpressibleByBooleanLiteral", vec![value.clone()]),
-            NodeKind::NilLiteral if !optional => ("ExpressibleByNilLiteral", vec![SwiftValue::Void]),
+            NodeKind::NilLiteral if !optional => {
+                ("ExpressibleByNilLiteral", vec![SwiftValue::Void])
+            }
             _ => return Ok(value),
         };
         if !self.all_protocols(ty).iter().any(|p| p == proto) {
@@ -1865,6 +1865,8 @@ impl<'w> Interpreter<'w> {
                     | "Array"
                     | "Dictionary"
                     | "Set"
+                    | "Data"
+                    | "UUID"
             )
     }
 
@@ -2428,7 +2430,10 @@ impl<'w> Interpreter<'w> {
 
         let mut writebacks: Vec<(String, Place)> = Vec::new();
         for (i, p) in params.iter().enumerate() {
-            let v = args.get(i).map(|a| a.value.clone()).unwrap_or(SwiftValue::Nil);
+            let v = args
+                .get(i)
+                .map(|a| a.value.clone())
+                .unwrap_or(SwiftValue::Nil);
             self.env.declare(&p.name, v, p.inout_);
             if p.inout_ {
                 if let Some(place) = args.get(i).and_then(|a| a.place.clone()) {
@@ -2966,9 +2971,8 @@ impl<'w> Interpreter<'w> {
                         .get(&type_name)
                         .is_some_and(|d| d.static_subscript.is_some());
                 if self.env.get(&type_name).is_none() && has_static {
-                    let indices: Vec<SwiftValue> = kids
-                        .map(|n| self.eval(&n))
-                        .collect::<Result<_, _>>()?;
+                    let indices: Vec<SwiftValue> =
+                        kids.map(|n| self.eval(&n)).collect::<Result<_, _>>()?;
                     return self.read_static_subscript(&type_name, &indices);
                 }
             }
@@ -4152,7 +4156,10 @@ impl<'w> Interpreter<'w> {
                 .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
                 .collect()),
             SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Str(s) => Ok(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
+            SwiftValue::Str(s) => Ok(crate::graphemes(s)
+                .into_iter()
+                .map(SwiftValue::Str)
+                .collect()),
             other => {
                 Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
             }
@@ -4660,7 +4667,8 @@ impl<'w> Interpreter<'w> {
                         };
                     }
                     // Static property of a struct or class type: `Type.prop`.
-                    if self.structs.contains_key(&type_name) || self.classes.contains_key(&type_name)
+                    if self.structs.contains_key(&type_name)
+                        || self.classes.contains_key(&type_name)
                     {
                         if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
                             return Ok(v.clone());
@@ -4722,6 +4730,14 @@ impl<'w> Interpreter<'w> {
                         self.write_place(&place, cached)?;
                     }
                     return Ok(computed);
+                }
+            }
+            if obj.get(&member).is_some() || self.struct_has_member(&obj.type_name, &member) {
+                return self.read_struct_member(&value, &member);
+            }
+            if let Some(kind) = BuiltinReceiver::of(&value) {
+                if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
+                    return func(value).map_err(Self::std_error_to_signal);
                 }
             }
             return self.read_struct_member(&value, &member);
@@ -5179,7 +5195,8 @@ impl<'w> Interpreter<'w> {
                         return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
                     }
                     // `Type.method(...)` — a static method on a class.
-                    if self.classes.contains_key(&tn) && self.lookup_method(&tn, &method).is_some() {
+                    if self.classes.contains_key(&tn) && self.lookup_method(&tn, &method).is_some()
+                    {
                         let params = self.user_method_params(&tn, &method);
                         let args = self.eval_args_with(arg_nodes, params.as_deref())?;
                         return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
@@ -5487,9 +5504,7 @@ impl<'w> Interpreter<'w> {
                 // is torn down; apply them to the caller below.
                 let finals: Vec<(Place, SwiftValue)> = binds
                     .iter()
-                    .filter_map(|(name, place)| {
-                        self.env.get(name).map(|v| (place.clone(), v))
-                    })
+                    .filter_map(|(name, place)| self.env.get(name).map(|v| (place.clone(), v)))
                     .collect();
                 (result, finals)
             }
@@ -6084,7 +6099,12 @@ fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
             let end = if *inclusive { *hi + 1 } else { *hi };
             Some((*lo..end).map(SwiftValue::int).collect())
         }
-        SwiftValue::Str(s) => Some(crate::graphemes(s).into_iter().map(SwiftValue::Str).collect()),
+        SwiftValue::Str(s) => Some(
+            crate::graphemes(s)
+                .into_iter()
+                .map(SwiftValue::Str)
+                .collect(),
+        ),
         // A dictionary is a sequence of `(key, value)` tuples.
         SwiftValue::Dict(pairs) => Some(
             pairs
@@ -6269,11 +6289,8 @@ fn tuple_type_labels(text: &str) -> Option<Vec<Option<String>>> {
         // colon. Anything else (a bare type) is unlabeled.
         let label = part.split_once(':').and_then(|(name, _)| {
             let name = name.trim();
-            (!name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_'))
-            .then(|| name.to_string())
+            (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                .then(|| name.to_string())
         });
         any |= label.is_some();
         labels.push(label);

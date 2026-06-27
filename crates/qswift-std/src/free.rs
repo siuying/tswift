@@ -67,7 +67,12 @@ fn dump(ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
     let value = args.remove(0).value;
     match as_sequence(&value) {
         Some(items) => {
-            let _ = writeln!(ctx.out(), "▿ {} element{}", items.len(), plural(items.len()));
+            let _ = writeln!(
+                ctx.out(),
+                "▿ {} element{}",
+                items.len(),
+                plural(items.len())
+            );
             for item in &items {
                 let _ = writeln!(ctx.out(), "  - {}", debug_format(item));
             }
@@ -81,7 +86,11 @@ fn dump(ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
 
 /// Split output args into `(items, separator, terminator)`, honouring the
 /// `separator:`/`terminator:` labels.
-fn output_parts(args: Vec<Arg>, def_sep: &str, def_term: &str) -> (Vec<SwiftValue>, String, String) {
+fn output_parts(
+    args: Vec<Arg>,
+    def_sep: &str,
+    def_term: &str,
+) -> (Vec<SwiftValue>, String, String) {
     let mut items = Vec::new();
     let mut sep = def_sep.to_string();
     let mut term = def_term.to_string();
@@ -118,7 +127,10 @@ fn abs(_ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
             Ok(SwiftValue::Int(qswift_core::IntValue::new(mag, i.width)))
         }
         SwiftValue::Double(d) => Ok(SwiftValue::Double(d.abs())),
-        other => Err(type_err(format!("abs expects a number, got {}", other.type_name()))),
+        other => Err(type_err(format!(
+            "abs expects a number, got {}",
+            other.type_name()
+        ))),
     }
 }
 
@@ -148,10 +160,16 @@ fn fold_extreme(ctx: &mut dyn StdContext, args: Vec<Arg>, want_greater: bool) ->
 /// `zip(_:_:)` — pair elements of two sequences into a tuple array (eager).
 fn zip(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut it = args.into_iter();
-    let a = it.next().ok_or_else(|| type_err("zip expects two sequences".into()))?;
-    let b = it.next().ok_or_else(|| type_err("zip expects two sequences".into()))?;
-    let xs = as_sequence(&a.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
-    let ys = as_sequence(&b.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
+    let a = it
+        .next()
+        .ok_or_else(|| type_err("zip expects two sequences".into()))?;
+    let b = it
+        .next()
+        .ok_or_else(|| type_err("zip expects two sequences".into()))?;
+    let xs =
+        as_sequence(&a.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
+    let ys =
+        as_sequence(&b.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
     let pairs = xs
         .into_iter()
         .zip(ys)
@@ -198,7 +216,11 @@ fn stride(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 
 fn stride_continues(cur: i128, lim: i128, step: i128, inclusive: bool) -> bool {
     if step > 0 {
-        if inclusive { cur <= lim } else { cur < lim }
+        if inclusive {
+            cur <= lim
+        } else {
+            cur < lim
+        }
     } else if inclusive {
         cur >= lim
     } else {
@@ -208,7 +230,11 @@ fn stride_continues(cur: i128, lim: i128, step: i128, inclusive: bool) -> bool {
 
 fn stride_continues_f(cur: f64, lim: f64, step: f64, inclusive: bool) -> bool {
     if step > 0.0 {
-        if inclusive { cur <= lim } else { cur < lim }
+        if inclusive {
+            cur <= lim
+        } else {
+            cur < lim
+        }
     } else if inclusive {
         cur >= lim
     } else {
@@ -327,7 +353,11 @@ fn fatal(args: &[Arg], default: &str) -> StdError {
             _ => None,
         })
         .unwrap_or_default();
-    let text = if msg.is_empty() { default.to_string() } else { msg };
+    let text = if msg.is_empty() {
+        default.to_string()
+    } else {
+        msg
+    };
     StdError::Error(EvalError::Trap(text))
 }
 
@@ -375,7 +405,10 @@ fn as_f64(v: &SwiftValue) -> Result<f64, StdError> {
     match v {
         SwiftValue::Int(i) => Ok(i.raw as f64),
         SwiftValue::Double(d) => Ok(*d),
-        other => Err(type_err(format!("expected a number, got {}", other.type_name()))),
+        other => Err(type_err(format!(
+            "expected a number, got {}",
+            other.type_name()
+        ))),
     }
 }
 
@@ -387,7 +420,11 @@ fn as_index(v: &SwiftValue) -> Option<usize> {
 }
 
 fn plural(n: usize) -> &'static str {
-    if n == 1 { "" } else { "s" }
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 /// Eagerly expand a builtin sequence value into its elements.
@@ -407,7 +444,11 @@ fn debug_format(v: &SwiftValue) -> String {
     match v {
         SwiftValue::Str(s) => format!("{s:?}"),
         SwiftValue::Array(items) => {
-            let inner = items.iter().map(debug_format).collect::<Vec<_>>().join(", ");
+            let inner = items
+                .iter()
+                .map(debug_format)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{inner}]")
         }
         SwiftValue::Tuple(items, labels) => {
@@ -456,11 +497,19 @@ mod tests {
     fn min_max_pick_extremes() {
         let mut c = MockCtx { sink: vec![] };
         assert_eq!(
-            min(&mut c, vec![pos(SwiftValue::int(3)), pos(SwiftValue::int(7))]).unwrap(),
+            min(
+                &mut c,
+                vec![pos(SwiftValue::int(3)), pos(SwiftValue::int(7))]
+            )
+            .unwrap(),
             SwiftValue::int(3)
         );
         assert_eq!(
-            max(&mut c, vec![pos(SwiftValue::int(3)), pos(SwiftValue::int(7))]).unwrap(),
+            max(
+                &mut c,
+                vec![pos(SwiftValue::int(3)), pos(SwiftValue::int(7))]
+            )
+            .unwrap(),
             SwiftValue::int(7)
         );
     }

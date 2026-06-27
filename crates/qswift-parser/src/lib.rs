@@ -887,8 +887,12 @@ impl<'a> Parser<'a> {
         if self.at_keyword("is") {
             let kw = self.bump();
             let ty = self.parse_type()?;
-            let wild = self.ast.add(NodeKind::WildcardPattern, None, kw.line, kw.col);
-            let cast = self.ast.add(NodeKind::CastExpr, Some("is"), kw.line, kw.col);
+            let wild = self
+                .ast
+                .add(NodeKind::WildcardPattern, None, kw.line, kw.col);
+            let cast = self
+                .ast
+                .add(NodeKind::CastExpr, Some("is"), kw.line, kw.col);
             self.ast.append_child(cast, wild);
             self.ast.append_child(cast, ty);
             return Ok(cast);

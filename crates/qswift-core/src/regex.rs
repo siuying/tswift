@@ -797,7 +797,10 @@ mod tests {
         assert!(Regex::compile(r"a{100000}").is_err());
         assert!(Regex::compile(r"a{0,100000}").is_err());
         // A `{` that is not a quantifier stays a literal brace.
-        assert_eq!(matched(&Regex::compile(r"a{b").unwrap(), "a{b").as_deref(), Some("a{b"));
+        assert_eq!(
+            matched(&Regex::compile(r"a{b").unwrap(), "a{b").as_deref(),
+            Some("a{b")
+        );
     }
 
     #[test]

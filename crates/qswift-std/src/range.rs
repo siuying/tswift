@@ -15,12 +15,18 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_intrinsic(
         BuiltinReceiver::Range,
         "contains",
-        MethodEntry { mutating: false, func: contains },
+        MethodEntry {
+            mutating: false,
+            func: contains,
+        },
     );
     interp.register_intrinsic(
         BuiltinReceiver::Range,
         "clamped",
-        MethodEntry { mutating: false, func: clamped },
+        MethodEntry {
+            mutating: false,
+            func: clamped,
+        },
     );
 }
 
@@ -76,8 +82,15 @@ fn contains(
             )))
         }
     };
-    let inside = if inclusive { x >= lo && x <= hi } else { x >= lo && x < hi };
-    Ok(Outcome { result: SwiftValue::Bool(inside), receiver: recv })
+    let inside = if inclusive {
+        x >= lo && x <= hi
+    } else {
+        x >= lo && x < hi
+    };
+    Ok(Outcome {
+        result: SwiftValue::Bool(inside),
+        receiver: recv,
+    })
 }
 
 /// `Range.clamped(to:)` — intersection with another range, same end style.
@@ -87,13 +100,18 @@ fn clamped(
     args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let (lo, hi, inclusive) = parts(&recv)?;
-    let (olo, ohi, _) = parts(args.first().ok_or_else(|| {
-        StdError::Error(EvalError::Type("clamped(to:) expects a range".into()))
-    })?)?;
+    let (olo, ohi, _) =
+        parts(args.first().ok_or_else(|| {
+            StdError::Error(EvalError::Type("clamped(to:) expects a range".into()))
+        })?)?;
     let new_lo = lo.max(olo);
     let new_hi = hi.min(ohi).max(new_lo);
     Ok(Outcome {
-        result: SwiftValue::Range { lo: new_lo, hi: new_hi, inclusive },
+        result: SwiftValue::Range {
+            lo: new_lo,
+            hi: new_hi,
+            inclusive,
+        },
         receiver: recv,
     })
 }
@@ -113,7 +131,11 @@ mod tests {
     }
 
     fn exclusive(lo: i128, hi: i128) -> SwiftValue {
-        SwiftValue::Range { lo, hi, inclusive: false }
+        SwiftValue::Range {
+            lo,
+            hi,
+            inclusive: false,
+        }
     }
 
     #[test]
@@ -123,7 +145,11 @@ mod tests {
         assert_eq!(upper_bound(r.clone()).unwrap(), SwiftValue::int(5));
         assert_eq!(count(r.clone()).unwrap(), SwiftValue::int(4));
         assert_eq!(is_empty(r).unwrap(), SwiftValue::Bool(false));
-        let closed = SwiftValue::Range { lo: 1, hi: 5, inclusive: true };
+        let closed = SwiftValue::Range {
+            lo: 1,
+            hi: 5,
+            inclusive: true,
+        };
         assert_eq!(count(closed).unwrap(), SwiftValue::int(5));
     }
 
@@ -132,11 +158,15 @@ mod tests {
         let mut c = MockCtx;
         let r = exclusive(1, 5);
         assert_eq!(
-            contains(&mut c, r.clone(), vec![SwiftValue::int(3)]).unwrap().result,
+            contains(&mut c, r.clone(), vec![SwiftValue::int(3)])
+                .unwrap()
+                .result,
             SwiftValue::Bool(true)
         );
         assert_eq!(
-            contains(&mut c, r, vec![SwiftValue::int(5)]).unwrap().result,
+            contains(&mut c, r, vec![SwiftValue::int(5)])
+                .unwrap()
+                .result,
             SwiftValue::Bool(false)
         );
     }
@@ -144,7 +174,9 @@ mod tests {
     #[test]
     fn clamped_intersects() {
         let mut c = MockCtx;
-        let out = clamped(&mut c, exclusive(0, 10), vec![exclusive(3, 20)]).unwrap().result;
+        let out = clamped(&mut c, exclusive(0, 10), vec![exclusive(3, 20)])
+            .unwrap()
+            .result;
         assert_eq!(out, exclusive(3, 10));
     }
 }

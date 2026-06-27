@@ -1,0 +1,6 @@
+Data.append
+Data.count
+Data.init
+Data.isEmpty
+UUID.init
+UUID.uuidString

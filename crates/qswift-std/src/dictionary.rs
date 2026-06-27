@@ -17,16 +17,61 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(d, "keys", keys);
     interp.register_property(d, "values", values);
 
-    interp.register_intrinsic(d, "updateValue", MethodEntry { mutating: true, func: update_value });
-    interp.register_intrinsic(d, "removeValue", MethodEntry { mutating: true, func: remove_value });
-    interp.register_intrinsic(d, "merge", MethodEntry { mutating: true, func: merge });
-    interp.register_intrinsic(d, "merging", MethodEntry { mutating: false, func: merging });
-    interp.register_intrinsic(d, "mapValues", MethodEntry { mutating: false, func: map_values });
-    interp.register_intrinsic(d, "filter", MethodEntry { mutating: false, func: filter });
+    interp.register_intrinsic(
+        d,
+        "updateValue",
+        MethodEntry {
+            mutating: true,
+            func: update_value,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "removeValue",
+        MethodEntry {
+            mutating: true,
+            func: remove_value,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "merge",
+        MethodEntry {
+            mutating: true,
+            func: merge,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "merging",
+        MethodEntry {
+            mutating: false,
+            func: merging,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "mapValues",
+        MethodEntry {
+            mutating: false,
+            func: map_values,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "filter",
+        MethodEntry {
+            mutating: false,
+            func: filter,
+        },
+    );
     interp.register_intrinsic(
         d,
         "compactMapValues",
-        MethodEntry { mutating: false, func: compact_map_values },
+        MethodEntry {
+            mutating: false,
+            func: compact_map_values,
+        },
     );
 }
 
@@ -68,8 +113,14 @@ fn values(recv: SwiftValue) -> StdResult {
 /// if the key was absent).
 fn update_value(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let mut p = pairs(recv)?;
-    let value = args.first().cloned().ok_or_else(|| type_err("updateValue expects a value".into()))?;
-    let key = args.get(1).cloned().ok_or_else(|| type_err("updateValue expects a key".into()))?;
+    let value = args
+        .first()
+        .cloned()
+        .ok_or_else(|| type_err("updateValue expects a value".into()))?;
+    let key = args
+        .get(1)
+        .cloned()
+        .ok_or_else(|| type_err("updateValue expects a key".into()))?;
     let store = Rc::make_mut(&mut p);
     let old = match store.iter_mut().find(|(k, _)| *k == key) {
         Some(slot) => std::mem::replace(&mut slot.1, value),
@@ -78,19 +129,28 @@ fn update_value(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>
             SwiftValue::Nil
         }
     };
-    Ok(Outcome { result: old, receiver: SwiftValue::Dict(p) })
+    Ok(Outcome {
+        result: old,
+        receiver: SwiftValue::Dict(p),
+    })
 }
 
 /// `removeValue(forKey:)` — remove and return the value (`nil` if absent).
 fn remove_value(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let mut p = pairs(recv)?;
-    let key = args.first().cloned().ok_or_else(|| type_err("removeValue expects a key".into()))?;
+    let key = args
+        .first()
+        .cloned()
+        .ok_or_else(|| type_err("removeValue expects a key".into()))?;
     let store = Rc::make_mut(&mut p);
     let removed = match store.iter().position(|(k, _)| *k == key) {
         Some(i) => store.remove(i).1,
         None => SwiftValue::Nil,
     };
-    Ok(Outcome { result: removed, receiver: SwiftValue::Dict(p) })
+    Ok(Outcome {
+        result: removed,
+        receiver: SwiftValue::Dict(p),
+    })
 }
 
 /// `merge(_:uniquingKeysWith:)` — merge another dictionary in place, resolving
@@ -111,7 +171,10 @@ fn merge(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
             None => store.push((k, v)),
         }
     }
-    Ok(Outcome { result: SwiftValue::Void, receiver: SwiftValue::Dict(p) })
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Dict(p),
+    })
 }
 
 // ---- non-mutating methods --------------------------------------------------
@@ -132,7 +195,10 @@ fn merging(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) ->
             None => store.push((k, v)),
         }
     }
-    Ok(Outcome { result: SwiftValue::Dict(Rc::new(store)), receiver: recv })
+    Ok(Outcome {
+        result: SwiftValue::Dict(Rc::new(store)),
+        receiver: recv,
+    })
 }
 
 /// `filter(_:)` — keep the `(key, value)` pairs for which the predicate holds.
@@ -153,7 +219,10 @@ fn filter(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> 
             out.push((k.clone(), v.clone()));
         }
     }
-    Ok(Outcome { result: SwiftValue::Dict(Rc::new(out)), receiver: recv })
+    Ok(Outcome {
+        result: SwiftValue::Dict(Rc::new(out)),
+        receiver: recv,
+    })
 }
 
 /// `mapValues(_:)` — transform each value, keeping keys.
@@ -163,12 +232,19 @@ fn map_values(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>)
     for (k, v) in pairs(recv.clone())?.iter() {
         out.push((k.clone(), ctx.call_closure(id, vec![v.clone()])?));
     }
-    Ok(Outcome { result: SwiftValue::Dict(Rc::new(out)), receiver: recv })
+    Ok(Outcome {
+        result: SwiftValue::Dict(Rc::new(out)),
+        receiver: recv,
+    })
 }
 
 /// `compactMapValues(_:)` — transform values, dropping keys whose value maps to
 /// `nil`.
-fn compact_map_values(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+fn compact_map_values(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
     let id = closure(&args).ok_or_else(|| type_err("compactMapValues expects a closure".into()))?;
     let mut out: Pairs = Vec::new();
     for (k, v) in pairs(recv.clone())?.iter() {
@@ -177,7 +253,10 @@ fn compact_map_values(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Swif
             mapped => out.push((k.clone(), mapped)),
         }
     }
-    Ok(Outcome { result: SwiftValue::Dict(Rc::new(out)), receiver: recv })
+    Ok(Outcome {
+        result: SwiftValue::Dict(Rc::new(out)),
+        receiver: recv,
+    })
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -284,9 +363,13 @@ mod tests {
     #[test]
     fn map_and_compact_map_values() {
         let mut c = Summer;
-        let mapped = map_values(&mut c, dict(&[("a", 1), ("b", 2)]), vec![SwiftValue::Closure(1)])
-            .unwrap()
-            .result;
+        let mapped = map_values(
+            &mut c,
+            dict(&[("a", 1), ("b", 2)]),
+            vec![SwiftValue::Closure(1)],
+        )
+        .unwrap()
+        .result;
         assert_eq!(mapped, dict(&[("a", 10), ("b", 20)]));
     }
 
@@ -306,7 +389,10 @@ mod tests {
 
     #[test]
     fn keys_and_values() {
-        assert_eq!(count(dict(&[("a", 1), ("b", 2)])).unwrap(), SwiftValue::int(2));
+        assert_eq!(
+            count(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            SwiftValue::int(2)
+        );
         match keys(dict(&[("a", 1)])).unwrap() {
             SwiftValue::Array(k) => assert_eq!(k[0], SwiftValue::Str("a".into())),
             _ => panic!("keys should be an array"),

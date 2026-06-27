@@ -50,14 +50,17 @@ pub fn registered_keys() -> Vec<String> {
 
 #[cfg(test)]
 mod coverage_dump {
-    /// Dump the live registry keys to `tools/stdlib-inventory/registered_keys.txt`
-    /// so `coverage.py` can read the authoritative set. Regenerate with:
+    /// Dump the live registry keys for coverage tooling. Regenerate with:
     /// `cargo test -p qswift-std dump_registered_keys`.
     #[test]
     fn dump_registered_keys() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tools/stdlib-inventory/registered_keys.txt");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let body = super::registered_keys().join("\n") + "\n";
-        std::fs::write(&path, body).expect("write registered_keys.txt");
+        for relative in [
+            "frameworks/stdlib/registered_keys.txt",
+            "tools/stdlib-inventory/registered_keys.txt",
+        ] {
+            std::fs::write(root.join(relative), &body).expect("write registered_keys.txt");
+        }
     }
 }

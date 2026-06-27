@@ -271,9 +271,7 @@ impl SwiftValue {
 
     /// The index of a tuple element by label, if the tuple carries that label.
     pub fn tuple_label_index(labels: &[Option<String>], name: &str) -> Option<usize> {
-        labels
-            .iter()
-            .position(|l| l.as_deref() == Some(name))
+        labels.iter().position(|l| l.as_deref() == Some(name))
     }
 
     /// Interpret the value as a boolean (only `Bool` qualifies).

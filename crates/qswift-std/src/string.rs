@@ -195,7 +195,9 @@ fn is_lowercase(recv: SwiftValue) -> StdResult {
 /// so `e\u{301}` (a combining accent) is not ASCII.
 fn is_ascii(recv: SwiftValue) -> StdResult {
     let s = str_of(&recv)?;
-    Ok(SwiftValue::Bool(!s.is_empty() && s.chars().all(|c| c.is_ascii())))
+    Ok(SwiftValue::Bool(
+        !s.is_empty() && s.chars().all(|c| c.is_ascii()),
+    ))
 }
 
 fn is_hex_digit(recv: SwiftValue) -> StdResult {

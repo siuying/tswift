@@ -126,6 +126,7 @@ fn run(paths: &[String]) -> ExitCode {
     let mut handle = stdout.lock();
     let mut interp = Interpreter::new(&mut handle);
     qswift_std::install(&mut interp);
+    qswift_foundation::install(&mut interp);
     interp.set_filename(path);
 
     let result = interp.run(analysis);

@@ -80,7 +80,10 @@ fn int_quotient_and_remainder(
     args: Vec<SwiftValue>,
 ) -> Outcomes {
     let i = as_int(&recv)?;
-    let d = as_int(args.first().ok_or_else(|| arg_err("quotientAndRemainder(dividingBy:)"))?)?;
+    let d = as_int(
+        args.first()
+            .ok_or_else(|| arg_err("quotientAndRemainder(dividingBy:)"))?,
+    )?;
     if d.raw == 0 {
         return Err(StdError::Error(EvalError::Trap("division by zero".into())));
     }
@@ -122,7 +125,10 @@ fn double_truncating_remainder(
     args: Vec<SwiftValue>,
 ) -> Outcomes {
     let d = as_double(&recv)?;
-    let by = as_double(args.first().ok_or_else(|| arg_err("truncatingRemainder(dividingBy:)"))?)?;
+    let by = as_double(
+        args.first()
+            .ok_or_else(|| arg_err("truncatingRemainder(dividingBy:)"))?,
+    )?;
     ok(SwiftValue::Double(d % by), recv)
 }
 
@@ -193,10 +199,15 @@ mod tests {
     fn signum_and_magnitude() {
         let mut c = MockCtx;
         assert_eq!(
-            int_signum(&mut c, SwiftValue::int(-9), vec![]).unwrap().result,
+            int_signum(&mut c, SwiftValue::int(-9), vec![])
+                .unwrap()
+                .result,
             SwiftValue::int(-1)
         );
-        assert_eq!(int_magnitude(SwiftValue::int(-9)).unwrap(), SwiftValue::int(9));
+        assert_eq!(
+            int_magnitude(SwiftValue::int(-9)).unwrap(),
+            SwiftValue::int(9)
+        );
     }
 
     #[test]
@@ -230,11 +241,15 @@ mod tests {
     fn double_math() {
         let mut c = MockCtx;
         assert_eq!(
-            double_sqrt(&mut c, SwiftValue::Double(9.0), vec![]).unwrap().result,
+            double_sqrt(&mut c, SwiftValue::Double(9.0), vec![])
+                .unwrap()
+                .result,
             SwiftValue::Double(3.0)
         );
         assert_eq!(
-            double_rounded(&mut c, SwiftValue::Double(2.6), vec![]).unwrap().result,
+            double_rounded(&mut c, SwiftValue::Double(2.6), vec![])
+                .unwrap()
+                .result,
             SwiftValue::Double(3.0)
         );
         assert_eq!(

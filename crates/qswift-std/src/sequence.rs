@@ -173,7 +173,11 @@ fn count_where(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>)
 
 // ---- ordering --------------------------------------------------------------
 
-pub(crate) fn sorted(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
+pub(crate) fn sorted(
+    ctx: &mut dyn StdContext,
+    items: Vec<SwiftValue>,
+    args: Vec<Arg>,
+) -> StdResult {
     let mut out = items;
     if let Ok(id) = closure(&args, "") {
         // sorted(by:) — closure is a strict-weak `<`-style comparator.
@@ -235,7 +239,11 @@ fn extreme(
             None => ctx.value_less_than(&it, &best).unwrap_or(false),
         };
         // `less` means it < best; pick it for min when less, for max when !less.
-        let take = if want == Ordering::Less { less } else { !less && it != best };
+        let take = if want == Ordering::Less {
+            less
+        } else {
+            !less && it != best
+        };
         if take {
             best = it;
         }
@@ -363,7 +371,9 @@ fn starts_with(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) 
         .or_else(|| first_positional(&args))
         .and_then(seq_of)
         .ok_or_else(|| type_err("starts(with:) expects a sequence"))?;
-    Ok(SwiftValue::Bool(items.len() >= prefix.len() && items[..prefix.len()] == prefix[..]))
+    Ok(SwiftValue::Bool(
+        items.len() >= prefix.len() && items[..prefix.len()] == prefix[..],
+    ))
 }
 
 // ---- randomness ------------------------------------------------------------
@@ -380,7 +390,9 @@ fn shuffled(_c: &mut dyn StdContext, mut items: Vec<SwiftValue>, _a: Vec<Arg>) -
     // Fisher–Yates with a tiny self-seeded PRNG (no external rand crate).
     let mut state = pseudo_random(items.len() as u64 + 0x9E37);
     for i in (1..items.len()).rev() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let j = (state >> 33) as usize % (i + 1);
         items.swap(i, j);
     }
@@ -408,7 +420,9 @@ fn closure(args: &[Arg], who: &str) -> Result<usize, StdError> {
 }
 
 fn first_positional(args: &[Arg]) -> Option<SwiftValue> {
-    args.iter().find(|a| a.label.is_none()).map(|a| a.value.clone())
+    args.iter()
+        .find(|a| a.label.is_none())
+        .map(|a| a.value.clone())
 }
 
 /// The element argument for search algorithms: the first non-closure value,
@@ -463,7 +477,10 @@ fn natural_cmp(a: &SwiftValue, b: &SwiftValue) -> Option<Ordering> {
 }
 
 /// A stable merge sort driven by a fallible comparator closure.
-fn merge_sort_by(items: &mut [SwiftValue], cmp: &mut dyn FnMut(&SwiftValue, &SwiftValue) -> Ordering) {
+fn merge_sort_by(
+    items: &mut [SwiftValue],
+    cmp: &mut dyn FnMut(&SwiftValue, &SwiftValue) -> Ordering,
+) {
     let n = items.len();
     if n <= 1 {
         return;
@@ -567,7 +584,12 @@ mod tests {
     fn search_and_predicates() {
         let mut c = Calc;
         assert_eq!(
-            contains(&mut c, ints(&[1, 2, 3]), vec![Arg::positional(SwiftValue::int(2))]).unwrap(),
+            contains(
+                &mut c,
+                ints(&[1, 2, 3]),
+                vec![Arg::positional(SwiftValue::int(2))]
+            )
+            .unwrap(),
             SwiftValue::Bool(true)
         );
         assert_eq!(
@@ -583,10 +605,27 @@ mod tests {
     #[test]
     fn shape_and_minmax() {
         let mut c = Calc;
-        assert_eq!(reversed(&mut c, ints(&[1, 2, 3]), vec![]).unwrap(), array(ints(&[3, 2, 1])));
-        assert_eq!(prefix(&mut c, ints(&[1, 2, 3]), vec![Arg::positional(SwiftValue::int(2))]).unwrap(), array(ints(&[1, 2])));
-        assert_eq!(min_by(&mut c, ints(&[3, 1, 2]), vec![]).unwrap(), SwiftValue::int(1));
-        assert_eq!(max_by(&mut c, ints(&[3, 1, 2]), vec![]).unwrap(), SwiftValue::int(3));
+        assert_eq!(
+            reversed(&mut c, ints(&[1, 2, 3]), vec![]).unwrap(),
+            array(ints(&[3, 2, 1]))
+        );
+        assert_eq!(
+            prefix(
+                &mut c,
+                ints(&[1, 2, 3]),
+                vec![Arg::positional(SwiftValue::int(2))]
+            )
+            .unwrap(),
+            array(ints(&[1, 2]))
+        );
+        assert_eq!(
+            min_by(&mut c, ints(&[3, 1, 2]), vec![]).unwrap(),
+            SwiftValue::int(1)
+        );
+        assert_eq!(
+            max_by(&mut c, ints(&[3, 1, 2]), vec![]).unwrap(),
+            SwiftValue::int(3)
+        );
     }
 
     #[test]
@@ -602,7 +641,15 @@ mod tests {
     fn joined_strings() {
         let mut c = Calc;
         let items = vec![SwiftValue::Str("a".into()), SwiftValue::Str("b".into())];
-        let out = joined(&mut c, items, vec![Arg { label: Some("separator".into()), value: SwiftValue::Str("-".into()) }]).unwrap();
+        let out = joined(
+            &mut c,
+            items,
+            vec![Arg {
+                label: Some("separator".into()),
+                value: SwiftValue::Str("-".into()),
+            }],
+        )
+        .unwrap();
         assert_eq!(out, SwiftValue::Str("a-b".into()));
     }
 }

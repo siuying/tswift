@@ -241,7 +241,10 @@ mod tests {
         let d = SwiftValue::Double(2.0);
         assert_eq!(binary("+", &i, &d).unwrap(), SwiftValue::Double(5.0));
         assert_eq!(binary("*", &d, &int(4)).unwrap(), SwiftValue::Double(8.0));
-        assert_eq!(binary("<", &int(1), &SwiftValue::Double(2.0)).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(
+            binary("<", &int(1), &SwiftValue::Double(2.0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
     }
 
     #[test]

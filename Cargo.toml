@@ -8,6 +8,7 @@ members = [
     "crates/qswift-frontend",
     "crates/qswift-core",
     "crates/qswift-std",
+    "crates/qswift-foundation",
     "crates/qswift-cli",
     "crates/qswift-wasm",
 ]
@@ -22,4 +23,5 @@ repository = "https://github.com/siuying/quick-swift"
 qswift-frontend = { path = "crates/qswift-frontend" }
 qswift-core = { path = "crates/qswift-core" }
 qswift-std = { path = "crates/qswift-std" }
+qswift-foundation = { path = "crates/qswift-foundation" }
 qswift-wasm = { path = "crates/qswift-wasm" }

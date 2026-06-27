@@ -1,6 +1,6 @@
 # Plan — Framework Support (Foundation, SwiftUI, …)
 
-**Status:** proposal
+**Status:** implemented
 **Date:** 2026-06-27
 **Reference toolchain / SDK:** Swift **6.3.2** (`swift-6.3.2-RELEASE`) + matching macOS SDK
 **Related:**
@@ -181,28 +181,28 @@ visible from day one.
 
 ## 6. Deliverables
 
-- [ ] Generalize `tools/stdlib-inventory/` → `tools/framework-inventory/` with
+- [x] Generalize `tools/stdlib-inventory/` → `tools/framework-inventory/` with
       `--framework`; keep a stdlib shim for back-compat.
-- [ ] `frameworks.toml` source resolver (toolchain + `xcrun` SDK path).
-- [ ] Framework-aware `extract.py` filter ruleset (availability/wrappers/builders).
-- [ ] `frameworks/<name>/scope.toml` schema + `frameworks/foundation/scope.toml`
+- [x] `frameworks.toml` source resolver (toolchain + `xcrun` SDK path).
+- [x] Framework-aware `extract.py` filter ruleset (availability/wrappers/builders).
+- [x] `frameworks/<name>/scope.toml` schema + `frameworks/foundation/scope.toml`
       (F1–F5 above) as the first roadmap.
-- [ ] `coverage.py --framework` with scope-aware denominator + out-of-scope bucket.
-- [ ] `qswift-foundation` crate skeleton with `registered_keys()` + dump test.
-- [ ] `framework-coverage` skill (generalized from `stdlib-coverage`).
-- [ ] Foundation tier F1 (`Data`/`UUID`) as the end-to-end proof slice.
+- [x] `coverage.py --framework` with scope-aware denominator + out-of-scope bucket.
+- [x] `qswift-foundation` crate skeleton with `registered_keys()` + dump test.
+- [x] `framework-coverage` skill (generalized from `stdlib-coverage`).
+- [x] Foundation tier F1 (`Data`/`UUID`) as the end-to-end proof slice.
 
-## 7. Open decisions (for grilling before build)
+## 7. Decisions taken in implementation
 
-- **Reference for behaviour.** Darwin Foundation vs open
-  swift-corelibs-foundation — proposal: mirror corelibs semantics, document
-  Darwin-only gaps the way float/regex gaps are documented (stdlib-support §3.3).
-- **One registry crate per framework vs a namespaced shared registry.** Proposal:
-  one crate per framework (clean ownership, mirrors `qswift-std`), keys namespaced
-  by receiver type as today.
-- **Fixture tagging convention** for the per-framework `verified` signal
-  (subdir vs filename prefix).
-- **Scope manifest format** (TOML proposed; could be YAML/JSON to match existing
-  tooling).
-- **SDK pin & portability** — interface paths are macOS/Xcode-specific; CI on
-  Linux would use swift-corelibs interfaces. Record the pin like `.swift-version`.
+- **Reference for behaviour.** The first slice mirrors Foundation value semantics
+  directly and keeps Darwin/corelibs gaps visible through fixtures and coverage.
+- **One registry crate per framework.** `qswift-foundation` mirrors `qswift-std`
+  and exposes its own `registered_keys()` dump.
+- **Fixture tagging convention.** Per-framework verified signals use filename
+  prefixes (`foundation_*.swift`) while the coverage script also accepts a
+  matching fixture subdirectory.
+- **Scope manifest format.** Scope is TOML (`frameworks/<name>/scope.toml`) so it
+  can be read by the Python tooling without new dependencies.
+- **SDK pin & portability.** `frameworks.toml` records a Swift 6.3.2 toolchain
+  pin and resolves SDK frameworks via `xcrun --show-sdk-path`; Linux/corelibs
+  interface paths can be added as another descriptor row/candidate.

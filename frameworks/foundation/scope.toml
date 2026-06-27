@@ -1,0 +1,35 @@
+[meta]
+framework = "Foundation"
+reference = "swiftc 6.3.2 / MacOSX SDK"
+stance = "mirror swift-corelibs-foundation semantics; document Darwin gaps"
+
+[[tier]]
+id = "F1"
+title = "Value primitives"
+types = ["Data", "UUID", "IndexPath", "IndexSet"]
+
+[[tier]]
+id = "F2"
+title = "URL + components"
+types = ["URL", "URLComponents", "URLQueryItem"]
+
+[[tier]]
+id = "F3"
+title = "Date & time"
+types = ["Date", "TimeInterval", "Calendar", "DateComponents", "DateFormatter", "ISO8601DateFormatter"]
+
+[[tier]]
+id = "F4"
+title = "Numbers & formatting"
+types = ["Decimal", "NumberFormatter", "Measurement"]
+
+[[tier]]
+id = "F5"
+title = "Coding"
+types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
+
+[out_of_scope]
+filesystem = ["FileManager", "FileHandle"]
+networking = ["URLSession", "URLRequest", "Host"]
+objc_runtime = ["NSObject", "NSCoding", "Bundle"]
+distributed = ["NSXPCConnection", "NSUserActivity"]

@@ -1,0 +1,47 @@
+# Framework descriptors for API inventory and coverage tooling.
+# Paths are resolved by tools/framework-inventory/extract.py.
+
+[stdlib]
+display_name = "Swift stdlib"
+module = "Swift"
+kind = "toolchain"
+toolchain = "swift-6.3.2-RELEASE"
+relative_path = "usr/lib/swift/macosx/Swift.swiftmodule"
+interface_candidates = [
+  "arm64-apple-macos.swiftinterface",
+  "x86_64-apple-macos.swiftinterface",
+]
+inventory = "docs/swift-runtime/stdlib-inventory.md"
+registry = "frameworks/stdlib/registered_keys.txt"
+scope = "frameworks/stdlib/scope.toml"
+fixture_prefix = "stdlib_"
+
+[foundation]
+display_name = "Foundation"
+module = "Foundation"
+kind = "sdk-framework"
+framework_path = "System/Library/Frameworks/Foundation.framework/Versions/Current/Modules/Foundation.swiftmodule"
+interface_candidates = [
+  "arm64e-apple-macos.swiftinterface",
+  "arm64-apple-macos.swiftinterface",
+  "x86_64-apple-macos.swiftinterface",
+]
+inventory = "frameworks/foundation/inventory.md"
+registry = "frameworks/foundation/registered_keys.txt"
+scope = "frameworks/foundation/scope.toml"
+fixture_prefix = "foundation_"
+
+[swiftui]
+display_name = "SwiftUI"
+module = "SwiftUI"
+kind = "sdk-framework"
+framework_path = "System/Library/Frameworks/SwiftUI.framework/Versions/Current/Modules/SwiftUI.swiftmodule"
+interface_candidates = [
+  "arm64e-apple-macos.swiftinterface",
+  "arm64-apple-macos.swiftinterface",
+  "x86_64-apple-macos.swiftinterface",
+]
+inventory = "frameworks/swiftui/inventory.md"
+registry = "frameworks/swiftui/registered_keys.txt"
+scope = "frameworks/swiftui/scope.toml"
+fixture_prefix = "swiftui_"

@@ -108,6 +108,8 @@ pub enum BuiltinReceiver {
     Bool,
     Optional,
     Range,
+    Data,
+    UUID,
 }
 
 impl BuiltinReceiver {
@@ -124,6 +126,8 @@ impl BuiltinReceiver {
             BuiltinReceiver::Bool => "Bool",
             BuiltinReceiver::Optional => "Optional",
             BuiltinReceiver::Range => "Range",
+            BuiltinReceiver::Data => "Data",
+            BuiltinReceiver::UUID => "UUID",
         }
     }
 
@@ -140,6 +144,8 @@ impl BuiltinReceiver {
             "Bool" => BuiltinReceiver::Bool,
             "Optional" => BuiltinReceiver::Optional,
             "Range" => BuiltinReceiver::Range,
+            "Data" => BuiltinReceiver::Data,
+            "UUID" => BuiltinReceiver::UUID,
             _ => return None,
         })
     }
@@ -156,6 +162,8 @@ impl BuiltinReceiver {
             SwiftValue::Bool(_) => BuiltinReceiver::Bool,
             SwiftValue::Range { .. } => BuiltinReceiver::Range,
             SwiftValue::Nil => BuiltinReceiver::Optional,
+            SwiftValue::Struct(obj) if obj.type_name == "Data" => BuiltinReceiver::Data,
+            SwiftValue::Struct(obj) if obj.type_name == "UUID" => BuiltinReceiver::UUID,
             _ => return None,
         })
     }

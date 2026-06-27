@@ -395,13 +395,13 @@ impl Resolver {
     /// (wildcards or plain name bindings), so the pattern matches the case for
     /// every payload value. Literal/range/nested-enum payloads are refutable.
     fn payload_is_irrefutable(&self, ast: &Ast, pattern: NodeId) -> bool {
-        child_ids(ast, pattern).iter().all(|&sub| {
-            match ast.node(sub).kind() {
+        child_ids(ast, pattern)
+            .iter()
+            .all(|&sub| match ast.node(sub).kind() {
                 NodeKind::WildcardPattern | NodeKind::NamePattern => true,
                 NodeKind::TuplePattern => self.payload_is_irrefutable(ast, sub),
                 _ => false,
-            }
-        })
+            })
     }
 
     fn resolve_func(&mut self, ast: &Ast, decl: NodeId, kids: &[NodeId]) {

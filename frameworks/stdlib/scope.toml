@@ -1,0 +1,23 @@
+[meta]
+framework = "Swift"
+reference = "swiftc 6.3.2 / Swift.swiftinterface"
+stance = "capability-driven stdlib denominator; legacy targeted sections remain registry-driven"
+
+[coverage]
+sequence_types = [
+  "Array",
+  "ArraySlice",
+  "ContiguousArray",
+  "Set",
+  "Dictionary",
+  "String",
+  "Substring",
+  "Range",
+  "ClosedRange",
+  "CollectionOfOne",
+  "EmptyCollection",
+  "ReversedCollection",
+]
+
+[core_members]
+Array = ["+", "+=", "=="]
