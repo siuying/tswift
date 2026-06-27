@@ -601,10 +601,25 @@ fn patch_split(prog: &mut [Inst], at: usize, body: usize, skip: usize, greedy: b
 /// a match was found (with `saves` populated on success).
 fn exec(
     prog: &[Inst],
+    pc: usize,
+    input: &[char],
+    pos: usize,
+    saves: &mut Vec<Option<usize>>,
+) -> bool {
+    // `active` holds the `(split_pc, pos)` states currently on the recursion
+    // stack, so an empty-width quantifier body (e.g. `(a?)*`, `()*`) cannot
+    // re-enter the same split at the same position and recurse forever.
+    let mut active = std::collections::HashSet::new();
+    exec_inner(prog, pc, input, pos, saves, &mut active)
+}
+
+fn exec_inner(
+    prog: &[Inst],
     mut pc: usize,
     input: &[char],
     mut pos: usize,
     saves: &mut Vec<Option<usize>>,
+    active: &mut std::collections::HashSet<(usize, usize)>,
 ) -> bool {
     loop {
         match &prog[pc] {
@@ -658,7 +673,7 @@ fn exec(
             Inst::Save(slot) => {
                 let prev = saves[*slot];
                 saves[*slot] = Some(pos);
-                if exec(prog, pc + 1, input, pos, saves) {
+                if exec_inner(prog, pc + 1, input, pos, saves, active) {
                     return true;
                 }
                 saves[*slot] = prev; // backtrack: restore the slot
@@ -666,7 +681,17 @@ fn exec(
             }
             Inst::Jmp(target) => pc = *target,
             Inst::Split(a, b) => {
-                if exec(prog, *a, input, pos, saves) {
+                let key = (pc, pos);
+                // Re-entering the same split at the same position means the body
+                // made no progress; take the exit branch instead of looping.
+                if active.contains(&key) {
+                    pc = *b;
+                    continue;
+                }
+                active.insert(key);
+                let matched = exec_inner(prog, *a, input, pos, saves, active);
+                active.remove(&key);
+                if matched {
                     return true;
                 }
                 pc = *b;
@@ -737,6 +762,20 @@ mod tests {
     fn lazy_quantifier() {
         let re = Regex::compile(r"a+?").unwrap();
         assert_eq!(matched(&re, "aaa").as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn nullable_quantifier_does_not_loop_forever() {
+        // Empty-width quantifier bodies must terminate rather than recurse
+        // forever / overflow the stack.
+        let re = Regex::compile(r"(a?)*").unwrap();
+        assert_eq!(matched(&re, "aaab").as_deref(), Some("aaa"));
+        let re = Regex::compile(r"()*").unwrap();
+        assert_eq!(matched(&re, "xyz").as_deref(), Some(""));
+        let re = Regex::compile(r"(a*)*b").unwrap();
+        assert_eq!(matched(&re, "aaab").as_deref(), Some("aaab"));
+        let re = Regex::compile(r"(a*)*c").unwrap();
+        assert!(re.find(&chars("aaab")).is_none());
     }
 
     #[test]
