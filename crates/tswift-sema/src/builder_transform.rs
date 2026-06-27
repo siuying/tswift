@@ -148,6 +148,19 @@ fn is_handleable(ast: &Ast, methods: &BuilderMethods, stmt: NodeId) -> bool {
     }
 }
 
+/// Whether an `if`'s conditions include an availability check
+/// (`#available` / `#unavailable`), whose taken branch is wrapped in
+/// `buildLimitedAvailability`.
+fn is_availability_condition(ast: &Ast, conds: &[NodeId]) -> bool {
+    conds.iter().any(|&c| {
+        ast.node(c).kind() == NodeKind::CompilerDirective
+            && matches!(
+                ast.node(c).text(),
+                Some("#available") | Some("#unavailable")
+            )
+    })
+}
+
 /// The recursive lowering state: the arena, the builder being lowered, its
 /// method set, and a monotonic counter for fresh `$buildN` names.
 struct Lowering<'a> {
@@ -298,6 +311,13 @@ impl Lowering<'_> {
         // Then branch: lower its block, then assign the chosen component value.
         let then_stmts = child_ids(self.ast, then_block);
         let (mut tstmts, tvalue) = self.lower_block(&then_stmts, line, col);
+        // `if #available(…)`: wrap the availability branch's value in
+        // buildLimitedAvailability before the surrounding optional/either.
+        let tvalue = if is_availability_condition(self.ast, &conds) {
+            self.build_limited_availability(tvalue, line, col)
+        } else {
+            tvalue
+        };
         let then_value = if has_else {
             astbuild::static_call(
                 self.ast,
@@ -495,6 +515,23 @@ impl Lowering<'_> {
             line,
             col,
         )
+    }
+
+    /// `Builder.buildLimitedAvailability(value)` when the builder declares it;
+    /// otherwise the value passes through.
+    fn build_limited_availability(&mut self, value: NodeId, line: u32, col: u32) -> NodeId {
+        if self.methods.has("buildLimitedAvailability") {
+            astbuild::static_call(
+                self.ast,
+                self.builder,
+                "buildLimitedAvailability",
+                vec![(None, value)],
+                line,
+                col,
+            )
+        } else {
+            value
+        }
     }
 
     /// `Builder.buildOptional(value)` when the builder declares it; otherwise the
@@ -1003,6 +1040,94 @@ mod tests {
         assert!(first_case
             .children()
             .any(|c| c.kind() == NodeKind::NamePattern));
+    }
+
+    const AVAIL_BUILDER: &str = "@resultBuilder\nstruct B {\n\
+        static func buildExpression(_ v: String) -> String { v }\n\
+        static func buildBlock(_ parts: String...) -> String { \"\" }\n\
+        static func buildEither(first: String) -> String { first }\n\
+        static func buildEither(second: String) -> String { second }\n\
+        static func buildOptional(_ part: String?) -> String { part ?? \"\" }\n\
+        static func buildLimitedAvailability(_ v: String) -> String { v }\n}\n";
+
+    #[test]
+    fn bare_if_available_wraps_in_limited_availability_then_optional() {
+        let mut ast = parse(&format!(
+            "{AVAIL_BUILDER}@B\nfunc g() -> String {{\n if #available(iOS 13, *) {{ \"a\" }}\n}}"
+        ))
+        .expect("parse ok");
+        let diags = analyze(&mut ast);
+        assert!(diags.is_empty(), "{diags:?}");
+        let body = func_body(&ast, "g");
+        let if_stmt = body.children().nth(1).unwrap();
+        let then_block = if_stmt
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        // then assigns buildOptional(buildLimitedAvailability(...))
+        let optional_call = then_block
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        assert_eq!(
+            optional_call.children().next().unwrap().text(),
+            Some("buildOptional")
+        );
+        let inner = optional_call.children().nth(1).unwrap();
+        assert_eq!(
+            inner.children().next().unwrap().text(),
+            Some("buildLimitedAvailability")
+        );
+    }
+
+    #[test]
+    fn if_available_with_else_wraps_only_the_availability_branch() {
+        let mut ast = parse(&format!(
+            "{AVAIL_BUILDER}@B\nfunc g() -> String {{\n if #available(iOS 13, *) {{ \"a\" }} else {{ \"b\" }}\n}}"
+        ))
+        .expect("parse ok");
+        analyze(&mut ast);
+        let body = func_body(&ast, "g");
+        let if_stmt = body.children().nth(1).unwrap();
+        let blocks: Vec<_> = if_stmt
+            .children()
+            .filter(|c| c.kind() == NodeKind::Block)
+            .collect();
+        // then: buildEither(first: buildLimitedAvailability(...))
+        let first_call = blocks[0]
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        assert_eq!(
+            first_call
+                .children()
+                .nth(1)
+                .unwrap()
+                .children()
+                .next()
+                .unwrap()
+                .text(),
+            Some("buildLimitedAvailability")
+        );
+        // else: buildEither(second: ...) with NO limited-availability wrap
+        let second_call = blocks[1]
+            .children()
+            .last()
+            .unwrap()
+            .children()
+            .nth(1)
+            .unwrap();
+        let second_arg = second_call.children().nth(1).unwrap();
+        assert_ne!(
+            second_arg.children().next().and_then(|c| c.text()),
+            Some("buildLimitedAvailability")
+        );
     }
 
     #[test]
