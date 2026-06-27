@@ -3509,12 +3509,7 @@ impl<'w> Interpreter<'w> {
         let (label, packed) = if use_keyword {
             let pairs: Vec<(SwiftValue, SwiftValue)> = args
                 .into_iter()
-                .map(|a| {
-                    (
-                        SwiftValue::Str(a.label.unwrap_or_default()),
-                        a.value,
-                    )
-                })
+                .map(|a| (SwiftValue::Str(a.label.unwrap_or_default()), a.value))
                 .collect();
             ("withKeywordArguments", SwiftValue::Dict(Rc::new(pairs)))
         } else {
@@ -4894,9 +4889,7 @@ impl<'w> Interpreter<'w> {
             "stride" => stride,
             "alignment" => alignment,
             other => {
-                return Err(
-                    EvalError::Unsupported(format!("MemoryLayout<{ty}>.{other}")).into(),
-                )
+                return Err(EvalError::Unsupported(format!("MemoryLayout<{ty}>.{other}")).into())
             }
         };
         Ok(SwiftValue::Int(IntValue::new(pick as i128, IntWidth::I64)))
@@ -5198,11 +5191,10 @@ impl<'w> Interpreter<'w> {
                 if let Some(v) = self.read_enum_computed(&value, name)? {
                     return Ok(v);
                 }
-                Err(EvalError::Unsupported(format!(
-                    "key-path member .{name} on {}",
-                    e.type_name
-                ))
-                .into())
+                Err(
+                    EvalError::Unsupported(format!("key-path member .{name} on {}", e.type_name))
+                        .into(),
+                )
             }
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&value) {
@@ -7186,8 +7178,7 @@ mod tests {
 
     #[test]
     fn key_paths_read_write_and_function() {
-        let out = run(
-            "struct Address { var city: String }\n\
+        let out = run("struct Address { var city: String }\n\
              struct Person { var name: String; var address: Address }\n\
              var p = Person(name: \"Ada\", address: Address(city: \"London\"))\n\
              print(p[keyPath: \\Person.name])\n\
@@ -7195,8 +7186,7 @@ mod tests {
              p[keyPath: \\Person.address.city] = \"Paris\"\n\
              print(p.address.city)\n\
              print([\"a\", \"bb\"].map(\\.count))\n\
-             print([1, 2, 3].map(\\.self))\n",
-        )
+             print([1, 2, 3].map(\\.self))\n")
         .unwrap();
         assert_eq!(out, "Ada\nLondon\nParis\n[1, 2]\n[1, 2, 3]\n");
     }
@@ -7205,12 +7195,10 @@ mod tests {
     fn key_path_writes_through_let_class_reference() {
         // A class is a reference type: a writable key path mutates it in place
         // even when it is held in a `let` binding.
-        let out = run(
-            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+        let out = run("class Box { var n: Int; init(_ v: Int) { n = v } }\n\
              let b = Box(1)\n\
              b[keyPath: \\Box.n] = 9\n\
-             print(b.n)\n",
-        )
+             print(b.n)\n")
         .unwrap();
         assert_eq!(out, "9\n");
     }
@@ -7219,14 +7207,12 @@ mod tests {
     fn key_path_identity_replacement_on_var_class() {
         // `obj[keyPath: \.self] = other` replaces the whole reference (a
         // different instance), so the `var` binding is rebound.
-        let out = run(
-            "class Box { var n: Int; init(_ v: Int) { n = v } }\n\
+        let out = run("class Box { var n: Int; init(_ v: Int) { n = v } }\n\
              var b = Box(1)\n\
              b[keyPath: \\Box.n] = 5\n\
              print(b.n)\n\
              b[keyPath: \\Box.self] = Box(99)\n\
-             print(b.n)\n",
-        )
+             print(b.n)\n")
         .unwrap();
         assert_eq!(out, "5\n99\n");
     }

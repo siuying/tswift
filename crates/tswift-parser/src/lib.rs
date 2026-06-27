@@ -1103,16 +1103,22 @@ impl<'a> Parser<'a> {
         // old `skip_modifiers` guard), so a bare `weak`/`@x` used elsewhere is
         // not mistaken for a modifier run.
         let mut i = self.pos;
+        let mut saw_objc_attr = false;
         loop {
             let t = self.tokens[i];
             // `class` is a modifier (`class func`) only before another token; a
             // following identifier means it is the `class Name` declaration keyword.
             let is_mod = if t.text == "class" {
                 self.tokens[i + 1].kind != TokenKind::Identifier
+            } else if t.text == "optional" {
+                saw_objc_attr && matches!(self.tokens[i + 1].text, "func" | "var" | "subscript")
             } else {
                 is_modifier_word(t.text)
             };
             if t.kind == TokenKind::Attribute || is_mod {
+                if t.kind == TokenKind::Attribute && t.text == "@objc" {
+                    saw_objc_attr = true;
+                }
                 i += 1;
                 // Argumented attribute/modifier such as `@available(...)` or
                 // `private(set)`.
@@ -2299,7 +2305,9 @@ impl<'a> Parser<'a> {
         {
             self.bump();
             let operand = self.parse_prefix()?;
-            let node = self.ast.add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
+            let node = self
+                .ast
+                .add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
             self.ast.append_child(node, operand);
             return Ok(node);
         }
@@ -3488,6 +3496,40 @@ mod tests {
     }
 
     // --- Tier 2: value & nominal types ---
+
+    #[test]
+    fn objc_optional_protocol_requirements_parse() {
+        let src = "@objc protocol Delegate {\n  @objc optional func willLoad()\n  @objc optional var badge: Int { get }\n  @objc optional subscript(i: Int) -> Int { get }\n}";
+        let ast = ast_of(src);
+        let proto = first_stmt(&ast);
+        assert_eq!(proto.kind(), NodeKind::ProtocolDecl);
+        let members: Vec<_> = proto
+            .children()
+            .filter(|node| {
+                matches!(
+                    node.kind(),
+                    NodeKind::FuncDecl | NodeKind::VarDecl | NodeKind::SubscriptDecl
+                )
+            })
+            .collect();
+        assert_eq!(members[0].kind(), NodeKind::FuncDecl);
+        assert!(members[0].modifiers().iter().any(|m| m == "optional"));
+        assert_eq!(members[1].kind(), NodeKind::VarDecl);
+        assert!(members[1].modifiers().iter().any(|m| m == "optional"));
+        assert_eq!(members[2].kind(), NodeKind::SubscriptDecl);
+        assert!(members[2].modifiers().iter().any(|m| m == "optional"));
+    }
+
+    #[test]
+    fn optional_without_objc_stays_an_identifier() {
+        assert!(parse("optional func f() {}").is_err());
+        assert!(parse("protocol P { optional func f() }").is_err());
+        assert!(parse("@objc optional let x = 1").is_err());
+        let ast = ast_of("func optional() {}\nvar optional = 1");
+        let stmts: Vec<_> = ast.node(ast.root()).children().collect();
+        assert_eq!(stmts[0].text(), Some("optional"));
+        assert_eq!(stmts[1].children().next().unwrap().text(), Some("optional"));
+    }
 
     #[test]
     fn struct_with_members() {
