@@ -108,6 +108,18 @@ impl<'a> Parser<'a> {
         t.kind == TokenKind::Keyword && t.text == kw
     }
 
+    /// True when the cursor sits on an `@unknown` attribute that introduces the
+    /// next switch clause (`@unknown default:` / `@unknown case ...:`), as
+    /// opposed to an attribute attached to a declaration inside a clause body.
+    fn at_unknown_clause(&self) -> bool {
+        let t = self.peek();
+        if t.kind != TokenKind::Attribute || t.text != "@unknown" {
+            return false;
+        }
+        let next = self.tokens[self.pos + 1];
+        next.kind == TokenKind::Keyword && (next.text == "default" || next.text == "case")
+    }
+
     fn error<T>(&self, message: impl Into<String>) -> Result<T, ParseError> {
         let t = self.peek();
         Err(ParseError {
@@ -759,10 +771,7 @@ impl<'a> Parser<'a> {
         let subject = self.parse_expr_no_trailing(0)?;
         self.ast.append_child(node, subject);
         self.expect(TokenKind::LBrace)?;
-        while self.at_keyword("case")
-            || self.at_keyword("default")
-            || self.peek().kind == TokenKind::Attribute
-        {
+        while self.at_keyword("case") || self.at_keyword("default") || self.at_unknown_clause() {
             let clause = self.parse_case_clause()?;
             self.ast.append_child(node, clause);
         }
@@ -773,9 +782,11 @@ impl<'a> Parser<'a> {
     /// One `case items [where cond]:` or `default:` clause. Children: the case
     /// items, an optional where-expr, then a `Block` of the clause body (last).
     fn parse_case_clause(&mut self) -> Result<NodeId, ParseError> {
-        // `@unknown default:` — accept (and discard) the `@unknown` attribute
-        // that may precede a `default` clause in an exhaustive switch.
-        while self.peek().kind == TokenKind::Attribute {
+        // `@unknown default:` / `@unknown case ...:` — accept (and discard) the
+        // `@unknown` attribute that may precede the clause in an exhaustive
+        // switch. Attributes attached to declarations in a clause body are left
+        // for statement parsing.
+        while self.at_unknown_clause() {
             self.bump();
         }
         let kw = self.bump();
@@ -809,8 +820,9 @@ impl<'a> Parser<'a> {
                 || self.peek().kind == TokenKind::RBrace
                 || self.at_eof()
                 // An `@unknown` attribute begins the next clause (`@unknown
-                // default:`), not a statement in this clause's body.
-                || self.peek().kind == TokenKind::Attribute
+                // default:`), not a statement in this clause's body. Other
+                // attributes belong to a declaration statement in this body.
+                || self.at_unknown_clause()
             {
                 break;
             }
@@ -3039,6 +3051,46 @@ mod tests {
         assert_eq!(items, 2);
         // The default clause is labelled.
         assert_eq!(clauses[3].text(), Some("default"));
+    }
+
+    #[test]
+    fn unknown_default_parses_as_clause() {
+        let src = "switch s {\n\
+                   case .ok: break\n\
+                   @unknown default: break\n\
+                   }";
+        let ast = ast_of(src);
+        let sw = first_stmt(&ast);
+        let clauses: Vec<_> = sw
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[1].text(), Some("default"));
+    }
+
+    #[test]
+    fn attribute_in_case_body_is_not_a_clause_boundary() {
+        // A `@discardableResult func` declaration inside a case body must stay
+        // part of that body, not be misread as the start of the next clause.
+        let src = "switch n {\n\
+                   case 0:\n\
+                   @discardableResult func f() -> Int { return 1 }\n\
+                   f()\n\
+                   default: break\n\
+                   }";
+        let ast = ast_of(src);
+        let sw = first_stmt(&ast);
+        let clauses: Vec<_> = sw
+            .children()
+            .filter(|c| c.kind() == NodeKind::CaseClause)
+            .collect();
+        // Two clauses only: the attributed func did not open a third clause.
+        assert_eq!(clauses.len(), 2);
+        let body = clauses[0].children().last().unwrap();
+        assert_eq!(body.kind(), NodeKind::Block);
+        // The body holds the func declaration plus the call statement.
+        assert!(body.children().any(|c| c.kind() == NodeKind::FuncDecl));
     }
 
     #[test]
