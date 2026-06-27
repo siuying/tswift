@@ -2863,6 +2863,26 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// The member chain of a `#selector`/`#keyPath` operand, dropping the
+    /// leading type root: `C.a.b` → `["a", "b"]`. The names are collected
+    /// outer-to-inner then reversed into source order.
+    fn member_chain(node: &Node<'static>) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut cur = Some(*node);
+        while let Some(n) = cur {
+            if n.kind() == NodeKind::MemberExpr {
+                if let Some(name) = n.text() {
+                    names.push(name);
+                }
+                cur = n.children().next();
+            } else {
+                break;
+            }
+        }
+        names.reverse();
+        names
+    }
+
     /// Magic literals: `#file`, `#line`, `#function`, `#column`.
     fn eval_macro(&mut self, node: &Node<'static>) -> Eval {
         let which = node.text().unwrap_or_default();
@@ -2870,6 +2890,23 @@ impl<'w> Interpreter<'w> {
             "file" | "filePath" | "fileID" => Ok(SwiftValue::Str(self.filename.clone())),
             "line" => Ok(SwiftValue::int(node.line() as i128)),
             "column" => Ok(SwiftValue::int(0)),
+            // `#selector(Type.method)` yields the method name (Swift prints a
+            // selector as its name); `#keyPath(Type.a.b)` yields the dotted key
+            // path string relative to the root type.
+            "selector" => {
+                let chain = node.children().next().map(|c| Self::member_chain(&c));
+                Ok(SwiftValue::Str(
+                    chain.and_then(|c| c.last().cloned()).unwrap_or_default(),
+                ))
+            }
+            "keyPath" => {
+                let chain = node
+                    .children()
+                    .next()
+                    .map(|c| Self::member_chain(&c))
+                    .unwrap_or_default();
+                Ok(SwiftValue::Str(chain.join(".")))
+            }
             "function" => Ok(SwiftValue::Str(
                 self.class_ctx.last().cloned().unwrap_or_default(),
             )),

@@ -2435,7 +2435,46 @@ impl<'a> Parser<'a> {
                 let node = self
                     .ast
                     .add(NodeKind::CompilerDirective, Some(t.text), t.line, t.col);
-                if self.peek().kind == TokenKind::LParen {
+                // `#selector(Type.member)` / `#keyPath(Type.path)` reference a
+                // member; keep the operand as a child so the runtime can read
+                // its name. An optional `getter:`/`setter:` label is skipped.
+                if matches!(t.text, "#selector" | "#keyPath")
+                    && self.peek().kind == TokenKind::LParen
+                {
+                    self.bump(); // `(`
+                    if self.peek().kind == TokenKind::Identifier
+                        && matches!(self.peek().text, "getter" | "setter")
+                        && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                    {
+                        self.bump(); // label
+                        self.bump(); // `:`
+                    }
+                    // Parse a dotted member path `Root.a.b` directly (rather than
+                    // a general expression) so a selector signature suffix like
+                    // `update(_:)` does not confuse the expression grammar.
+                    let root = self.expect(TokenKind::Identifier)?;
+                    let mut path =
+                        self.ast
+                            .add(NodeKind::IdentExpr, Some(root.text), root.line, root.col);
+                    while self.peek().kind == TokenKind::Dot {
+                        self.bump();
+                        let name = self.expect(TokenKind::Identifier)?;
+                        let member = self.ast.add(
+                            NodeKind::MemberExpr,
+                            Some(name.text),
+                            name.line,
+                            name.col,
+                        );
+                        self.ast.append_child(member, path);
+                        path = member;
+                    }
+                    // Skip a trailing selector signature `(_:)` / `(label:)`.
+                    if self.peek().kind == TokenKind::LParen {
+                        self.skip_balanced_parens();
+                    }
+                    self.ast.append_child(node, path);
+                    self.expect(TokenKind::RParen)?;
+                } else if self.peek().kind == TokenKind::LParen {
                     self.skip_balanced_parens();
                 }
                 node
