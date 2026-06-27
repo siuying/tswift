@@ -39,6 +39,11 @@ kind = "sdk-framework"
 # not macOS. iOS framework bundles are not versioned (no Versions/Current).
 sdk = "iphonesimulator"
 framework_path = "System/Library/Frameworks/SwiftUI.framework/Modules/SwiftUI.swiftmodule"
+# SwiftUI @_exported import SwiftUICore: the layout primitives (VStack/HStack/
+# ZStack/Spacer/Color/Text/Binding/State/View) live in SwiftUICore. Merge both.
+additional_framework_paths = [
+  "System/Library/Frameworks/SwiftUICore.framework/Modules/SwiftUICore.swiftmodule",
+]
 interface_candidates = [
   "arm64-apple-ios-simulator.swiftinterface",
   "x86_64-apple-ios-simulator.swiftinterface",

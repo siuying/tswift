@@ -67,39 +67,60 @@ def sdk_root(sdk_name: str | None = None) -> Path:
     return Path(run(cmd))
 
 
-def resolve_interface(framework: str) -> Path:
+def resolve_interfaces(framework: str) -> list[Path]:
+    """Resolve every .swiftinterface a framework spans.
+
+    A framework may re-export sibling modules (SwiftUI `@_exported import`s
+    SwiftUICore, where the layout primitives live). `additional_framework_paths`
+    lists those extra modules; all resolve under the same SDK/toolchain root and
+    are merged into one inventory.
+    """
     manifest = load_manifest()
     if framework not in manifest:
         names = ", ".join(sorted(manifest))
         raise SystemExit(f"unknown framework {framework!r}; known: {names}")
     desc = manifest[framework]
     kind = desc["kind"]
+    candidates = desc.get("interface_candidates", [])
+
+    def find(base: Path) -> Path:
+        for candidate in candidates:
+            path = base / candidate
+            if path.exists():
+                return path
+        raise SystemExit(f"no .swiftinterface found for {framework!r} under {base}")
+
     if kind == "toolchain":
-        base = toolchain_root(desc) / desc["relative_path"]
+        root = toolchain_root(desc)
+        bases = [root / desc["relative_path"]]
     elif kind == "sdk-framework":
-        base = sdk_root(desc.get("sdk")) / desc["framework_path"]
+        root = sdk_root(desc.get("sdk"))
+        bases = [root / desc["framework_path"]]
+        bases += [root / extra for extra in desc.get("additional_framework_paths", [])]
     else:
         raise SystemExit(f"unsupported descriptor kind: {kind}")
-    for candidate in desc.get("interface_candidates", []):
-        path = base / candidate
-        if path.exists():
-            return path
-    raise SystemExit(f"no .swiftinterface found for {framework!r} under {base}")
+    return [find(base) for base in bases]
 
 
 def member_signature(line: str) -> str:
     s = line.strip()
     s = re.sub(r"\s*\{.*$", "", s)
-    # Drop common interface-only attributes, but keep access/static/mutating.
-    s = re.sub(r"^(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s+)+", "", s)
+    # Drop leading attributes, but keep access/static/mutating. Handles
+    # module-qualified attribute names (`@_Concurrency.MainActor`) and arg
+    # lists (`@_typeEraser(AnyView)`) that pervade SDK interfaces.
+    s = re.sub(r"^(?:@[\w.]+(?:\([^)]*\))?\s+)+", "", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
-def is_internal(sig: str, framework: str) -> bool:
+def is_internal(raw: str, sig: str, framework: str) -> bool:
     m = NAME_RE.search(sig)
     if m and m.group(1).startswith("_"):
         return True
-    if "@_" in sig or "_bridge" in sig:
+    # SPI / private-implementation attributes mark non-public-stable surface.
+    # Public decorations (`@_Concurrency.MainActor`, `@preconcurrency`,
+    # `@_typeEraser`) are stripped by member_signature and must NOT count as
+    # internal — on iOS SwiftUI they adorn nearly every public member.
+    if "@_spi" in raw or "_bridge" in raw:
         return True
     if framework == "stdlib" and "ObjectiveC" in sig:
         return True
@@ -110,8 +131,10 @@ def is_internal(sig: str, framework: str) -> bool:
     return False
 
 
-def extract(path: Path, framework: str | None) -> tuple[dict[str, set[str]], set[str]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+def extract(paths: list[Path], framework: str | None) -> tuple[dict[str, set[str]], set[str]]:
+    lines: list[str] = []
+    for path in paths:
+        lines.extend(path.read_text(encoding="utf-8").splitlines())
     members: dict[str, set[str]] = defaultdict(set)
     free_funcs: set[str] = set()
     depth = 0
@@ -128,11 +151,11 @@ def extract(path: Path, framework: str | None) -> tuple[dict[str, set[str]], set
                 members[current_type].add(f"case {cm.group(1)}")
             elif ("public" in stripped or "open" in stripped) and MEMBER_RE.search(stripped):
                 sig = member_signature(stripped)
-                if not is_internal(sig, fw):
+                if not is_internal(stripped, sig, fw):
                     members[current_type].add(sig)
         elif depth == 0 and "public func" in stripped and stripped.startswith(("public func", "@")):
             sig = member_signature(stripped)
-            if not is_internal(sig, fw):
+            if not is_internal(stripped, sig, fw):
                 free_funcs.add(sig)
 
         opens_block_type: str | None = None
@@ -159,11 +182,16 @@ def extract(path: Path, framework: str | None) -> tuple[dict[str, set[str]], set
     return members, free_funcs
 
 
-def emit(path: Path, framework: str | None, members: dict[str, set[str]], free_funcs: set[str]) -> None:
+def emit(paths: list[Path], framework: str | None, members: dict[str, set[str]], free_funcs: set[str]) -> None:
     title = framework or "Swift"
     print(f"# {title} API inventory (generated)")
     print()
-    print(f"Source: `{path}`")
+    if len(paths) == 1:
+        print(f"Source: `{paths[0]}`")
+    else:
+        print("Sources:")
+        for path in paths:
+            print(f"- `{path}`")
     print()
     print(f"- Types with members: **{len(members)}**")
     print(f"- Free functions: **{len(free_funcs)}**")
@@ -191,15 +219,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.framework:
-        path = resolve_interface(args.framework.lower())
+        paths = resolve_interfaces(args.framework.lower())
         framework = args.framework.lower()
     elif args.path:
-        path = Path(args.path)
+        paths = [Path(args.path)]
         framework = None
     else:
         parser.error("pass --framework or a .swiftinterface path")
-    members, free_funcs = extract(path, framework)
-    emit(path, framework, members, free_funcs)
+    members, free_funcs = extract(paths, framework)
+    emit(paths, framework, members, free_funcs)
     return 0
 
 
