@@ -380,7 +380,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` | ⚠️ | ★★ | R5 |
 | [x] | `#if` platform/arch/compiler/`canImport`/`swift()` | ⚠️ | ★★ | R5 |
 | [ ] | `#sourceLocation` line control | ⚠️ | ★ | R6+ |
-| [ ] | `#available` / `#unavailable` conditions | ✅ | ★★ | R5 |
+| [x] | `#available` / `#unavailable` conditions | ✅ | ★★ | R5 |
 
 ---
 

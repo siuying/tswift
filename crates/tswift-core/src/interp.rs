@@ -2859,6 +2859,11 @@ impl<'w> Interpreter<'w> {
             "function" => Ok(SwiftValue::Str(
                 self.class_ctx.last().cloned().unwrap_or_default(),
             )),
+            // Availability conditions. The runtime targets one current platform,
+            // so a required version is always met: `#available(...)` is `true`
+            // and `#unavailable(...)` is `false`.
+            "available" => Ok(SwiftValue::Bool(true)),
+            "unavailable" => Ok(SwiftValue::Bool(false)),
             // `#warning`/`#error` are diagnosed by the frontend; no-op at runtime.
             _ => Ok(SwiftValue::Void),
         }

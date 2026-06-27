@@ -13,4 +13,12 @@ let where_ = trace()
 #error("this branch is never compiled")
 #endif
 
+// Availability conditions parse and type-check.
+if #available(macOS 10.15, *) {
+    let _ = "available"
+}
+if #unavailable(iOS 13) {
+    let _ = "legacy"
+}
+
 let _ = (column, where_)
