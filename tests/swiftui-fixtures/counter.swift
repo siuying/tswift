@@ -5,8 +5,8 @@ struct CounterView: View {
             Text("\(count)")
                 .font(.largeTitle)
                 .fontWeight(.bold)
-                .foregroundColor(.white)
             Button("Increment") { count += 1 }
+                .foregroundColor(.white)
                 .padding()
                 .background(Color.blue)
                 .cornerRadius(8)

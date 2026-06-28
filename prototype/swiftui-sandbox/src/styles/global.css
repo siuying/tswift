@@ -164,25 +164,36 @@ html, body {
   justify-content: center;
   padding: 22px;
   min-height: 0;
+  overflow: auto;
 }
+/* The device is authored at a real iPhone logical width (≈390pt) so the
+   SwiftUI content lays out at iOS proportions, then scaled to fit the panel via
+   `zoom` — which keeps the box model and scrolling correct while rendering at a
+   crisp, ~2x effective resolution on the display. */
 .device {
-  width: 248px;
-  height: 100%;
-  max-height: 520px;
-  background: var(--device);
-  border-radius: 36px;
-  padding: 12px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 0 0 2px #2a2a30;
+  width: 414px;
+  height: 852px;
+  zoom: 0.75;
+  background: #0b0b0d;
+  border-radius: 60px;
+  padding: 16px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 0 0 3px #26262b;
   display: flex;
 }
-/* The shared host element fills the device screen and paints its own
-   (appearance-correct) background inside its Shadow DOM, so the page leaves
-   the element background transparent and lets the canvas own it. */
-#preview {
+/* The iPhone screen: a fixed light (systemBackground) surface that clips and
+   scrolls the preview. */
+.screen {
   flex: 1;
-  border-radius: 26px;
+  border-radius: 46px;
   overflow: auto;
-  background: transparent;
+  background: #ffffff;
+}
+/* Fill the screen and let the canvas paint its own system background. We must
+   NOT set an id-level background here — `#preview` (1,0,0) would beat the
+   canvas's `:host` (0,1,0) system background and show the dark bezel through. */
+#preview {
+  display: block;
+  width: 100%;
 }
 
 .proto-note {

@@ -256,11 +256,11 @@ export class PatchApplier {
       }
       case "TextField":
       case "SecureField": {
-        // A text input emitting `set` with its string value on each edit.
+        // A text input emitting `set` with its string value on each edit. The
+        // base box (padding/border) lives in the stylesheet, not inline, so a
+        // theme or a user modifier can override it without `!important`.
         const input = document.createElement("input");
         input.type = node.kind === "SecureField" ? "password" : "text";
-        input.style.cssText =
-          "padding:8px;border:1px solid #ccc;border-radius:6px;font:inherit;";
         input.addEventListener("input", () =>
           this.emit(node.id, "set", input.value),
         );
@@ -374,6 +374,14 @@ export class PatchApplier {
       if (typeof args.value === "number" && Number(el.value) !== args.value) {
         el.value = String(args.value);
       }
+      // Expose the value as a 0–100% of the range so a theme can paint a filled
+      // track (e.g. iOS). Theme-agnostic and unused by the default skin, so it
+      // does not affect the default rendering.
+      const lo = Number(el.min || "0");
+      const hi = Number(el.max || "1");
+      const cur = Number(el.value || "0");
+      const pct = hi > lo ? ((cur - lo) / (hi - lo)) * 100 : 0;
+      el.style.setProperty("--swiftui-slider-fill", `${pct}%`);
     } else if (kind === "Picker" && el instanceof HTMLSelectElement) {
       // Options are built in `build`; here we only reflect the active tag.
       if (typeof args.selection === "string") el.value = args.selection;
