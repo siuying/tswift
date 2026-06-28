@@ -1,0 +1,744 @@
+use tswift_frontend::{Node, NodeKind};
+
+use super::{
+    clone_method, clone_params, expand_directives, field_type_name, generic_param_names, is_expr,
+    is_value_node, parse_params, ClassDef, ComputedProp, EnumCaseDef, EnumDef, Interpreter,
+    MethodDef, Param, ProtoDef, RawKind, StoredProp, StructDef, SubscriptDef, MOD_LAZY,
+    MOD_MUTATING, MOD_STATIC, MOD_WEAK,
+};
+use crate::value::{IntWidth, SwiftValue};
+
+impl<'w> Interpreter<'w> {
+    /// Pre-declare function and struct declarations in `node` so forward
+    /// references resolve.
+    pub(super) fn hoist(&mut self, node: &Node<'static>) {
+        // First pass: type and protocol declarations.
+        for child in expand_directives(node) {
+            match child.kind() {
+                NodeKind::FuncDecl => self.declare_func(&child),
+                NodeKind::StructDecl => {
+                    self.register_struct(&child);
+                    self.register_nested_types(&child);
+                }
+                NodeKind::EnumDecl => {
+                    self.register_enum(&child);
+                    self.register_nested_types(&child);
+                }
+                // An `actor` is a reference type whose isolation is provided
+                // for free by our single-threaded executor (ADR-0005), so it is
+                // registered exactly like a class.
+                NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                    self.register_class(&child);
+                    self.register_nested_types(&child);
+                }
+                NodeKind::ProtocolDecl => self.register_protocol(&child),
+                NodeKind::TypeAliasDecl => self.register_typealias(&child),
+                _ => {}
+            }
+        }
+        // Second pass: extensions (they add to already-registered types).
+        for child in expand_directives(node) {
+            if child.kind() == NodeKind::ExtensionDecl {
+                self.register_extension(&child);
+            }
+        }
+    }
+
+    /// Register type declarations nested inside a type body so they resolve by
+    /// their simple name (e.g. `B` referenced inside `A`, or `A.B` qualified).
+    fn register_nested_types(&mut self, node: &Node<'static>) {
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        for member in expand_directives(body) {
+            match member.kind() {
+                NodeKind::StructDecl => {
+                    self.register_struct(&member);
+                    self.register_nested_types(&member);
+                }
+                NodeKind::EnumDecl => {
+                    self.register_enum(&member);
+                    self.register_nested_types(&member);
+                }
+                NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                    self.register_class(&member);
+                    self.register_nested_types(&member);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Register a `typealias X = A & B` whose right-hand side is a protocol
+    /// composition, so conformance to `X` can be expanded to its components.
+    fn register_typealias(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        let Some(rhs) = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .and_then(|c| c.text())
+        else {
+            return;
+        };
+        if !rhs.contains('&') {
+            return;
+        }
+        let components: Vec<String> = rhs
+            .split('&')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !components.is_empty() {
+            self.protocol_aliases.insert(name, components);
+        }
+    }
+
+    /// Record the protocols a type conforms to from its inherited-type
+    /// (`TypeRef`) children.
+    fn record_conformances(&mut self, type_name: &str, node: &Node<'static>) {
+        let conf: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::TypeRef)
+            .filter_map(|c| c.text())
+            .collect();
+        if !conf.is_empty() {
+            self.conformances
+                .entry(type_name.to_string())
+                .or_default()
+                .extend(conf);
+        }
+    }
+
+    /// Register a protocol declaration (name + inherited protocols).
+    fn register_protocol(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        let inherited: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::TypeRef)
+            .filter_map(|c| c.text())
+            .collect();
+        self.protocols.entry(name).or_insert_with(|| ProtoDef {
+            inherited,
+            methods: std::collections::HashMap::new(),
+            computed: std::collections::HashMap::new(),
+        });
+    }
+
+    /// Register an extension: add its members to the extended type, or — when the
+    /// extension targets a protocol — to that protocol's default members. Any
+    /// conformances the extension adds are recorded too.
+    fn register_extension(&mut self, node: &Node<'static>) {
+        let Some(target) = node.text() else { return };
+        self.record_conformances(&target, node);
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        let mut methods = std::collections::HashMap::new();
+        let mut computed = std::collections::HashMap::new();
+        for member in expand_directives(body) {
+            match member.kind() {
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
+                                is_static: member.modifiers() & MOD_STATIC != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    if let Some(pname) = member.decl_name() {
+                        let acc = member.var_accessors();
+                        if acc.is_computed {
+                            computed.insert(
+                                pname,
+                                ComputedProp {
+                                    getter: acc.getter_body,
+                                    setter: acc.setter_body,
+                                    setter_param: acc.setter_param,
+                                    setter_nonmutating: acc.setter_nonmutating,
+                                    is_static: member.modifiers() & MOD_STATIC != 0,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(proto) = self.protocols.get_mut(&target) {
+            proto.methods.extend(methods);
+            proto.computed.extend(computed);
+        } else if let Some(def) = self.structs.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        } else if let Some(def) = self.enums.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        } else if let Some(def) = self.classes.get_mut(&target) {
+            def.methods.extend(methods);
+            def.computed.extend(computed);
+        } else {
+            // Extension on a builtin type (`extension Int`, `extension Array`,
+            // `extension String`, …). Store the members so value-typed
+            // receivers can dispatch to them.
+            self.builtin_ext_methods
+                .entry(target.clone())
+                .or_default()
+                .extend(methods);
+            self.builtin_ext_computed
+                .entry(target)
+                .or_default()
+                .extend(computed);
+        }
+    }
+
+    /// All protocols a type conforms to, transitively (including protocol
+    /// inheritance), for default-implementation lookup.
+    pub(super) fn all_protocols(&self, type_name: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut stack: Vec<String> = self
+            .conformances
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        while let Some(p) = stack.pop() {
+            // Expand a protocol-composition typealias (`typealias X = A & B`)
+            // into its component protocols.
+            if let Some(components) = self.protocol_aliases.get(&p) {
+                stack.extend(components.iter().cloned());
+                continue;
+            }
+            if result.contains(&p) {
+                continue;
+            }
+            if let Some(def) = self.protocols.get(&p) {
+                stack.extend(def.inherited.iter().cloned());
+            }
+            result.push(p);
+        }
+        result
+    }
+
+    /// A protocol default method for `type_name`'s `method`, if any.
+    pub(super) fn protocol_default_method(
+        &self,
+        type_name: &str,
+        method: &str,
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
+        for proto in self.all_protocols(type_name) {
+            if let Some(m) = self
+                .protocols
+                .get(&proto)
+                .and_then(|d| d.methods.get(method))
+            {
+                return Some((
+                    clone_params(&m.params),
+                    m.body,
+                    m.mutating,
+                    m.generic_params.clone(),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Render a value honouring `CustomStringConvertible.description` when the
+    /// value's type provides one; otherwise fall back to the plain rendering.
+    pub(super) fn render_description(&mut self, value: &SwiftValue) -> String {
+        let described = match value {
+            SwiftValue::Struct(o) => self
+                .structs
+                .get(&o.type_name)
+                .is_some_and(|d| d.computed.contains_key("description"))
+                .then(|| self.read_struct_member(value, "description").ok())
+                .flatten(),
+            SwiftValue::Object(o) => {
+                let cn = o.borrow().class_name.clone();
+                self.class_computed_getter(&cn, "description")
+                    .is_some()
+                    .then(|| self.read_object_member(value, "description").ok())
+                    .flatten()
+            }
+            SwiftValue::Enum(e) => self
+                .enums
+                .get(&e.type_name)
+                .is_some_and(|d| d.computed.contains_key("description"))
+                .then(|| self.read_enum_computed(value, "description").ok().flatten())
+                .flatten(),
+            _ => None,
+        };
+        match described {
+            Some(SwiftValue::Str(s)) => s,
+            _ => value.to_string(),
+        }
+    }
+
+    /// A protocol default computed getter for `type_name`'s `name`, if any.
+    pub(super) fn protocol_default_getter(
+        &self,
+        type_name: &str,
+        name: &str,
+    ) -> Option<Node<'static>> {
+        for proto in self.all_protocols(type_name) {
+            if let Some(c) = self
+                .protocols
+                .get(&proto)
+                .and_then(|d| d.computed.get(name))
+            {
+                return c.getter;
+            }
+        }
+        None
+    }
+
+    /// Register an enum type from its declaration.
+    fn register_enum(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        if self.enums.contains_key(&name) {
+            return;
+        }
+        self.record_conformances(&name, node);
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        // Determine the raw-value backing type from the inherited-type list.
+        let raw_kind = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::TypeRef)
+            .find_map(|c| match c.text().as_deref() {
+                Some("String") => Some(RawKind::Str),
+                Some(t) if IntWidth::from_type_name(t).is_some() => Some(RawKind::Int),
+                _ => None,
+            });
+        let mut next_int: i128 = 0;
+        let mut cases = Vec::new();
+        let mut methods = std::collections::HashMap::new();
+        let mut computed = std::collections::HashMap::new();
+        for member in expand_directives(body) {
+            match member.kind() {
+                // Each `case` element is a flat `EnumCaseDecl(name)`: its
+                // expression child (if any) is the raw value (`case c = 1`);
+                // its `TypeIdent` children are associated-value types.
+                NodeKind::EnumCaseDecl => {
+                    let Some(cname) = member.text() else {
+                        continue;
+                    };
+                    let explicit = member
+                        .children()
+                        .find(|ec| is_expr(ec))
+                        .and_then(|n| self.eval(&n).ok());
+                    let raw = match raw_kind {
+                        Some(RawKind::Int) => {
+                            let v = match &explicit {
+                                Some(SwiftValue::Int(i)) => i.raw,
+                                _ => next_int,
+                            };
+                            next_int = v + 1;
+                            Some(SwiftValue::int(v))
+                        }
+                        Some(RawKind::Str) => {
+                            Some(explicit.unwrap_or_else(|| SwiftValue::Str(cname.clone())))
+                        }
+                        None => explicit,
+                    };
+                    let payload_types: Vec<Option<String>> = member
+                        .children()
+                        .filter(|ec| ec.kind() == NodeKind::TypeRef)
+                        .map(|c| c.text())
+                        .collect();
+                    cases.push(EnumCaseDef {
+                        name: cname,
+                        raw,
+                        payload_types,
+                    });
+                }
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                                generic_params: generic_param_names(&member),
+                                is_static: member.modifiers() & MOD_STATIC != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    if let Some(pname) = member.decl_name() {
+                        let acc = member.var_accessors();
+                        if acc.is_computed {
+                            computed.insert(
+                                pname,
+                                ComputedProp {
+                                    getter: acc.getter_body,
+                                    setter: acc.setter_body,
+                                    setter_param: acc.setter_param,
+                                    setter_nonmutating: acc.setter_nonmutating,
+                                    is_static: member.modifiers() & MOD_STATIC != 0,
+                                },
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.enums.insert(
+            name,
+            EnumDef {
+                cases,
+                methods,
+                computed,
+            },
+        );
+    }
+
+    /// Register a class type from its declaration.
+    fn register_class(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        if self.classes.contains_key(&name) {
+            return;
+        }
+        self.record_conformances(&name, node);
+        let superclass = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .and_then(|c| c.text());
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        let mut stored = Vec::new();
+        let mut weak_fields = Vec::new();
+        let mut computed = std::collections::HashMap::new();
+        let mut methods = std::collections::HashMap::new();
+        let mut init = None;
+        let mut init_overloads = Vec::new();
+        let mut deinit = None;
+        let mut static_subscript = None;
+        let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
+
+        for member in expand_directives(body) {
+            match member.kind() {
+                NodeKind::InitDecl => {
+                    let def = MethodDef {
+                        params: parse_params(&member),
+                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        mutating: false,
+                        generic_params: generic_param_names(&member),
+                        is_static: false,
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
+                }
+                NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
+                    let acc = member.var_accessors();
+                    let sbody = acc
+                        .getter_body
+                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                    static_subscript = Some(MethodDef {
+                        params: parse_params(&member),
+                        body: sbody,
+                        mutating: false,
+                        generic_params: generic_param_names(&member),
+                        is_static: true,
+                    });
+                }
+                NodeKind::DeinitDecl => {
+                    deinit = member.children().find(|c| c.kind() == NodeKind::Block);
+                }
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        methods.insert(
+                            mname,
+                            MethodDef {
+                                params: parse_params(&member),
+                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                mutating: false,
+                                generic_params: generic_param_names(&member),
+                                is_static: member.modifiers() & MOD_STATIC != 0,
+                            },
+                        );
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    let Some(pname) = member.decl_name() else {
+                        continue;
+                    };
+                    let acc = member.var_accessors();
+                    if acc.is_computed {
+                        computed.insert(
+                            pname,
+                            ComputedProp {
+                                getter: acc.getter_body,
+                                setter: acc.setter_body,
+                                setter_param: acc.setter_param,
+                                setter_nonmutating: acc.setter_nonmutating,
+                                is_static: member.modifiers() & MOD_STATIC != 0,
+                            },
+                        );
+                    } else if member.modifiers() & MOD_STATIC != 0 {
+                        // A `static` stored property is type-level storage; defer
+                        // its initializer until the class is registered so it can
+                        // reference its own type.
+                        if let Some(def) = member.children().find(|c| is_value_node(c)) {
+                            static_inits.push((pname.clone(), def));
+                        }
+                    } else {
+                        if member.modifiers() & MOD_WEAK != 0
+                            || member.ownership().as_deref() == Some("weak")
+                        {
+                            weak_fields.push(pname.clone());
+                        }
+                        let default = member.children().find(|c| is_value_node(c));
+                        let will_set = acc.will_set_body.map(|b| {
+                            (
+                                acc.will_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "newValue".into()),
+                                b,
+                            )
+                        });
+                        let did_set = acc.did_set_body.map(|b| {
+                            (
+                                acc.did_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "oldValue".into()),
+                                b,
+                            )
+                        });
+                        stored.push(StoredProp {
+                            name: pname,
+                            ty: field_type_name(&member),
+                            default,
+                            lazy: member.modifiers() & MOD_LAZY != 0,
+                            will_set,
+                            did_set,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.classes.insert(
+            name.clone(),
+            ClassDef {
+                superclass,
+                stored,
+                weak_fields,
+                computed,
+                methods,
+                init,
+                init_overloads,
+                deinit,
+                static_subscript,
+            },
+        );
+        // Evaluate static stored-property initializers now the class exists.
+        for (pname, def) in static_inits {
+            if let Ok(v) = self.eval(&def) {
+                self.statics.insert(format!("{name}.{pname}"), v);
+            }
+        }
+    }
+
+    /// Register a struct type from its declaration.
+    fn register_struct(&mut self, node: &Node<'static>) {
+        let Some(name) = node.text() else { return };
+        if self.structs.contains_key(&name) {
+            return;
+        }
+        self.record_conformances(&name, node);
+        // `@main` attribute marks the program entry point.
+        if node
+            .children()
+            .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main"))
+        {
+            self.main_type = Some(name.clone());
+        }
+        // `@dynamicMemberLookup` routes unresolved member access through the
+        // type's `subscript(dynamicMember:)`.
+        let dynamic_member_lookup = node.children().any(|c| {
+            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicMemberLookup")
+        });
+        // `@dynamicCallable` routes call syntax through the type's
+        // `dynamicallyCall(...)` method.
+        let dynamic_callable = node.children().any(|c| {
+            c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("dynamicCallable")
+        });
+        // Members are the nominal's direct children; there is no synthesized
+        // body block. Non-member children (inherited types, attributes, generic
+        // params) fall through each loop's `_ => {}` arm.
+        let body = node;
+        let mut stored = Vec::new();
+        let mut computed = std::collections::HashMap::new();
+        let mut methods = std::collections::HashMap::new();
+        let mut method_overloads: std::collections::HashMap<String, Vec<MethodDef>> =
+            std::collections::HashMap::new();
+        let mut wrappers = std::collections::HashMap::new();
+        let mut subscripts: Vec<SubscriptDef> = Vec::new();
+        let mut static_subscript = None;
+        let mut init = None;
+        let mut init_overloads = Vec::new();
+        let mut static_inits: Vec<(String, Node<'static>)> = Vec::new();
+
+        for member in expand_directives(body) {
+            match member.kind() {
+                NodeKind::InitDecl => {
+                    let def = MethodDef {
+                        params: parse_params(&member),
+                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        mutating: true,
+                        generic_params: generic_param_names(&member),
+                        is_static: false,
+                    };
+                    init_overloads.push(clone_method(&def));
+                    init = Some(def);
+                }
+                NodeKind::SubscriptDecl => {
+                    let acc = member.var_accessors();
+                    let getter = acc
+                        .getter_body
+                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                    if member.modifiers() & MOD_STATIC != 0 {
+                        static_subscript = Some(MethodDef {
+                            params: parse_params(&member),
+                            body: getter,
+                            mutating: false,
+                            generic_params: generic_param_names(&member),
+                            is_static: true,
+                        });
+                    } else {
+                        subscripts.push(SubscriptDef {
+                            params: parse_params(&member),
+                            getter,
+                            setter: acc.setter_body,
+                            setter_param: acc
+                                .setter_param
+                                .unwrap_or_else(|| "newValue".to_string()),
+                        });
+                    }
+                }
+                NodeKind::FuncDecl => {
+                    if let Some(mname) = member.text() {
+                        let mods = member.modifiers();
+                        let params = parse_params(&member);
+                        let body = member.children().find(|c| c.kind() == NodeKind::Block);
+                        let mutating = mods & MOD_MUTATING != 0;
+                        let is_static = mods & MOD_STATIC != 0;
+                        let def = MethodDef {
+                            params,
+                            body,
+                            mutating,
+                            generic_params: generic_param_names(&member),
+                            is_static,
+                        };
+                        method_overloads
+                            .entry(mname.clone())
+                            .or_default()
+                            .push(clone_method(&def));
+                        methods.insert(mname, def);
+                    }
+                }
+                NodeKind::VarDecl | NodeKind::LetDecl => {
+                    let Some(pname) = member.decl_name() else {
+                        continue;
+                    };
+                    let mods = member.modifiers();
+                    let is_static = mods & MOD_STATIC != 0;
+                    let acc = member.var_accessors();
+                    if acc.is_computed {
+                        computed.insert(
+                            pname,
+                            ComputedProp {
+                                getter: acc.getter_body,
+                                setter: acc.setter_body,
+                                setter_param: acc.setter_param,
+                                setter_nonmutating: acc.setter_nonmutating,
+                                is_static,
+                            },
+                        );
+                    } else {
+                        if let Some(attr) = member
+                            .children()
+                            .find(|c| c.kind() == NodeKind::Attribute)
+                            .and_then(|a| a.text())
+                        {
+                            wrappers.insert(pname.clone(), attr);
+                        }
+                        let default = member.children().find(|c| is_value_node(c));
+                        let will_set = acc.will_set_body.map(|b| {
+                            (
+                                acc.will_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "newValue".into()),
+                                b,
+                            )
+                        });
+                        let did_set = acc.did_set_body.map(|b| {
+                            (
+                                acc.did_set_param
+                                    .clone()
+                                    .unwrap_or_else(|| "oldValue".into()),
+                                b,
+                            )
+                        });
+                        if is_static {
+                            // Defer evaluation until after the type is
+                            // registered so a static like `static let red =
+                            // Color(...)` can reference its own type.
+                            if let Some(def) = default {
+                                static_inits.push((pname.clone(), def));
+                            }
+                        } else {
+                            stored.push(StoredProp {
+                                name: pname,
+                                ty: field_type_name(&member),
+                                default,
+                                lazy: mods & MOD_LAZY != 0,
+                                will_set,
+                                did_set,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.structs.insert(
+            name.clone(),
+            StructDef {
+                stored,
+                computed,
+                methods,
+                method_overloads,
+                subscripts,
+                static_subscript,
+                init,
+                init_overloads,
+                wrappers,
+                dynamic_member_lookup,
+                dynamic_callable,
+            },
+        );
+        // Now that the struct is registered, evaluate its static initializers
+        // (which may construct instances of the type itself).
+        for (pname, def) in static_inits {
+            if let Ok(v) = self.eval(&def) {
+                self.statics.insert(format!("{name}.{pname}"), v);
+            }
+        }
+    }
+}
