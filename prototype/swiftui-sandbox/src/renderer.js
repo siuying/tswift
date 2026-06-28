@@ -266,6 +266,9 @@ function renderNode(node, dispatch) {
   }
 
   applyModifiers(node, dom, modifiers);
+  // Tag the element with its UIIR id so the caller can restore focus/caret to
+  // the same node after a re-render (otherwise typing in a field loses focus).
+  if (id != null) dom.dataset.uiirId = id;
   return dom;
 }
 

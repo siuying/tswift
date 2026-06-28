@@ -103,12 +103,38 @@ const sample = presets[0].code;
       source.addEventListener('scroll', () => { gutter.scrollTop = source.scrollTop; });
 
       // ── Dispatch: route an event into the live session, re-render ─
+      // Re-rendering replaces the DOM, so capture the focused control (by its
+      // UIIR id) plus caret position and restore them afterward — without this
+      // a TextField loses focus on every keystroke.
+      function captureFocus() {
+        const active = document.activeElement;
+        if (!active || !preview.contains(active) || !active.dataset.uiirId) return null;
+        const snap = { id: active.dataset.uiirId };
+        if (typeof active.selectionStart === 'number') {
+          snap.start = active.selectionStart;
+          snap.end = active.selectionEnd;
+        }
+        return snap;
+      }
+
+      function restoreFocus(snap) {
+        if (!snap) return;
+        const next = preview.querySelector(`[data-uiir-id="${snap.id}"]`);
+        if (!next) return;
+        next.focus();
+        if (snap.start != null && typeof next.setSelectionRange === 'function') {
+          try { next.setSelectionRange(snap.start, snap.end); } catch {}
+        }
+      }
+
       function dispatch(id, event, value) {
         if (!wasmReady) return;
         try {
+          const snap = captureFocus();
           const res = JSON.parse(swiftUIDispatch(id, event, value));
           if (res.ok) {
             renderTree(preview, res.tree, dispatch);
+            restoreFocus(snap);
             renderState.textContent = 'updated';
           } else {
             renderState.textContent = 'event error';
