@@ -331,6 +331,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Group", group_init);
     interp.register_free_fn("Divider", divider_init);
     interp.register_free_fn("ScrollView", scrollview_init);
+    interp.register_free_fn("LazyVStack", lazy_vstack_init);
+    interp.register_free_fn("LazyHStack", lazy_hstack_init);
+    interp.register_free_fn("Grid", grid_init);
+    interp.register_free_fn("GridRow", grid_row_init);
+    interp.register_free_fn("Form", form_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
@@ -379,7 +384,8 @@ pub fn registered_keys() -> Vec<String> {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
             | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
-            | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView" => {
+            | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView"
+            | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form" => {
                 Some(format!("{key}.init"))
             }
             _ => None,
@@ -921,6 +927,70 @@ fn group_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(container_value("Group", collect_children(ctx, args)?))
 }
 
+/// `LazyVStack(spacing:) { ... }` — a vertical stack that renders lazily; for the
+/// UIIR it lays out exactly like `VStack` (the host owns lazy materialization).
+fn lazy_vstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    stack_init("LazyVStack", ctx, args)
+}
+
+/// `LazyHStack(spacing:) { ... }` — the horizontal lazy stack.
+fn lazy_hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    stack_init("LazyHStack", ctx, args)
+}
+
+/// Collect only the `@ViewBuilder` closure children of a container, dropping any
+/// labeled scalar args (e.g. `Grid(horizontalSpacing:)`) which are deferred.
+fn collect_closure_children(
+    who: &str,
+    ctx: &mut dyn StdContext,
+    args: Vec<Arg>,
+) -> Result<Vec<SwiftValue>, StdError> {
+    let mut out = Vec::new();
+    for arg in args {
+        match arg.value {
+            SwiftValue::Closure(id) => {
+                let block = ctx.eval_block_values(id)?;
+                expand_into(ctx, block, &mut out, 0, &[])?;
+            }
+            // Any non-closure arg (e.g. `Grid(horizontalSpacing:)`/`alignment:`)
+            // is a deferred layout option; error explicitly rather than silently
+            // dropping it (mirrors the stack `alignment:` deferral, issue #193).
+            _ => {
+                let what = arg.label.as_deref().unwrap_or("an argument");
+                return Err(type_error(format!(
+                    "{who}({what}:) is not yet supported (deferred, issue #193); omit it"
+                )));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `Grid { GridRow { ... } ... }` — a 2-D grid (SwiftUI's iOS 16 `Grid`, distinct
+/// from the `GridItem`-driven `LazyVGrid`). Spacing/alignment args are deferred.
+fn grid_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value(
+        "Grid",
+        collect_closure_children("Grid", ctx, args)?,
+    ))
+}
+
+/// `GridRow { ... }` — one row of a `Grid`; its children are the row's cells.
+fn grid_row_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value(
+        "GridRow",
+        collect_closure_children("GridRow", ctx, args)?,
+    ))
+}
+
+/// `Form { ... }` — a grouped, list-styled container for settings-style content.
+fn form_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value(
+        "Form",
+        collect_closure_children("Form", ctx, args)?,
+    ))
+}
+
 /// `Divider()` — a thin rule separating content along the container's axis.
 fn divider_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Divider", Vec::new()))
@@ -1370,10 +1440,15 @@ mod tests {
                 "Divider.init",
                 "Ellipse.init",
                 "ForEach.init",
+                "Form.init",
+                "Grid.init",
+                "GridRow.init",
                 "Group.init",
                 "HStack.init",
                 "Image.init",
                 "Label.init",
+                "LazyHStack.init",
+                "LazyVStack.init",
                 "List.init",
                 "Picker.init",
                 "ProgressView.init",
@@ -2050,6 +2125,15 @@ struct V: View {
             2,
             "two options: {json}"
         );
+    }
+
+    #[test]
+    fn grid_scalar_args_are_explicit_unsupported_errors() {
+        let err = render_err(
+            r#"struct V: View { var body: some View { Grid(horizontalSpacing: 8) { GridRow { Text("x") } } } }"#,
+            "V",
+        );
+        assert!(err.contains("Grid"), "clear deferral error: {err}");
     }
 
     #[test]

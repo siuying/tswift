@@ -327,6 +327,17 @@ mod tests {
     }
 
     #[test]
+    fn c6_grids_and_lazy_stacks_serialize() {
+        let json = render_json(
+            r#"Form { LazyVStack(spacing: 4) { Text("a") }; Grid { GridRow { Text("x"); Text("y") } } }"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Form","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"LazyVStack","args":{"spacing":4},"modifiers":[],"children":[{"id":"0.0.0","kind":"Text","args":{"verbatim":"a"},"modifiers":[],"children":[]}]},{"id":"0.1","kind":"Grid","args":{},"modifiers":[],"children":[{"id":"0.1.0","kind":"GridRow","args":{},"modifiers":[],"children":[{"id":"0.1.0.0","kind":"Text","args":{"verbatim":"x"},"modifiers":[],"children":[]},{"id":"0.1.0.1","kind":"Text","args":{"verbatim":"y"},"modifiers":[],"children":[]}]}]}]}"#
+        );
+    }
+
+    #[test]
     fn frame_and_padding_encode_object_and_null_values() {
         let json = render_json("Text(\"x\").padding().frame(width: 56, height: 56)");
         assert_eq!(

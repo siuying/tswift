@@ -107,9 +107,13 @@ table**, an accepted drift surface like colors; iOS: native `Image(systemName:)`
 · `Image(_ name)` placeholder · `ProgressView()` + `ProgressView(value:)`.
 
 ### Batch C6 — Lazy stacks, grids, Form
-`LazyVStack`/`LazyHStack` (render like stacks) · `Grid`/`GridRow` ·
-`LazyVGrid`/`LazyHGrid` (+ `GridItem`) · `Form` (styled `List`). *Most
-layout-heavy; web CSS-grid + iOS `Grid`.*
+**Shipped (#193):** `LazyVStack`/`LazyHStack` (render like stacks; `spacing:`) ·
+`Grid`/`GridRow` (web CSS-grid so columns align; iOS native `Grid`) · `Form`
+(styled `List`). Deferred Grid layout args (`alignment:`/`horizontalSpacing:`/
+`verticalSpacing:`) error explicitly.
+**Deferred (follow-up):** `LazyVGrid`/`LazyHGrid` (+ `GridItem`) — need a
+`GridItem` prelude type **and** array-valued arg serialization (`write_value` has
+no JSON-array support yet).
 
 ### Batch C7 — Control styling & accessibility no-ops
 `buttonStyle` (`.bordered`/`.borderedProminent`/`.plain`) · `listStyle` ·

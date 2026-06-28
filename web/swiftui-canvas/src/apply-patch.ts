@@ -205,14 +205,31 @@ export class PatchApplier {
   /** Create the host primitive for a SwiftUI concept (the lowering boundary). */
   private element(node: UiirNode): HTMLElement {
     switch (node.kind) {
-      case "VStack": {
+      case "VStack":
+      case "LazyVStack": {
         const el = document.createElement("div");
         el.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;";
         return el;
       }
-      case "HStack": {
+      case "HStack":
+      case "LazyHStack": {
         const el = document.createElement("div");
         el.style.cssText = "display:flex;flex-direction:row;align-items:center;gap:8px;";
+        return el;
+      }
+      case "Grid": {
+        // A real 2-D grid so columns align across rows. The column count is the
+        // widest GridRow; each GridRow is `display:contents` so its cells become
+        // direct grid items flowing row by row.
+        const el = document.createElement("div");
+        const cols = Math.max(1, ...node.children.map((r) => r.children.length));
+        el.style.cssText = `display:inline-grid;grid-template-columns:repeat(${cols}, auto);gap:8px;justify-items:center;align-items:center;`;
+        return el;
+      }
+      case "GridRow": {
+        // Transparent: its cells participate directly in the parent Grid.
+        const el = document.createElement("div");
+        el.style.cssText = "display:contents;";
         return el;
       }
       case "ZStack": {
@@ -243,8 +260,9 @@ export class PatchApplier {
         el.style.cssText = "display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;";
         return el;
       }
-      case "List": {
-        // A vertically scrolling list of rows.
+      case "List":
+      case "Form": {
+        // A vertically scrolling, grouped list of rows.
         const el = document.createElement("div");
         el.style.cssText =
           "display:flex;flex-direction:column;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;";
@@ -380,8 +398,14 @@ export class PatchApplier {
   private applyArgs(el: HTMLElement, kind: string, args: Record<string, unknown>): void {
     if (kind === "Text" && typeof args.verbatim === "string") {
       el.textContent = args.verbatim;
-    } else if (kind === "VStack" || kind === "HStack" || kind === "ZStack") {
-      // `spacing:` overrides the default inter-child gap (C2). ZStack ignores it.
+    } else if (
+      kind === "VStack" ||
+      kind === "HStack" ||
+      kind === "ZStack" ||
+      kind === "LazyVStack" ||
+      kind === "LazyHStack"
+    ) {
+      // `spacing:` overrides the default inter-child gap (C2/C6). ZStack ignores it.
       if (typeof args.spacing === "number" && kind !== "ZStack") {
         el.style.gap = `${args.spacing}px`;
       }
