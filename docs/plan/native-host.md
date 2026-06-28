@@ -67,7 +67,7 @@ Mirrors `tswift-wasm`'s `run_swift` / `swiftui_compile` / `swiftui_dispatch`.
   committed `ios/TSwift/ffi.pin` (JSON: `{version, url, checksum}`).
 - **Host**: a **GitHub Release asset** (not GitHub Packages — that registry does
   not host raw binaries). Pinned by a dedicated **`ffi-vN`** tag, bumped by the
-  publish script, giving the binary ABI its own version line.
+  publish script, giving the binary ABI its own version line. See ADR-0008.
 - **Two scripts**: `scripts/build-xcframework.sh` (cargo ×targets → `lipo` →
   `xcodebuild -create-xcframework` → local `Artifacts/`) and
   `scripts/publish-xcframework.sh` (zip → `swift package compute-checksum` →
@@ -93,7 +93,22 @@ The consume side already exists in `UiirRenderer` (`RenderModel.apply([Patch])`,
 - The dispatch event carries wasm's `(id, event, value)` triple (node id, event
   name e.g. `"tap"`, payload `""` for taps) as JSON, built by the façade.
 
-## Open branches (still to grill)
+## Example app + verification (locked)
 
-- **Two example apps**: CodeSandbox-style split view (TSwiftCore);
-  Playground-style preview (TSwiftUI).
+- **One combined example app** (`examples/ios/`), two screens: a **Run** screen
+  (TSwiftCore — editor + stdout/diagnostics) and a **Preview** screen (TSwiftUI
+  — editor + live `PreviewSession`). One app proves both products link the one
+  xcframework and smoke-tests the `binaryTarget` switch; halves project/signing
+  boilerplate. (Rejected: two separate apps.)
+- **The app is a demo, never the gate.** Regression signal lives in tests:
+  - A `TSwiftUI` snapshot test drives `PreviewSession.compile` then `dispatch`
+    and snapshots the resulting `RenderModel` tree (reuses the existing
+    `swift-snapshot-testing` infra).
+  - A Rust `#[test]` calls the `extern "C"` functions directly, asserting the
+    returned JSON and that `tswift_string_free` is paired (no leak).
+
+## Status
+
+All design branches resolved. Distribution model captured in ADR-0008. Ready to
+implement: `crates/tswift-ffi` → `ios/TSwift` (`TSwiftCore` + `TSwiftUI`) →
+`UiirRenderer` event-sink seam → build/publish scripts → example app + tests.
