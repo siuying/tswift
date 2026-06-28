@@ -2,45 +2,117 @@
 //! runtime-facing forms the interpreter reads: the modifier bitmask and the
 //! numeric literal values.
 
-/// Translate parser modifier keywords into the runtime-facing modifier bitmask
-/// (the same bit layout `tswift-core` reads and `modifier_names` decodes).
+// --- Modifier bit layout: the single source of truth ---
+//
+// Each Swift modifier keyword occupies one bit of the `u32` mask that crosses
+// the frontend→runtime seam. These named constants are the *only* place the bit
+// positions are written: `modifier_bits` (encode) and `flag_names` (decode)
+// derive from them, and `Node`'s modifier predicates test them by concept so
+// the runtime never sees a raw bit.
+pub(crate) const PUBLIC: u32 = 1 << 0;
+pub(crate) const PRIVATE: u32 = 1 << 1;
+pub(crate) const INTERNAL: u32 = 1 << 2;
+pub(crate) const FILEPRIVATE: u32 = 1 << 3;
+pub(crate) const OPEN: u32 = 1 << 4;
+pub(crate) const STATIC: u32 = 1 << 5;
+pub(crate) const FINAL: u32 = 1 << 6;
+pub(crate) const OVERRIDE: u32 = 1 << 7;
+pub(crate) const MUTATING: u32 = 1 << 8;
+pub(crate) const NONMUTATING: u32 = 1 << 9;
+pub(crate) const LAZY: u32 = 1 << 10;
+pub(crate) const WEAK: u32 = 1 << 11;
+pub(crate) const UNOWNED: u32 = 1 << 12;
+pub(crate) const ASYNC: u32 = 1 << 13;
+pub(crate) const THROWS: u32 = 1 << 14;
+pub(crate) const RETHROWS: u32 = 1 << 15;
+pub(crate) const INDIRECT: u32 = 1 << 16;
+pub(crate) const REQUIRED: u32 = 1 << 17;
+pub(crate) const CONVENIENCE: u32 = 1 << 18;
+pub(crate) const DYNAMIC: u32 = 1 << 19;
+pub(crate) const ESCAPING: u32 = 1 << 26;
+pub(crate) const AUTOCLOSURE: u32 = 1 << 27;
+pub(crate) const VARIADIC: u32 = 1 << 28;
+pub(crate) const FAILABLE: u32 = 1 << 29;
+pub(crate) const INOUT: u32 = 1 << 30;
+/// `as?` optional cast. Deliberately reuses the `weak` bit: the two never
+/// co-occur — `weak` appears only on a property decl, this only on a `CastExpr`
+/// — so one bit serves both across disjoint node kinds.
+pub(crate) const OPTIONAL_CAST: u32 = WEAK;
+
+/// The decl-modifier bits paired with their Swift keyword, for decoding a mask
+/// back into names (`Node::modifier_names`, the `tswift dump` format).
+const FLAG_NAMES: &[(u32, &str)] = &[
+    (PUBLIC, "public"),
+    (PRIVATE, "private"),
+    (INTERNAL, "internal"),
+    (FILEPRIVATE, "fileprivate"),
+    (OPEN, "open"),
+    (STATIC, "static"),
+    (FINAL, "final"),
+    (OVERRIDE, "override"),
+    (MUTATING, "mutating"),
+    (NONMUTATING, "nonmutating"),
+    (LAZY, "lazy"),
+    (WEAK, "weak"),
+    (UNOWNED, "unowned"),
+    (ASYNC, "async"),
+    (THROWS, "throws"),
+    (RETHROWS, "rethrows"),
+    (INDIRECT, "indirect"),
+    (REQUIRED, "required"),
+    (CONVENIENCE, "convenience"),
+    (DYNAMIC, "dynamic"),
+    (ESCAPING, "escaping"),
+    (AUTOCLOSURE, "autoclosure"),
+    (VARIADIC, "variadic"),
+    (FAILABLE, "failable"),
+];
+
+/// Translate parser modifier keywords into the runtime-facing modifier bitmask.
 pub(crate) fn modifier_bits(modifiers: &[String]) -> u32 {
     let mut bits = 0u32;
     for m in modifiers {
         bits |= match m.as_str() {
-            "public" => 1 << 0,
-            "private" => 1 << 1,
-            "internal" => 1 << 2,
-            "fileprivate" => 1 << 3,
-            "open" => 1 << 4,
+            "public" => PUBLIC,
+            "private" => PRIVATE,
+            "internal" => INTERNAL,
+            "fileprivate" => FILEPRIVATE,
+            "open" => OPEN,
             // `static` and a type-level `class` member both mean "static".
-            "static" | "class" => 1 << 5,
-            "final" => 1 << 6,
-            "override" => 1 << 7,
-            "mutating" => 1 << 8,
-            "nonmutating" => 1 << 9,
-            "lazy" => 1 << 10,
-            "weak" => 1 << 11,
-            "unowned" => 1 << 12,
-            "async" => 1 << 13,
-            "throws" => 1 << 14,
-            "rethrows" => 1 << 15,
-            "indirect" => 1 << 16,
-            "required" => 1 << 17,
-            "convenience" => 1 << 18,
-            "dynamic" => 1 << 19,
+            "static" | "class" => STATIC,
+            "final" => FINAL,
+            "override" => OVERRIDE,
+            "mutating" => MUTATING,
+            "nonmutating" => NONMUTATING,
+            "lazy" => LAZY,
+            "weak" => WEAK,
+            "unowned" => UNOWNED,
+            "async" => ASYNC,
+            "throws" => THROWS,
+            "rethrows" => RETHROWS,
+            "indirect" => INDIRECT,
+            "required" => REQUIRED,
+            "convenience" => CONVENIENCE,
+            "dynamic" => DYNAMIC,
             // Parameter type attributes carried for the runtime.
-            "escaping" => 1 << 26,
-            "autoclosure" => 1 << 27,
-            // Parameter flags: `T...` variadic and `inout`. The runtime reads
-            // variadic via the same 1<<28 bit; inout uses a frontend-internal
-            // bit surfaced through `param_info`.
-            "variadic" => 1 << 28,
-            "inout" => 1 << 30,
+            "escaping" => ESCAPING,
+            "autoclosure" => AUTOCLOSURE,
+            // Parameter flags: `T...` variadic and `inout`.
+            "variadic" => VARIADIC,
+            "inout" => INOUT,
             _ => 0,
         };
     }
     bits
+}
+
+/// Decode a modifier bitmask into its set Swift keyword names, in bit order.
+pub(crate) fn flag_names(bits: u32) -> Vec<&'static str> {
+    FLAG_NAMES
+        .iter()
+        .filter(|(bit, _)| bits & bit != 0)
+        .map(|(_, name)| *name)
+        .collect()
 }
 
 /// Parse a Swift integer literal in any radix, honouring `_` digit separators

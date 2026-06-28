@@ -209,13 +209,32 @@ impl<'a> Node<'a> {
     /// Whether this node carries the `async` effect modifier — `async let`
     /// on a binding, or `for await` on a loop.
     pub fn is_async(&self) -> bool {
-        const MOD_ASYNC: u32 = 1 << 13;
-        self.modifiers() & MOD_ASYNC != 0
+        self.modifiers() & decode::ASYNC != 0
     }
 
     /// For a `LetDecl`/`VarDecl`, whether it was written `async let`.
     pub fn is_async_let(&self) -> bool {
         self.is_async()
+    }
+
+    /// Whether this declaration is `static` (or a type-level `class` member).
+    pub fn is_static(&self) -> bool {
+        self.modifiers() & decode::STATIC != 0
+    }
+
+    /// Whether this method is `mutating`.
+    pub fn is_mutating(&self) -> bool {
+        self.modifiers() & decode::MUTATING != 0
+    }
+
+    /// Whether this stored property is `lazy`.
+    pub fn is_lazy(&self) -> bool {
+        self.modifiers() & decode::LAZY != 0
+    }
+
+    /// For a `CastExpr`, whether it is the optional form `as?` (vs `as!`/`as`).
+    pub fn is_optional_cast(&self) -> bool {
+        self.modifiers() & decode::OPTIONAL_CAST != 0
     }
 
     /// For a `break`/`continue` statement, its target loop label, if any.
@@ -259,13 +278,15 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// The declaration modifier bitmask.
-    pub fn modifiers(&self) -> u32 {
+    /// The declaration modifier bitmask. Crate-private: callers outside the
+    /// frontend reason in concepts via the `is_*`/`ownership`/`param_info`
+    /// predicates, never raw bits.
+    pub(crate) fn modifiers(&self) -> u32 {
         let mut bits = decode::modifier_bits(self.inner.modifiers());
-        // The runtime reads the optional-cast flag (`as?`) from bit 0x800 on a
-        // CastExpr, not from its operator text.
+        // A `CastExpr` carries its optional-ness as a modifier bit, not in its
+        // operator text, so the runtime can ask `is_optional_cast()`.
         if self.inner.kind() == NodeKind::CastExpr && self.inner.text() == Some("as?") {
-            bits |= 0x800;
+            bits |= decode::OPTIONAL_CAST;
         }
         bits
     }
@@ -277,16 +298,13 @@ impl<'a> Node<'a> {
 
     /// For a `Param` node, its label/name/variadic/inout info.
     pub fn param_info(&self) -> ParamInfo {
-        const MOD_VARIADIC: u32 = 1 << 28;
-        const MOD_INOUT: u32 = 1 << 30;
-        const MOD_AUTOCLOSURE: u32 = 1 << 27;
         let bits = self.modifiers();
         ParamInfo {
             label: self.arg_label(),
             name: self.text().unwrap_or_default(),
-            variadic: bits & MOD_VARIADIC != 0,
-            autoclosure: bits & MOD_AUTOCLOSURE != 0,
-            is_inout: bits & MOD_INOUT != 0,
+            variadic: bits & decode::VARIADIC != 0,
+            autoclosure: bits & decode::AUTOCLOSURE != 0,
+            is_inout: bits & decode::INOUT != 0,
         }
     }
 
@@ -340,38 +358,7 @@ impl<'a> Node<'a> {
 
     /// Decode this node's `modifiers` bitmask into a list of flag names.
     pub fn modifier_names(&self) -> Vec<&'static str> {
-        let m = self.modifiers();
-        const FLAGS: &[(u32, &str)] = &[
-            (1 << 0, "public"),
-            (1 << 1, "private"),
-            (1 << 2, "internal"),
-            (1 << 3, "fileprivate"),
-            (1 << 4, "open"),
-            (1 << 5, "static"),
-            (1 << 6, "final"),
-            (1 << 7, "override"),
-            (1 << 8, "mutating"),
-            (1 << 9, "nonmutating"),
-            (1 << 10, "lazy"),
-            (1 << 11, "weak"),
-            (1 << 12, "unowned"),
-            (1 << 13, "async"),
-            (1 << 14, "throws"),
-            (1 << 15, "rethrows"),
-            (1 << 16, "indirect"),
-            (1 << 17, "required"),
-            (1 << 18, "convenience"),
-            (1 << 19, "dynamic"),
-            (1 << 26, "escaping"),
-            (1 << 27, "autoclosure"),
-            (1 << 28, "variadic"),
-            (1 << 29, "failable"),
-        ];
-        FLAGS
-            .iter()
-            .filter(|(bit, _)| m & bit != 0)
-            .map(|(_, name)| *name)
-            .collect()
+        decode::flag_names(self.modifiers())
     }
 
     /// A recursive, human-readable dump of this subtree: kind, token text, line,
@@ -721,6 +708,11 @@ mod tests {
         assert!(member("shared").modifier_names().contains(&"static"));
         assert!(member("cache").modifier_names().contains(&"lazy"));
         assert_eq!(member("owner").ownership().as_deref(), Some("weak"));
+        // The named predicates read the same bits the runtime relies on.
+        assert!(member("shared").is_static());
+        assert!(!member("count").is_static());
+        assert!(member("cache").is_lazy());
+        assert!(!member("shared").is_lazy());
 
         let func_body = body
             .children()

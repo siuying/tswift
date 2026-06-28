@@ -31,12 +31,6 @@ mod storage;
 
 use self::concurrency::Scheduler;
 
-// Declaration modifier bits used by this milestone (see msf.h §9).
-const MOD_STATIC: u32 = 1 << 5;
-const MOD_MUTATING: u32 = 1 << 8;
-const MOD_LAZY: u32 = 1 << 10;
-const MOD_WEAK: u32 = 1 << 11;
-
 /// Maximum nested Swift call depth before the interpreter traps, converting
 /// unbounded recursion into a catchable error instead of a native stack
 /// overflow.
@@ -1849,8 +1843,8 @@ impl<'w> Interpreter<'w> {
         let ty = kids.next().and_then(|t| t.text()).unwrap_or_default();
         let value = self.eval(&expr)?;
         let matches = self.value_is_type(&value, &ty);
-        // `as?` carries the optional-cast modifier (0x800); `is` yields Bool.
-        let optional = node.modifiers() & 0x800 != 0;
+        // `as?` yields an optional; `is` yields Bool.
+        let optional = node.is_optional_cast();
         if op == "is" {
             return Ok(SwiftValue::Bool(matches));
         }
