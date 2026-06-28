@@ -186,6 +186,18 @@ fn write_value(value: &SwiftValue, out: &mut String) {
     }
     match value {
         SwiftValue::Int(i) => out.push_str(&i.raw.to_string()),
+        // Non-finite layout lengths (e.g. a qualified `.frame(maxWidth:
+        // Double.infinity)`) are deferred (issue #189). Emit a JSON-valid
+        // sentinel token instead of the bare `inf`/`nan` (which is invalid
+        // JSON); hosts ignore unknown tokens, so this degrades gracefully until
+        // the typed-token work lands.
+        SwiftValue::Double(d) if !d.is_finite() => out.push_str(if d.is_nan() {
+            r#"{"$":"nan"}"#
+        } else if *d > 0.0 {
+            r#"{"$":"infinity"}"#
+        } else {
+            r#"{"$":"-infinity"}"#
+        }),
         SwiftValue::Double(d) => out.push_str(&tswift_core::format_double(*d)),
         SwiftValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         SwiftValue::Str(s) => write_string(s, out),
@@ -258,6 +270,27 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"bold","value":null},{"name":"italic","value":null},{"name":"opacity","value":0.5},{"name":"foregroundStyle","value":{"$":"color","name":"red"}},{"name":"tint","value":{"$":"color","name":"blue"}},{"name":"lineLimit","value":2},{"name":"multilineTextAlignment","value":{"$":"textAlign","name":"center"}},{"name":"textCase","value":{"$":"textCase","name":"uppercase"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn c2_layout_args_and_modifiers_serialize() {
+        let json = render_json(
+            r#"VStack(spacing: 12) { Spacer(minLength: 4); Text("x").frame(maxWidth: 300, minHeight: 44).offset(x: 2, y: 3) }"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"VStack","args":{"spacing":12},"modifiers":[],"children":[{"id":"0.0","kind":"Spacer","args":{"minLength":4},"modifiers":[],"children":[]},{"id":"0.1","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"frame","value":{"maxWidth":300,"minHeight":44}},{"name":"offset","value":{"x":2,"y":3}}],"children":[]}]}"#
+        );
+    }
+
+    #[test]
+    fn non_finite_frame_bound_serializes_as_json_valid_sentinel() {
+        // Deferred `.infinity` must never produce invalid JSON (issue #189).
+        let json = render_json(r#"Text("x").frame(maxWidth: Double.infinity)"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"frame","value":{"maxWidth":{"$":"infinity"}}}],"children":[]}"#
         );
     }
 

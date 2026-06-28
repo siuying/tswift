@@ -35,6 +35,10 @@ export type EventSink = (id: string, event: string, value: unknown) => void;
  */
 export class PatchApplier {
   private nodes = new Map<string, HTMLElement>();
+  /** Last-applied modifier list per node, so `setArgs` can rebuild a node's
+   * base style from scratch and re-apply modifiers without ever capturing
+   * modifier CSS into the base. */
+  private mods = new Map<string, Modifier[]>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -51,6 +55,7 @@ export class PatchApplier {
       case "mount": {
         this.root.replaceChildren();
         this.nodes.clear();
+        this.mods.clear();
         this.root.appendChild(this.build(patch.node));
         break;
       }
@@ -116,16 +121,21 @@ export class PatchApplier {
           }
         } else {
           applyModifiers(el, patch.modifiers);
+          this.mods.set(patch.id, patch.modifiers);
         }
         break;
       }
       case "setArgs": {
         const el = this.nodes.get(patch.id);
         if (el) {
+          // Rebuild from the pristine intrinsic style so arg-owned styling
+          // (stack `gap`, Spacer `flex-basis`, …) is total: removed args revert
+          // to their defaults instead of leaking. Then recompute the base and
+          // re-apply the remembered modifiers — never capturing modifier CSS.
+          el.style.cssText = el.dataset.intrinsicStyle ?? "";
           this.applyArgs(el, el.dataset.kind ?? "", patch.args);
-          // Keep arg-derived styling in the base so a later `setModifiers`
-          // reset preserves it.
           el.dataset.baseStyle = el.style.cssText;
+          applyModifiers(el, this.mods.get(patch.id) ?? []);
         }
         break;
       }
@@ -136,7 +146,10 @@ export class PatchApplier {
   private forget(id: string): void {
     const prefix = `${id}.`;
     for (const key of [...this.nodes.keys()]) {
-      if (key === id || key.startsWith(prefix)) this.nodes.delete(key);
+      if (key === id || key.startsWith(prefix)) {
+        this.nodes.delete(key);
+        this.mods.delete(key);
+      }
     }
   }
 
@@ -144,12 +157,16 @@ export class PatchApplier {
   private build(node: UiirNode): HTMLElement {
     const el = this.element(node);
     el.dataset.kind = node.kind;
+    // Pristine style straight from `element()` — no args, no modifiers — so
+    // `setArgs` can revert arg-owned style to defaults.
+    el.dataset.intrinsicStyle = el.style.cssText;
     this.applyArgs(el, node.kind, node.args);
     // Capture the base style *after* args so arg-derived styling (e.g. a
     // RoundedRectangle's corner radius) survives the idempotent reset that
     // `applyModifiers`/`setModifiers` performs.
     el.dataset.baseStyle = el.style.cssText;
     applyModifiers(el, node.modifiers);
+    this.mods.set(node.id, node.modifiers);
     this.nodes.set(node.id, el);
     if (node.kind === "Picker" && el instanceof HTMLSelectElement) {
       // A Picker's tagged children become <option>s, not nested views.
@@ -326,6 +343,16 @@ export class PatchApplier {
   private applyArgs(el: HTMLElement, kind: string, args: Record<string, unknown>): void {
     if (kind === "Text" && typeof args.verbatim === "string") {
       el.textContent = args.verbatim;
+    } else if (kind === "VStack" || kind === "HStack" || kind === "ZStack") {
+      // `spacing:` overrides the default inter-child gap (C2). ZStack ignores it.
+      if (typeof args.spacing === "number" && kind !== "ZStack") {
+        el.style.gap = `${args.spacing}px`;
+      }
+    } else if (kind === "Spacer") {
+      // `minLength:` is the spacer's minimum length along the stack axis (C2).
+      if (typeof args.minLength === "number") {
+        el.style.flexBasis = `${args.minLength}px`;
+      }
     } else if (kind === "Button" && typeof args.title === "string") {
       el.textContent = args.title;
     } else if (kind === "RoundedRectangle" && typeof args.cornerRadius === "number") {

@@ -30,6 +30,12 @@ public enum ViewFactory {
         arg(node, key)?.doubleValue ?? fallback
     }
 
+    /// An optional length arg (e.g. stack `spacing:`, `Spacer(minLength:)`) ->
+    /// `CGFloat?`, preserving SwiftUI's default when the arg is absent.
+    private static func optLength(_ node: UiirNode, _ key: String) -> CGFloat? {
+        arg(node, key)?.doubleValue.map { CGFloat($0) }
+    }
+
     private static func bool(_ node: UiirNode, _ key: String, _ fallback: Bool = false) -> Bool {
         arg(node, key)?.boolValue ?? fallback
     }
@@ -139,13 +145,13 @@ public enum ViewFactory {
             )
 
         case "VStack":
-            return AnyView(VStack { renderChildren(node, sink) })
+            return AnyView(VStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
         case "HStack":
-            return AnyView(HStack { renderChildren(node, sink) })
+            return AnyView(HStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
         case "ZStack":
             return AnyView(ZStack { renderChildren(node, sink) })
         case "Spacer":
-            return AnyView(Spacer())
+            return AnyView(Spacer(minLength: optLength(node, "minLength")))
 
         case "ForEach":
             return AnyView(renderChildren(node, sink))
