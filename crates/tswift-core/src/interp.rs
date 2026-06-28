@@ -14,8 +14,9 @@ use tswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext,
-    StdError, StructMethodFn,
+    collection_range_bounds, materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, FreeFn,
+    LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext, StdError,
+    StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -320,6 +321,8 @@ pub struct Interpreter<'w> {
     free_fns: HashMap<String, FreeFn>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
+    /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
+    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
     /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
@@ -367,9 +370,17 @@ pub struct Interpreter<'w> {
     /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
     /// `SwiftValue::Task` drives the matching slot to completion.
     tasks: Vec<TaskSlot>,
+    /// Stack of currently-executing task ids (innermost last), so
+    /// `Task.isCancelled` / `Task.checkCancellation()` reflect the running
+    /// task's cooperative-cancellation flag (ADR-0005).
+    current_task: Vec<usize>,
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
+    /// Per-group cancellation flag (set by `cancelAll()`), so children added
+    /// *after* cancellation are spawned cancelled and `addTaskUnlessCancelled`
+    /// can refuse to add one.
+    group_cancelled: Vec<bool>,
     /// `with*Continuation` slots, one per continuation handed to a body. The
     /// state machine (`Pending` → `Resumed` → `Consumed`) lets `resume(...)`
     /// diagnose both double resume *and* late resume after the enclosing
@@ -453,6 +464,7 @@ impl<'w> Interpreter<'w> {
             natives: HashMap::new(),
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
+            labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
@@ -475,7 +487,9 @@ impl<'w> Interpreter<'w> {
             defer_stack: Vec::new(),
             main_type: None,
             tasks: Vec::new(),
+            current_task: Vec::new(),
             groups: Vec::new(),
+            group_cancelled: Vec::new(),
             continuations: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
@@ -509,6 +523,9 @@ impl<'w> Interpreter<'w> {
         let mut keys: Vec<String> = Vec::new();
         keys.extend(self.free_fns.keys().cloned());
         for (recv, name) in self.intrinsics.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
+        for (recv, name) in self.labeled_intrinsics.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
         for (recv, name) in self.properties.keys() {
@@ -599,6 +616,17 @@ impl<'w> Interpreter<'w> {
         self.intrinsics.insert((recv, name.to_string()), entry);
     }
 
+    /// Register a label-aware method intrinsic on a builtin receiver type.
+    pub fn register_labeled_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: LabeledMethodEntry,
+    ) {
+        self.labeled_intrinsics
+            .insert((recv, name.to_string()), entry);
+    }
+
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
     /// Loop/`return` control flow cannot legitimately cross an intrinsic call.
     fn signal_to_std_error(sig: Signal) -> StdError {
@@ -621,6 +649,22 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Apply a stdlib method outcome, including mutating receiver write-back.
+    fn apply_method_outcome(
+        &mut self,
+        outcome: Outcome,
+        mutating: bool,
+        base_place: Option<Place>,
+    ) -> Eval {
+        let Outcome { result, receiver } = outcome;
+        if mutating {
+            if let Some(place) = base_place {
+                self.write_place(&place, receiver)?;
+            }
+        }
+        Ok(result)
+    }
+
     /// Dispatch a method call on a builtin receiver through the intrinsic
     /// registry, if one is registered. Returns `None` when no intrinsic matches
     /// so the caller can fall through to the existing ad-hoc paths.
@@ -635,18 +679,31 @@ impl<'w> Interpreter<'w> {
         let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
         let outcome = (entry.func)(self, recv_value, args);
         Some(match outcome {
-            Ok(Outcome { result, receiver }) => {
-                if entry.mutating {
-                    if let Some(place) = base_place {
-                        if let Err(sig) = self.write_place(&place, receiver) {
-                            return Some(Err(sig));
-                        }
-                    }
-                }
-                Ok(result)
-            }
+            Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, base_place),
             Err(err) => Err(Self::std_error_to_signal(err)),
         })
+    }
+
+    /// Dispatch a label-aware method call. `Ok(None)` from the stdlib handler
+    /// means this label shape is not one of its overloads, so normal positional
+    /// dispatch should continue.
+    fn dispatch_labeled_intrinsic(
+        &mut self,
+        recv_value: SwiftValue,
+        method: &str,
+        args: Vec<Arg>,
+        base_place: Option<Place>,
+    ) -> Option<Eval> {
+        let kind = BuiltinReceiver::of(&recv_value)?;
+        let entry = *self.labeled_intrinsics.get(&(kind, method.to_string()))?;
+        let outcome = (entry.func)(self, recv_value, args);
+        match outcome {
+            Ok(Some(outcome)) => {
+                Some(self.apply_method_outcome(outcome, entry.mutating, base_place))
+            }
+            Ok(None) => None,
+            Err(err) => Some(Err(Self::std_error_to_signal(err))),
+        }
     }
 
     /// Predeclare `Result<Success, Failure>` as a two-case enum so
@@ -2869,13 +2926,7 @@ impl<'w> Interpreter<'w> {
         }
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
-        for (i, p) in params.iter().enumerate() {
-            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
-            self.env.declare(&p.name, v, false);
-        }
-        for (i, v) in args.iter().enumerate() {
-            self.env.declare(&format!("${i}"), v.clone(), false);
-        }
+        self.bind_closure_args(&params, &body, &args);
         let mut values = Vec::new();
         let mut error = None;
         for stmt in &body {
@@ -2899,6 +2950,64 @@ impl<'w> Interpreter<'w> {
         match error {
             Some(e) => Err(e),
             None => Ok(values),
+        }
+    }
+
+    /// The greatest shorthand-argument index (`$0`, `$1`, …) referenced anywhere
+    /// in `node`'s subtree, used to decide a closure's implicit arity for
+    /// tuple-splat shorthand binding. `None` when no `$N` shorthand appears.
+    fn max_shorthand(node: &Node<'static>) -> Option<usize> {
+        let here = match node.kind() {
+            NodeKind::IdentExpr => node
+                .text()
+                .as_deref()
+                .and_then(|t| t.strip_prefix('$'))
+                .and_then(|d| d.parse::<usize>().ok()),
+            // `$0`/`$1` inside a string-interpolation segment (`"\($1)"`) are not
+            // separate AST nodes — the interpolation is re-parsed lazily — so
+            // scan the literal's interpolation text for shorthand references.
+            NodeKind::StringLiteral => node
+                .text()
+                .as_deref()
+                .and_then(max_shorthand_in_interpolations),
+            _ => None,
+        };
+        node.children()
+            .filter_map(|c| Self::max_shorthand(&c))
+            .chain(here)
+            .max()
+    }
+
+    /// Bind a user closure's named parameters and `$N` shorthands consistently
+    /// for both normal and result-builder closure evaluation.
+    fn bind_closure_args(&mut self, params: &[Param], body: &[Node<'static>], args: &[SwiftValue]) {
+        let shorthand_args = Self::shorthand_args(params, body, args);
+        for (i, p) in params.iter().enumerate() {
+            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
+            self.env.declare(&p.name, v, false);
+        }
+        for (i, v) in shorthand_args.iter().enumerate() {
+            self.env.declare(&format!("${i}"), v.clone(), false);
+        }
+    }
+
+    /// Tuple-splat shorthand: a closure that references `$1`, `$2`, … but is
+    /// called with a single tuple argument destructures the tuple across the
+    /// shorthands. A closure using only `$0` keeps the whole tuple as `$0`.
+    fn shorthand_args(
+        params: &[Param],
+        body: &[Node<'static>],
+        args: &[SwiftValue],
+    ) -> Vec<SwiftValue> {
+        match args {
+            [SwiftValue::Tuple(elems, _)] if params.is_empty() => {
+                let arity = body.iter().map(Self::max_shorthand).max().flatten();
+                match arity {
+                    Some(n) if n >= 1 && n + 1 == elems.len() => elems.clone(),
+                    _ => args.to_vec(),
+                }
+            }
+            _ => args.to_vec(),
         }
     }
 
@@ -2953,14 +3062,7 @@ impl<'w> Interpreter<'w> {
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
 
-        // Bind named parameters, and always expose `$0`, `$1`, … shorthands.
-        for (i, p) in params.iter().enumerate() {
-            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
-            self.env.declare(&p.name, v, false);
-        }
-        for (i, v) in args.iter().enumerate() {
-            self.env.declare(&format!("${i}"), v.clone(), false);
-        }
+        self.bind_closure_args(&params, &body, &args);
 
         // Evaluate the closure body statements, yielding the last value.
         let mut result = Ok(SwiftValue::Void);
@@ -3006,13 +3108,21 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Register a 0-argument closure body as a task and return its handle index.
-    fn spawn_task_closure(&mut self, closure_id: usize) -> usize {
+    /// Spawn a task body. A *structured* child (`inherit = true`) inherits its
+    /// enclosing task's cancellation (ADR-0005); a detached task
+    /// (`inherit = false`) starts uncancelled regardless of context.
+    fn spawn_task_closure(&mut self, closure_id: usize, inherit: bool) -> usize {
         let id = self.tasks.len();
+        let cancelled = inherit
+            && self
+                .current_task
+                .last()
+                .is_some_and(|&parent| self.tasks[parent].cancelled);
         self.tasks.push(TaskSlot {
             closure: closure_id,
             class_ctx: self.class_ctx.clone(),
             state: TaskState::Pending,
-            cancelled: false,
+            cancelled,
         });
         id
     }
@@ -3029,7 +3139,24 @@ impl<'w> Interpreter<'w> {
             },
             captured,
         ));
-        self.spawn_task_closure(closure_id)
+        self.spawn_task_closure(closure_id, true)
+    }
+
+    /// Whether the innermost running task is cancelled (`false` when no task is
+    /// on the stack, i.e. top-level code).
+    fn current_task_cancelled(&self) -> bool {
+        self.current_task
+            .last()
+            .is_some_and(|&id| self.tasks[id].cancelled)
+    }
+
+    /// A fresh `CancellationError` value (the stdlib error thrown by
+    /// `Task.checkCancellation()`), modelled as an empty conforming struct.
+    fn cancellation_error() -> SwiftValue {
+        SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "CancellationError".into(),
+            fields: Vec::new(),
+        }))
     }
 
     /// Drive task `id` to completion (cooperatively, on the current stack) and
@@ -3047,7 +3174,9 @@ impl<'w> Interpreter<'w> {
         let ctx = self.tasks[id].class_ctx.clone();
         self.tasks[id].state = TaskState::Running;
         let saved_ctx = std::mem::replace(&mut self.class_ctx, ctx);
+        self.current_task.push(id);
         let result = self.call_closure(closure, Vec::new());
+        self.current_task.pop();
         self.class_ctx = saved_ctx;
         self.tasks[id].state = TaskState::Done(result.clone());
         result
@@ -3105,7 +3234,9 @@ impl<'w> Interpreter<'w> {
                 let closure = self
                     .eval_body_closure(arg_nodes)?
                     .ok_or_else(|| EvalError::Unsupported("Task without a body closure".into()))?;
-                Ok(Some(SwiftValue::Task(self.spawn_task_closure(closure))))
+                Ok(Some(SwiftValue::Task(
+                    self.spawn_task_closure(closure, true),
+                )))
             }
             "withTaskGroup" | "withThrowingTaskGroup" => {
                 let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
@@ -3113,6 +3244,7 @@ impl<'w> Interpreter<'w> {
                 })?;
                 let gid = self.groups.len();
                 self.groups.push(Vec::new());
+                self.group_cancelled.push(false);
                 let result = self.call_closure(body, vec![SwiftValue::TaskGroup(gid)]);
                 // The group's children are structured: drain any not consumed by
                 // a `for await` so they complete before the group returns.
@@ -3198,11 +3330,22 @@ impl<'w> Interpreter<'w> {
                         let closure = Self::first_closure(&args).ok_or_else(|| {
                             EvalError::Unsupported("addTask without a body closure".into())
                         })?;
-                        let tid = self.spawn_task_closure(closure);
+                        // `addTaskUnlessCancelled` adds nothing (and returns
+                        // `false`) once the group is cancelled.
+                        if method == "addTaskUnlessCancelled" && self.group_cancelled[gid] {
+                            return Ok(Some(SwiftValue::Bool(false)));
+                        }
+                        let tid = self.spawn_task_closure(closure, false);
+                        // A child added to an already-cancelled group starts
+                        // cancelled (structured-concurrency propagation).
+                        if self.group_cancelled[gid] {
+                            self.tasks[tid].cancelled = true;
+                        }
                         self.groups[gid].push(tid);
                         Ok(Some(SwiftValue::Bool(true)))
                     }
                     "cancelAll" => {
+                        self.group_cancelled[gid] = true;
                         for &tid in &self.groups[gid].clone() {
                             self.tasks[tid].cancelled = true;
                         }
@@ -3628,11 +3771,75 @@ impl<'w> Interpreter<'w> {
         }
         let base_value = self.eval(&base)?;
         let index_nodes: Vec<Node<'static>> = kids.collect();
+        // A single one-sided range index (`a[2...]`, `a[..<2]`, `a[...2]`) is
+        // resolved against the base collection's length into a concrete
+        // `Range` before the generic index evaluation, which has no notion of
+        // partial ranges.
+        if let [only] = index_nodes.as_slice() {
+            if let Some(range) = self.eval_partial_range_index(only, &base_value)? {
+                return self.read_subscript(&base_value, &[range]);
+            }
+        }
         let indices: Vec<SwiftValue> = index_nodes
             .iter()
             .map(|n| self.eval(n))
             .collect::<Result<_, _>>()?;
         self.read_subscript(&base_value, &indices)
+    }
+
+    /// If `node` is a one-sided range form (`..<n` / `...n` prefix or `n...`
+    /// postfix), resolve it to a concrete `Range` over `base`'s length; else
+    /// `None`. The lower bound of an up-to/through range is `0`; the upper
+    /// bound of a from range is the collection's element count.
+    fn eval_partial_range_index(
+        &mut self,
+        node: &Node<'static>,
+        base: &SwiftValue,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let len = match base {
+            SwiftValue::Array(items) => items.len() as i128,
+            SwiftValue::Str(s) => crate::graphemes(s).len() as i128,
+            _ => return Ok(None),
+        };
+        let op = node.op_text();
+        let bound_int = |this: &mut Self, n: &Node<'static>| -> Result<i128, Signal> {
+            match this.eval(n)? {
+                SwiftValue::Int(i) => Ok(i.raw),
+                other => Err(EvalError::Type(format!(
+                    "range bound must be an integer, found {}",
+                    other.type_name()
+                ))
+                .into()),
+            }
+        };
+        let child = node.children().next();
+        match (node.kind(), op.as_deref()) {
+            (NodeKind::PrefixExpr, Some("..<")) => {
+                let hi = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo: 0,
+                    hi,
+                    inclusive: false,
+                }))
+            }
+            (NodeKind::PrefixExpr, Some("...")) => {
+                let hi = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo: 0,
+                    hi,
+                    inclusive: true,
+                }))
+            }
+            (NodeKind::PostfixExpr, Some("...")) => {
+                let lo = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo,
+                    hi: len,
+                    inclusive: false,
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Evaluate a `static subscript` declared on `type_name`, addressed as
@@ -3855,6 +4062,26 @@ impl<'w> Interpreter<'w> {
         if let [idx] = indices {
             if let Some(components) = self.keypath_components(idx) {
                 return self.apply_keypath(base.clone(), &components);
+            }
+        }
+        // `base[range]` — slice an array or string by an integer range
+        // (two-sided `a..<b`/`a...b` or a one-sided partial range resolved
+        // by `eval_subscript` against the collection length).
+        if let [SwiftValue::Range { lo, hi, inclusive }] = indices {
+            let (lo, hi, inclusive) = (*lo, *hi, *inclusive);
+            match base {
+                SwiftValue::Array(items) => {
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (start, end) = collection_range_bounds(&range, items.len(), "subscript")?;
+                    return Ok(SwiftValue::Array(Rc::new(items[start..end].to_vec())));
+                }
+                SwiftValue::Str(s) => {
+                    let chars = crate::graphemes(s);
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (start, end) = collection_range_bounds(&range, chars.len(), "subscript")?;
+                    return Ok(SwiftValue::Str(chars[start..end].concat()));
+                }
+                _ => {}
             }
         }
         match base {
@@ -5086,26 +5313,9 @@ impl<'w> Interpreter<'w> {
 
     /// Expand a sequence value (range or array) into the values to iterate.
     fn iterate(&self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
-        match seq {
-            SwiftValue::Range { lo, hi, inclusive } => {
-                let end = if *inclusive { *hi + 1 } else { *hi };
-                Ok((*lo..end).map(SwiftValue::int).collect())
-            }
-            SwiftValue::Array(items) => Ok(items.as_ref().clone()),
-            // Iterating a dictionary yields `(key:, value:)` tuples.
-            SwiftValue::Dict(pairs) => Ok(pairs
-                .iter()
-                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
-                .collect()),
-            SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Str(s) => Ok(crate::graphemes(s)
-                .into_iter()
-                .map(SwiftValue::Str)
-                .collect()),
-            other => {
-                Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
-            }
-        }
+        materialize_builtin_sequence(seq).ok_or_else(|| {
+            EvalError::Type(format!("cannot iterate over {}", seq.type_name())).into()
+        })
     }
 
     /// Evaluate a loop body, mapping `break`/`continue` (with optional labels) to
@@ -5694,6 +5904,11 @@ impl<'w> Interpreter<'w> {
                             return self.memory_layout_member(&ty, &member);
                         }
                     }
+                    // `Task.isCancelled` — the running task's cooperative
+                    // cancellation flag (`false` outside any task).
+                    if type_name == "Task" && member == "isCancelled" {
+                        return Ok(SwiftValue::Bool(self.current_task_cancelled()));
+                    }
                     // `Type.self` — a metatype value naming the type.
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
@@ -5802,8 +6017,8 @@ impl<'w> Interpreter<'w> {
                     .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
             }
             // Named tuple element access (`r.min` on `(min: 1, max: 9)`). This
-            // also serves a dictionary element's `.key`/`.value`, since those
-            // tuples carry the `key`/`value` labels (see `dict_element_tuple`).
+            // also serves a dictionary element's `.key`/`.value`, since
+            // `materialize_builtin_sequence` emits those tuple labels.
             (SwiftValue::Tuple(items, labels), name)
                 if SwiftValue::tuple_label_index(labels, name).is_some() =>
             {
@@ -5972,6 +6187,26 @@ impl<'w> Interpreter<'w> {
             return self.eval_method_call(callee, arg_nodes);
         }
 
+        // A *type* literal applied to arguments is a collection constructor:
+        // `[Int]()`, `[String: Int]()`, `[Int](repeating: 0, count: 3)`. The
+        // callee literal is not evaluated (its elements are type names, not
+        // values). A value literal such as `[1, 2]()` is not a type literal and
+        // falls through to normal (erroring) evaluation.
+        if matches!(
+            callee.kind(),
+            NodeKind::ArrayLiteral | NodeKind::DictLiteral
+        ) && self.is_type_literal_callee(callee)
+        {
+            let args = self.eval_args_with(arg_nodes, None)?;
+            if callee.kind() == NodeKind::DictLiteral {
+                if !args.is_empty() {
+                    return Err(EvalError::Type("[K: V](...) takes no arguments".into()).into());
+                }
+                return Ok(SwiftValue::Dict(Rc::new(Vec::new())));
+            }
+            return self.construct_array_literal_ctor(&args);
+        }
+
         // Structured-concurrency entry points (ADR-0005). Handled before
         // argument evaluation so a metatype label like `of: Int.self` is never
         // eagerly evaluated; only the trailing body closure matters.
@@ -6093,21 +6328,25 @@ impl<'w> Interpreter<'w> {
                 });
             }
 
+            // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
+            // `Dictionary<K,V>()`. The parser erases the generic arguments, so
+            // the callee is the bare type name with no arguments.
+            if args.is_empty() && self.env.get(&name).is_none() {
+                match name.as_str() {
+                    "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
+                    "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
+                    "Dictionary" => return Ok(SwiftValue::Dict(Rc::new(Vec::new()))),
+                    _ => {}
+                }
+            }
+
             // `Array(repeating:count:)` — build an array of repeated elements.
-            if name == "Array" && self.env.get("Array").is_none() {
-                let repeating = args
-                    .iter()
-                    .find(|a| a.label.as_deref() == Some("repeating"))
-                    .map(|a| a.value.clone());
-                let count = args
-                    .iter()
-                    .find(|a| a.label.as_deref() == Some("count"))
-                    .and_then(|a| match &a.value {
-                        SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-                        _ => None,
-                    });
-                if let (Some(elem), Some(n)) = (repeating, count) {
-                    return Ok(SwiftValue::Array(Rc::new(vec![elem; n])));
+            if name == "Array"
+                && self.env.get("Array").is_none()
+                && args.iter().any(|a| a.label.as_deref() == Some("repeating"))
+            {
+                if let Some(v) = self.array_repeating_count(&args)? {
+                    return Ok(v);
                 }
             }
 
@@ -6325,10 +6564,20 @@ impl<'w> Interpreter<'w> {
                     let closure = Self::first_closure(&args).ok_or_else(|| {
                         EvalError::Unsupported("Task.detached without a body closure".into())
                     })?;
-                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure)));
+                    // A detached task is not a structured child: it never
+                    // inherits the spawning task's cancellation.
+                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure, false)));
+                }
+                // `Task.checkCancellation()` throws `CancellationError` when the
+                // running task is cancelled, else does nothing.
+                "checkCancellation" => {
+                    if self.current_task_cancelled() {
+                        return Err(Signal::Throw(Self::cancellation_error()));
+                    }
+                    return Ok(SwiftValue::Void);
                 }
                 // Cooperative no-ops on our single-threaded executor.
-                "yield" | "sleep" | "checkCancellation" => return Ok(SwiftValue::Void),
+                "yield" | "sleep" => return Ok(SwiftValue::Void),
                 _ => {}
             }
         }
@@ -6489,11 +6738,42 @@ impl<'w> Interpreter<'w> {
             }
         }
 
+        let mut evaluated_args = None;
+
+        // Label-aware stdlib overloads (layer 1a): selected APIs need argument
+        // labels to choose between overloads without leaking that policy into the
+        // interpreter dispatcher.
+        if let Some(kind) = BuiltinReceiver::of(&base_value) {
+            if self
+                .labeled_intrinsics
+                .contains_key(&(kind, method.clone()))
+            {
+                let args = self.eval_args(arg_nodes)?;
+                let labeled: Vec<Arg> = args
+                    .iter()
+                    .map(|a| Arg {
+                        label: a.label.clone(),
+                        value: a.value.clone(),
+                    })
+                    .collect();
+                let place = self.resolve_place(&base);
+                if let Some(result) =
+                    self.dispatch_labeled_intrinsic(base_value.clone(), &method, labeled, place)
+                {
+                    return result;
+                }
+                evaluated_args = Some(args);
+            }
+        }
+
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
-                let args = self.eval_args(arg_nodes)?;
+                let args = match evaluated_args.take() {
+                    Some(args) => args,
+                    None => self.eval_args(arg_nodes)?,
+                };
                 // `IndexPath`/`IndexSet` intrinsics take positional arguments.
                 // The sole exception is `IndexSet.update(with:)`, whose one
                 // argument is labelled `with:` (and requires that label).
@@ -6788,6 +7068,35 @@ impl<'w> Interpreter<'w> {
         }
         let type_binding = self.infer_type_bindings(&generics, &params, &args);
         self.type_bindings.push(type_binding);
+        // For a `mutating` struct method with an lvalue receiver, take the
+        // receiver out of its storage so `self` becomes its sole owner *aside
+        // from other logical bindings* (the `var y = x` aliases). `make_mut`
+        // then clones the `StructObj` — retaining its reference-type fields —
+        // exactly when the value is shared, so a class-backed CoW buffer reads
+        // the right answer from `isKnownUniquelyReferenced`. A unique value
+        // keeps strong count 1 and is mutated in place. The end-of-call
+        // write-back restores the storage we vacated here.
+        let this = if mutating && matches!(this, SwiftValue::Struct(_)) {
+            // Only a *root* stored binding is vacated: vacating a nested member
+            // (`outer.buffer.append(...)`) would route the placeholder write
+            // through `willSet`/`didSet`/computed setters/property wrappers,
+            // which must not observe the transient. Nested receivers keep the
+            // pre-existing clone-and-write-back behaviour.
+            match &base_place {
+                Some(place) if place.path.is_empty() => {
+                    drop(this);
+                    let mut taken = self.read_place(place)?;
+                    self.write_place(place, SwiftValue::Void)?;
+                    if let SwiftValue::Struct(rc) = &mut taken {
+                        let _ = Rc::make_mut(rc);
+                    }
+                    taken
+                }
+                _ => this,
+            }
+        } else {
+            this
+        };
         // Run isolated from the caller's locals: the body sees globals, its
         // parameters, and `self`/its members, but not enclosing variables.
         let saved_env = self.env.enter_isolated();
@@ -7334,6 +7643,80 @@ impl<'w> Interpreter<'w> {
 
     /// Attempt a numeric/string conversion `Type(value)`. Returns `Ok(None)` if
     /// `name` is not a known conversion type.
+    /// Whether a call's `ArrayLiteral`/`DictLiteral` callee is a *type* literal
+    /// (`[Int]`, `[String: Int]`, `[[Int]]`) rather than a value literal
+    /// (`[1, 2]`). Every element must name a type: an identifier that is not
+    /// bound to a value in the current scope, or a nested type literal.
+    fn is_type_literal_callee(&self, callee: &Node<'static>) -> bool {
+        let children: Vec<Node<'static>> = callee.children().collect();
+        let arity = if callee.kind() == NodeKind::DictLiteral {
+            2
+        } else {
+            1
+        };
+        if children.len() != arity {
+            return false;
+        }
+        children.iter().all(|c| self.is_type_element(c))
+    }
+
+    /// Whether `node` denotes a type within a type-literal callee: a type-naming
+    /// identifier (not shadowed by a value binding) or a nested type literal.
+    fn is_type_element(&self, node: &Node<'static>) -> bool {
+        match node.kind() {
+            NodeKind::IdentExpr => node
+                .text()
+                .is_some_and(|name| self.env.get(&name).is_none()),
+            NodeKind::ArrayLiteral | NodeKind::DictLiteral => self.is_type_literal_callee(node),
+            _ => false,
+        }
+    }
+
+    /// `[T](...)` array constructor: empty for no arguments, otherwise it must be
+    /// the `repeating:count:` form (any other shape is an error).
+    fn construct_array_literal_ctor(&self, args: &[CallArg]) -> Eval {
+        if args.is_empty() {
+            return Ok(SwiftValue::Array(Rc::new(Vec::new())));
+        }
+        match self.array_repeating_count(args)? {
+            Some(v) => Ok(v),
+            None => Err(EvalError::Type(
+                "[T](...) takes either no arguments or `repeating:count:`".into(),
+            )
+            .into()),
+        }
+    }
+
+    /// `repeating:count:` array construction, shared by `Array(repeating:count:)`
+    /// and `[T](repeating:count:)`. `Ok(None)` when no `repeating:` label is
+    /// present (not this initializer); an error when `count:` is missing or
+    /// negative.
+    fn array_repeating_count(&self, args: &[CallArg]) -> Result<Option<SwiftValue>, Signal> {
+        let Some(repeating) = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("repeating"))
+            .map(|a| a.value.clone())
+        else {
+            return Ok(None);
+        };
+        match args.iter().find(|a| a.label.as_deref() == Some("count")) {
+            Some(CallArg {
+                value: SwiftValue::Int(i),
+                ..
+            }) if i.raw >= 0 => Ok(Some(SwiftValue::Array(Rc::new(vec![
+                repeating;
+                i.raw as usize
+            ])))),
+            Some(CallArg {
+                value: SwiftValue::Int(_),
+                ..
+            }) => Err(trap(
+                "Array(repeating:count:) requires a non-negative count".into(),
+            )),
+            _ => Err(EvalError::Type("Array(repeating:count:) requires a count".into()).into()),
+        }
+    }
+
     /// Build a dictionary from `Dictionary(uniqueKeysWithValues:)` (a sequence
     /// of key/value tuples) or `Dictionary(grouping:by:)` (bucket elements by a
     /// key closure). Returns `None` if the args match neither initializer.
@@ -7359,10 +7742,38 @@ impl<'w> Interpreter<'w> {
             return Ok(Some(SwiftValue::Dict(StdRc::new(pairs))));
         }
 
-        if let (Some(seq), Some(by)) = (labeled("grouping"), labeled("by")) {
+        if let Some(seq) = labeled("grouping") {
             let elements = materialize_sequence(&seq.value)
                 .ok_or_else(|| EvalError::Type("grouping: expects a sequence".into()))?;
-            let SwiftValue::Closure(id) = by.value else {
+            // The discriminator closure arrives either labelled `by:` or as a
+            // single trailing (unlabelled) closure. Reject any other argument so
+            // a stray value or a second closure cannot be silently dropped or
+            // mistaken for the discriminator.
+            let mut by: Option<SwiftValue> = None;
+            for a in args {
+                match a.label.as_deref() {
+                    Some("grouping") => {}
+                    Some("by") | None if matches!(a.value, SwiftValue::Closure(_)) => {
+                        if by.replace(a.value.clone()).is_some() {
+                            return Err(EvalError::Type(
+                                "Dictionary(grouping:by:) takes a single discriminator closure"
+                                    .into(),
+                            )
+                            .into());
+                        }
+                    }
+                    other => {
+                        return Err(EvalError::Type(format!(
+                            "Dictionary(grouping:by:) called with unexpected argument {}",
+                            other.unwrap_or("_")
+                        ))
+                        .into())
+                    }
+                }
+            }
+            let SwiftValue::Closure(id) =
+                by.ok_or_else(|| EvalError::Type("grouping expects a `by:` closure".into()))?
+            else {
                 return Err(EvalError::Type("grouping by: expects a closure".into()).into());
             };
             let mut pairs: Vec<(SwiftValue, Vec<SwiftValue>)> = Vec::new();
@@ -7469,37 +7880,7 @@ impl<'w> Interpreter<'w> {
 /// Eagerly materialize a builtin sequence value into a `Vec` of its elements,
 /// or `None` if the value is not a sequence the tree-walker can expand.
 fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
-    match value {
-        SwiftValue::Array(items) => Some(items.as_ref().clone()),
-        SwiftValue::Range { lo, hi, inclusive } => {
-            let end = if *inclusive { *hi + 1 } else { *hi };
-            Some((*lo..end).map(SwiftValue::int).collect())
-        }
-        SwiftValue::Str(s) => Some(
-            crate::graphemes(s)
-                .into_iter()
-                .map(SwiftValue::Str)
-                .collect(),
-        ),
-        // A dictionary is a sequence of `(key, value)` tuples.
-        SwiftValue::Dict(pairs) => Some(
-            pairs
-                .iter()
-                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
-                .collect(),
-        ),
-        SwiftValue::Set(items) => Some(items.as_ref().clone()),
-        _ => None,
-    }
-}
-
-/// A dictionary element `(key:, value:)` tuple, carrying the Swift labels so
-/// both `element.key`/`element.value` access and printing behave like Swift.
-fn dict_element_tuple(key: SwiftValue, value: SwiftValue) -> SwiftValue {
-    SwiftValue::tuple_labeled(
-        vec![key, value],
-        vec![Some("key".to_string()), Some("value".to_string())],
-    )
+    materialize_builtin_sequence(value)
 }
 
 /// The capability surface the standard-library seam sees: a narrow window onto
@@ -8183,7 +8564,54 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
     }
 }
 
-/// Extract a single integer subscript index from evaluated index args.
+/// Scan a string literal's *interpolation* segments (`\( … )`) for shorthand
+/// argument references (`$0`, `$1`, …) and return the greatest index found.
+/// Only text inside `\(…)` is considered, so a literal `"$1"` outside an
+/// interpolation is ignored.
+fn max_shorthand_in_interpolations(raw: &str) -> Option<usize> {
+    let bytes: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    let mut max: Option<usize> = None;
+    while i < bytes.len() {
+        if bytes[i] == '\\' && i + 1 < bytes.len() && bytes[i + 1] == '(' {
+            // Capture the balanced interpolation body.
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                if depth == 0 {
+                    break;
+                }
+                j += 1;
+            }
+            // Scan the fragment `bytes[i+2..j]` for `$<digits>`.
+            let mut k = i + 2;
+            while k < j {
+                if bytes[k] == '$' {
+                    let mut d = String::new();
+                    let mut m = k + 1;
+                    while m < j && bytes[m].is_ascii_digit() {
+                        d.push(bytes[m]);
+                        m += 1;
+                    }
+                    if let Ok(n) = d.parse::<usize>() {
+                        max = Some(max.map_or(n, |c| c.max(n)));
+                    }
+                }
+                k += 1;
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    max
+}
+
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     match indices.first() {
         Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),

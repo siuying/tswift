@@ -1,0 +1,8 @@
+top-level isCancelled: false
+isCancelled: true
+value: -1
+threw CancellationError
+child inherited cancel: true
+detached inherited cancel: false
+addTaskUnlessCancelled after cancel: false
+group sum: 101

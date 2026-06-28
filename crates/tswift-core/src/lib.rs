@@ -21,8 +21,9 @@ pub use grapheme::graphemes;
 pub use interp::{EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
-    scalar_less_than, AlgoFn, Arg, BuiltinReceiver, FreeFn, IntrinsicFn, MethodEntry, Outcome,
-    PropertyFn, StaticFn, StdContext, StdError, StdResult, StructMethodFn,
+    collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,
+    BuiltinReceiver, FreeFn, IntrinsicFn, LabeledIntrinsicFn, LabeledMethodEntry, MethodEntry,
+    Outcome, PropertyFn, StaticFn, StdContext, StdError, StdResult, StructMethodFn,
 };
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 

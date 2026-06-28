@@ -250,14 +250,15 @@ pub struct Outcome {
 }
 
 /// A method intrinsic: receives the context, the receiver by value, and the
-/// already-evaluated arguments; returns its [`Outcome`].
+/// already-evaluated positional argument values; returns its [`Outcome`].
 pub type IntrinsicFn =
     fn(&mut dyn StdContext, SwiftValue, Vec<SwiftValue>) -> Result<Outcome, StdError>;
 
-/// One evaluated free-function argument: its (optional) label and value.
+/// One evaluated free-function or label-aware method argument: its (optional)
+/// label and value.
 ///
-/// Free functions see labels because some are label-overloaded
-/// (`stride(from:to:by:)` vs `stride(from:through:by:)`).
+/// Free functions and selected overloaded methods see labels because some APIs
+/// are label-overloaded (`stride(from:to:by:)`, `Array.append(contentsOf:)`).
 #[derive(Debug, Clone)]
 pub struct Arg {
     pub label: Option<String>,
@@ -273,6 +274,12 @@ impl Arg {
 
 /// A free-function intrinsic (`print`, `min`, `max`, …).
 pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
+
+/// A label-aware method intrinsic for builtin receivers whose overloads cannot
+/// be selected from value shape alone. Returning `None` lets the normal
+/// positional intrinsic registry handle the call.
+pub type LabeledIntrinsicFn =
+    fn(&mut dyn StdContext, SwiftValue, Vec<Arg>) -> Result<Option<Outcome>, StdError>;
 
 /// A generic method intrinsic dispatched on *any* `SwiftValue::Struct` receiver
 /// by method name, tried as a fallback after user-declared methods and builtin
@@ -308,4 +315,83 @@ pub struct MethodEntry {
     /// returned receiver back after the call.
     pub mutating: bool,
     pub func: IntrinsicFn,
+}
+
+/// A registered label-aware method intrinsic plus whether it mutates its
+/// receiver. This keeps overload policy in `tswift-std` without forcing every
+/// simple intrinsic to traffic in labels.
+#[derive(Clone, Copy)]
+pub struct LabeledMethodEntry {
+    /// When set, the dispatcher resolves the receiver's lvalue and writes the
+    /// returned receiver back after the call.
+    pub mutating: bool,
+    pub func: LabeledIntrinsicFn,
+}
+
+/// Resolve an integer collection range into validated `start..end` bounds.
+///
+/// Both open and closed two-sided ranges reject negative lower bounds, inverted
+/// raw bounds (`3...2`), and upper bounds past `len`. One-sided ranges should be
+/// normalized into a concrete [`SwiftValue::Range`] before calling this helper.
+/// Eagerly materialize a builtin sequence value into its element values.
+///
+/// This is shared by the interpreter's generic algorithm dispatcher and stdlib
+/// overloads that need to accept `Sequence`-shaped arguments such as
+/// `contentsOf:`.
+pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
+    match value {
+        SwiftValue::Array(items) => Some(items.as_ref().clone()),
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive { *hi + 1 } else { *hi };
+            Some((*lo..end).map(SwiftValue::int).collect())
+        }
+        SwiftValue::Str(s) => Some(
+            crate::graphemes(s)
+                .into_iter()
+                .map(SwiftValue::Str)
+                .collect(),
+        ),
+        SwiftValue::Dict(pairs) => Some(
+            pairs
+                .iter()
+                .map(|(k, v)| {
+                    SwiftValue::tuple_labeled(
+                        vec![k.clone(), v.clone()],
+                        vec![Some("key".to_string()), Some("value".to_string())],
+                    )
+                })
+                .collect(),
+        ),
+        SwiftValue::Set(items) => Some(items.as_ref().clone()),
+        _ => None,
+    }
+}
+
+pub fn collection_range_bounds(
+    range: &SwiftValue,
+    len: usize,
+    who: &str,
+) -> Result<(usize, usize), EvalError> {
+    let SwiftValue::Range { lo, hi, inclusive } = range else {
+        return Err(EvalError::Type(format!("{who} expects a range")));
+    };
+    if *lo < 0 || *hi < *lo {
+        return Err(EvalError::Trap(format!(
+            "{who} invalid range {lo}..{}{hi} for collection of length {len}",
+            if *inclusive { "=" } else { "<" }
+        )));
+    }
+    let end = if *inclusive {
+        hi.checked_add(1)
+            .ok_or_else(|| EvalError::Trap(format!("{who} range upperBound overflow")))?
+    } else {
+        *hi
+    };
+    if end > len as i128 {
+        return Err(EvalError::Trap(format!(
+            "{who} range {lo}..{}{hi} out of bounds for collection of length {len}",
+            if *inclusive { "=" } else { "<" }
+        )));
+    }
+    Ok((*lo as usize, end as usize))
 }

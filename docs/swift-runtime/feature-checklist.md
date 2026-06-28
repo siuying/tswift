@@ -56,7 +56,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
 | [x] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
 | [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [x] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
+| [x] | Range operators `..<` `...` (+ one-sided, incl. collection slicing `a[2...]`/`a[..<n]`/`a[lo..<hi]`) | ✅ | ★★ | R1 |
 | [x] | Identity operators `===` `!==` | ✅ | ★ | R3 |
 
 ---
@@ -188,7 +188,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | Closure expressions | ✅ | ★★★ | R3 |
 | [x] | Trailing closures (+ multiple) | ✅ | ★★ | R3 |
-| [x] | Shorthand args `$0 $1` | ✅ | ★★ | R3 |
+| [x] | Shorthand args `$0 $1` (incl. tuple-splat destructuring of a single tuple arg) | ✅ | ★★ | R3 |
 | [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
 | [~] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
 | [~] | `@escaping` closures | ✅ | ★★★ | R3 |
@@ -295,7 +295,7 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 | [x] | `async let` | ⚠️ | ★★★★ | R6+ |
 | [x] | `Task` / `Task.detached` | ✅(stdlib) | ★★★★ | R6+ |
 | [x] | Task groups (`withTaskGroup`) | ✅(stdlib) | ★★★★ | R6+ |
-| [~] | Task cancellation | n/a | ★★★ | R6+ |
+| [x] | Task cancellation (`cancel()`/`isCancelled`/`Task.isCancelled`/`checkCancellation()`+`CancellationError`, child inheritance) | n/a | ★★★ | R6+ |
 | [x] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
 | [~] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
 | [x] | `@MainActor` / global actors | ✅ | ★★★★ | R6+ |
@@ -411,7 +411,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
 | [x] | `Set<Element>` + CoW | ★★★ | R2 |
 | [x] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
-| [ ] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
+| [x] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
 
 ### 10c. Protocols that drive the language
 | ✓ | Feature | RT | Phase |
@@ -419,7 +419,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Equatable` / `Hashable` / `Comparable` | ★★★ | R4 |
 | [x] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
 | [ ] | `Collection` / `BidirectionalCollection` / `RandomAccess` | ★★★★ | R4 |
-| [ ] | `RangeReplaceableCollection` | ★★★ | R4 |
+| [~] | `RangeReplaceableCollection` (Array: `append`/`insert(contentsOf:)`, `removeSubrange`, `removeAll(where:)`, `reverse`, `replaceSubrange`) | ★★★ | R4 |
 | [x] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |
 | [x] | `CustomStringConvertible` / `Debug…` | ★★ | R2 |
 | [x] | `RawRepresentable` / `CaseIterable` | ★★ | R2 |
@@ -432,7 +432,7 @@ biggest sustained effort. Scope deliberately.*
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
 | [x] | `print` / `debugPrint` / `dump` | ★ | R0 |
-| [x] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/… | ★★★ | R4 |
+| [x] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/`drop(while:)`/… + `Dictionary(grouping:by:)` | ★★★ | R4 |
 | [x] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
 | [x] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
 | [x] | `Result` | ★★ | R5 |
