@@ -7562,10 +7562,20 @@ impl<'w> Interpreter<'w> {
             return Ok(Some(SwiftValue::Dict(StdRc::new(pairs))));
         }
 
-        if let (Some(seq), Some(by)) = (labeled("grouping"), labeled("by")) {
+        if let Some(seq) = labeled("grouping") {
             let elements = materialize_sequence(&seq.value)
                 .ok_or_else(|| EvalError::Type("grouping: expects a sequence".into()))?;
-            let SwiftValue::Closure(id) = by.value else {
+            // The discriminator closure arrives either labelled `by:` or as a
+            // trailing closure (unlabelled).
+            let by = labeled("by")
+                .map(|a| a.value.clone())
+                .or_else(|| {
+                    args.iter()
+                        .find(|a| a.label.is_none() && matches!(a.value, SwiftValue::Closure(_)))
+                        .map(|a| a.value.clone())
+                })
+                .ok_or_else(|| EvalError::Type("grouping expects a `by:` closure".into()))?;
+            let SwiftValue::Closure(id) = by else {
                 return Err(EvalError::Type("grouping by: expects a closure".into()).into());
             };
             let mut pairs: Vec<(SwiftValue, Vec<SwiftValue>)> = Vec::new();
