@@ -316,6 +316,17 @@ mod tests {
     }
 
     #[test]
+    fn c5_content_views_serialize() {
+        let json = render_json(
+            r#"VStack { Label("Home", systemImage: "house.fill"); Image(systemName: "star.fill"); Image("photo"); ProgressView(value: 0.4) }"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"VStack","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"Label","args":{"title":"Home","systemImage":"house.fill"},"modifiers":[],"children":[]},{"id":"0.1","kind":"Image","args":{"systemName":"star.fill"},"modifiers":[],"children":[]},{"id":"0.2","kind":"Image","args":{"name":"photo"},"modifiers":[],"children":[]},{"id":"0.3","kind":"ProgressView","args":{"value":0.4},"modifiers":[],"children":[]}]}"#
+        );
+    }
+
+    #[test]
     fn frame_and_padding_encode_object_and_null_values() {
         let json = render_json("Text(\"x\").padding().frame(width: 56, height: 56)");
         assert_eq!(

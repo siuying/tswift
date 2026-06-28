@@ -166,6 +166,19 @@ public enum ViewFactory {
             return AnyView(Divider())
         case "ScrollView":
             return AnyView(ScrollView(scrollAxes(node)) { renderChildren(node, sink) })
+        case "Label":
+            return AnyView(Label(str(node, "title"), systemImage: str(node, "systemImage")))
+        case "Image":
+            if case let .string(systemName)? = arg(node, "systemName") {
+                return AnyView(Image(systemName: systemName))
+            }
+            return AnyView(Image(str(node, "name")))
+        case "ProgressView":
+            if case let .number(value)? = arg(node, "value") {
+                let total = arg(node, "total")?.doubleValue ?? 1
+                return AnyView(ProgressView(value: value, total: total))
+            }
+            return AnyView(ProgressView())
 
         case "ForEach":
             return AnyView(renderChildren(node, sink))

@@ -6,8 +6,11 @@ Ellipse.init
 ForEach.init
 Group.init
 HStack.init
+Image.init
+Label.init
 List.init
 Picker.init
+ProgressView.init
 Rectangle.init
 RoundedRectangle.init
 ScrollView.init

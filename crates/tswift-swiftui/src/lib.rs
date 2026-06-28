@@ -325,6 +325,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("ForEach", foreach_init);
     interp.register_free_fn("List", list_init);
     interp.register_free_fn("Section", section_init);
+    interp.register_free_fn("Label", label_init);
+    interp.register_free_fn("Image", image_init);
+    interp.register_free_fn("ProgressView", progress_view_init);
     interp.register_free_fn("Group", group_init);
     interp.register_free_fn("Divider", divider_init);
     interp.register_free_fn("ScrollView", scrollview_init);
@@ -376,7 +379,9 @@ pub fn registered_keys() -> Vec<String> {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
             | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
-            | "Group" | "Divider" | "ScrollView" => Some(format!("{key}.init")),
+            | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView" => {
+                Some(format!("{key}.init"))
+            }
             _ => None,
         })
         .collect();
@@ -849,6 +854,67 @@ fn ellipse_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Ellipse", Vec::new()))
 }
 
+/// `Label(_ title, systemImage:)` — a title paired with an SF Symbol icon.
+fn label_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut title = String::new();
+    let mut system_image = String::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("systemImage") => system_image = arg.value.to_string(),
+            None if matches!(arg.value, SwiftValue::Str(_)) => title = arg.value.to_string(),
+            _ => {}
+        }
+    }
+    Ok(view_value(
+        "Label",
+        vec![
+            ("title".into(), SwiftValue::Str(title)),
+            ("systemImage".into(), SwiftValue::Str(system_image)),
+        ],
+    ))
+}
+
+/// `Image(systemName:)` (an SF Symbol) or `Image(_ name)` (a bundle asset).
+fn image_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut system_name: Option<String> = None;
+    let mut name: Option<String> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("systemName") => system_name = Some(arg.value.to_string()),
+            None if matches!(arg.value, SwiftValue::Str(_)) => name = Some(arg.value.to_string()),
+            _ => {}
+        }
+    }
+    let fields = match system_name {
+        Some(system_name) => vec![("systemName".into(), SwiftValue::Str(system_name))],
+        None => vec![("name".into(), SwiftValue::Str(name.unwrap_or_default()))],
+    };
+    Ok(view_value("Image", fields))
+}
+
+/// `ProgressView()` (indeterminate) or `ProgressView(value:total:)` (determinate).
+/// A leading title label is deferred (kept fully lockstep across hosts: it would
+/// otherwise need a wrapped layout on web); the positional string is ignored.
+fn progress_view_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut value: Option<SwiftValue> = None;
+    let mut total: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("value") => value = Some(arg.value),
+            Some("total") => total = Some(arg.value),
+            _ => {}
+        }
+    }
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(value) = value {
+        fields.push(("value".into(), value));
+    }
+    if let Some(total) = total {
+        fields.push(("total".into(), total));
+    }
+    Ok(view_value("ProgressView", fields))
+}
+
 /// `Group { ... }` — a transparent container: it groups views for shared
 /// modifiers without adding layout, laying its children out as if inline.
 fn group_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
@@ -1306,8 +1372,11 @@ mod tests {
                 "ForEach.init",
                 "Group.init",
                 "HStack.init",
+                "Image.init",
+                "Label.init",
                 "List.init",
                 "Picker.init",
+                "ProgressView.init",
                 "Rectangle.init",
                 "RoundedRectangle.init",
                 "ScrollView.init",
