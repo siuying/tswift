@@ -111,9 +111,13 @@ Range.count
 Range.debugDescription
 Range.description
 Range.distance
+Range.endIndex
+Range.hashValue
+Range.indices
 Range.isEmpty
 Range.lowerBound
 Range.overlaps
+Range.startIndex
 Range.upperBound
 Sequence.allSatisfy
 Sequence.compactMap
