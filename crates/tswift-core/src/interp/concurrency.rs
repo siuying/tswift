@@ -51,7 +51,10 @@ pub(super) enum TaskRun {
     Deadlock,
     /// The task was pending and is now marked running; evaluate `closure` under
     /// `class_ctx`, then report back via [`Scheduler::complete_task`].
-    Start { closure: usize, class_ctx: Vec<String> },
+    Start {
+        closure: usize,
+        class_ctx: Vec<String>,
+    },
 }
 
 /// The structured-concurrency state machine (ADR-0005), owning the task table,
@@ -669,7 +672,10 @@ mod tests {
 
         let late = s.spawn(1, Vec::new(), false);
         s.add_to_group(gid, late);
-        assert!(s.task_cancelled(late), "child added post-cancel starts cancelled");
+        assert!(
+            s.task_cancelled(late),
+            "child added post-cancel starts cancelled"
+        );
 
         assert_eq!(s.take_group(gid), vec![early, late]);
         assert!(s.take_group(gid).is_empty(), "taking a group drains it");

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Guard pushes with the relevant validation slice for files changed on this branch.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if command -v mise >/dev/null 2>&1; then
+  exec mise run validate:changed
+fi
+
+exec ./scripts/validate changed

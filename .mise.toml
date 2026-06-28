@@ -1,0 +1,28 @@
+[tools]
+# Pin the JS runtime used by web validation. Rust and Swift/Xcode are supplied
+# by the host toolchains.
+node = "24.16.0"
+
+[tasks."validate:rust"]
+description = "Validate Rust crates (fmt, clippy, tests)"
+run = "./scripts/validate rust"
+
+[tasks."validate:ios"]
+description = "Validate Swift/iOS packages (uses pinned ffi-v1 unless local artifact exists)"
+run = "./scripts/validate ios"
+
+[tasks."validate:web"]
+description = "Validate web packages"
+run = "./scripts/validate web"
+
+[tasks."validate:all"]
+description = "Validate Rust, Swift/iOS, and web code"
+run = "./scripts/validate all"
+
+[tasks."validate:changed"]
+description = "Validate slices affected by files changed on this branch"
+run = "./scripts/validate changed"
+
+[tasks."hooks:install"]
+description = "Install git hooks for this checkout"
+run = "./scripts/install-git-hooks.sh"

@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+#
+# Unified local validation entrypoint.
+#
+# Usage:
+#   scripts/validate rust|ios|web|all|changed
+#
+# The `changed` mode is intended for the pre-push hook: it inspects files changed
+# relative to the upstream branch (or origin/main) and runs only the relevant
+# validation slices.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+cd "$ROOT"
+
+SIM="${TSWIFT_SIM:-platform=iOS Simulator,name=iPhone 16 Pro,OS=18.5}"
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/validate <rust|ios|web|all|changed>
+
+Slices:
+  rust     cargo fmt --check, cargo clippy --workspace, cargo test --workspace --all-targets
+  ios      Swift package tests against pinned ffi-v1 plus UiirRenderer iOS simulator tests
+  web      Typecheck/validate the SwiftUI canvas; build changed web packages in changed mode
+  all      rust + ios + web
+  changed  run slices inferred from files changed vs upstream/origin/main
+
+Environment:
+  TSWIFT_SIM                    xcodebuild destination for iOS simulator tests
+  TSWIFT_VALIDATE_IOS_FULL=1    also build examples/ios app during validate ios
+USAGE
+}
+
+section() { printf '\n==> %s\n' "$*"; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+npm_install_if_needed() {
+  local dir="$1"
+  if [[ ! -d "$dir/node_modules" ]]; then
+    section "npm ci ($dir)"
+    npm --prefix "$dir" ci
+  fi
+}
+
+validate_rust() {
+  section "Rust: cargo fmt --check"
+  cargo fmt --check
+  section "Rust: cargo clippy --workspace"
+  cargo clippy --workspace
+  section "Rust: cargo test --workspace --all-targets"
+  cargo test --workspace --all-targets
+}
+
+validate_ios() {
+  if ! have swift; then
+    echo "error: swift is required for validate ios" >&2
+    return 1
+  fi
+
+  section "iOS/Swift: TSwift package tests (uses pinned ffi-v1 unless local Artifacts exists)"
+  swift test --package-path ios/TSwift
+
+  if have xcodebuild; then
+    section "iOS/Swift: UiirRenderer tests (iOS simulator)"
+    ( cd ios/UiirRenderer && xcodebuild test -scheme UiirRenderer -destination "$SIM" )
+
+    if [[ "${TSWIFT_VALIDATE_IOS_FULL:-0}" == "1" ]]; then
+      if ! have xcodegen; then
+        echo "error: xcodegen is required for TSWIFT_VALIDATE_IOS_FULL=1" >&2
+        return 1
+      fi
+      section "iOS/Swift: example app build (iOS simulator)"
+      ( cd examples/ios && xcodegen generate >/dev/null \
+        && xcodebuild build -project TSwiftExample.xcodeproj -scheme TSwiftExample -destination "$SIM" )
+    fi
+  else
+    echo "warning: xcodebuild not found; skipped UiirRenderer simulator tests" >&2
+  fi
+}
+
+validate_web_canvas() {
+  npm_install_if_needed web/swiftui-canvas
+  section "Web: swiftui-canvas typecheck"
+  npm --prefix web/swiftui-canvas run typecheck
+  section "Web: swiftui-canvas protocol validation"
+  npm --prefix web/swiftui-canvas run validate
+}
+
+validate_web_all() {
+  validate_web_canvas
+
+  if [[ -f website/package.json ]]; then
+    npm_install_if_needed website
+    section "Web: website build"
+    npm --prefix website run build
+  fi
+}
+
+changed_base() {
+  if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+    git merge-base HEAD '@{upstream}'
+  elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+    git merge-base HEAD origin/main
+  else
+    git rev-parse HEAD~1
+  fi
+}
+
+changed_files() {
+  local base
+  base="$(changed_base)"
+  git diff --name-only "$base"...HEAD
+}
+
+validate_changed() {
+  local files rust=0 ios=0 web=0 website=0 proto_web=0 proto_swiftui=0
+  files="$(changed_files)"
+
+  if [[ -z "$files" ]]; then
+    echo "No changed files detected; nothing to validate."
+    return 0
+  fi
+
+  echo "Changed files considered:"
+  printf '%s\n' "$files" | sed 's/^/  /'
+
+  while IFS= read -r f; do
+    case "$f" in
+      Cargo.toml|Cargo.lock|crates/**|tests/**|frameworks/**)
+        rust=1 ;;
+    esac
+    case "$f" in
+      ios/**|examples/ios/**|crates/tswift-ffi/**|crates/tswift-swiftui/**|scripts/build-xcframework.sh|scripts/publish-xcframework.sh|scripts/verify-native-host.sh)
+        ios=1 ;;
+    esac
+    case "$f" in
+      web/swiftui-canvas/**|tests/swiftui-fixtures/**|crates/tswift-wasm/**)
+        web=1 ;;
+      website/**)
+        web=1; website=1 ;;
+      prototype/web-sandbox/**)
+        web=1; proto_web=1 ;;
+      prototype/swiftui-sandbox/**)
+        web=1; proto_swiftui=1 ;;
+    esac
+  done <<< "$files"
+
+  if (( rust )); then validate_rust; fi
+  if (( ios )); then validate_ios; fi
+  if (( web )); then
+    validate_web_canvas
+    if (( website )); then
+      npm_install_if_needed website
+      section "Web: website build"
+      npm --prefix website run build
+    fi
+    if (( proto_web )); then
+      npm_install_if_needed prototype/web-sandbox
+      section "Web: prototype/web-sandbox test"
+      npm --prefix prototype/web-sandbox test
+    fi
+    if (( proto_swiftui )); then
+      npm_install_if_needed prototype/swiftui-sandbox
+      section "Web: prototype/swiftui-sandbox test"
+      npm --prefix prototype/swiftui-sandbox test
+    fi
+  fi
+
+  if (( !rust && !ios && !web )); then
+    echo "Only docs/metadata changed; no validation slice selected."
+  fi
+}
+
+case "${1:-}" in
+  rust) validate_rust ;;
+  ios) validate_ios ;;
+  web) validate_web_all ;;
+  all) validate_rust; validate_ios; validate_web_all ;;
+  changed) validate_changed ;;
+  -h|--help|help) usage ;;
+  "") usage; exit 2 ;;
+  *) echo "error: unknown validation target: $1" >&2; usage >&2; exit 2 ;;
+esac

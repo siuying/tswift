@@ -124,7 +124,9 @@ impl<'a> Node<'a> {
 
     /// This node's last direct child, if any.
     pub fn last_child(&self) -> Option<Node<'a>> {
-        self.child_count().checked_sub(1).and_then(|i| self.child(i))
+        self.child_count()
+            .checked_sub(1)
+            .and_then(|i| self.child(i))
     }
 
     /// The first direct child of the given [`NodeKind`], in source order.
@@ -622,7 +624,8 @@ mod tests {
 
         // find_child locates by kind.
         assert_eq!(
-            call.find_child(NodeKind::IntegerLiteral).and_then(|n| n.int()),
+            call.find_child(NodeKind::IntegerLiteral)
+                .and_then(|n| n.int()),
             Some(42)
         );
     }
