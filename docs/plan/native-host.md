@@ -75,9 +75,25 @@ Mirrors `tswift-wasm`'s `run_swift` / `swiftui_compile` / `swiftui_dispatch`.
 - Network note: the offline rule is **crates.io-only**; SwiftPM already fetches
   `swift-snapshot-testing`, so a remote `binaryTarget` is consistent.
 
+## TSwiftUI session driver (locked)
+
+The consume side already exists in `UiirRenderer` (`RenderModel.apply([Patch])`,
+`Patch: Decodable`). Two pieces are added:
+
+- **`PreviewSession`** — `@MainActor public final class ... : ObservableObject`
+  in `TSwiftUI`. Owns a `Context` (`tswift_context_new` on init,
+  `tswift_context_free` on deinit) and a `RenderModel`. `compile(source:)` →
+  `tswift_swiftui_compile` → mount initial UIIR; `dispatch(id:event:value:)` →
+  `tswift_swiftui_dispatch` → decode `[Patch]` → `renderModel.apply(...)`.
+- **Event-out seam in `UiirRenderer`** — an `EventSink` injected via
+  `@Environment`, **defaulting to a no-op** so existing snapshot tests stay
+  byte-identical. Live mode injects a sink that calls `PreviewSession.dispatch`.
+  Keeps **one** `ViewFactory` for both static snapshots and live previews
+  (rejected: a parallel interactive renderer — duplicates the `build` switch).
+- The dispatch event carries wasm's `(id, event, value)` triple (node id, event
+  name e.g. `"tap"`, payload `""` for taps) as JSON, built by the façade.
+
 ## Open branches (still to grill)
 
-- **`TSwiftUI` session driver**: how it drives a live render session against
-  `UiirRenderer`'s patch applier (which already consumes UIIR + patch JSON).
 - **Two example apps**: CodeSandbox-style split view (TSwiftCore);
   Playground-style preview (TSwiftUI).
