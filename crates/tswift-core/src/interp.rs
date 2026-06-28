@@ -367,9 +367,17 @@ pub struct Interpreter<'w> {
     /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
     /// `SwiftValue::Task` drives the matching slot to completion.
     tasks: Vec<TaskSlot>,
+    /// Stack of currently-executing task ids (innermost last), so
+    /// `Task.isCancelled` / `Task.checkCancellation()` reflect the running
+    /// task's cooperative-cancellation flag (ADR-0005).
+    current_task: Vec<usize>,
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
+    /// Per-group cancellation flag (set by `cancelAll()`), so children added
+    /// *after* cancellation are spawned cancelled and `addTaskUnlessCancelled`
+    /// can refuse to add one.
+    group_cancelled: Vec<bool>,
     /// `with*Continuation` slots, one per continuation handed to a body. The
     /// state machine (`Pending` → `Resumed` → `Consumed`) lets `resume(...)`
     /// diagnose both double resume *and* late resume after the enclosing
@@ -475,7 +483,9 @@ impl<'w> Interpreter<'w> {
             defer_stack: Vec::new(),
             main_type: None,
             tasks: Vec::new(),
+            current_task: Vec::new(),
             groups: Vec::new(),
+            group_cancelled: Vec::new(),
             continuations: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
@@ -3006,13 +3016,21 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Register a 0-argument closure body as a task and return its handle index.
-    fn spawn_task_closure(&mut self, closure_id: usize) -> usize {
+    /// Spawn a task body. A *structured* child (`inherit = true`) inherits its
+    /// enclosing task's cancellation (ADR-0005); a detached task
+    /// (`inherit = false`) starts uncancelled regardless of context.
+    fn spawn_task_closure(&mut self, closure_id: usize, inherit: bool) -> usize {
         let id = self.tasks.len();
+        let cancelled = inherit
+            && self
+                .current_task
+                .last()
+                .is_some_and(|&parent| self.tasks[parent].cancelled);
         self.tasks.push(TaskSlot {
             closure: closure_id,
             class_ctx: self.class_ctx.clone(),
             state: TaskState::Pending,
-            cancelled: false,
+            cancelled,
         });
         id
     }
@@ -3029,7 +3047,24 @@ impl<'w> Interpreter<'w> {
             },
             captured,
         ));
-        self.spawn_task_closure(closure_id)
+        self.spawn_task_closure(closure_id, true)
+    }
+
+    /// Whether the innermost running task is cancelled (`false` when no task is
+    /// on the stack, i.e. top-level code).
+    fn current_task_cancelled(&self) -> bool {
+        self.current_task
+            .last()
+            .is_some_and(|&id| self.tasks[id].cancelled)
+    }
+
+    /// A fresh `CancellationError` value (the stdlib error thrown by
+    /// `Task.checkCancellation()`), modelled as an empty conforming struct.
+    fn cancellation_error() -> SwiftValue {
+        SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "CancellationError".into(),
+            fields: Vec::new(),
+        }))
     }
 
     /// Drive task `id` to completion (cooperatively, on the current stack) and
@@ -3047,7 +3082,9 @@ impl<'w> Interpreter<'w> {
         let ctx = self.tasks[id].class_ctx.clone();
         self.tasks[id].state = TaskState::Running;
         let saved_ctx = std::mem::replace(&mut self.class_ctx, ctx);
+        self.current_task.push(id);
         let result = self.call_closure(closure, Vec::new());
+        self.current_task.pop();
         self.class_ctx = saved_ctx;
         self.tasks[id].state = TaskState::Done(result.clone());
         result
@@ -3105,7 +3142,9 @@ impl<'w> Interpreter<'w> {
                 let closure = self
                     .eval_body_closure(arg_nodes)?
                     .ok_or_else(|| EvalError::Unsupported("Task without a body closure".into()))?;
-                Ok(Some(SwiftValue::Task(self.spawn_task_closure(closure))))
+                Ok(Some(SwiftValue::Task(
+                    self.spawn_task_closure(closure, true),
+                )))
             }
             "withTaskGroup" | "withThrowingTaskGroup" => {
                 let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
@@ -3113,6 +3152,7 @@ impl<'w> Interpreter<'w> {
                 })?;
                 let gid = self.groups.len();
                 self.groups.push(Vec::new());
+                self.group_cancelled.push(false);
                 let result = self.call_closure(body, vec![SwiftValue::TaskGroup(gid)]);
                 // The group's children are structured: drain any not consumed by
                 // a `for await` so they complete before the group returns.
@@ -3198,11 +3238,22 @@ impl<'w> Interpreter<'w> {
                         let closure = Self::first_closure(&args).ok_or_else(|| {
                             EvalError::Unsupported("addTask without a body closure".into())
                         })?;
-                        let tid = self.spawn_task_closure(closure);
+                        // `addTaskUnlessCancelled` adds nothing (and returns
+                        // `false`) once the group is cancelled.
+                        if method == "addTaskUnlessCancelled" && self.group_cancelled[gid] {
+                            return Ok(Some(SwiftValue::Bool(false)));
+                        }
+                        let tid = self.spawn_task_closure(closure, false);
+                        // A child added to an already-cancelled group starts
+                        // cancelled (structured-concurrency propagation).
+                        if self.group_cancelled[gid] {
+                            self.tasks[tid].cancelled = true;
+                        }
                         self.groups[gid].push(tid);
                         Ok(Some(SwiftValue::Bool(true)))
                     }
                     "cancelAll" => {
+                        self.group_cancelled[gid] = true;
                         for &tid in &self.groups[gid].clone() {
                             self.tasks[tid].cancelled = true;
                         }
@@ -5776,6 +5827,11 @@ impl<'w> Interpreter<'w> {
                             return self.memory_layout_member(&ty, &member);
                         }
                     }
+                    // `Task.isCancelled` — the running task's cooperative
+                    // cancellation flag (`false` outside any task).
+                    if type_name == "Task" && member == "isCancelled" {
+                        return Ok(SwiftValue::Bool(self.current_task_cancelled()));
+                    }
                     // `Type.self` — a metatype value naming the type.
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
@@ -6407,10 +6463,20 @@ impl<'w> Interpreter<'w> {
                     let closure = Self::first_closure(&args).ok_or_else(|| {
                         EvalError::Unsupported("Task.detached without a body closure".into())
                     })?;
-                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure)));
+                    // A detached task is not a structured child: it never
+                    // inherits the spawning task's cancellation.
+                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure, false)));
+                }
+                // `Task.checkCancellation()` throws `CancellationError` when the
+                // running task is cancelled, else does nothing.
+                "checkCancellation" => {
+                    if self.current_task_cancelled() {
+                        return Err(Signal::Throw(Self::cancellation_error()));
+                    }
+                    return Ok(SwiftValue::Void);
                 }
                 // Cooperative no-ops on our single-threaded executor.
-                "yield" | "sleep" | "checkCancellation" => return Ok(SwiftValue::Void),
+                "yield" | "sleep" => return Ok(SwiftValue::Void),
                 _ => {}
             }
         }
