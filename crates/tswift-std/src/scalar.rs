@@ -71,6 +71,47 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: double_negate,
         },
     );
+    method(
+        interp,
+        BuiltinReceiver::Double,
+        "remainder",
+        double_remainder,
+    );
+    method(interp, BuiltinReceiver::Double, "isEqual", double_is_equal);
+    method(interp, BuiltinReceiver::Double, "isLess", double_is_less);
+    method(
+        interp,
+        BuiltinReceiver::Double,
+        "isLessThanOrEqualTo",
+        double_is_less_or_equal,
+    );
+    method(interp, BuiltinReceiver::Double, "advanced", double_advanced);
+    method(interp, BuiltinReceiver::Double, "distance", double_distance);
+    mutating(
+        interp,
+        BuiltinReceiver::Double,
+        "formSquareRoot",
+        double_form_square_root,
+    );
+    mutating(
+        interp,
+        BuiltinReceiver::Double,
+        "formTruncatingRemainder",
+        double_form_truncating_remainder,
+    );
+    mutating(
+        interp,
+        BuiltinReceiver::Double,
+        "formRemainder",
+        double_form_remainder,
+    );
+    mutating(interp, BuiltinReceiver::Double, "round", double_round);
+    mutating(
+        interp,
+        BuiltinReceiver::Double,
+        "addProduct",
+        double_add_product,
+    );
     // Double properties.
     interp.register_property(BuiltinReceiver::Double, "magnitude", double_magnitude);
     interp.register_property(BuiltinReceiver::Double, "isNaN", double_is_nan);
@@ -117,6 +158,32 @@ fn method(
             func,
         },
     );
+}
+
+/// Register a mutating method intrinsic (writes a new receiver in place).
+fn mutating(
+    interp: &mut Interpreter<'_>,
+    recv: BuiltinReceiver,
+    name: &str,
+    func: tswift_core::IntrinsicFn,
+) {
+    interp.register_intrinsic(
+        recv,
+        name,
+        MethodEntry {
+            mutating: true,
+            func,
+        },
+    );
+}
+
+/// IEEE 754 remainder: `x - round_ties_even(x / y) * y`. NaN when `y` is zero
+/// or `x` is non-finite, matching `Double.remainder(dividingBy:)`.
+fn ieee_remainder(x: f64, y: f64) -> f64 {
+    if y == 0.0 || !x.is_finite() {
+        return f64::NAN;
+    }
+    x - (x / y).round_ties_even() * y
 }
 
 // ---- Int -------------------------------------------------------------------
@@ -348,6 +415,122 @@ fn double_negate(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>)
     })
 }
 
+/// The first argument as a `Double`, for the binary `Double` methods.
+fn arg_double(args: &[SwiftValue], who: &str) -> Result<f64, StdError> {
+    as_double(args.first().ok_or_else(|| arg_err(who))?)
+}
+
+/// `Double.remainder(dividingBy:)` — the IEEE remainder.
+fn double_remainder(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    let y = arg_double(&args, "remainder(dividingBy:)")?;
+    ok(SwiftValue::Double(ieee_remainder(x, y)), recv)
+}
+
+/// `Double.isEqual(to:)` — IEEE equality (false if either side is NaN).
+fn double_is_equal(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    let y = arg_double(&args, "isEqual(to:)")?;
+    ok(SwiftValue::Bool(x == y), recv)
+}
+
+/// `Double.isLess(than:)` — IEEE ordered less-than.
+fn double_is_less(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    let y = arg_double(&args, "isLess(than:)")?;
+    ok(SwiftValue::Bool(x < y), recv)
+}
+
+/// `Double.isLessThanOrEqualTo(_:)` — IEEE ordered less-than-or-equal.
+fn double_is_less_or_equal(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let x = as_double(&recv)?;
+    let y = arg_double(&args, "isLessThanOrEqualTo(_:)")?;
+    ok(SwiftValue::Bool(x <= y), recv)
+}
+
+/// `Double.advanced(by:)` — `self + amount` (the `Strideable` conformance).
+fn double_advanced(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    let by = arg_double(&args, "advanced(by:)")?;
+    ok(SwiftValue::Double(x + by), recv)
+}
+
+/// `Double.distance(to:)` — `other - self` (the `Strideable` conformance).
+fn double_distance(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    let other = arg_double(&args, "distance(to:)")?;
+    ok(SwiftValue::Double(other - x), recv)
+}
+
+/// `Double.formSquareRoot()` — replace `self` with its square root.
+fn double_form_square_root(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Outcomes {
+    let x = as_double(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(x.sqrt()),
+    })
+}
+
+/// `Double.formTruncatingRemainder(dividingBy:)` — in-place `self %= by`.
+fn double_form_truncating_remainder(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let x = as_double(&recv)?;
+    let by = arg_double(&args, "formTruncatingRemainder(dividingBy:)")?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(x % by),
+    })
+}
+
+/// `Double.formRemainder(dividingBy:)` — in-place IEEE remainder.
+fn double_form_remainder(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let x = as_double(&recv)?;
+    let by = arg_double(&args, "formRemainder(dividingBy:)")?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(ieee_remainder(x, by)),
+    })
+}
+
+/// `Double.round()` — round to the nearest integer (ties away from zero) in place.
+fn double_round(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let x = as_double(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(x.round()),
+    })
+}
+
+/// `Double.addProduct(_:_:)` — fused-multiply-add accumulate: `self += a * b`.
+fn double_add_product(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let x = as_double(&recv)?;
+    let a = as_double(args.first().ok_or_else(|| arg_err("addProduct(_:_:)"))?)?;
+    let b = as_double(args.get(1).ok_or_else(|| arg_err("addProduct(_:_:)"))?)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(a.mul_add(b, x)),
+    })
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 type Outcomes = Result<Outcome, StdError>;
@@ -520,6 +703,69 @@ mod tests {
         );
         assert_eq!(
             double_is_subnormal(SwiftValue::Double(1.0)).unwrap(),
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn double_ieee_methods() {
+        let mut c = MockCtx;
+        assert_eq!(
+            double_remainder(
+                &mut c,
+                SwiftValue::Double(5.0),
+                vec![SwiftValue::Double(3.0)]
+            )
+            .unwrap()
+            .result,
+            SwiftValue::Double(-1.0)
+        );
+        assert_eq!(
+            double_is_less(
+                &mut c,
+                SwiftValue::Double(2.0),
+                vec![SwiftValue::Double(3.0)]
+            )
+            .unwrap()
+            .result,
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            double_distance(
+                &mut c,
+                SwiftValue::Double(10.0),
+                vec![SwiftValue::Double(13.0)]
+            )
+            .unwrap()
+            .result,
+            SwiftValue::Double(3.0)
+        );
+        // Mutating methods write the new value through the receiver.
+        assert_eq!(
+            double_form_square_root(&mut c, SwiftValue::Double(9.0), vec![])
+                .unwrap()
+                .receiver,
+            SwiftValue::Double(3.0)
+        );
+        assert_eq!(
+            double_add_product(
+                &mut c,
+                SwiftValue::Double(1.0),
+                vec![SwiftValue::Double(2.0), SwiftValue::Double(3.0)]
+            )
+            .unwrap()
+            .receiver,
+            SwiftValue::Double(7.0)
+        );
+        // NaN comparisons are all false (no ordering with NaN).
+        assert_eq!(
+            double_is_equal(
+                &mut c,
+                SwiftValue::Double(f64::NAN),
+                vec![SwiftValue::Double(f64::NAN)]
+            )
+            .unwrap()
+            .result,
             SwiftValue::Bool(false)
         );
     }
