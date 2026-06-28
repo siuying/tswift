@@ -5,11 +5,10 @@ frontend (lex → parse → sema) feeding a tree-walking interpreter, with stdli
 Foundation, and SwiftUI implemented as native Rust builtins. Hosts (web/wasm,
 native/iOS) drive the runtime over a serialized boundary.
 
-> **Current focus (pivot):** before embedding the runtime as a long-running
-> native host (`TSwiftCore`/`TSwiftUI`), resolve the **fragment leak** — the
-> per-interpolation `Analysis` leak that ADR-0003 deferred — so a live session
-> doesn't grow memory on every render. The Swift-library work resumes once the
-> leak is bounded and reclaimed.
+> **Current focus:** the **fragment leak** is resolved (ADR-0007, landed) — the
+> per-interpolation `Analysis` leak is now bounded and reclaimed by the
+> **fragment cache**. Next: design and build the native embedding host
+> (`tswift-ffi` → `TSwiftCore`/`TSwiftUI`).
 
 ## Language
 
