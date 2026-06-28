@@ -1,8 +1,8 @@
 //! Scalar-value method and property intrinsics for `Int` and `Double`.
 
 use tswift_core::{
-    BuiltinReceiver, EvalError, IntValue, Interpreter, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, SwiftValue,
+    format_double, BuiltinReceiver, EvalError, IntValue, Interpreter, MethodEntry, Outcome,
+    StdContext, StdError, StdResult, SwiftValue,
 };
 
 /// Register the `Int`/`Double` intrinsics of this slice.
@@ -79,6 +79,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Double, "isZero", double_is_zero);
     interp.register_property(BuiltinReceiver::Double, "isNormal", double_is_normal);
     interp.register_property(BuiltinReceiver::Double, "isSubnormal", double_is_subnormal);
+    interp.register_property(BuiltinReceiver::Double, "isSignMinus", double_is_sign_minus);
+    interp.register_property(BuiltinReceiver::Double, "description", double_description);
+    interp.register_property(
+        BuiltinReceiver::Double,
+        "debugDescription",
+        double_description,
+    );
+    interp.register_property(BuiltinReceiver::Double, "nextUp", double_next_up);
+    interp.register_property(BuiltinReceiver::Double, "ulp", double_ulp);
 }
 
 /// Width-masked unsigned bit pattern of an integer (two's complement within
@@ -309,6 +318,27 @@ fn double_is_subnormal(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(as_double(&recv)?.is_subnormal()))
 }
 
+/// `Double.isSignMinus` — whether the sign bit is set (true for `-0.0`).
+fn double_is_sign_minus(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(as_double(&recv)?.is_sign_negative()))
+}
+
+/// `Double.description` / `debugDescription` — the textual form `print` uses.
+fn double_description(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Str(format_double(as_double(&recv)?)))
+}
+
+/// `Double.nextUp` — the least representable value greater than `self`.
+fn double_next_up(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(as_double(&recv)?.next_up()))
+}
+
+/// `Double.ulp` — the unit in the last place: the distance to `nextUp`.
+fn double_ulp(recv: SwiftValue) -> StdResult {
+    let d = as_double(&recv)?;
+    Ok(SwiftValue::Double(d.next_up() - d))
+}
+
 /// `Double.negate()` — flip the sign in place (`mutating func negate()`).
 fn double_negate(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
     let d = as_double(&recv)?;
@@ -492,6 +522,27 @@ mod tests {
             double_is_subnormal(SwiftValue::Double(1.0)).unwrap(),
             SwiftValue::Bool(false)
         );
+    }
+
+    #[test]
+    fn double_text_and_neighbours() {
+        assert_eq!(
+            double_description(SwiftValue::Double(3.5)).unwrap(),
+            SwiftValue::Str("3.5".into())
+        );
+        assert_eq!(
+            double_is_sign_minus(SwiftValue::Double(-0.0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            double_is_sign_minus(SwiftValue::Double(1.0)).unwrap(),
+            SwiftValue::Bool(false)
+        );
+        // nextUp is strictly greater; ulp is the positive gap to it.
+        let up = double_next_up(SwiftValue::Double(2.0)).unwrap();
+        assert!(matches!(up, SwiftValue::Double(d) if d > 2.0));
+        let ulp = double_ulp(SwiftValue::Double(1.0)).unwrap();
+        assert!(matches!(ulp, SwiftValue::Double(d) if d > 0.0));
     }
 
     #[test]
