@@ -33,6 +33,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     a("suffix", suffix);
     a("dropFirst", drop_first);
     a("dropLast", drop_last);
+    a("drop", drop_while);
     a("split", split);
     a("joined", joined);
     a("elementsEqual", elements_equal);
@@ -291,6 +292,20 @@ fn prefix(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> S
 fn suffix(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
     let n = count_arg(&args).unwrap_or(0).min(items.len());
     let start = items.len() - n;
+    Ok(array(items[start..].to_vec()))
+}
+
+/// `drop(while:)` — the suffix beginning at the first element that fails the
+/// predicate (the symmetric counterpart of `prefix(while:)`).
+fn drop_while(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
+    let id = closure(&args, "drop(while:)")?;
+    let mut start = items.len();
+    for (i, it) in items.iter().enumerate() {
+        if !truthy(ctx.call_closure(id, vec![it.clone()])?) {
+            start = i;
+            break;
+        }
+    }
     Ok(array(items[start..].to_vec()))
 }
 

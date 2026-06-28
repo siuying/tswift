@@ -432,7 +432,7 @@ biggest sustained effort. Scope deliberately.*
 | ✓ | Feature | RT | Phase |
 |---|---|----|-------|
 | [x] | `print` / `debugPrint` / `dump` | ★ | R0 |
-| [x] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/… | ★★★ | R4 |
+| [x] | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/`drop(while:)`/… + `Dictionary(grouping:by:)` | ★★★ | R4 |
 | [x] | `assert`/`precondition`/`fatalError`/`assertionFailure` | ★★ | R1 |
 | [x] | `min`/`max`/`abs`/`stride`/`zip`/`swap` | ★★ | R2 |
 | [x] | `Result` | ★★ | R5 |

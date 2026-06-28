@@ -65,6 +65,7 @@ Sequence.allSatisfy
 Sequence.compactMap
 Sequence.contains
 Sequence.count
+Sequence.drop
 Sequence.dropFirst
 Sequence.dropLast
 Sequence.elementsEqual
