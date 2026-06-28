@@ -176,15 +176,13 @@ html, body {
   display: flex;
 }
 /* The shared host element fills the device screen and paints its own
-   (appearance-correct) background inside its Shadow DOM. */
+   (appearance-correct) background inside its Shadow DOM, so the page leaves
+   the element background transparent and lets the canvas own it. */
 #preview {
   flex: 1;
   border-radius: 26px;
   overflow: auto;
-  background: #fff;
-}
-@media (prefers-color-scheme: dark) {
-  #preview { background: #000; }
+  background: transparent;
 }
 
 .proto-note {
