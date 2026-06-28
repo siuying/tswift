@@ -411,7 +411,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Dictionary<Key,Value>` + CoW | ★★★★ | R2 |
 | [x] | `Set<Element>` + CoW | ★★★ | R2 |
 | [x] | `ContiguousArray` / `ArraySlice` | ★★★ | R4 |
-| [ ] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
+| [x] | `isKnownUniquelyReferenced` (CoW correctness) | ★★★ | R3 |
 
 ### 10c. Protocols that drive the language
 | ✓ | Feature | RT | Phase |
