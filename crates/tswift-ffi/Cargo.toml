@@ -1,0 +1,19 @@
+[package]
+name = "tswift-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C-ABI native embedding host for tswift (TSwiftCore / TSwiftUI)."
+
+[lib]
+# `staticlib` is the `.a` linked into the xcframework; `rlib` lets the native
+# `#[test]`s link the entry points directly.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true
+tswift-std.workspace = true
+tswift-foundation.workspace = true
+tswift-swiftui.workspace = true
