@@ -183,6 +183,22 @@ pub unsafe extern "C" fn tswift_swiftui_dispatch(
 mod tests {
     use super::*;
 
+    /// Drift guard: each `extern "C"` entry point must keep the exact ABI
+    /// signature declared in `include/tswift_ffi.h`. Renaming or changing the
+    /// argument/return types of any symbol breaks this coercion at compile
+    /// time, flagging that the header must be updated in lockstep.
+    #[test]
+    fn c_abi_signatures_match_header() {
+        let _new: extern "C" fn() -> *mut Context = tswift_context_new;
+        let _free: unsafe extern "C" fn(*mut Context) = tswift_context_free;
+        let _run: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char = tswift_run;
+        let _compile: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
+            tswift_swiftui_compile;
+        let _dispatch: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
+            tswift_swiftui_dispatch;
+        let _string_free: unsafe extern "C" fn(*mut c_char) = tswift_string_free;
+    }
+
     #[test]
     fn context_new_returns_nonnull_and_frees() {
         let ctx = tswift_context_new();
