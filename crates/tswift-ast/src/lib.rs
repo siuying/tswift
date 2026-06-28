@@ -484,6 +484,21 @@ impl<'a> Node<'a> {
         self.ast.data(self.id).arg_label.as_deref()
     }
 
+    /// The number of direct children this node has.
+    pub fn child_count(&self) -> usize {
+        self.ast.data(self.id).children.len()
+    }
+
+    /// The `i`-th direct child, in source order — a constant-time arena lookup
+    /// that allocates nothing.
+    pub fn child(&self, i: usize) -> Option<Node<'a>> {
+        self.ast
+            .data(self.id)
+            .children
+            .get(i)
+            .map(|&id| Node { ast: self.ast, id })
+    }
+
     /// Iterator over the node's direct children, in source order.
     pub fn children(&self) -> impl Iterator<Item = Node<'a>> + 'a {
         let ast = self.ast;
