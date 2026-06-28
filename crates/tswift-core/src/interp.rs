@@ -370,10 +370,11 @@ pub struct Interpreter<'w> {
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
-    /// `with*Continuation` slots: each holds the outcome a `resume(...)` call
-    /// stored (`Some(Ok)` for a value, `Some(Err)` for `resume(throwing:)`),
-    /// or `None` while the continuation is still pending.
-    continuations: Vec<Option<Eval>>,
+    /// `with*Continuation` slots, one per continuation handed to a body. The
+    /// state machine (`Pending` → `Resumed` → `Consumed`) lets `resume(...)`
+    /// diagnose both double resume *and* late resume after the enclosing
+    /// `with*Continuation` has already read the value.
+    continuations: Vec<ContinuationState>,
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
@@ -408,6 +409,20 @@ enum TaskState {
     Running,
     /// Finished, carrying its memoized outcome (value or thrown signal).
     Done(Eval),
+}
+
+/// Lifecycle of a `with*Continuation` slot. Distinguishing `Resumed` from
+/// `Consumed` is what lets the runtime trap on a *late* resume (after the
+/// continuation's value has already been read back) the same way it traps on a
+/// double resume.
+enum ContinuationState {
+    /// Handed to the body but not yet resumed.
+    Pending,
+    /// `resume(...)` stored an outcome that has not been read yet.
+    Resumed(Eval),
+    /// The enclosing `with*Continuation` already read the value; any further
+    /// `resume(...)` is misuse.
+    Consumed,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -3107,7 +3122,9 @@ impl<'w> Interpreter<'w> {
             "withCheckedContinuation"
             | "withUnsafeContinuation"
             | "withCheckedThrowingContinuation"
-            | "withUnsafeThrowingContinuation" => self.eval_with_continuation(arg_nodes).map(Some),
+            | "withUnsafeThrowingContinuation" => {
+                self.eval_with_continuation(name, arg_nodes).map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -3117,27 +3134,51 @@ impl<'w> Interpreter<'w> {
     ///
     /// Our executor runs to completion at each `await` (ADR-0005), so the body
     /// either resumes the continuation inline or hands it to a spawned `Task`.
-    /// After the body returns we drain still-pending tasks (giving such a task
-    /// a chance to resume) before reading the slot. An unresumed continuation
-    /// traps, mirroring `CheckedContinuation`'s misuse diagnostic.
-    fn eval_with_continuation(&mut self, arg_nodes: &[Node<'static>]) -> Eval {
-        let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
-            EvalError::Unsupported("withCheckedContinuation without a body closure".into())
-        })?;
+    /// If it is not resumed inline we drive only the tasks *this body spawned*
+    /// (not unrelated earlier pending tasks) until the continuation is resumed.
+    /// An unresumed continuation traps, mirroring `CheckedContinuation`'s misuse
+    /// diagnostic.
+    fn eval_with_continuation(&mut self, name: &str, arg_nodes: &[Node<'static>]) -> Eval {
+        let body = self
+            .eval_body_closure(arg_nodes)?
+            .ok_or_else(|| EvalError::Unsupported(format!("{name} without a body closure")))?;
         let cid = self.continuations.len();
-        self.continuations.push(None);
+        self.continuations.push(ContinuationState::Pending);
+        let body_tasks_start = self.tasks.len();
         self.call_closure(body, vec![SwiftValue::Continuation(cid)])?;
-        if self.continuations[cid].is_none() {
-            // The body may have parked the continuation in a Task; run pending
-            // tasks so it gets resumed before we give up.
-            self.drain_pending_tasks()?;
+        if matches!(self.continuations[cid], ContinuationState::Pending) {
+            // The body parked the continuation in a task it spawned; drive only
+            // those tasks (in spawn order) until one resumes the continuation.
+            self.drive_tasks_until_resumed(cid, body_tasks_start)?;
         }
-        match self.continuations[cid].take() {
-            Some(result) => result,
-            None => Err(trap(
+        // Read the value and mark the slot consumed so a later resume traps.
+        match std::mem::replace(&mut self.continuations[cid], ContinuationState::Consumed) {
+            ContinuationState::Resumed(result) => result,
+            _ => Err(trap(
                 "continuation was not resumed before with*Continuation returned".into(),
             )),
         }
+    }
+
+    /// Drive the tasks spawned at or after `start` (in spawn order) until the
+    /// continuation `cid` is resumed, leaving any unrelated/earlier pending
+    /// tasks for normal program-end draining. A spawned task that fails with a
+    /// genuine interpreter error propagates; an uncaught Swift `throw` from a
+    /// detached task is dropped, matching [`drain_pending_tasks`].
+    fn drive_tasks_until_resumed(&mut self, cid: usize, start: usize) -> Result<(), Signal> {
+        let mut i = start;
+        while i < self.tasks.len() {
+            if matches!(self.continuations[cid], ContinuationState::Resumed(_)) {
+                break;
+            }
+            if matches!(self.tasks[i].state, TaskState::Pending) {
+                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
+                    return Err(sig);
+                }
+            }
+            i += 1;
+        }
+        Ok(())
     }
 
     /// Dispatch instance methods on a task handle or task group. Returns `None`
@@ -3191,11 +3232,12 @@ impl<'w> Interpreter<'w> {
                 }
                 let args = self.eval_args(arg_nodes)?;
                 let outcome = self.continuation_outcome(&args)?;
-                // `CheckedContinuation` traps on a second resume; mirror that.
-                if self.continuations[cid].is_some() {
+                // `CheckedContinuation` traps on a second *or late* resume: only
+                // a still-`Pending` slot accepts the outcome.
+                if !matches!(self.continuations[cid], ContinuationState::Pending) {
                     return Err(trap("continuation resumed more than once".into()));
                 }
-                self.continuations[cid] = Some(outcome);
+                self.continuations[cid] = ContinuationState::Resumed(outcome);
                 Ok(Some(SwiftValue::Void))
             }
             _ => Ok(None),
@@ -9189,6 +9231,33 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
             matches!(err, EvalError::Trap(ref m) if m.contains("more than once")),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn late_resume_after_completion_traps() {
+        // Capturing the continuation in a class and resuming it *after*
+        // `withCheckedContinuation` already returned is misuse and must trap,
+        // not be silently accepted.
+        let err = run(
+            "final class Box { var c: CheckedContinuation<Int, Never>? = nil }\nfunc value(_ box: Box) async -> Int {\n  await withCheckedContinuation { cont in\n    box.c = cont\n    cont.resume(returning: 1)\n  }\n}\nfunc run() async {\n  let box = Box()\n  let _ = await value(box)\n  box.c!.resume(returning: 2)\n}\nrun()\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Trap(ref m) if m.contains("more than once")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn continuation_does_not_drain_unrelated_pending_tasks() {
+        // An earlier detached task must NOT be forced to run just because a
+        // later continuation waits to be resolved: it stays pending until the
+        // program's end-of-scope drain, printing after the continuation result.
+        let out = run(
+            "func value() async -> Int {\n  await withCheckedContinuation { cont in\n    Task { cont.resume(returning: 5) }\n  }\n}\nfunc run() async {\n  Task { print(\"unrelated\") }\n  print(\"value \\(await value())\")\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "value 5\nunrelated\n");
     }
 
     #[test]
