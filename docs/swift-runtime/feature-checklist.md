@@ -188,7 +188,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | Closure expressions | ✅ | ★★★ | R3 |
 | [x] | Trailing closures (+ multiple) | ✅ | ★★ | R3 |
-| [x] | Shorthand args `$0 $1` | ✅ | ★★ | R3 |
+| [x] | Shorthand args `$0 $1` (incl. tuple-splat destructuring of a single tuple arg) | ✅ | ★★ | R3 |
 | [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
 | [~] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
 | [~] | `@escaping` closures | ✅ | ★★★ | R3 |

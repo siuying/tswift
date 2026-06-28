@@ -14,8 +14,9 @@ use tswift_frontend::{Analysis, Node, NodeKind};
 use crate::env::{BindError, Env, Scope};
 use crate::ops;
 use crate::stdlib::{
-    AlgoFn, Arg, BuiltinReceiver, FreeFn, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext,
-    StdError, StructMethodFn,
+    collection_range_bounds, materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, FreeFn,
+    LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext, StdError,
+    StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -320,6 +321,8 @@ pub struct Interpreter<'w> {
     free_fns: HashMap<String, FreeFn>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
+    /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
+    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
     /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
@@ -461,6 +464,7 @@ impl<'w> Interpreter<'w> {
             natives: HashMap::new(),
             free_fns: HashMap::new(),
             intrinsics: HashMap::new(),
+            labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
@@ -519,6 +523,9 @@ impl<'w> Interpreter<'w> {
         let mut keys: Vec<String> = Vec::new();
         keys.extend(self.free_fns.keys().cloned());
         for (recv, name) in self.intrinsics.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
+        for (recv, name) in self.labeled_intrinsics.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
         for (recv, name) in self.properties.keys() {
@@ -609,6 +616,17 @@ impl<'w> Interpreter<'w> {
         self.intrinsics.insert((recv, name.to_string()), entry);
     }
 
+    /// Register a label-aware method intrinsic on a builtin receiver type.
+    pub fn register_labeled_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: LabeledMethodEntry,
+    ) {
+        self.labeled_intrinsics
+            .insert((recv, name.to_string()), entry);
+    }
+
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
     /// Loop/`return` control flow cannot legitimately cross an intrinsic call.
     fn signal_to_std_error(sig: Signal) -> StdError {
@@ -631,6 +649,22 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Apply a stdlib method outcome, including mutating receiver write-back.
+    fn apply_method_outcome(
+        &mut self,
+        outcome: Outcome,
+        mutating: bool,
+        base_place: Option<Place>,
+    ) -> Eval {
+        let Outcome { result, receiver } = outcome;
+        if mutating {
+            if let Some(place) = base_place {
+                self.write_place(&place, receiver)?;
+            }
+        }
+        Ok(result)
+    }
+
     /// Dispatch a method call on a builtin receiver through the intrinsic
     /// registry, if one is registered. Returns `None` when no intrinsic matches
     /// so the caller can fall through to the existing ad-hoc paths.
@@ -645,18 +679,31 @@ impl<'w> Interpreter<'w> {
         let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
         let outcome = (entry.func)(self, recv_value, args);
         Some(match outcome {
-            Ok(Outcome { result, receiver }) => {
-                if entry.mutating {
-                    if let Some(place) = base_place {
-                        if let Err(sig) = self.write_place(&place, receiver) {
-                            return Some(Err(sig));
-                        }
-                    }
-                }
-                Ok(result)
-            }
+            Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, base_place),
             Err(err) => Err(Self::std_error_to_signal(err)),
         })
+    }
+
+    /// Dispatch a label-aware method call. `Ok(None)` from the stdlib handler
+    /// means this label shape is not one of its overloads, so normal positional
+    /// dispatch should continue.
+    fn dispatch_labeled_intrinsic(
+        &mut self,
+        recv_value: SwiftValue,
+        method: &str,
+        args: Vec<Arg>,
+        base_place: Option<Place>,
+    ) -> Option<Eval> {
+        let kind = BuiltinReceiver::of(&recv_value)?;
+        let entry = *self.labeled_intrinsics.get(&(kind, method.to_string()))?;
+        let outcome = (entry.func)(self, recv_value, args);
+        match outcome {
+            Ok(Some(outcome)) => {
+                Some(self.apply_method_outcome(outcome, entry.mutating, base_place))
+            }
+            Ok(None) => None,
+            Err(err) => Some(Err(Self::std_error_to_signal(err))),
+        }
     }
 
     /// Predeclare `Result<Success, Failure>` as a two-case enum so
@@ -2879,13 +2926,7 @@ impl<'w> Interpreter<'w> {
         }
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
-        for (i, p) in params.iter().enumerate() {
-            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
-            self.env.declare(&p.name, v, false);
-        }
-        for (i, v) in args.iter().enumerate() {
-            self.env.declare(&format!("${i}"), v.clone(), false);
-        }
+        self.bind_closure_args(&params, &body, &args);
         let mut values = Vec::new();
         let mut error = None;
         for stmt in &body {
@@ -2909,6 +2950,64 @@ impl<'w> Interpreter<'w> {
         match error {
             Some(e) => Err(e),
             None => Ok(values),
+        }
+    }
+
+    /// The greatest shorthand-argument index (`$0`, `$1`, …) referenced anywhere
+    /// in `node`'s subtree, used to decide a closure's implicit arity for
+    /// tuple-splat shorthand binding. `None` when no `$N` shorthand appears.
+    fn max_shorthand(node: &Node<'static>) -> Option<usize> {
+        let here = match node.kind() {
+            NodeKind::IdentExpr => node
+                .text()
+                .as_deref()
+                .and_then(|t| t.strip_prefix('$'))
+                .and_then(|d| d.parse::<usize>().ok()),
+            // `$0`/`$1` inside a string-interpolation segment (`"\($1)"`) are not
+            // separate AST nodes — the interpolation is re-parsed lazily — so
+            // scan the literal's interpolation text for shorthand references.
+            NodeKind::StringLiteral => node
+                .text()
+                .as_deref()
+                .and_then(max_shorthand_in_interpolations),
+            _ => None,
+        };
+        node.children()
+            .filter_map(|c| Self::max_shorthand(&c))
+            .chain(here)
+            .max()
+    }
+
+    /// Bind a user closure's named parameters and `$N` shorthands consistently
+    /// for both normal and result-builder closure evaluation.
+    fn bind_closure_args(&mut self, params: &[Param], body: &[Node<'static>], args: &[SwiftValue]) {
+        let shorthand_args = Self::shorthand_args(params, body, args);
+        for (i, p) in params.iter().enumerate() {
+            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
+            self.env.declare(&p.name, v, false);
+        }
+        for (i, v) in shorthand_args.iter().enumerate() {
+            self.env.declare(&format!("${i}"), v.clone(), false);
+        }
+    }
+
+    /// Tuple-splat shorthand: a closure that references `$1`, `$2`, … but is
+    /// called with a single tuple argument destructures the tuple across the
+    /// shorthands. A closure using only `$0` keeps the whole tuple as `$0`.
+    fn shorthand_args(
+        params: &[Param],
+        body: &[Node<'static>],
+        args: &[SwiftValue],
+    ) -> Vec<SwiftValue> {
+        match args {
+            [SwiftValue::Tuple(elems, _)] if params.is_empty() => {
+                let arity = body.iter().map(Self::max_shorthand).max().flatten();
+                match arity {
+                    Some(n) if n >= 1 && n + 1 == elems.len() => elems.clone(),
+                    _ => args.to_vec(),
+                }
+            }
+            _ => args.to_vec(),
         }
     }
 
@@ -2963,14 +3062,7 @@ impl<'w> Interpreter<'w> {
         let call_env = Env::with_captured(captured);
         let saved = std::mem::replace(&mut self.env, call_env);
 
-        // Bind named parameters, and always expose `$0`, `$1`, … shorthands.
-        for (i, p) in params.iter().enumerate() {
-            let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
-            self.env.declare(&p.name, v, false);
-        }
-        for (i, v) in args.iter().enumerate() {
-            self.env.declare(&format!("${i}"), v.clone(), false);
-        }
+        self.bind_closure_args(&params, &body, &args);
 
         // Evaluate the closure body statements, yielding the last value.
         let mut result = Ok(SwiftValue::Void);
@@ -3898,73 +3990,6 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Read `base[indices]`.
-    /// `Array.append(contentsOf:)` / `Array.insert(contentsOf:at:)` — splice the
-    /// elements of a sequence into the receiver, writing the result back through
-    /// `base`'s lvalue. The `contentsOf:` argument must be a flattenable
-    /// sequence (array or integer range); `at:` (for `insert`) is the index.
-    fn array_splice_contents_of(
-        &mut self,
-        receiver: SwiftValue,
-        base: &Node<'static>,
-        method: &str,
-        args: Vec<CallArg>,
-    ) -> Eval {
-        let SwiftValue::Array(items) = receiver else {
-            return Err(EvalError::Type("append/insert on a non-array receiver".into()).into());
-        };
-        let mut out = items.as_ref().clone();
-        // Validate the exact call shape so a stray/duplicate label cannot be
-        // silently ignored: `append(contentsOf:)` takes only `contentsOf:`;
-        // `insert(contentsOf:at:)` takes exactly `contentsOf:` and `at:`.
-        let allowed: &[&str] = if method == "append" {
-            &["contentsOf"]
-        } else {
-            &["contentsOf", "at"]
-        };
-        let mut seen = std::collections::HashSet::new();
-        for arg in &args {
-            match arg.label.as_deref() {
-                Some(label) if allowed.contains(&label) && seen.insert(label) => {}
-                other => {
-                    return Err(EvalError::Type(format!(
-                        "Array.{method} called with unexpected argument label {}",
-                        other.unwrap_or("_")
-                    ))
-                    .into())
-                }
-            }
-        }
-        let contents = args
-            .iter()
-            .find(|a| a.label.as_deref() == Some("contentsOf"))
-            .map(|a| a.value.clone())
-            .ok_or_else(|| EvalError::Type("missing contentsOf: argument".into()))?;
-        let extra = materialize_sequence(&contents).ok_or_else(|| {
-            EvalError::Type(format!(
-                "cannot use {} as a sequence for contentsOf:",
-                contents.type_name()
-            ))
-        })?;
-        if method == "append" {
-            out.extend(extra);
-        } else {
-            let at = args
-                .iter()
-                .find(|a| a.label.as_deref() == Some("at"))
-                .and_then(|a| match &a.value {
-                    SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-                    _ => None,
-                })
-                .ok_or_else(|| EvalError::Type("insert(contentsOf:at:) needs an index".into()))?;
-            if at > out.len() {
-                return Err(trap(format!("insert index {at} out of range")));
-            }
-            out.splice(at..at, extra);
-        }
-        self.assign_value_to(base, SwiftValue::Array(Rc::new(out)))?;
-        Ok(SwiftValue::Void)
-    }
-
     fn read_subscript(&mut self, base: &SwiftValue, indices: &[SwiftValue]) -> Eval {
         // `base[keyPath: kp]` — a key-path subscript walks the path from `base`.
         if let [idx] = indices {
@@ -3979,12 +4004,14 @@ impl<'w> Interpreter<'w> {
             let (lo, hi, inclusive) = (*lo, *hi, *inclusive);
             match base {
                 SwiftValue::Array(items) => {
-                    let (start, end) = slice_bounds(lo, hi, inclusive, items.len())?;
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (start, end) = collection_range_bounds(&range, items.len(), "subscript")?;
                     return Ok(SwiftValue::Array(Rc::new(items[start..end].to_vec())));
                 }
                 SwiftValue::Str(s) => {
                     let chars = crate::graphemes(s);
-                    let (start, end) = slice_bounds(lo, hi, inclusive, chars.len())?;
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (start, end) = collection_range_bounds(&range, chars.len(), "subscript")?;
                     return Ok(SwiftValue::Str(chars[start..end].concat()));
                 }
                 _ => {}
@@ -5219,26 +5246,9 @@ impl<'w> Interpreter<'w> {
 
     /// Expand a sequence value (range or array) into the values to iterate.
     fn iterate(&self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
-        match seq {
-            SwiftValue::Range { lo, hi, inclusive } => {
-                let end = if *inclusive { *hi + 1 } else { *hi };
-                Ok((*lo..end).map(SwiftValue::int).collect())
-            }
-            SwiftValue::Array(items) => Ok(items.as_ref().clone()),
-            // Iterating a dictionary yields `(key:, value:)` tuples.
-            SwiftValue::Dict(pairs) => Ok(pairs
-                .iter()
-                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
-                .collect()),
-            SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Str(s) => Ok(crate::graphemes(s)
-                .into_iter()
-                .map(SwiftValue::Str)
-                .collect()),
-            other => {
-                Err(EvalError::Type(format!("cannot iterate over {}", other.type_name())).into())
-            }
-        }
+        materialize_builtin_sequence(seq).ok_or_else(|| {
+            EvalError::Type(format!("cannot iterate over {}", seq.type_name())).into()
+        })
     }
 
     /// Evaluate a loop body, mapping `break`/`continue` (with optional labels) to
@@ -5940,8 +5950,8 @@ impl<'w> Interpreter<'w> {
                     .ok_or_else(|| EvalError::Type(format!("tuple index .{i} out of range")).into())
             }
             // Named tuple element access (`r.min` on `(min: 1, max: 9)`). This
-            // also serves a dictionary element's `.key`/`.value`, since those
-            // tuples carry the `key`/`value` labels (see `dict_element_tuple`).
+            // also serves a dictionary element's `.key`/`.value`, since
+            // `materialize_builtin_sequence` emits those tuple labels.
             (SwiftValue::Tuple(items, labels), name)
                 if SwiftValue::tuple_label_index(labels, name).is_some() =>
             {
@@ -6661,37 +6671,42 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        // `Array.append(contentsOf:)` / `insert(contentsOf:at:)` concatenate or
-        // splice a whole sequence rather than adding one element. The argument
-        // label is dropped before the value-only intrinsic seam, so the
-        // sequence-flattening overloads are resolved here while labels survive.
-        if matches!(
-            BuiltinReceiver::of(&base_value),
-            Some(BuiltinReceiver::Array)
-        ) && matches!(method.as_str(), "append" | "insert")
-        {
-            let args = self.eval_args(arg_nodes)?;
-            if args
-                .iter()
-                .any(|a| a.label.as_deref() == Some("contentsOf"))
+        let mut evaluated_args = None;
+
+        // Label-aware stdlib overloads (layer 1a): selected APIs need argument
+        // labels to choose between overloads without leaking that policy into the
+        // interpreter dispatcher.
+        if let Some(kind) = BuiltinReceiver::of(&base_value) {
+            if self
+                .labeled_intrinsics
+                .contains_key(&(kind, method.clone()))
             {
-                return self.array_splice_contents_of(base_value, &base, &method, args);
+                let args = self.eval_args(arg_nodes)?;
+                let labeled: Vec<Arg> = args
+                    .iter()
+                    .map(|a| Arg {
+                        label: a.label.clone(),
+                        value: a.value.clone(),
+                    })
+                    .collect();
+                let place = self.resolve_place(&base);
+                if let Some(result) =
+                    self.dispatch_labeled_intrinsic(base_value.clone(), &method, labeled, place)
+                {
+                    return result;
+                }
+                evaluated_args = Some(args);
             }
-            // Plain single-element overload: dispatch with the already-evaluated
-            // arguments (avoid re-evaluating side-effecting argument exprs).
-            let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
-            let place = self.resolve_place(&base);
-            if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
-                return result;
-            }
-            unreachable!("Array.{method} intrinsic registered above");
         }
 
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
-                let args = self.eval_args(arg_nodes)?;
+                let args = match evaluated_args.take() {
+                    Some(args) => args,
+                    None => self.eval_args(arg_nodes)?,
+                };
                 // `IndexPath`/`IndexSet` intrinsics take positional arguments.
                 // The sole exception is `IndexSet.update(with:)`, whose one
                 // argument is labelled `with:` (and requires that label).
@@ -7798,37 +7813,7 @@ impl<'w> Interpreter<'w> {
 /// Eagerly materialize a builtin sequence value into a `Vec` of its elements,
 /// or `None` if the value is not a sequence the tree-walker can expand.
 fn materialize_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
-    match value {
-        SwiftValue::Array(items) => Some(items.as_ref().clone()),
-        SwiftValue::Range { lo, hi, inclusive } => {
-            let end = if *inclusive { *hi + 1 } else { *hi };
-            Some((*lo..end).map(SwiftValue::int).collect())
-        }
-        SwiftValue::Str(s) => Some(
-            crate::graphemes(s)
-                .into_iter()
-                .map(SwiftValue::Str)
-                .collect(),
-        ),
-        // A dictionary is a sequence of `(key, value)` tuples.
-        SwiftValue::Dict(pairs) => Some(
-            pairs
-                .iter()
-                .map(|(k, v)| dict_element_tuple(k.clone(), v.clone()))
-                .collect(),
-        ),
-        SwiftValue::Set(items) => Some(items.as_ref().clone()),
-        _ => None,
-    }
-}
-
-/// A dictionary element `(key:, value:)` tuple, carrying the Swift labels so
-/// both `element.key`/`element.value` access and printing behave like Swift.
-fn dict_element_tuple(key: SwiftValue, value: SwiftValue) -> SwiftValue {
-    SwiftValue::tuple_labeled(
-        vec![key, value],
-        vec![Some("key".to_string()), Some("value".to_string())],
-    )
+    materialize_builtin_sequence(value)
 }
 
 /// The capability surface the standard-library seam sees: a narrow window onto
@@ -8497,29 +8482,52 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
     }
 }
 
-/// Extract a single integer subscript index from evaluated index args.
-/// Resolve a `lo..<hi` / `lo...hi` integer range into validated `start..end`
-/// slice bounds against a collection of length `len`. Traps (Swift `fatalError`)
-/// when the range escapes `0...len` or is inverted.
-fn slice_bounds(lo: i128, hi: i128, inclusive: bool, len: usize) -> Result<(usize, usize), Signal> {
-    // Validate against the *raw* bounds first: both `a..<b` and `a...b` require
-    // `b >= a` (a closed `2...1` is inverted and traps). Computing `end` before
-    // this check would mask `inclusive` inversions, since `hi + 1` can lift an
-    // inverted upper bound back to `== lo`.
-    if lo < 0 || hi < lo {
-        return Err(trap(format!(
-            "invalid range {lo}..{}{hi} for collection of length {len}",
-            if inclusive { "=" } else { "<" }
-        )));
+/// Scan a string literal's *interpolation* segments (`\( … )`) for shorthand
+/// argument references (`$0`, `$1`, …) and return the greatest index found.
+/// Only text inside `\(…)` is considered, so a literal `"$1"` outside an
+/// interpolation is ignored.
+fn max_shorthand_in_interpolations(raw: &str) -> Option<usize> {
+    let bytes: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    let mut max: Option<usize> = None;
+    while i < bytes.len() {
+        if bytes[i] == '\\' && i + 1 < bytes.len() && bytes[i + 1] == '(' {
+            // Capture the balanced interpolation body.
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                if depth == 0 {
+                    break;
+                }
+                j += 1;
+            }
+            // Scan the fragment `bytes[i+2..j]` for `$<digits>`.
+            let mut k = i + 2;
+            while k < j {
+                if bytes[k] == '$' {
+                    let mut d = String::new();
+                    let mut m = k + 1;
+                    while m < j && bytes[m].is_ascii_digit() {
+                        d.push(bytes[m]);
+                        m += 1;
+                    }
+                    if let Ok(n) = d.parse::<usize>() {
+                        max = Some(max.map_or(n, |c| c.max(n)));
+                    }
+                }
+                k += 1;
+            }
+            i = j + 1;
+        } else {
+            i += 1;
+        }
     }
-    let end = if inclusive { hi + 1 } else { hi };
-    if end > len as i128 {
-        return Err(trap(format!(
-            "range {lo}..{}{hi} out of bounds for collection of length {len}",
-            if inclusive { "=" } else { "<" }
-        )));
-    }
-    Ok((lo as usize, end as usize))
+    max
 }
 
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
