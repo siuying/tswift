@@ -12,6 +12,7 @@ use std::rc::Rc;
 use tswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{Env, Scope};
+use crate::fragment_cache::{FragmentCache, FragmentError};
 use crate::ops;
 use crate::stdlib::{
     materialize_builtin_sequence, AlgoFn, BuiltinReceiver, FreeFn, LabeledMethodEntry, MethodEntry,
@@ -405,6 +406,10 @@ pub struct Interpreter<'w> {
     /// call-site parameter type when its own node lacks an inferred type. The
     /// top of the stack is the active hint; `None` entries mean "no hint".
     type_hint: Vec<Option<String>>,
+    /// Interpreter-owned cache of interpolation-fragment analyses (ADR-0007).
+    /// Replaces the per-evaluation `Box::leak`: a repeated fragment is analyzed
+    /// once, and the whole cache is reclaimed when the interpreter drops.
+    fragment_cache: FragmentCache,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -468,6 +473,7 @@ impl<'w> Interpreter<'w> {
             // nanos are used as-is rather than forcing the low bit.
             rng_state: initial_rng_seed(),
             type_hint: Vec::new(),
+            fragment_cache: FragmentCache::default(),
         }
     }
 
@@ -3239,16 +3245,22 @@ impl<'w> Interpreter<'w> {
     /// Evaluate an interpolated expression fragment against the current scope,
     /// reusing this interpreter (and thus its type/function tables).
     ///
-    /// The fragment's analysis is intentionally leaked so its AST nodes live for
-    /// `'static`, matching the interpreter's AST lifetime. Fragments are tiny and
-    /// a program is run once, so the leak is bounded and acceptable.
+    /// The fragment's analysis is owned by the interpreter's [`FragmentCache`]
+    /// (ADR-0007): a repeated fragment is analyzed once, and every cached
+    /// analysis is reclaimed when the interpreter drops, so a long-running host
+    /// runs in bounded memory.
     fn eval_interpolation(&mut self, fragment: &str) -> Result<SwiftValue, Signal> {
-        let analysis = Analysis::analyze(fragment, "interpolation")
-            .map_err(|e| EvalError::Type(format!("interpolation parse error: {e}")))?;
-        if !analysis.is_ok() {
-            return Err(EvalError::Type(format!("invalid interpolation `{fragment}`")).into());
-        }
-        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let analysis = self
+            .fragment_cache
+            .get_or_analyze(fragment)
+            .map_err(|e| match e {
+                FragmentError::Parse(msg) => {
+                    EvalError::Type(format!("interpolation parse error: {msg}"))
+                }
+                FragmentError::Invalid => {
+                    EvalError::Type(format!("invalid interpolation `{fragment}`"))
+                }
+            })?;
         let root = analysis.root();
         // Evaluate the wrapped expression statement directly.
         self.eval(&root)
@@ -4990,6 +5002,46 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
     fn string_interpolation_renders_expressions() {
         let out = run("let n = 6\nprint(\"n*n = \\(n * n)\")\n").unwrap();
         assert_eq!(out, "n*n = 36\n");
+    }
+
+    #[test]
+    fn repeated_interpolation_analyzes_fragment_once() {
+        // A loop printing the same "\(i)" fragment N times must cache one
+        // analysis, not leak one per render (ADR-0007).
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        for _ in 0..50 {
+            interp.eval_interpolation("1 + 2").expect("eval");
+        }
+        assert_eq!(interp.fragment_cache.len(), 1);
+    }
+
+    #[test]
+    fn distinct_interpolations_grow_cache_by_distinct_count() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        // Three distinct fragments, each evaluated twice → cache holds three.
+        for _ in 0..2 {
+            interp.eval_interpolation("1 + 2").expect("eval");
+            interp.eval_interpolation("3 * 4").expect("eval");
+            interp.eval_interpolation("5 - 1").expect("eval");
+        }
+        assert_eq!(interp.fragment_cache.len(), 3);
+    }
+
+    #[test]
+    fn dropping_interpreter_reclaims_fragment_cache() {
+        // Scoped block: the cache (and its boxed analyses) drop with the
+        // interpreter, so nothing leaks across sessions.
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            interp.eval_interpolation("42").expect("eval");
+            assert_eq!(interp.fragment_cache.len(), 1);
+        }
+        // A fresh interpreter starts with an empty cache.
+        let interp = Interpreter::new(&mut buf);
+        assert_eq!(interp.fragment_cache.len(), 0);
     }
 
     #[test]
