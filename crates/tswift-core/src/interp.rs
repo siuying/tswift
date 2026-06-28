@@ -367,6 +367,10 @@ pub struct Interpreter<'w> {
     /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
     /// `SwiftValue::Task` drives the matching slot to completion.
     tasks: Vec<TaskSlot>,
+    /// Stack of currently-executing task ids (innermost last), so
+    /// `Task.isCancelled` / `Task.checkCancellation()` reflect the running
+    /// task's cooperative-cancellation flag (ADR-0005).
+    current_task: Vec<usize>,
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
@@ -475,6 +479,7 @@ impl<'w> Interpreter<'w> {
             defer_stack: Vec::new(),
             main_type: None,
             tasks: Vec::new(),
+            current_task: Vec::new(),
             groups: Vec::new(),
             continuations: Vec::new(),
             filename: "main.swift".into(),
@@ -3008,11 +3013,17 @@ impl<'w> Interpreter<'w> {
     /// Register a 0-argument closure body as a task and return its handle index.
     fn spawn_task_closure(&mut self, closure_id: usize) -> usize {
         let id = self.tasks.len();
+        // A child task spawned inside an already-cancelled task inherits its
+        // cancellation (structured-concurrency propagation, ADR-0005).
+        let inherited = self
+            .current_task
+            .last()
+            .is_some_and(|&parent| self.tasks[parent].cancelled);
         self.tasks.push(TaskSlot {
             closure: closure_id,
             class_ctx: self.class_ctx.clone(),
             state: TaskState::Pending,
-            cancelled: false,
+            cancelled: inherited,
         });
         id
     }
@@ -3032,6 +3043,23 @@ impl<'w> Interpreter<'w> {
         self.spawn_task_closure(closure_id)
     }
 
+    /// Whether the innermost running task is cancelled (`false` when no task is
+    /// on the stack, i.e. top-level code).
+    fn current_task_cancelled(&self) -> bool {
+        self.current_task
+            .last()
+            .is_some_and(|&id| self.tasks[id].cancelled)
+    }
+
+    /// A fresh `CancellationError` value (the stdlib error thrown by
+    /// `Task.checkCancellation()`), modelled as an empty conforming struct.
+    fn cancellation_error() -> SwiftValue {
+        SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "CancellationError".into(),
+            fields: Vec::new(),
+        }))
+    }
+
     /// Drive task `id` to completion (cooperatively, on the current stack) and
     /// return its memoized outcome. Re-awaiting a finished task returns the
     /// stored result; awaiting a task that is mid-flight is a deadlock trap.
@@ -3047,7 +3075,9 @@ impl<'w> Interpreter<'w> {
         let ctx = self.tasks[id].class_ctx.clone();
         self.tasks[id].state = TaskState::Running;
         let saved_ctx = std::mem::replace(&mut self.class_ctx, ctx);
+        self.current_task.push(id);
         let result = self.call_closure(closure, Vec::new());
+        self.current_task.pop();
         self.class_ctx = saved_ctx;
         self.tasks[id].state = TaskState::Done(result.clone());
         result
@@ -5709,6 +5739,11 @@ impl<'w> Interpreter<'w> {
                             return self.memory_layout_member(&ty, &member);
                         }
                     }
+                    // `Task.isCancelled` — the running task's cooperative
+                    // cancellation flag (`false` outside any task).
+                    if type_name == "Task" && member == "isCancelled" {
+                        return Ok(SwiftValue::Bool(self.current_task_cancelled()));
+                    }
                     // `Type.self` — a metatype value naming the type.
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
@@ -6342,8 +6377,16 @@ impl<'w> Interpreter<'w> {
                     })?;
                     return Ok(SwiftValue::Task(self.spawn_task_closure(closure)));
                 }
+                // `Task.checkCancellation()` throws `CancellationError` when the
+                // running task is cancelled, else does nothing.
+                "checkCancellation" => {
+                    if self.current_task_cancelled() {
+                        return Err(Signal::Throw(Self::cancellation_error()));
+                    }
+                    return Ok(SwiftValue::Void);
+                }
                 // Cooperative no-ops on our single-threaded executor.
-                "yield" | "sleep" | "checkCancellation" => return Ok(SwiftValue::Void),
+                "yield" | "sleep" => return Ok(SwiftValue::Void),
                 _ => {}
             }
         }

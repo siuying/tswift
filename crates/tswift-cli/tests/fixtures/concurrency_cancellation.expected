@@ -1,0 +1,5 @@
+isCancelled: true
+value: -1
+threw CancellationError
+child inherited cancel: true
+top-level isCancelled: false

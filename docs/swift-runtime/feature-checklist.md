@@ -295,7 +295,7 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 | [x] | `async let` | ⚠️ | ★★★★ | R6+ |
 | [x] | `Task` / `Task.detached` | ✅(stdlib) | ★★★★ | R6+ |
 | [x] | Task groups (`withTaskGroup`) | ✅(stdlib) | ★★★★ | R6+ |
-| [~] | Task cancellation | n/a | ★★★ | R6+ |
+| [x] | Task cancellation (`cancel()`/`isCancelled`/`Task.isCancelled`/`checkCancellation()`+`CancellationError`, child inheritance) | n/a | ★★★ | R6+ |
 | [x] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
 | [~] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
 | [x] | `@MainActor` / global actors | ✅ | ★★★★ | R6+ |
