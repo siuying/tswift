@@ -42,6 +42,10 @@ impl Analysis {
                         message: d.message,
                         line: d.line,
                         col: d.col,
+                        severity: match d.severity {
+                            tswift_sema::Severity::Warning => Severity::Warning,
+                            tswift_sema::Severity::Error => Severity::Error,
+                        },
                     })
                     .collect();
                 (ast, diagnostics)
@@ -54,6 +58,7 @@ impl Analysis {
                     message: e.message,
                     line: e.line,
                     col: e.col,
+                    severity: Severity::Error,
                 }],
             ),
         };
@@ -72,9 +77,10 @@ impl Analysis {
         self.diagnostics.clone()
     }
 
-    /// Returns `true` if analysis produced no errors.
+    /// Returns `true` if analysis produced no error-severity diagnostics.
+    /// Warnings (e.g. `#warning`) do not make analysis fail.
     pub fn is_ok(&self) -> bool {
-        self.diagnostics.is_empty()
+        !self.diagnostics.iter().any(Diagnostic::is_error)
     }
 }
 
@@ -491,12 +497,30 @@ pub struct VarAccessors<'a> {
     pub did_set_param: Option<String>,
 }
 
-/// One analysis diagnostic (syntax or semantic error).
+/// Severity of a [`Diagnostic`]. Errors block execution; warnings are advisory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Severity {
+    /// Advisory diagnostic (e.g. `#warning`); the program still runs.
+    Warning,
+    /// Fatal diagnostic (e.g. `#error`, a type error); blocks execution.
+    #[default]
+    Error,
+}
+
+/// One analysis diagnostic (syntax or semantic error/warning).
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub message: String,
     pub line: u32,
     pub col: u32,
+    pub severity: Severity,
+}
+
+impl Diagnostic {
+    /// Whether this diagnostic is an error (blocks execution).
+    pub fn is_error(&self) -> bool {
+        self.severity == Severity::Error
+    }
 }
 
 /// Why [`Analysis::analyze`] could not produce a result.
