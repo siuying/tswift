@@ -1,3 +1,4 @@
-cargo fmt
-cargo clippy
-cargo test
+#!/usr/bin/env bash
+set -euo pipefail
+
+./scripts/validate rust
