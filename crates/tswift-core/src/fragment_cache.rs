@@ -17,7 +17,7 @@
 //! edits:
 //!
 //! 1. **Stable addresses.** Each `Analysis` is stored behind a `Box`, so its heap
-//!    address never moves when the backing `Vec` reallocates — pushing later
+//!    address never moves when the backing `HashMap` rehashes — inserting later
 //!    fragments only moves box pointers, never the `Analysis` itself. A
 //!    `&'static Analysis` handed out earlier therefore stays valid.
 //!
@@ -44,16 +44,13 @@ use tswift_frontend::Analysis;
 /// sound.
 #[derive(Default)]
 pub(crate) struct FragmentCache {
-    /// Boxed analyses, each at a stable heap address. Never shrinks.
+    /// Fragment source text → its boxed analysis. Append-only; never shrinks.
     ///
     /// The `Box` is load-bearing, not redundant: it keeps each `Analysis` at a
-    /// fixed address when the `Vec` reallocates, so the `&'static` references
-    /// handed out earlier stay valid. `Vec<Analysis>` would move the analyses on
-    /// growth and dangle those references — see the module `SAFETY` block.
-    #[allow(clippy::vec_box)]
-    entries: Vec<Box<Analysis>>,
-    /// Fragment source text → index into `entries`.
-    index: HashMap<String, usize>,
+    /// fixed address when the map rehashes, so the `&'static` references handed
+    /// out earlier stay valid. A `HashMap<String, Analysis>` would move the
+    /// analyses on growth and dangle those references — see the `SAFETY` block.
+    entries: HashMap<String, Box<Analysis>>,
 }
 
 /// Why analyzing an interpolation fragment failed.
@@ -72,18 +69,19 @@ impl FragmentCache {
     /// the returned reference points into that owned storage (see the
     /// module-level `SAFETY` block).
     pub(crate) fn get_or_analyze(&mut self, src: &str) -> Result<&'static Analysis, FragmentError> {
-        if let Some(&idx) = self.index.get(src) {
-            return Ok(Self::as_static(&self.entries[idx]));
+        if let Some(existing) = self.entries.get(src) {
+            return Ok(Self::as_static(existing));
         }
         let analysis = Analysis::analyze(src, "interpolation")
             .map_err(|e| FragmentError::Parse(e.to_string()))?;
         if !analysis.is_ok() {
             return Err(FragmentError::Invalid);
         }
-        let idx = self.entries.len();
-        self.entries.push(Box::new(analysis));
-        self.index.insert(src.to_string(), idx);
-        Ok(Self::as_static(&self.entries[idx]))
+        let entry = self
+            .entries
+            .entry(src.to_string())
+            .or_insert_with(|| Box::new(analysis));
+        Ok(Self::as_static(entry))
     }
 
     /// Number of distinct fragments currently cached.
