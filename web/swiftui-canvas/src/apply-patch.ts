@@ -5,6 +5,7 @@
 
 import { applyModifiers } from "./modifier-css.js";
 import type { Modifier } from "./modifier-css.js";
+import { sfGlyph } from "./sf-symbols.js";
 
 /** A UIIR node from `tswift swiftui render` / patch payloads. */
 export interface UiirNode {
@@ -269,6 +270,28 @@ export class PatchApplier {
         el.style.cssText = "flex:1 1 auto;";
         return el;
       }
+      case "Label": {
+        // An icon + title row.
+        const el = document.createElement("span");
+        el.style.cssText = "display:inline-flex;align-items:center;gap:6px;";
+        const icon = document.createElement("span");
+        icon.className = "label-icon";
+        const text = document.createElement("span");
+        text.className = "label-text";
+        el.append(icon, text);
+        return el;
+      }
+      case "Image": {
+        const el = document.createElement("span");
+        el.style.cssText = "display:inline-flex;align-items:center;justify-content:center;";
+        return el;
+      }
+      case "ProgressView": {
+        // Native <progress>: determinate when `value` is set, else indeterminate.
+        const el = document.createElement("progress");
+        el.max = 1;
+        return el;
+      }
       case "Button": {
         const el = document.createElement("button");
         el.addEventListener("click", () => this.emit(node.id, "tap", null));
@@ -366,6 +389,30 @@ export class PatchApplier {
       // `minLength:` is the spacer's minimum length along the stack axis (C2).
       if (typeof args.minLength === "number") {
         el.style.flexBasis = `${args.minLength}px`;
+      }
+    } else if (kind === "Label") {
+      const icon = el.querySelector(".label-icon");
+      const text = el.querySelector(".label-text");
+      if (icon) icon.textContent = typeof args.systemImage === "string" ? sfGlyph(args.systemImage) : "";
+      if (text) text.textContent = typeof args.title === "string" ? args.title : "";
+    } else if (kind === "Image") {
+      if (typeof args.systemName === "string") {
+        el.textContent = sfGlyph(args.systemName);
+        el.removeAttribute("title"); // clear any stale asset-name tooltip
+      } else if (typeof args.name === "string") {
+        // No asset bundle on the web; show a placeholder labelled by name.
+        el.textContent = "\u{1F5BC}"; // 🖼
+        el.title = args.name;
+      } else {
+        el.textContent = "";
+        el.removeAttribute("title");
+      }
+    } else if (kind === "ProgressView" && el instanceof HTMLProgressElement) {
+      if (typeof args.value === "number") {
+        el.max = typeof args.total === "number" ? args.total : 1;
+        el.value = args.value;
+      } else {
+        el.removeAttribute("value"); // indeterminate
       }
     } else if (kind === "ScrollView") {
       // `axes` switches the scroll direction (C3); default is vertical.
