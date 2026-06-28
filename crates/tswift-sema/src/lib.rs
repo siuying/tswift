@@ -275,22 +275,35 @@ impl Resolver<'_> {
                     // `#warning("msg")` / `#error("msg")` raise a diagnostic at
                     // the directive's location; the string child is the message.
                     Some("#warning") | Some("#error") => {
-                        let severity = if n.text() == Some("#error") {
+                        let directive = n.text().unwrap_or("#warning");
+                        let severity = if directive == "#error" {
                             Severity::Error
                         } else {
                             Severity::Warning
                         };
-                        let msg = kids
-                            .first()
-                            .and_then(|&c| ast.node(c).text())
-                            .map(decode_string_literal)
-                            .unwrap_or_default();
-                        self.diags.push(Diagnostic {
-                            message: msg,
-                            line: n.line(),
-                            col: n.col(),
-                            severity,
-                        });
+                        // Swift requires a single string-literal argument.
+                        let arg = kids.first().map(|&c| ast.node(c));
+                        match arg {
+                            Some(a) if a.kind() == NodeKind::StringLiteral => {
+                                let msg = a.text().map(decode_string_literal).unwrap_or_default();
+                                self.diags.push(Diagnostic {
+                                    message: msg,
+                                    line: n.line(),
+                                    col: n.col(),
+                                    severity,
+                                });
+                            }
+                            _ => {
+                                self.diags.push(Diagnostic {
+                                    message: format!(
+                                        "expected a string literal argument to '{directive}'"
+                                    ),
+                                    line: n.line(),
+                                    col: n.col(),
+                                    severity: Severity::Error,
+                                });
+                            }
+                        }
                     }
                     _ => {
                         for &c in &kids {
@@ -682,31 +695,73 @@ fn child_ids(ast: &Ast, id: NodeId) -> Vec<NodeId> {
     ast.node(id).children().map(|c| c.id()).collect()
 }
 
-/// Decode the literal text of a string node (`"..."`) into its content for use
-/// in a diagnostic message: strip the surrounding quotes and unescape the
-/// common escapes. Non-string text is returned unchanged.
-fn decode_string_literal(text: &str) -> String {
-    let inner = text
+/// Decode the literal text of a string node into its content for use in a
+/// diagnostic message. Handles raw strings (`#"..."#`), multiline strings
+/// (`""".."""`), and the common escapes (`\n \t \r \0 \\ \" \' \u{...}`).
+/// Non-string text is returned unchanged. Mirrors the runtime decoder in
+/// `tswift_core::interp` (the crates cannot share it without a dependency
+/// cycle: `tswift-core` depends on the frontend, not vice versa).
+fn decode_string_literal(raw: &str) -> String {
+    if raw.starts_with('#') {
+        let hashes = raw.chars().take_while(|&c| c == '#').count();
+        let inner = &raw[hashes..raw.len().saturating_sub(hashes)];
+        let inner = inner
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(inner);
+        return inner.to_string();
+    }
+    if let Some(body) = raw
+        .strip_prefix("\"\"\"")
+        .and_then(|s| s.strip_suffix("\"\"\""))
+    {
+        let body = body.trim_start_matches('\n').trim_end_matches([' ', '\t']);
+        return decode_escapes(body);
+    }
+    let body = raw
         .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .unwrap_or(text);
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(raw);
+    decode_escapes(body)
+}
+
+/// Unescape the common Swift string escapes within an already-unquoted body.
+fn decode_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('"') => out.push('"'),
-                Some('\\') => out.push('\\'),
-                Some(other) => {
-                    out.push('\\');
-                    out.push(other);
-                }
-                None => out.push('\\'),
-            }
-        } else {
+        if c != '\\' {
             out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some('u') => {
+                if chars.peek() == Some(&'{') {
+                    chars.next();
+                    let mut hex = String::new();
+                    for h in chars.by_ref() {
+                        if h == '}' {
+                            break;
+                        }
+                        hex.push(h);
+                    }
+                    if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        out.push(ch);
+                    }
+                }
+            }
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
         }
     }
     out
@@ -792,6 +847,29 @@ mod tests {
         assert_eq!(diags.len(), 1, "{diags:?}");
         assert_eq!(diags[0].severity, Severity::Error);
         assert_eq!(diags[0].message, "broken");
+    }
+
+    #[test]
+    fn pound_warning_decodes_escapes_and_unicode() {
+        let (_ast, diags) = resolved(r#"#warning("a\tb\u{21}")"#);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].message, "a\tb!");
+    }
+
+    #[test]
+    fn pound_warning_decodes_raw_string() {
+        let (_ast, diags) = resolved("#warning(#\"no\\nescape\"#)");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].message, "no\\nescape");
+    }
+
+    #[test]
+    fn pound_warning_without_string_literal_is_error() {
+        // A non-string-literal argument is rejected as an error.
+        let (_ast, diags) = resolved("#warning(42)");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert!(diags[0].message.contains("string literal"), "{diags:?}");
     }
 
     #[test]

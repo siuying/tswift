@@ -125,7 +125,10 @@ fn run(paths: &[String]) -> ExitCode {
     let mut had_error = false;
     for diag in analysis.diagnostics() {
         let kind = if diag.is_error() { "error" } else { "warning" };
-        eprintln!("{}:{}: {}: {}", diag.line, diag.col, kind, diag.message);
+        eprintln!(
+            "{path}:{}:{}: {kind}: {}",
+            diag.line, diag.col, diag.message
+        );
         had_error |= diag.is_error();
     }
     if had_error {
