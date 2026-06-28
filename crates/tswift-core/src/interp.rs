@@ -6730,16 +6730,22 @@ impl<'w> Interpreter<'w> {
         // keeps strong count 1 and is mutated in place. The end-of-call
         // write-back restores the storage we vacated here.
         let this = if mutating && matches!(this, SwiftValue::Struct(_)) {
-            if let Some(place) = &base_place {
-                drop(this);
-                let mut taken = self.read_place(place)?;
-                self.write_place(place, SwiftValue::Void)?;
-                if let SwiftValue::Struct(rc) = &mut taken {
-                    let _ = Rc::make_mut(rc);
+            // Only a *root* stored binding is vacated: vacating a nested member
+            // (`outer.buffer.append(...)`) would route the placeholder write
+            // through `willSet`/`didSet`/computed setters/property wrappers,
+            // which must not observe the transient. Nested receivers keep the
+            // pre-existing clone-and-write-back behaviour.
+            match &base_place {
+                Some(place) if place.path.is_empty() => {
+                    drop(this);
+                    let mut taken = self.read_place(place)?;
+                    self.write_place(place, SwiftValue::Void)?;
+                    if let SwiftValue::Struct(rc) = &mut taken {
+                        let _ = Rc::make_mut(rc);
+                    }
+                    taken
                 }
-                taken
-            } else {
-                this
+                _ => this,
             }
         } else {
             this
