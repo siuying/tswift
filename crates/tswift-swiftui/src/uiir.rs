@@ -175,6 +175,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "FontWeight" => "weight",
             "TextAlignment" => "textAlign",
             "TextCase" => "textCase",
+            "Axis" => "axis",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -291,6 +292,15 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"frame","value":{"maxWidth":{"$":"infinity"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn c3_structural_containers_serialize() {
+        let json = render_json(r#"ScrollView(.horizontal) { Group { Text("a"); Divider() } }"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"ScrollView","args":{"axes":{"$":"axis","name":"horizontal"}},"modifiers":[],"children":[{"id":"0.0","kind":"Group","args":{},"modifiers":[],"children":[{"id":"0.0.0","kind":"Text","args":{"verbatim":"a"},"modifiers":[],"children":[]},{"id":"0.0.1","kind":"Divider","args":{},"modifiers":[],"children":[]}]}]}"#
         );
     }
 

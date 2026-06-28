@@ -79,4 +79,9 @@ final class SnapshotTests: XCTestCase {
     func testPicker() throws { try runFixture("picker") }
     func testEnvironment() throws { try runFixture("environment") }
     func testSections() throws { try runFixture("sections") }
+    // C1/C2/C3 breadth fixtures (previously only covered by the Rust goldens).
+    func testTextStyling() throws { try runFixture("text-styling") }
+    func testLayout() throws { try runFixture("layout") }
+    func testContainers() throws { try runFixture("containers") }
+    func testScrollHorizontal() throws { try runFixture("scroll-horizontal") }
 }

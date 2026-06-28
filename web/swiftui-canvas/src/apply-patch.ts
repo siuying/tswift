@@ -221,11 +221,25 @@ export class PatchApplier {
         el.dataset.zstack = "1";
         return el;
       }
-      case "ForEach": {
-        // A transparent group: its keyed rows lay out as if direct children of
-        // the surrounding container.
+      case "ForEach":
+      case "Group": {
+        // A transparent group: its children lay out as if direct children of
+        // the surrounding container (no box of its own).
         const el = document.createElement("div");
         el.style.cssText = "display:contents;";
+        return el;
+      }
+      case "Divider": {
+        // A thin rule; stretches across the container's cross axis.
+        const el = document.createElement("div");
+        el.style.cssText =
+          "flex:0 0 auto;align-self:stretch;min-width:1px;min-height:1px;background:var(--swiftui-separator, #e0e0e0);";
+        return el;
+      }
+      case "ScrollView": {
+        // A scroll container. Default axis is vertical; `axes` arg may switch it.
+        const el = document.createElement("div");
+        el.style.cssText = "display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;";
         return el;
       }
       case "List": {
@@ -352,6 +366,14 @@ export class PatchApplier {
       // `minLength:` is the spacer's minimum length along the stack axis (C2).
       if (typeof args.minLength === "number") {
         el.style.flexBasis = `${args.minLength}px`;
+      }
+    } else if (kind === "ScrollView") {
+      // `axes` switches the scroll direction (C3); default is vertical.
+      const axis = args.axes as { name?: string } | undefined;
+      if (axis?.name === "horizontal") {
+        el.style.flexDirection = "row";
+        el.style.overflowX = "auto";
+        el.style.overflowY = "hidden";
       }
     } else if (kind === "Button" && typeof args.title === "string") {
       el.textContent = args.title;

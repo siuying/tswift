@@ -74,6 +74,11 @@ node kinds; high-frequency containers before niche; compositing last.
   `frame`; widen the args object and the host readers.
 - `padding(.horizontal/.vertical/.edges, _)` — **new `Edge`/`Edge.Set` token** +
   optional length; web → directional padding, iOS → `.padding(edges, len)`.
+  ⚠️ `Edge.horizontal`/`.vertical` collide with C3's `Axis.horizontal`/`.vertical`
+  and `Edge.leading`/`.trailing` with C1's `TextAlignment`; bare leading-dot
+  forms are ambiguous under untyped builtin params, so these need typed prelude
+  shims (or qualified `Edge.horizontal`) — same blocker as `alignment:`/`.infinity`
+  (deferred, issue #189).
 - Stack `spacing:` and `alignment:` args on `VStack`/`HStack`/`ZStack`
   (`x_init` reads the labeled args → fields; web flex `gap`/`align-items`, iOS
   native stack params).
