@@ -7,6 +7,13 @@ description: Autonomous iterative problem-solving loop. Given any problem (fix a
 
 An autonomous iterate-and-bookkeep loop. Each iteration goes through four gates before a commit lands: **implement → review → verify → commit**.
 
+1. Survey & Plan
+2. Repeat until goal is reached or user interrupts:
+   - Implement
+   - Review
+   - Verify
+   - Commit or Discard
+
 ## Phase 1 — Survey & Plan
 
 1. Read `AGENTS.md`, `README.md`, or equivalent project root docs.
@@ -22,11 +29,11 @@ An autonomous iterate-and-bookkeep loop. Each iteration goes through four gates 
    - Offer to scaffold it (write the test file, benchmark harness, or lint config).
    - Get user confirmation before scaffolding, then add it as iteration #0 (`keep`, no metric delta).
 5. Determine the **iteration strategy**: ordered list of experiment ideas, simple → complex.
-6. Present plan to user and **wait for confirmation**:
+6. **Important**: Present plan to user and **wait for confirmation**:
 
 ```
 Problem:        <restate>
-Files in scope: <list>
+Scope:          <list>
 Signal:         <command> → <metric>  (or "none found — propose: <suggestion>")
 Strategy:       1. <idea>  2. <idea>  …
 Log file:       loop-log.{yyyymmdd}.md (untracked)

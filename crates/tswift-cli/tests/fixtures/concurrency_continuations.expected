@@ -1,0 +1,4 @@
+inline 42
+deferred 7
+ok 99
+caught error
