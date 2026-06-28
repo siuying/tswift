@@ -35,6 +35,14 @@ print(Size.medium(2) >= Size.medium(2))
 print([Size.large(1, 1), Size.small, Size.medium(9)].sorted().map { "\($0)" })
 print(min(Size.medium(3), Size.small) == Size.small)
 
+// Structs do NOT get synthesized `Comparable` (Swift only synthesizes it for
+// enums); a struct must implement `<` explicitly. Here `Money` does.
+struct Money: Comparable {
+    let cents: Int
+    static func < (a: Money, b: Money) -> Bool { a.cents < b.cents }
+}
+print(Money(cents: 99) < Money(cents: 100))
+
 // A custom `<` still wins over synthesis when both are present.
 enum Priority: Comparable {
     case low, high

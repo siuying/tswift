@@ -214,7 +214,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [~] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [x] | Conditional conformance | ✅ | ★★★ | R4 |
-| [x] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
+| [x] | Synthesized `Equatable`/`Hashable`/`Comparable` (enum `Comparable` ordered by case then payload; non-`Comparable` payloads aren't statically rejected — they trap at use) | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
 
 ### 4b. Generics
