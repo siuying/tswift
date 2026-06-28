@@ -12,6 +12,7 @@ members = [
     "crates/tswift-swiftui",
     "crates/tswift-cli",
     "crates/tswift-wasm",
+    "crates/tswift-ffi",
 ]
 
 [workspace.package]

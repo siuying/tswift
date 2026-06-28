@@ -391,6 +391,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tswift-ffi"
+version = "0.0.0"
+
+[[package]]
 name = "tswift-foundation"
 version = "0.0.0"
 dependencies = [
