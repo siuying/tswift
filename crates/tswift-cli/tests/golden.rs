@@ -255,6 +255,53 @@ fn index_value_edge_cases() {
     assert_eq!(out, "-1\ntrue false true\n");
 }
 
+/// `#error("…")` is a compile error: the CLI must exit non-zero, print an
+/// `error:` diagnostic, and never execute the program body.
+#[test]
+fn pound_error_fails_compilation() {
+    let dir = std::env::temp_dir();
+    let src = dir.join("tswift_pound_error_test.swift");
+    std::fs::write(&src, "#error(\"nope\")\nprint(\"should not run\")\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&src)
+        .output()
+        .expect("spawn tswift");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "#error must fail the build");
+    assert!(stderr.contains("error:"), "stderr was: {stderr}");
+    assert!(stderr.contains("nope"), "stderr was: {stderr}");
+    assert!(
+        !stdout.contains("should not run"),
+        "program body must not execute; stdout: {stdout}"
+    );
+    let _ = std::fs::remove_file(&src);
+}
+
+/// `#warning("…")` is advisory: the CLI exits zero, prints a `warning:`
+/// diagnostic to stderr, and still runs the program body.
+#[test]
+fn pound_warning_runs_with_stderr_note() {
+    let dir = std::env::temp_dir();
+    let src = dir.join("tswift_pound_warning_test.swift");
+    std::fs::write(&src, "#warning(\"heads up\")\nprint(\"ran\")\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&src)
+        .output()
+        .expect("spawn tswift");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "#warning must not fail: {stderr}");
+    assert!(stderr.contains("warning:"), "stderr was: {stderr}");
+    assert!(
+        stdout.contains("ran"),
+        "program body must run; stdout: {stdout}"
+    );
+    let _ = std::fs::remove_file(&src);
+}
+
 /// A deliberately broken fixture must make the harness notice a mismatch — this
 /// guards the harness itself against silently passing.
 #[test]

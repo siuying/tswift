@@ -33,7 +33,12 @@ per section), use the **`stdlib-coverage`** skill.
 
 ### Subagent
 
-If running Pi Agent, when user request subagent, use the skill `subagent`.
+If running Pi Agent, when user request subagent, use the skill (`/subagent`).
+If running Codex/Claude Code, when user request Pi subagent, use the skill (`/pi-subagent`).
+
+### Autoloop
+
+When user request autoloop, survey, plan and confirm first before enter the loop.
 
 ### Issue tracker
 

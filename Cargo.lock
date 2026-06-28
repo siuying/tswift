@@ -450,6 +450,7 @@ dependencies = [
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
+ "tswift-swiftui",
  "wasm-bindgen",
 ]
 
