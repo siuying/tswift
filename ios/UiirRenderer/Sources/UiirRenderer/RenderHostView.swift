@@ -1,19 +1,20 @@
 import SwiftUI
 
-/// A fixed-size host that renders a `RenderModel`'s current tree. Snapshots are
-/// taken of this view; mutating the model (via patches) re-renders it.
+/// Hosts a `RenderModel`'s current tree, filling the device and supplying the
+/// adaptive system background. Snapshots are taken of this view across a
+/// device × appearance matrix (see `SnapshotTests`); the color scheme is driven
+/// by the snapshot's trait collection, so `.primary`/`.secondary` and the
+/// background adapt to light/dark exactly as on a real device.
 public struct RenderHostView: View {
     @ObservedObject var model: RenderModel
-    let size: CGSize
 
-    public init(model: RenderModel, size: CGSize = CGSize(width: 320, height: 480)) {
+    public init(model: RenderModel) {
         self.model = model
-        self.size = size
     }
 
     public var body: some View {
         ViewFactory.render(model.root)
-            .frame(width: size.width, height: size.height)
-            .background(Color(white: 0.12))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemBackground))
     }
 }

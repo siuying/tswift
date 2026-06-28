@@ -25,7 +25,9 @@
     "validate": "node scripts/validate.mjs",
     "dev": "vite example --host 127.0.0.1 --port 4322",
     "example": "npm run dev",
-    "build:example": "vite build example"
+    "build:example": "vite build example",
+    "test:snapshot": "playwright test",
+    "test:snapshot:update": "playwright test --update-snapshots"
   },
   "keywords": [
     "swiftui",
@@ -35,6 +37,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "typescript": "^5.5.0",
     "vite": "^7.0.0"
   }

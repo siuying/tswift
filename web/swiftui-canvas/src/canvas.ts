@@ -24,10 +24,30 @@ export class SwiftUICanvas extends HTMLElement {
     const style = document.createElement("style");
     // Encapsulated baseline: the SwiftUI-modifier→CSS system can't leak out and
     // host-page styles can't leak in.
+    // Semantic colors (.primary/.secondary, default label, systemBackground)
+    // are dynamic on iOS: they adapt to light/dark. We mirror that with CSS
+    // custom properties overridden under `prefers-color-scheme: dark`, so the
+    // same UIIR renders correctly in both appearances (and the dark/light
+    // screenshots line up with the native ones).
     style.textContent = `
-      :host { display: block; font-family: -apple-system, system-ui, sans-serif; }
+      :host {
+        display: block;
+        font-family: -apple-system, system-ui, sans-serif;
+        --swiftui-label: #000000;
+        --swiftui-label-secondary: rgba(60, 60, 67, 0.6);
+        --swiftui-system-background: #ffffff;
+        color: var(--swiftui-label);
+        background: var(--swiftui-system-background);
+      }
+      @media (prefers-color-scheme: dark) {
+        :host {
+          --swiftui-label: #ffffff;
+          --swiftui-label-secondary: rgba(235, 235, 245, 0.6);
+          --swiftui-system-background: #000000;
+        }
+      }
       .root { display: flex; justify-content: center; padding: 16px; }
-      button { font: inherit; border: none; background: transparent; cursor: pointer; }
+      button { font: inherit; border: none; background: transparent; cursor: pointer; color: inherit; }
     `;
     this.mountPoint = document.createElement("div");
     this.mountPoint.className = "root";

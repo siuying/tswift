@@ -47,8 +47,11 @@ const FONT_WEIGHT: Record<string, string> = {
 
 /** Named SwiftUI colors → CSS colors (approximate iOS system palette). */
 const COLOR: Record<string, string> = {
-  primary: "#000000",
-  secondary: "#3c3c4399",
+  // Dynamic system colors resolve to CSS variables that adapt to light/dark
+  // (defined in canvas.ts). Fixed colors below are appearance-independent,
+  // matching SwiftUI (`.white` is always white; `.primary` adapts).
+  primary: "var(--swiftui-label)",
+  secondary: "var(--swiftui-label-secondary)",
   white: "#ffffff",
   black: "#000000",
   red: "#ff3b30",

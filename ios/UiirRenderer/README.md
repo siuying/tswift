@@ -29,10 +29,17 @@ mapping matches the web `<swiftui-canvas>` host — not an interpreter test
 Snapshots are scale/font sensitive. Baselines were recorded on:
 
 - **Xcode** 26.1.1 / **Swift** 6.3.2
-- **Simulator:** iPhone 16 Pro, **iOS 18.5** (@3x)
-- Device config: `.image(on: .iPhone13, precision: 0.98)`
+- **Simulator:** iPhone 16 Pro, **iOS 18.5**
 
-Re-record only on this configuration or the baselines will mismatch.
+Each fixture step is captured across a **device × appearance matrix** (4 images
+per step), named `<step>-<device>-<scheme>`:
+
+- `iphone` — `.iPhone13` (@3x) · `ipad` — `.iPadPro11(.portrait)` (@2x)
+- `light` / `dark` — driven by the snapshot `UITraitCollection`
+
+The host fills the device and uses `Color(.systemBackground)`, so semantic
+colors and the background adapt to appearance. Re-record only on this
+configuration or the baselines will mismatch.
 
 ## Run
 

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>swiftui-canvas Layer D harness</title>
+    <style>
+      /* Match the iOS snapshot host (RenderHostView): the canvas fills the
+         device width and supplies its own adaptive system background, so the
+         web screenshot lines up with the native one across device + appearance.
+         The Playwright project (viewport + colorScheme) selects iPhone/iPad and
+         light/dark; the canvas reacts via prefers-color-scheme. */
+      html, body { margin: 0; padding: 0; }
+      #stage { width: 100vw; }
+      swiftui-canvas { display: block; width: 100%; }
+    </style>
+    <script type="module" src="/main.ts"></script>
+  </head>
+  <body>
+    <div id="stage">
+      <swiftui-canvas id="canvas"></swiftui-canvas>
+    </div>
+  </body>
+</html>

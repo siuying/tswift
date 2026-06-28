@@ -65,6 +65,12 @@ patches, and produces committed snapshot baselines.
    toolchain is Xcode 26.1.1 / Swift 6.3.2; pin **iPhone 16 Pro, iOS 18.5**
    (@3x) so reruns are deterministic.
 
+7. **Device × appearance matrix.** Each fixture step is snapshotted across
+   `iphone` (`.iPhone13`) and `ipad` (`.iPadPro11(.portrait)`) × `light`/`dark`
+   (driven by the snapshot trait collection), naming each
+   `<step>-<device>-<scheme>` to line up with the web baselines. The host fills
+   the device and uses `Color(.systemBackground)` so it adapts to appearance.
+
 ---
 
 ## 3. Package layout

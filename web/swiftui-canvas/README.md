@@ -67,3 +67,23 @@ npm run dev          # opens the editor + preview example on port 4322
 
 `npm run validate` loads the committed Layer B/C goldens and asserts they conform
 to the protocol this host consumes (no browser needed).
+
+## Layer D screenshot harness
+
+`tests/snapshot.spec.ts` is the web half of the Layer D web↔native perceptual
+diff (`docs/plan/layer-d-web-harness.md`). For each `tests/swiftui-fixtures/`
+fixture it mounts the UIIR on a real `<swiftui-canvas>`, replays the patch
+stream, and screenshots every step on WebKit across a **device × appearance
+matrix** (iPhone + iPad, light + dark) — the same loop and matrix as the native
+`ios/UiirRenderer` harness. Semantic colors (`.primary`/`.secondary`) and the
+system background adapt to light/dark via `prefers-color-scheme`.
+
+```sh
+npm run test:snapshot          # assert against committed baselines
+npm run test:snapshot:update   # re-record baselines
+```
+
+Baselines live in `tests/snapshot.spec.ts-snapshots/` and are tracked via Git
+LFS (root `.gitattributes`). Playwright starts the Vite harness server
+(`tests/harness`, port 4323) automatically. Non-gating — it surfaces token/CSS
+drift against iOS, it does not gate CI.

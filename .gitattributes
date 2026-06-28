@@ -1,1 +1,2 @@
 ios/UiirRenderer/Tests/**/__Snapshots__/**/*.png filter=lfs diff=lfs merge=lfs -text
+web/swiftui-canvas/tests/**/*-snapshots/**/*.png filter=lfs diff=lfs merge=lfs -text
