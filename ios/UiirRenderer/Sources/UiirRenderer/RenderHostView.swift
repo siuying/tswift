@@ -7,13 +7,14 @@ import SwiftUI
 /// background adapt to light/dark exactly as on a real device.
 public struct RenderHostView: View {
     @ObservedObject var model: RenderModel
+    @Environment(\.uiirEventSink) private var eventSink
 
     public init(model: RenderModel) {
         self.model = model
     }
 
     public var body: some View {
-        ViewFactory.render(model.root)
+        ViewFactory.render(model.root, eventSink: eventSink)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(.systemBackground))
     }
