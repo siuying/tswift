@@ -8,7 +8,10 @@
 //! All `unsafe` for the FFI lives in this crate, preserving ADR-0001's
 //! FFI-only-unsafe rule.
 
-use std::ffi::{c_char, CString};
+use std::ffi::{c_char, CStr, CString};
+
+mod run;
+mod util;
 
 /// The lifespan-owning VM handle handed to C as an opaque pointer — the native
 /// analogue of QuickJS's `JSContext`. Owns the reclaimable interpreter bundle
@@ -60,9 +63,6 @@ pub unsafe extern "C" fn tswift_context_free(ctx: *mut Context) {
 ///
 /// Our JSON never contains an interior NUL byte; on the impossible chance it
 /// does, the string is replaced with an empty one rather than panicking.
-// Exercised by the T1 round-trip test; the returning entry points that consume
-// it land in T2 (`tswift_run`) and T3 (the SwiftUI session).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn into_json_ptr(value: String) -> *mut c_char {
     match CString::new(value) {
         Ok(c) => c.into_raw(),
@@ -87,10 +87,52 @@ pub unsafe extern "C" fn tswift_string_free(s: *mut c_char) {
     drop(CString::from_raw(s));
 }
 
+/// Borrow a C string argument as `&str`, or `None` if it is null or not UTF-8.
+///
+/// # Safety
+/// `s` must be either null or a valid, NUL-terminated C string pointer that
+/// stays alive for the entire lifetime `'a` of the returned borrow (not merely
+/// the duration of this call). Callers must not let the borrow outlive `s`.
+unsafe fn borrow_str<'a>(s: *const c_char) -> Option<&'a str> {
+    if s.is_null() {
+        return None;
+    }
+    CStr::from_ptr(s).to_str().ok()
+}
+
+/// Build the serialized error JSON used when an argument is malformed.
+fn arg_error_json(message: &str) -> String {
+    format!(
+        "{{\"ok\":false,\"backend\":\"ffi\",\"error\":\"{}\"}}",
+        util::escape_json(message)
+    )
+}
+
+/// Compile and run a Swift `source` string through `ctx`, returning owned result
+/// JSON (mirrors `tswift-wasm`'s `runSwift`). Release the result with
+/// [`tswift_string_free`].
+///
+/// The run is self-contained per call; `ctx` is required (forward-compatible
+/// with later persistent run state) and must be non-null.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `source` must be
+/// null or a valid NUL-terminated C string. The returned pointer is owned by
+/// the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) -> *mut c_char {
+    if ctx.is_null() {
+        return into_json_ptr(arg_error_json("null context"));
+    }
+    let Some(source) = borrow_str(source) else {
+        return into_json_ptr(arg_error_json("source is null or not valid UTF-8"));
+    };
+    into_json_ptr(run::run_impl(source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
 
     #[test]
     fn context_new_returns_nonnull_and_frees() {
@@ -116,5 +158,57 @@ mod tests {
         let read = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
         assert_eq!(read, "{\"ok\":true}");
         unsafe { tswift_string_free(ptr) };
+    }
+
+    // --- T2: tswift_run -----------------------------------------------------
+
+    /// Call `tswift_run` and return the (owned-then-freed) JSON as a `String`.
+    fn run(ctx: *mut Context, source: &str) -> String {
+        let csource = CString::new(source).unwrap();
+        let ptr = unsafe { tswift_run(ctx, csource.as_ptr()) };
+        assert!(!ptr.is_null());
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        json
+    }
+
+    #[test]
+    fn run_prints_to_stdout() {
+        let ctx = tswift_context_new();
+        let json = run(ctx, "print(\"hi\")");
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(json.contains("\"backend\":\"ffi\""), "{json}");
+        assert!(json.contains("\"stdout\":\"hi\\n\""), "{json}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn run_reports_compile_error() {
+        let ctx = tswift_context_new();
+        let json = run(ctx, "#error(\"boom\")");
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"compile\":{\"ok\":false"), "{json}");
+        assert!(json.contains("boom"), "{json}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn run_reuses_context_without_stale_state() {
+        let ctx = tswift_context_new();
+        let first = run(ctx, "print(\"one\")");
+        assert!(first.contains("\"stdout\":\"one\\n\""), "{first}");
+        let second = run(ctx, "print(\"two\")");
+        assert!(second.contains("\"ok\":true"), "{second}");
+        assert!(second.contains("\"stdout\":\"two\\n\""), "{second}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn run_null_context_is_error_json() {
+        let csource = CString::new("print(1)").unwrap();
+        let ptr = unsafe { tswift_run(std::ptr::null_mut(), csource.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("null context"), "{json}");
     }
 }

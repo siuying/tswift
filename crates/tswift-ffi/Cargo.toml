@@ -12,3 +12,7 @@ description = "C-ABI native embedding host for tswift (TSwiftCore / TSwiftUI)."
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true
+tswift-std.workspace = true
+tswift-foundation.workspace = true
