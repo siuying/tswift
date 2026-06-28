@@ -1,8 +1,6 @@
 .checkout
 .DS_Store
 target
-loop-log.md
-loop-log.*.md
 ios/TSwift/Artifacts/
 
 # SwiftPM build output
