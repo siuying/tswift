@@ -3822,6 +3822,17 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Struct(obj) => {
                 let type_name = obj.type_name.clone();
+                // `IndexPath[i]` reads its `i`th element (a Foundation builtin
+                // backed by a `_indexes` array, with no user `subscript`).
+                if type_name == "IndexPath" {
+                    if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                        let i = subscript_index(indices)?;
+                        return items
+                            .get(i)
+                            .cloned()
+                            .ok_or_else(|| trap(format!("index {i} out of range")));
+                    }
+                }
                 // Select the overload whose arity matches the index count.
                 let getter = self.structs.get(&type_name).and_then(|d| {
                     d.subscripts
@@ -6416,8 +6427,12 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
+                // `IndexPath`/`IndexSet` intrinsics take positional arguments,
+                // except `update(with:)` whose sole argument is labelled.
                 if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet)
-                    && args.iter().any(|arg| arg.label.is_some())
+                    && args
+                        .iter()
+                        .any(|arg| arg.label.is_some() && arg.label.as_deref() != Some("with"))
                 {
                     return Err(EvalError::Type(format!(
                         "{}.{} does not accept argument labels",

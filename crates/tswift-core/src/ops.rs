@@ -21,6 +21,12 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        // `IndexPath` is `Comparable`: compare its element list lexicographically.
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "IndexPath" && b.type_name == "IndexPath" =>
+        {
+            index_path_binary(op, a, b)
+        }
         // Metatype identity: `Int.self == type(of: x)`.
         (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
             "==" => Ok(SwiftValue::Bool(a == b)),
@@ -172,6 +178,40 @@ fn str_binary(op: &str, a: &str, b: &str) -> Result<SwiftValue, String> {
     }
 }
 
+/// Lexicographic comparison of two `IndexPath` values (Foundation builtins
+/// backed by an `_indexes` array). Supports `==`/`!=` and the ordering ops.
+fn index_path_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let indexes = |o: &crate::value::StructObj| -> Vec<i128> {
+        match o.get("_indexes") {
+            Some(SwiftValue::Array(items)) => items
+                .iter()
+                .filter_map(|v| match v {
+                    SwiftValue::Int(i) => Some(i.raw),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let (la, lb) = (indexes(a), indexes(b));
+    let ord = la.cmp(&lb);
+    use std::cmp::Ordering;
+    let res = match op {
+        "==" => ord == Ordering::Equal,
+        "!=" => ord != Ordering::Equal,
+        "<" => ord == Ordering::Less,
+        "<=" => ord != Ordering::Greater,
+        ">" => ord == Ordering::Greater,
+        ">=" => ord != Ordering::Less,
+        _ => return Err(format!("operator `{op}` cannot apply to IndexPath")),
+    };
+    Ok(SwiftValue::Bool(res))
+}
+
 fn array_binary(
     op: &str,
     a: &std::rc::Rc<Vec<SwiftValue>>,
@@ -251,6 +291,35 @@ mod tests {
     fn division_by_zero_traps() {
         assert!(binary("/", &int(1), &int(0)).is_err());
         assert!(binary("%", &int(1), &int(0)).is_err());
+    }
+
+    #[test]
+    fn index_path_compares_lexicographically() {
+        use crate::value::StructObj;
+        use std::rc::Rc;
+        let path = |xs: &[i128]| {
+            SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "IndexPath".into(),
+                fields: vec![(
+                    "_indexes".into(),
+                    SwiftValue::Array(Rc::new(xs.iter().copied().map(int).collect())),
+                )],
+            }))
+        };
+        let a = path(&[1, 2]);
+        let b = path(&[1, 3]);
+        let c = path(&[1, 2]);
+        assert_eq!(binary("<", &a, &b).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(binary(">", &a, &b).unwrap(), SwiftValue::Bool(false));
+        assert_eq!(binary("<=", &a, &c).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(binary(">=", &a, &c).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(binary("==", &a, &c).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(binary("!=", &a, &b).unwrap(), SwiftValue::Bool(true));
+        // A shorter prefix orders before its extension.
+        assert_eq!(
+            binary("<", &path(&[1]), &path(&[1, 0])).unwrap(),
+            SwiftValue::Bool(true)
+        );
     }
 
     #[test]
