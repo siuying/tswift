@@ -105,7 +105,7 @@ unsafe fn borrow_str<'a>(s: *const c_char) -> Option<&'a str> {
 fn arg_error_json(message: &str) -> String {
     format!(
         "{{\"ok\":false,\"backend\":\"ffi\",\"error\":\"{}\"}}",
-        util::escape_json(message)
+        tswift_core::result_json::escape(message)
     )
 }
 

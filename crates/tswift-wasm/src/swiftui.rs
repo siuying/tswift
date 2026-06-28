@@ -23,7 +23,8 @@ use tswift_swiftui::session::{Event, Session};
 use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 use wasm_bindgen::prelude::*;
 
-use crate::{escape_json, install_panic_hook};
+use crate::install_panic_hook;
+use tswift_core::result_json::escape as escape_json;
 
 thread_local! {
     /// The live render session for the most recently compiled program. Replaced

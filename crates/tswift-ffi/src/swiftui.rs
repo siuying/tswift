@@ -17,7 +17,7 @@ use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
 use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 
-use crate::util::escape_json;
+use tswift_core::result_json::escape as escape_json;
 
 /// A live SwiftUI render session plus the heap allocations it borrows.
 ///

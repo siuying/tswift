@@ -5,12 +5,12 @@
 //! interpreter through a lifetime-scoped `&'static` borrow that never escapes,
 //! so nothing leaks across repeated calls on a long-lived `Context`.
 
+use tswift_core::result_json::{self, CompileReport, RunReport};
 use tswift_frontend::Analysis;
 
-use crate::util::{elapsed_ms, escape_json, now_ms, truncate};
+use crate::util::{elapsed_ms, now_ms};
 
-const AST_LIMIT: usize = 6_000;
-const STDOUT_LIMIT: usize = 24_000;
+const BACKEND: &str = "ffi";
 
 /// Compile and run `source`, returning the result JSON (string body, owned).
 pub(crate) fn run_impl(source: &str) -> String {
@@ -19,10 +19,15 @@ pub(crate) fn run_impl(source: &str) -> String {
     let analysis = match Analysis::analyze(source, "main.swift") {
         Ok(analysis) => analysis,
         Err(error) => {
-            return format!(
-                "{{\"ok\":false,\"backend\":\"ffi\",\"compile\":{{\"ok\":false,\"stderr\":\"{}\",\"astPreview\":\"\",\"elapsedMs\":{}}},\"run\":null}}",
-                escape_json(&error.to_string()),
-                elapsed_ms(started)
+            return result_json::result(
+                BACKEND,
+                CompileReport {
+                    ok: false,
+                    diagnostics: &error.to_string(),
+                    ast_preview: "",
+                    elapsed_ms: elapsed_ms(started),
+                },
+                None,
             );
         }
     };
@@ -46,11 +51,15 @@ pub(crate) fn run_impl(source: &str) -> String {
     let compile_elapsed = elapsed_ms(started);
 
     if had_error {
-        return format!(
-            "{{\"ok\":false,\"backend\":\"ffi\",\"compile\":{{\"ok\":false,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":null}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, AST_LIMIT)),
-            compile_elapsed
+        return result_json::result(
+            BACKEND,
+            CompileReport {
+                ok: false,
+                diagnostics: &diagnostics,
+                ast_preview: &ast_preview,
+                elapsed_ms: compile_elapsed,
+            },
+            None,
         );
     }
 
@@ -71,23 +80,23 @@ pub(crate) fn run_impl(source: &str) -> String {
     let run_elapsed = elapsed_ms(run_started);
     let stdout = String::from_utf8_lossy(&stdout);
 
-    match run_result {
-        Ok(()) => format!(
-            "{{\"ok\":true,\"backend\":\"ffi\",\"compile\":{{\"ok\":true,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":{{\"ok\":true,\"stdout\":\"{}\",\"stderr\":\"\",\"elapsedMs\":{}}}}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, AST_LIMIT)),
-            compile_elapsed,
-            escape_json(&truncate(&stdout, STDOUT_LIMIT)),
-            run_elapsed
-        ),
-        Err(error) => format!(
-            "{{\"ok\":false,\"backend\":\"ffi\",\"compile\":{{\"ok\":true,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":{{\"ok\":false,\"stdout\":\"{}\",\"stderr\":\"error: {}\",\"elapsedMs\":{}}}}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, AST_LIMIT)),
-            compile_elapsed,
-            escape_json(&truncate(&stdout, STDOUT_LIMIT)),
-            escape_json(&error.to_string()),
-            run_elapsed
-        ),
-    }
+    let run_stderr = match &run_result {
+        Ok(()) => String::new(),
+        Err(error) => format!("error: {}", error),
+    };
+    result_json::result(
+        BACKEND,
+        CompileReport {
+            ok: true,
+            diagnostics: &diagnostics,
+            ast_preview: &ast_preview,
+            elapsed_ms: compile_elapsed,
+        },
+        Some(RunReport {
+            ok: run_result.is_ok(),
+            stdout: &stdout,
+            stderr: &run_stderr,
+            elapsed_ms: run_elapsed,
+        }),
+    )
 }
