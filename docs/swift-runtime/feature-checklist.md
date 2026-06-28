@@ -252,7 +252,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `throw` statement | ✅ | ★★ | R5 |
 | [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
 | [x] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
-| [~] | `rethrows` | ✅ | ★★★ | R5 |
+| [~] | `rethrows` (runtime ✓; static `try`-effect checking not enforced) | ✅ | ★★★ | R5 |
 | [~] | Typed throws `throws(E)` (Swift 6) | ⚠️ | ★★★ | R5 |
 | [x] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
 | [x] | Error propagation through call stack | ✅ | ★★★ | R5 |
