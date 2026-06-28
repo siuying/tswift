@@ -28,8 +28,9 @@ function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
 
-// 1. A counter compiles, renders, and a button tap mutates @State.
-check('counter renders and a tap bumps @State', () => {
+// 1. A counter compiles to a full tree, and a button tap returns a minimal
+//    in-place patch stream (the wire format `<swiftui-canvas>` applies).
+check('counter renders and a tap returns a setText patch', () => {
   const src = [
     'struct CounterView: View {',
     '  @State private var count = 0',
@@ -45,11 +46,13 @@ check('counter renders and a tap bumps @State', () => {
   assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r)}`);
   assert(r.root === 'CounterView', `bad root: ${r.root}`);
   assert(r.tree.kind === 'VStack', `bad root kind: ${r.tree.kind}`);
-  // Button is the second child: id "0.1".
+  // Button is the second child: id "0.1". Only the counter Text (id "0.0")
+  // changes, so the diff is a single in-place setText — not a re-mount.
   const after = JSON.parse(swiftUIDispatch('0.1', 'tap', ''));
   assert(after.ok === true, `dispatch failed: ${JSON.stringify(after)}`);
-  const text = after.tree.children.find((c) => c.kind === 'Text');
-  assert(text.args.verbatim === '1', `tap did not bump count: ${JSON.stringify(text.args)}`);
+  assert(Array.isArray(after.patches), `expected a patches array: ${JSON.stringify(after)}`);
+  const setText = after.patches.find((p) => p.op === 'setText' && p.id === '0.0');
+  assert(setText && setText.text === '1', `tap did not emit setText=1: ${JSON.stringify(after.patches)}`);
 });
 
 // 2. A program with no View is a structured compile error, not a wasm trap.
