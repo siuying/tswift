@@ -71,6 +71,12 @@ npm test
   throwaway sandbox).
 - Only the v1 SwiftUI surface the runtime supports is rendered; unsupported view
   kinds/modifiers are ignored by the canvas.
+- `.environmentObject(_)` injects into a custom view it is applied to **directly**
+  (e.g. `ThemeCard().environmentObject(settings)`). It does **not** reach
+  `@EnvironmentObject` children nested inside a container — `VStack { ChildA();
+  ChildB() }.environmentObject(...)` won't inject — because container children
+  are collected eagerly before the modifier is applied. Keep the injected view a
+  single custom view whose body is the full screen.
 
 ## Verdict placeholder
 
