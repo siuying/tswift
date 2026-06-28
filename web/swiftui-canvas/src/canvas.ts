@@ -65,18 +65,51 @@ export class SwiftUICanvas extends HTMLElement {
       }
       .root { display: flex; justify-content: center; padding: 16px; }
       button { font: inherit; border: none; background: transparent; cursor: pointer; color: inherit; }
+      /* Default text-field base box. Kept in the stylesheet (not inline) so a
+         theme rule or a user SwiftUI modifier overrides it without \`!important\`
+         (inline modifier styles always beat these). */
+      [data-kind="TextField"], [data-kind="SecureField"] {
+        padding: 8px; border: 1px solid #ccc; border-radius: 6px; font: inherit;
+      }
 
       /* ── iOS theme ──────────────────────────────────────────────
          Opt-in (\`theme="ios"\`) skin that restyles the control primitives to
-         resemble iOS. Scoped under :host([theme="ios"]) so the default skin —
-         and its snapshot baselines — is untouched. Controls are matched by the
-         \`data-kind\` PatchApplier sets on each element. A SwiftUI modifier
-         (e.g. .background(_)) is applied inline and still wins, except where a
-         field's base box needs !important to beat its inline default. */
-      :host([theme="ios"]) { font-family: -apple-system, system-ui, sans-serif; }
+         resemble iOS. Scoped under :host([theme="ios"]) so the default skin is
+         untouched. Controls are matched by the \`data-kind\` PatchApplier sets
+         on each element; the palette is held in --ios-* custom properties that
+         adapt to the active appearance, and every rule is overridable by an
+         inline SwiftUI modifier (no !important). */
+      :host([theme="ios"]) {
+        font-family: -apple-system, system-ui, sans-serif;
+        --ios-tint: #007aff;
+        --ios-switch-off: #e9e9ea;
+        --ios-track: #d1d1d6;
+        --ios-field-border: #c6c6c8;
+        --ios-fill: rgba(120, 120, 128, 0.12);
+        --ios-fill-strong: rgba(120, 120, 128, 0.16);
+      }
+      /* iOS palette in dark: auto (no \`appearance\`) under a dark OS, or forced. */
+      @media (prefers-color-scheme: dark) {
+        :host([theme="ios"]:not([appearance="light"])) {
+          --ios-tint: #0a84ff;
+          --ios-switch-off: #39393d;
+          --ios-track: #48484a;
+          --ios-field-border: #38383a;
+          --ios-fill: rgba(120, 120, 128, 0.24);
+          --ios-fill-strong: rgba(120, 120, 128, 0.32);
+        }
+      }
+      :host([theme="ios"][appearance="dark"]) {
+        --ios-tint: #0a84ff;
+        --ios-switch-off: #39393d;
+        --ios-track: #48484a;
+        --ios-field-border: #38383a;
+        --ios-fill: rgba(120, 120, 128, 0.24);
+        --ios-fill-strong: rgba(120, 120, 128, 0.32);
+      }
 
       :host([theme="ios"]) [data-kind="Button"] {
-        color: #007aff;
+        color: var(--ios-tint);
         font-size: 17px;
         padding: 4px 6px;
         border-radius: 8px;
@@ -93,7 +126,7 @@ export class SwiftUICanvas extends HTMLElement {
         width: 51px;
         height: 31px;
         border-radius: 31px;
-        background: #e9e9ea;
+        background: var(--ios-switch-off);
         transition: background 0.2s ease;
         cursor: pointer;
       }
@@ -112,15 +145,16 @@ export class SwiftUICanvas extends HTMLElement {
       :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked { background: #34c759; }
       :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked::after { transform: translateX(20px); }
 
-      /* TextField / SecureField → rounded field (overrides the inline base box) */
+      /* TextField / SecureField → rounded field. Higher specificity than the
+         default base rule above; a user modifier (inline) still wins. */
       :host([theme="ios"]) [data-kind="TextField"],
       :host([theme="ios"]) [data-kind="SecureField"] {
-        padding: 7px 11px !important;
-        border: 0.5px solid #c6c6c8 !important;
-        border-radius: 10px !important;
-        background: var(--swiftui-system-background) !important;
-        color: var(--swiftui-label) !important;
-        font-size: 17px !important;
+        padding: 7px 11px;
+        border: 0.5px solid var(--ios-field-border);
+        border-radius: 10px;
+        background: var(--swiftui-system-background);
+        color: var(--swiftui-label);
+        font-size: 17px;
         outline: none;
       }
 
@@ -133,8 +167,17 @@ export class SwiftUICanvas extends HTMLElement {
         cursor: pointer;
         background: linear-gradient(
           to right,
-          #007aff var(--swiftui-slider-fill, 0%),
-          #d1d1d6 var(--swiftui-slider-fill, 0%)
+          var(--ios-tint) var(--swiftui-slider-fill, 0%),
+          var(--ios-track) var(--swiftui-slider-fill, 0%)
+        );
+      }
+      :host([theme="ios"]) [data-kind="Slider"]::-moz-range-track {
+        height: 4px;
+        border-radius: 2px;
+        background: linear-gradient(
+          to right,
+          var(--ios-tint) var(--swiftui-slider-fill, 0%),
+          var(--ios-track) var(--swiftui-slider-fill, 0%)
         );
       }
       :host([theme="ios"]) [data-kind="Slider"]::-webkit-slider-thumb {
@@ -162,7 +205,7 @@ export class SwiftUICanvas extends HTMLElement {
         height: 32px;
         font-size: 20px;
         color: var(--swiftui-label);
-        background: rgba(120, 120, 128, 0.16);
+        background: var(--ios-fill-strong);
       }
       :host([theme="ios"]) [data-kind="Stepper"] button:nth-of-type(1) {
         border-radius: 8px 0 0 8px;
@@ -173,8 +216,8 @@ export class SwiftUICanvas extends HTMLElement {
       /* Picker → tinted menu-style control */
       :host([theme="ios"]) [data-kind="Picker"] {
         font-size: 15px;
-        color: #007aff;
-        background: rgba(120, 120, 128, 0.12);
+        color: var(--ios-tint);
+        background: var(--ios-fill);
         border: none;
         border-radius: 8px;
         padding: 6px 10px;

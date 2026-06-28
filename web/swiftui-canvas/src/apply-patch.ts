@@ -256,11 +256,11 @@ export class PatchApplier {
       }
       case "TextField":
       case "SecureField": {
-        // A text input emitting `set` with its string value on each edit.
+        // A text input emitting `set` with its string value on each edit. The
+        // base box (padding/border) lives in the stylesheet, not inline, so a
+        // theme or a user modifier can override it without `!important`.
         const input = document.createElement("input");
         input.type = node.kind === "SecureField" ? "password" : "text";
-        input.style.cssText =
-          "padding:8px;border:1px solid #ccc;border-radius:6px;font:inherit;";
         input.addEventListener("input", () =>
           this.emit(node.id, "set", input.value),
         );
