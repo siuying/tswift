@@ -27,3 +27,12 @@ https host.com /p
 2
 http://host.com/p?a=1&b=2
 https://x.com/y
+true nil /tmp/a file:///tmp/a
+true
+[::1] 9000
+true
+/a b
+hello world
+true
+.bashrc
+https://h/p?z=9

@@ -83,6 +83,11 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         "string",
         url_components_string,
     );
+    interp.register_property(
+        BuiltinReceiver::URLComponents,
+        "queryItems",
+        url_components_query_items,
+    );
 }
 
 // ===========================================================================
@@ -92,6 +97,9 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
 #[derive(Default, Clone)]
 struct Parsed {
     scheme: Option<String>,
+    /// Whether an authority component (`//...`) was present, even if empty —
+    /// needed to round-trip `file:///path` (empty authority) faithfully.
+    authority: bool,
     user: Option<String>,
     password: Option<String>,
     host: Option<String>,
@@ -134,6 +142,7 @@ fn parse_url(input: &str) -> Parsed {
     }
     // authority
     if let Some(after) = rest.strip_prefix("//") {
+        p.authority = true;
         let auth_end = after.find('/').unwrap_or(after.len());
         let authority = &after[..auth_end];
         rest = &after[auth_end..];
@@ -149,29 +158,40 @@ fn parse_url(input: &str) -> Parsed {
         } else {
             authority
         };
-        if let Some(colon) = host_port.rfind(':') {
-            let host = &host_port[..colon];
-            if !host.is_empty() {
-                p.host = Some(host.to_string());
+        // A bracketed IPv6 literal (`[::1]`) keeps its brackets as the host; a
+        // port, if any, follows the closing `]`.
+        let (host, port_text) = if let Some(close) = host_port
+            .strip_prefix('[')
+            .and_then(|_| host_port.find(']'))
+        {
+            let host = &host_port[..=close];
+            let after = &host_port[close + 1..];
+            (host, after.strip_prefix(':'))
+        } else if let Some(colon) = host_port.rfind(':') {
+            (&host_port[..colon], Some(&host_port[colon + 1..]))
+        } else {
+            (host_port, None)
+        };
+        if !host.is_empty() {
+            p.host = Some(host.to_string());
+        }
+        // A port must be a non-empty run of ASCII digits.
+        if let Some(text) = port_text {
+            if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+                if let Ok(port) = text.parse::<i128>() {
+                    p.port = Some(port);
+                }
             }
-            if let Ok(port) = host_port[colon + 1..].parse::<i128>() {
-                p.port = Some(port);
-            }
-        } else if !host_port.is_empty() {
-            p.host = Some(host_port.to_string());
         }
     }
     p.path = rest.to_string();
     p
 }
 
-fn url_value(string: String, is_file: bool) -> SwiftValue {
+fn url_value(string: String) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URL".into(),
-        fields: vec![
-            ("_string".into(), SwiftValue::Str(string)),
-            ("_isFile".into(), SwiftValue::Bool(is_file)),
-        ],
+        fields: vec![("_string".into(), SwiftValue::Str(string))],
     }))
 }
 
@@ -191,8 +211,13 @@ fn url_string(value: &SwiftValue) -> Result<String, StdError> {
     }
 }
 
+/// A URL is a file URL when its scheme is `file` (case-insensitive), matching
+/// Foundation's semantic `isFileURL` rather than initializer provenance.
 fn url_is_file_flag(value: &SwiftValue) -> bool {
-    matches!(value, SwiftValue::Struct(o) if matches!(o.get("_isFile"), Some(SwiftValue::Bool(true))))
+    url_string(value)
+        .ok()
+        .and_then(|s| parse_url(&s).scheme)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file"))
 }
 
 fn opt_str(v: Option<String>) -> SwiftValue {
@@ -213,7 +238,7 @@ fn url_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         Some("string") => Ok(if raw.is_empty() {
             SwiftValue::Nil
         } else {
-            url_value(raw.clone(), false)
+            url_value(raw.clone())
         }),
         Some("fileURLWithPath") => {
             let path = raw.clone();
@@ -225,7 +250,7 @@ fn url_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
                     format!("/{path}")
                 }
             );
-            Ok(url_value(string, true))
+            Ok(url_value(string))
         }
         Some(other) => Err(type_error(format!("unsupported URL argument {other}:"))),
         None => Err(type_error("URL argument needs a label")),
@@ -251,7 +276,10 @@ fn url_port(recv: SwiftValue) -> StdResult {
         .unwrap_or(SwiftValue::Nil))
 }
 fn url_path(recv: SwiftValue) -> StdResult {
-    Ok(SwiftValue::Str(parse_url(&url_string(&recv)?).path))
+    // Foundation's `URL.path` is percent-decoded.
+    Ok(SwiftValue::Str(percent_decode(
+        &parse_url(&url_string(&recv)?).path,
+    )))
 }
 fn url_query(recv: SwiftValue) -> StdResult {
     Ok(opt_str(parse_url(&url_string(&recv)?).query))
@@ -276,11 +304,45 @@ fn url_last_path_component(recv: SwiftValue) -> StdResult {
 
 fn url_path_extension(recv: SwiftValue) -> StdResult {
     let last = last_component(&parse_url(&url_string(&recv)?).path);
-    let ext = last
-        .rsplit_once('.')
+    let ext = file_extension(&last)
         .map(|(_, e)| e.to_string())
         .unwrap_or_default();
     Ok(SwiftValue::Str(ext))
+}
+
+/// Split a path component into `(stem, extension)` when it has a file
+/// extension. A leading-dot hidden file (`.bashrc`) or trailing dot has no
+/// extension, matching Foundation/`NSString` semantics.
+fn file_extension(name: &str) -> Option<(&str, &str)> {
+    let dot = name.rfind('.')?;
+    let (stem, ext) = (&name[..dot], &name[dot + 1..]);
+    if stem.is_empty() || ext.is_empty() {
+        None
+    } else {
+        Some((stem, ext))
+    }
+}
+
+/// Decode `%XX` escapes in a URL component (best-effort; invalid escapes are
+/// left intact).
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn url_path_components(recv: SwiftValue) -> StdResult {
@@ -314,7 +376,7 @@ fn rebuild_with_path(parsed: &Parsed, new_path: &str) -> String {
         out.push_str(scheme);
         out.push(':');
     }
-    if parsed.host.is_some() || parsed.user.is_some() {
+    if parsed.authority || parsed.host.is_some() || parsed.user.is_some() {
         out.push_str("//");
         if let Some(user) = &parsed.user {
             out.push_str(user);
@@ -360,10 +422,7 @@ fn appended_component(recv: &SwiftValue, args: &[SwiftValue]) -> Result<SwiftVal
     };
     let parsed = parse_url(&url_string(recv)?);
     let new_path = join_path(&parsed.path, comp);
-    Ok(url_value(
-        rebuild_with_path(&parsed, &new_path),
-        url_is_file_flag(recv),
-    ))
+    Ok(url_value(rebuild_with_path(&parsed, &new_path)))
 }
 
 fn url_appending_path_component(
@@ -398,10 +457,7 @@ fn deleted_last(recv: &SwiftValue) -> Result<SwiftValue, StdError> {
         Some((head, _)) => format!("{head}/"),
         None => String::new(),
     };
-    Ok(url_value(
-        rebuild_with_path(&parsed, &new_path),
-        url_is_file_flag(recv),
-    ))
+    Ok(url_value(rebuild_with_path(&parsed, &new_path)))
 }
 
 fn url_deleting_last_path_component(
@@ -438,10 +494,7 @@ fn url_appending_path_extension(
     };
     let parsed = parse_url(&url_string(&recv)?);
     let new_path = format!("{}.{}", parsed.path.trim_end_matches('/'), ext);
-    let result = url_value(
-        rebuild_with_path(&parsed, &new_path),
-        url_is_file_flag(&recv),
-    );
+    let result = url_value(rebuild_with_path(&parsed, &new_path));
     Ok(Outcome {
         result,
         receiver: recv,
@@ -457,19 +510,16 @@ fn url_deleting_path_extension(
     let path = &parsed.path;
     // Strip the extension from the final component only.
     let new_path = match path.rsplit_once('/') {
-        Some((head, last)) => match last.rsplit_once('.') {
+        Some((head, last)) => match file_extension(last) {
             Some((stem, _)) => format!("{head}/{stem}"),
             None => path.clone(),
         },
-        None => match path.rsplit_once('.') {
+        None => match file_extension(path) {
             Some((stem, _)) => stem.to_string(),
             None => path.clone(),
         },
     };
-    let result = url_value(
-        rebuild_with_path(&parsed, &new_path),
-        url_is_file_flag(&recv),
-    );
+    let result = url_value(rebuild_with_path(&parsed, &new_path));
     Ok(Outcome {
         result,
         receiver: recv,
@@ -517,16 +567,19 @@ fn url_query_item_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         }
     }
     let Some(name) = name else {
-        return Err(type_error("URLQueryItem requires a name"));
+        return Err(type_error("URLQueryItem requires a name:"));
     };
-    Ok(url_query_item_value(name, value.flatten()))
+    let Some(value) = value else {
+        return Err(type_error("URLQueryItem requires a value: label"));
+    };
+    Ok(url_query_item_value(name, value))
 }
 
 // ===========================================================================
 // URLComponents
 // ===========================================================================
 
-fn url_components_value(parsed: &Parsed, query_items: SwiftValue) -> SwiftValue {
+fn url_components_value(parsed: &Parsed) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URLComponents".into(),
         fields: vec![
@@ -539,16 +592,17 @@ fn url_components_value(parsed: &Parsed, query_items: SwiftValue) -> SwiftValue 
                 parsed.port.map(SwiftValue::int).unwrap_or(SwiftValue::Nil),
             ),
             ("path".into(), SwiftValue::Str(parsed.path.clone())),
+            // `query` is the canonical query store; `queryItems` is a read-only
+            // property derived from it (avoids the two drifting out of sync).
             ("query".into(), opt_str(parsed.query.clone())),
             ("fragment".into(), opt_str(parsed.fragment.clone())),
-            ("queryItems".into(), query_items),
         ],
     }))
 }
 
 fn url_components_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if args.is_empty() {
-        return Ok(url_components_value(&Parsed::default(), SwiftValue::Nil));
+        return Ok(url_components_value(&Parsed::default()));
     }
     if args.len() != 1 {
         return Err(type_error("URLComponents expects zero or one argument"));
@@ -558,20 +612,23 @@ fn url_components_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             let SwiftValue::Str(raw) = &args[0].value else {
                 return Err(type_error("URLComponents(string:) expects a String"));
             };
-            let parsed = parse_url(raw);
-            let items = query_items_from(parsed.query.as_deref());
-            Ok(url_components_value(&parsed, items))
+            Ok(url_components_value(&parse_url(raw)))
         }
-        Some("url") => {
-            let parsed = parse_url(&url_string(&args[0].value)?);
-            let items = query_items_from(parsed.query.as_deref());
-            Ok(url_components_value(&parsed, items))
-        }
+        Some("url") => Ok(url_components_value(&parse_url(&url_string(
+            &args[0].value,
+        )?))),
         Some(other) => Err(type_error(format!(
             "unsupported URLComponents argument {other}:"
         ))),
         None => Err(type_error("URLComponents argument needs a label")),
     }
+}
+
+/// `queryItems` (read-only here): parse the canonical `query` field into
+/// `[URLQueryItem]?`. Writing `queryItems` directly is not supported — set
+/// `query` instead.
+fn url_components_query_items(recv: SwiftValue) -> StdResult {
+    Ok(query_items_from(comp_str(&recv, "query").as_deref()))
 }
 
 /// Build a `[URLQueryItem]?` from a raw query string.
@@ -582,11 +639,12 @@ fn query_items_from(query: Option<&str>) -> SwiftValue {
     if query.is_empty() {
         return SwiftValue::Nil;
     }
+    // Query item names/values are exposed percent-decoded, like Foundation.
     let items: Vec<SwiftValue> = query
         .split('&')
         .map(|pair| match pair.split_once('=') {
-            Some((k, v)) => url_query_item_value(k.to_string(), Some(v.to_string())),
-            None => url_query_item_value(pair.to_string(), None),
+            Some((k, v)) => url_query_item_value(percent_decode(k), Some(percent_decode(v))),
+            None => url_query_item_value(percent_decode(pair), None),
         })
         .collect();
     SwiftValue::Array(Rc::new(items))
@@ -607,46 +665,23 @@ fn comp_str(value: &SwiftValue, name: &str) -> Option<String> {
     }
 }
 
-/// Recompute the query string from the current `queryItems`, if any.
-fn query_from_items(value: &SwiftValue) -> Option<String> {
-    let SwiftValue::Array(items) = comp_field(value, "queryItems")? else {
-        return None;
-    };
-    if items.is_empty() {
-        return Some(String::new());
-    }
-    let parts: Vec<String> = items
-        .iter()
-        .filter_map(|item| {
-            let SwiftValue::Struct(o) = item else {
-                return None;
-            };
-            let name = match o.get("name") {
-                Some(SwiftValue::Str(s)) => s.clone(),
-                _ => return None,
-            };
-            Some(match o.get("value") {
-                Some(SwiftValue::Str(v)) => format!("{name}={v}"),
-                _ => name,
-            })
-        })
-        .collect();
-    Some(parts.join("&"))
-}
-
 /// Assemble the URL string from the current component fields.
 fn components_to_string(value: &SwiftValue) -> String {
+    let host = comp_str(value, "host");
+    let user = comp_str(value, "user");
     let parsed = Parsed {
         scheme: comp_str(value, "scheme"),
-        user: comp_str(value, "user"),
+        // Emit an authority whenever a host or user is set.
+        authority: host.is_some() || user.is_some(),
+        user,
         password: comp_str(value, "password"),
-        host: comp_str(value, "host"),
+        host,
         port: match comp_field(value, "port") {
             Some(SwiftValue::Int(i)) => Some(i.raw),
             _ => None,
         },
         path: comp_str(value, "path").unwrap_or_default(),
-        query: query_from_items(value).or_else(|| comp_str(value, "query")),
+        query: comp_str(value, "query"),
         fragment: comp_str(value, "fragment"),
     };
     rebuild_with_path(&parsed, &parsed.path)
@@ -661,7 +696,7 @@ fn url_components_url(recv: SwiftValue) -> StdResult {
     if string.is_empty() {
         Ok(SwiftValue::Nil)
     } else {
-        Ok(url_value(string, false))
+        Ok(url_value(string))
     }
 }
 
@@ -712,5 +747,45 @@ mod tests {
         let original = "https://u:pw@h.com:80/a/b?x=1#f";
         let p = parse_url(original);
         assert_eq!(rebuild_with_path(&p, &p.path), original);
+    }
+
+    #[test]
+    fn preserves_empty_authority() {
+        let p = parse_url("file:///tmp/a");
+        assert!(p.authority);
+        assert_eq!(p.host, None);
+        assert_eq!(p.path, "/tmp/a");
+        assert_eq!(rebuild_with_path(&p, &p.path), "file:///tmp/a");
+    }
+
+    #[test]
+    fn parses_ipv6_host_and_port() {
+        let p = parse_url("http://[::1]:9000/x");
+        assert_eq!(p.host.as_deref(), Some("[::1]"));
+        assert_eq!(p.port, Some(9000));
+    }
+
+    #[test]
+    fn rejects_non_numeric_port() {
+        assert_eq!(parse_url("http://h:-1/").port, None);
+        assert_eq!(parse_url("http://h:abc/").port, None);
+    }
+
+    #[test]
+    fn file_extension_handles_dotfiles() {
+        assert_eq!(file_extension("a.txt"), Some(("a", "txt")));
+        assert_eq!(file_extension("a.b.txt"), Some(("a.b", "txt")));
+        assert_eq!(file_extension(".bashrc"), None);
+        assert_eq!(file_extension("a."), None);
+        assert_eq!(file_extension("plain"), None);
+    }
+
+    #[test]
+    fn percent_decode_decodes_escapes() {
+        assert_eq!(percent_decode("a%20b"), "a b");
+        assert_eq!(percent_decode("%41%42"), "AB");
+        // An invalid escape is left intact.
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%zzb"), "a%zzb");
     }
 }

@@ -35,6 +35,7 @@ URL.query
 URL.scheme
 URL.user
 URLComponents.init
+URLComponents.queryItems
 URLComponents.string
 URLComponents.url
 URLQueryItem.init
