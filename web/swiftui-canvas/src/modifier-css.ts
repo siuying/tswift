@@ -10,6 +10,7 @@ export type UiirValue =
   | string
   | boolean
   | { $: string; name: string }
+  | UiirValue[]
   | { [key: string]: UiirValue };
 
 export interface Modifier {
@@ -82,6 +83,28 @@ const COLOR: Record<string, string> = {
   gray: "#8e8e93",
   clear: "transparent",
 };
+
+/** Map a nested shape descriptor (a UIIR node value) to a CSS `border-radius`
+ * for `.clipShape(...)`. Returns undefined for non-rounded shapes. */
+function shapeClipRadius(value: UiirValue): string | undefined {
+  if (!value || typeof value !== "object" || !("kind" in value)) return undefined;
+  const node = value as unknown as { kind: string; args?: Record<string, UiirValue> };
+  switch (node.kind) {
+    case "Circle":
+    case "Ellipse":
+      return "50%";
+    case "Capsule":
+      return "9999px";
+    case "RoundedRectangle": {
+      const r = node.args?.cornerRadius;
+      return typeof r === "number" ? `${r}px` : "8px";
+    }
+    case "Rectangle":
+      return "0";
+    default:
+      return undefined;
+  }
+}
 
 function isToken(value: UiirValue, tag: string): value is { $: string; name: string } {
   return Boolean(
@@ -246,6 +269,36 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
           const y = typeof o.y === "number" ? o.y : 0;
           el.style.transform = `translate(${x}px, ${y}px)`;
         }
+        break;
+      }
+      // C4 — visual decoration.
+      case "clipped": {
+        el.style.overflow = "hidden";
+        break;
+      }
+      case "clipShape": {
+        // The value is a nested shape descriptor; map its kind to a clip.
+        const r = shapeClipRadius(value);
+        if (r) el.style.borderRadius = r;
+        el.style.overflow = "hidden";
+        break;
+      }
+      case "border": {
+        // `{ value: <color token>, width: n }` (width defaults to 1).
+        const o = (value && typeof value === "object" ? value : {}) as Record<string, UiirValue>;
+        const c = cssColor(o.value ?? value) ?? "currentColor";
+        const w = typeof o.width === "number" ? o.width : 1;
+        el.style.border = `${w}px solid ${c}`;
+        break;
+      }
+      case "shadow": {
+        // `{ color?, radius, x?, y? }` -> CSS box-shadow (blur = radius).
+        const o = (value && typeof value === "object" ? value : {}) as Record<string, UiirValue>;
+        const radius = typeof o.radius === "number" ? o.radius : 0;
+        const x = typeof o.x === "number" ? o.x : 0;
+        const y = typeof o.y === "number" ? o.y : 0;
+        const c = cssColor(o.color) ?? "rgba(0,0,0,0.33)";
+        el.style.boxShadow = `${x}px ${y}px ${radius}px ${c}`;
         break;
       }
       default:

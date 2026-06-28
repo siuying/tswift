@@ -63,6 +63,26 @@ enum ModifierApply {
                 x: mod.value.member("x")?.asLength ?? 0,
                 y: mod.value.member("y")?.asLength ?? 0
             ))
+        // C4 — visual decoration.
+        case "clipped":
+            return AnyView(view.clipped())
+        case "clipShape":
+            if let shape = mod.value.asClipShape {
+                return AnyView(view.clipShape(shape))
+            }
+        case "border":
+            // `{ value: <color token>, width: n }` (positional color + width).
+            let c = (mod.value.member("value") ?? mod.value).asColor ?? .primary
+            let w = mod.value.member("width")?.asLength ?? 1
+            return AnyView(view.border(c, width: w))
+        case "shadow":
+            let radius = mod.value.member("radius")?.asLength ?? 0
+            let x = mod.value.member("x")?.asLength ?? 0
+            let y = mod.value.member("y")?.asLength ?? 0
+            if let c = mod.value.member("color")?.asColor {
+                return AnyView(view.shadow(color: c, radius: radius, x: x, y: y))
+            }
+            return AnyView(view.shadow(radius: radius, x: x, y: y))
         case "fill":
             // `.fill` on a shape is handled in the ViewFactory (shapes need the
             // ShapeStyle overload). As a chained modifier we approximate with
