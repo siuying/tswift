@@ -204,7 +204,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | Protocol declaration (methods/props/init) | ✅ | ★★★ | R4 |
 | [x] | Conformance + **witness tables** (msf ConformanceTable) | ✅ | ★★★ | R4 |
-| [~] | Protocol inheritance | ✅ | ★★ | R4 |
+| [x] | Protocol inheritance | ✅ | ★★ | R4 |
 | [x] | Protocol composition `P & Q` | ✅ | ★★ | R4 |
 | [x] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
 | [x] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
