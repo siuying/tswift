@@ -3467,14 +3467,16 @@ impl<'w> Interpreter<'w> {
     /// struct, else inferred from the JSON shape).
     fn json_decode(&self, type_name: &str, json: &crate::json::Json) -> SwiftValue {
         use crate::json::Json;
-        // A `Codable` enum decodes from its raw value (or bare case name).
+        // A `Codable` enum decodes from its raw value, or — for a payload-free
+        // case — its bare case name. A case with associated values never matches
+        // here (we would have to synthesize a payload), so it is skipped.
         if let Some(def) = self.enums.get(type_name) {
             let decoded = self.json_value(json);
             if let Some(case) = def.cases.iter().find(|c| {
-                c.raw
-                    .as_ref()
-                    .map(|r| r == &decoded)
-                    .unwrap_or_else(|| matches!(&decoded, SwiftValue::Str(s) if s == &c.name))
+                let raw_matches = c.raw.as_ref().is_some_and(|r| r == &decoded);
+                let name_matches = c.payload_types.is_empty()
+                    && matches!(&decoded, SwiftValue::Str(s) if s == &c.name);
+                raw_matches || name_matches
             }) {
                 return SwiftValue::Enum(Rc::new(EnumObj {
                     type_name: type_name.to_string(),
@@ -3494,12 +3496,12 @@ impl<'w> Interpreter<'w> {
                             // Decode typed nested fields (structs/enums) by their
                             // declared element type so they round-trip; fall back
                             // to a shape-inferred value otherwise.
-                            match p.ty.as_deref().map(decode_element_type) {
-                                Some(inner)
-                                    if self.structs.contains_key(inner)
-                                        || self.enums.contains_key(inner) =>
+                            match p.ty.as_deref() {
+                                Some(full)
+                                    if self.structs.contains_key(decode_element_type(full))
+                                        || self.enums.contains_key(decode_element_type(full)) =>
                                 {
-                                    self.json_decode_field(inner, p.ty.as_deref().unwrap(), j)
+                                    self.json_decode_field(decode_element_type(full), full, j)
                                 }
                                 _ => self.json_value(j),
                             }

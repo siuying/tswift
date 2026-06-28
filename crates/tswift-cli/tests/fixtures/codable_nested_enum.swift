@@ -31,3 +31,22 @@ let ad = try! JSONEncoder().encode(acc)
 print(ad)
 let adec = try! JSONDecoder().decode(Account.self, from: "{\"role\":\"guest\",\"backup\":\"admin\"}")
 print(adec.role == .guest, adec.backup == .admin)
+
+// Custom raw value: decode by raw value OR by case name; encode uses raw value.
+enum Status: String, Codable { case active = "ACTIVE", inactive }
+struct Record: Codable { let status: Status }
+print(try! JSONEncoder().encode(Record(status: .active)))
+print(try! JSONDecoder().decode(Record.self, from: "{\"status\":\"ACTIVE\"}").status == .active)
+print(try! JSONDecoder().decode(Record.self, from: "{\"status\":\"active\"}").status == .active)
+
+// Int raw value enum.
+enum Level: Int, Codable { case low = 1, high = 9 }
+struct Setting: Codable { let level: Level }
+print(try! JSONEncoder().encode(Setting(level: .high)))
+print(try! JSONDecoder().decode(Setting.self, from: "{\"level\":9}").level == .high)
+
+// Payload-free enum without raw values encodes/decodes by case name.
+enum Dir: Codable { case north, south }
+struct Move: Codable { let dir: Dir }
+print(try! JSONEncoder().encode(Move(dir: .north)))
+print(try! JSONDecoder().decode(Move.self, from: "{\"dir\":\"south\"}").dir == .south)
