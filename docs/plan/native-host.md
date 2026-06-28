@@ -123,17 +123,17 @@ built xcframework.
 
 ## Overall checklist
 
-- [ ] **T1** — Scaffold `tswift-ffi` crate: `Context` handle + `tswift_string_free`
-- [ ] **T2** — `tswift_run` one-shot run entry point (TSwiftCore surface)
-- [ ] **T3** — `tswift_swiftui_compile` / `tswift_swiftui_dispatch` (render session)
-- [ ] **T4** — Hand-written `tswift_ffi.h` + ABI drift check
-- [ ] **T5** — `scripts/build-xcframework.sh` (all slices → local `Artifacts/`)
-- [ ] **T6** — `ios/TSwift` package skeleton + `TSwiftCore` façade over T2
-- [ ] **T7** — `UiirRenderer` `EventSink` seam (no-op default, snapshot-safe)
-- [ ] **T8** — `TSwiftUI` `PreviewSession` driver over T3 + T7
-- [ ] **T9** — `scripts/publish-xcframework.sh` + `ffi.pin` pinned-release path
-- [ ] **T10** — Combined example app (Run + Preview screens)
-- [ ] **T11** — Verification: Rust FFI `#[test]` + `TSwiftUI` snapshot test
+- [x] **T1** — Scaffold `tswift-ffi` crate: `Context` handle + `tswift_string_free`
+- [x] **T2** — `tswift_run` one-shot run entry point (TSwiftCore surface)
+- [x] **T3** — `tswift_swiftui_compile` / `tswift_swiftui_dispatch` (render session)
+- [x] **T4** — Hand-written `tswift_ffi.h` + ABI drift check
+- [x] **T5** — `scripts/build-xcframework.sh` (all slices → local `Artifacts/`)
+- [x] **T6** — `ios/TSwift` package skeleton + `TSwiftCore` façade over T2
+- [x] **T7** — `UiirRenderer` `EventSink` seam (no-op default, snapshot-safe)
+- [x] **T8** — `TSwiftUI` `PreviewSession` driver over T3 + T7
+- [x] **T9** — `scripts/publish-xcframework.sh` + `ffi.pin` pinned-release path
+- [x] **T10** — Combined example app (Run + Preview screens)
+- [x] **T11** — Verification: Rust FFI `#[test]` + `TSwiftUI` snapshot test
 
 ---
 
