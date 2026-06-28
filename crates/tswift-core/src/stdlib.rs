@@ -153,6 +153,9 @@ pub enum BuiltinReceiver {
     UUID,
     IndexPath,
     IndexSet,
+    URL,
+    URLComponents,
+    URLQueryItem,
 }
 
 impl BuiltinReceiver {
@@ -173,6 +176,9 @@ impl BuiltinReceiver {
             BuiltinReceiver::UUID => "UUID",
             BuiltinReceiver::IndexPath => "IndexPath",
             BuiltinReceiver::IndexSet => "IndexSet",
+            BuiltinReceiver::URL => "URL",
+            BuiltinReceiver::URLComponents => "URLComponents",
+            BuiltinReceiver::URLQueryItem => "URLQueryItem",
         }
     }
 
@@ -193,6 +199,9 @@ impl BuiltinReceiver {
             "UUID" => BuiltinReceiver::UUID,
             "IndexPath" => BuiltinReceiver::IndexPath,
             "IndexSet" => BuiltinReceiver::IndexSet,
+            "URL" => BuiltinReceiver::URL,
+            "URLComponents" => BuiltinReceiver::URLComponents,
+            "URLQueryItem" => BuiltinReceiver::URLQueryItem,
             _ => return None,
         })
     }
@@ -213,6 +222,13 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "UUID" => BuiltinReceiver::UUID,
             SwiftValue::Struct(obj) if obj.type_name == "IndexPath" => BuiltinReceiver::IndexPath,
             SwiftValue::Struct(obj) if obj.type_name == "IndexSet" => BuiltinReceiver::IndexSet,
+            SwiftValue::Struct(obj) if obj.type_name == "URL" => BuiltinReceiver::URL,
+            SwiftValue::Struct(obj) if obj.type_name == "URLComponents" => {
+                BuiltinReceiver::URLComponents
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "URLQueryItem" => {
+                BuiltinReceiver::URLQueryItem
+            }
             _ => return None,
         })
     }
