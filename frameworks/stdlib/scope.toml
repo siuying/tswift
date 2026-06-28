@@ -21,3 +21,14 @@ sequence_types = [
 
 [core_members]
 Array = ["+", "+=", "=="]
+# Floating-point type constants resolved directly by the interpreter
+# (interp/storage.rs `double_type_constant`), not via the method registry.
+Double = [
+  "pi",
+  "infinity",
+  "nan",
+  "greatestFiniteMagnitude",
+  "leastNonzeroMagnitude",
+  "leastNormalMagnitude",
+  "ulpOfOne",
+]
