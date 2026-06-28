@@ -97,11 +97,34 @@ impl<'a> Node<'a> {
         self.inner.kind()
     }
 
-    /// Iterator over this node's direct children, in source order.
+    /// Iterator over this node's direct children, in source order. A borrowing
+    /// cursor over the parse AST — it allocates nothing.
     pub fn children(&self) -> Children<'a> {
         Children {
-            inner: self.inner.children().collect::<Vec<_>>().into_iter(),
+            parent: self.inner,
+            idx: 0,
+            len: self.inner.child_count(),
         }
+    }
+
+    /// The number of direct children this node has.
+    pub fn child_count(&self) -> usize {
+        self.inner.child_count()
+    }
+
+    /// The `i`-th direct child, in source order, if present.
+    pub fn child(&self, i: usize) -> Option<Node<'a>> {
+        self.inner.child(i).map(|inner| Node { inner })
+    }
+
+    /// This node's first direct child, if any.
+    pub fn first_child(&self) -> Option<Node<'a>> {
+        self.child(0)
+    }
+
+    /// The first direct child of the given [`NodeKind`], in source order.
+    pub fn find_child(&self, kind: NodeKind) -> Option<Node<'a>> {
+        self.children().find(|c| c.kind() == kind)
     }
 
     /// The source text of this node's primary token (identifier name, literal
@@ -445,16 +468,30 @@ fn json_string(s: &str) -> String {
 
 /// Iterator over a node's children produced by [`Node::children`].
 pub struct Children<'a> {
-    inner: std::vec::IntoIter<tswift_ast::Node<'a>>,
+    parent: tswift_ast::Node<'a>,
+    idx: usize,
+    len: usize,
 }
 
 impl<'a> Iterator for Children<'a> {
     type Item = Node<'a>;
 
     fn next(&mut self) -> Option<Node<'a>> {
-        self.inner.next().map(|inner| Node { inner })
+        if self.idx >= self.len {
+            return None;
+        }
+        let inner = self.parent.child(self.idx)?;
+        self.idx += 1;
+        Some(Node { inner })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.len - self.idx;
+        (rem, Some(rem))
     }
 }
+
+impl ExactSizeIterator for Children<'_> {}
 
 /// Decoded shape of a `switch` case clause.
 #[derive(Clone, Copy)]
@@ -566,6 +603,36 @@ mod tests {
         let arg = kids.next().expect("argument");
         assert_eq!(arg.kind(), NodeKind::IntegerLiteral);
         assert_eq!(arg.int(), Some(42));
+    }
+
+    /// The borrowing cursor exposes positional access and `find_child` without
+    /// re-collecting: `child`/`first_child`/`child_count` agree with iteration.
+    #[test]
+    fn cursor_positional_helpers_match_iteration() {
+        let a = Analysis::analyze("print(42)\n", "main.swift").unwrap();
+        let call = a
+            .root()
+            .first_child()
+            .and_then(|s| s.first_child())
+            .expect("a call expr");
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+
+        // child_count and ExactSizeIterator len agree.
+        assert_eq!(call.child_count(), call.children().count());
+        assert_eq!(call.children().len(), call.child_count());
+
+        // Positional child(i) matches the i-th iterated child.
+        let iterated: Vec<_> = call.children().map(|c| c.kind()).collect();
+        for (i, kind) in iterated.iter().enumerate() {
+            assert_eq!(call.child(i).map(|c| c.kind()).as_ref(), Some(kind));
+        }
+        assert!(call.child(iterated.len()).is_none());
+
+        // find_child locates by kind.
+        assert_eq!(
+            call.find_child(NodeKind::IntegerLiteral).and_then(|n| n.int()),
+            Some(42)
+        );
     }
 
     /// `NodeKind` names its variants and `dump` reports kind/line/type/modifiers.
