@@ -120,6 +120,17 @@ fn run(paths: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Surface diagnostics: warnings (e.g. `#warning`) print and continue;
+    // errors (e.g. `#error`, type errors) abort before execution.
+    let mut had_error = false;
+    for diag in analysis.diagnostics() {
+        let kind = if diag.is_error() { "error" } else { "warning" };
+        eprintln!("{}:{}: {}: {}", diag.line, diag.col, kind, diag.message);
+        had_error |= diag.is_error();
+    }
+    if had_error {
+        return ExitCode::FAILURE;
+    }
     // The interpreter borrows the AST for `'static` (string interpolation leaks
     // small fragment ASTs to match). The process runs one program and exits, so
     // leaking the root analysis here is intentional and bounded.

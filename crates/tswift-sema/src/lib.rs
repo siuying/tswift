@@ -23,12 +23,24 @@ mod symbols;
 pub use passes::analyze;
 use symbols::Symbols;
 
+/// Severity of a [`Diagnostic`]. Errors fail compilation; warnings are
+/// advisory and let the program still run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Severity {
+    /// Advisory diagnostic (e.g. `#warning`); does not block execution.
+    Warning,
+    /// Fatal diagnostic (e.g. `#error`, a type error); blocks execution.
+    #[default]
+    Error,
+}
+
 /// One semantic diagnostic with its 1-based source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub message: String,
     pub line: u32,
     pub col: u32,
+    pub severity: Severity,
 }
 
 /// The annotate pass: resolve names and record a [`Type`] on each expression
@@ -147,6 +159,7 @@ impl Resolver<'_> {
                             message: "extensions must not contain stored properties".to_string(),
                             line: n.line(),
                             col: n.col(),
+                            severity: Severity::Error,
                         });
                     }
                     self.resolve_statement(ast, member);
@@ -257,8 +270,33 @@ impl Resolver<'_> {
                 }
             }
             NodeKind::CompilerDirective => {
-                for &c in &kids {
-                    self.resolve_statement(ast, c);
+                let n = ast.node(stmt);
+                match n.text() {
+                    // `#warning("msg")` / `#error("msg")` raise a diagnostic at
+                    // the directive's location; the string child is the message.
+                    Some("#warning") | Some("#error") => {
+                        let severity = if n.text() == Some("#error") {
+                            Severity::Error
+                        } else {
+                            Severity::Warning
+                        };
+                        let msg = kids
+                            .first()
+                            .and_then(|&c| ast.node(c).text())
+                            .map(decode_string_literal)
+                            .unwrap_or_default();
+                        self.diags.push(Diagnostic {
+                            message: msg,
+                            line: n.line(),
+                            col: n.col(),
+                            severity,
+                        });
+                    }
+                    _ => {
+                        for &c in &kids {
+                            self.resolve_statement(ast, c);
+                        }
+                    }
                 }
             }
             NodeKind::OperatorDecl | NodeKind::PrecedenceGroupDecl => {}
@@ -364,6 +402,7 @@ impl Resolver<'_> {
             ),
             line: n.line(),
             col: n.col(),
+            severity: Severity::Error,
         });
     }
 
@@ -452,6 +491,7 @@ impl Resolver<'_> {
                         b.name(),
                         a.name()
                     ),
+                    severity: Severity::Error,
                     line: n.line(),
                     col: n.col(),
                 });
@@ -588,6 +628,7 @@ impl Resolver<'_> {
                     message: format!("cannot assign to value: '{name}' is a 'let' constant"),
                     line: node.line(),
                     col: node.col(),
+                    severity: Severity::Error,
                 });
             }
         }
@@ -626,6 +667,7 @@ impl Resolver<'_> {
                         a.name(),
                         b.name()
                     ),
+                    severity: Severity::Error,
                     line: node.line(),
                     col: node.col(),
                 });
@@ -638,6 +680,36 @@ impl Resolver<'_> {
 
 fn child_ids(ast: &Ast, id: NodeId) -> Vec<NodeId> {
     ast.node(id).children().map(|c| c.id()).collect()
+}
+
+/// Decode the literal text of a string node (`"..."`) into its content for use
+/// in a diagnostic message: strip the surrounding quotes and unescape the
+/// common escapes. Non-string text is returned unchanged.
+fn decode_string_literal(text: &str) -> String {
+    let inner = text
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text);
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Whether `member` is an instance stored property — a `let`/`var` with neither
@@ -704,6 +776,22 @@ mod tests {
     fn first_binding_init_type(ast: &Ast) -> Option<&'static str> {
         let decl = ast.node(ast.root()).children().next().unwrap();
         decl.children().last().unwrap().type_name()
+    }
+
+    #[test]
+    fn pound_warning_emits_warning_severity() {
+        let (_ast, diags) = resolved("#warning(\"todo: fix\")");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert_eq!(diags[0].message, "todo: fix");
+    }
+
+    #[test]
+    fn pound_error_emits_error_severity() {
+        let (_ast, diags) = resolved("#error(\"broken\")");
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].message, "broken");
     }
 
     #[test]
