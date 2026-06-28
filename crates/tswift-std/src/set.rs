@@ -18,6 +18,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "isEmpty", is_empty);
     interp.register_property(s, "capacity", capacity);
     interp.register_property(s, "hashValue", hash_value);
+    interp.register_property(s, "description", description);
 
     let mut mutating = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -133,6 +134,13 @@ pub(crate) fn value_digest(v: &SwiftValue) -> u64 {
         SwiftValue::Bool(b) => fnv1a(&[u8::from(*b)]),
         _ => fnv1a(&[0]),
     }
+}
+
+/// `Set.description` — the bracketed element list, e.g. `[1, 2, 3]`. Elements
+/// appear in insertion order (deterministic here), unlike Swift's hashed order.
+fn description(recv: SwiftValue) -> StdResult {
+    elements(&recv)?;
+    Ok(SwiftValue::Str(recv.to_string()))
 }
 
 /// `Set.hashValue` — an order-independent digest: equal sets (regardless of
@@ -412,6 +420,14 @@ mod tests {
         };
         out.sort();
         out
+    }
+
+    #[test]
+    fn description_renders_bracketed_list() {
+        assert_eq!(
+            description(s(&[1, 2, 3])).unwrap(),
+            SwiftValue::Str("[1, 2, 3]".into())
+        );
     }
 
     #[test]

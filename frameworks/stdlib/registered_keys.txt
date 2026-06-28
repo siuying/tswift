@@ -31,6 +31,7 @@ Bool.unsafelyUnwrapped
 Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
+Dictionary.description
 Dictionary.filter
 Dictionary.hashValue
 Dictionary.isEmpty
@@ -153,6 +154,7 @@ Sequence.starts
 Sequence.suffix
 Set.capacity
 Set.count
+Set.description
 Set.formIntersection
 Set.formSymmetricDifference
 Set.formUnion

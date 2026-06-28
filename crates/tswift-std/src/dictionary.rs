@@ -18,6 +18,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(d, "values", values);
     interp.register_property(d, "capacity", capacity);
     interp.register_property(d, "hashValue", hash_value);
+    interp.register_property(d, "description", description);
 
     interp.register_intrinsic(
         d,
@@ -115,6 +116,14 @@ fn pairs(recv: SwiftValue) -> Result<Rc<Pairs>, StdError> {
 
 fn count(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(pairs(recv)?.len() as i128))
+}
+
+/// `Dictionary.description` — the bracketed `[key: value, …]` rendering (`[:]`
+/// when empty). Pairs appear in insertion order here, unlike Swift's hashed
+/// order.
+fn description(recv: SwiftValue) -> StdResult {
+    pairs(recv.clone())?;
+    Ok(SwiftValue::Str(recv.to_string()))
 }
 
 /// `Dictionary.hashValue` — an order-independent digest over the key/value
@@ -407,6 +416,18 @@ mod tests {
                 .map(|(k, v)| (SwiftValue::Str((*k).into()), SwiftValue::int(*v)))
                 .collect(),
         ))
+    }
+
+    #[test]
+    fn description_renders_pairs() {
+        assert_eq!(
+            description(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            SwiftValue::Str("[a: 1, b: 2]".into())
+        );
+        assert_eq!(
+            description(SwiftValue::Dict(Rc::new(Vec::new()))).unwrap(),
+            SwiftValue::Str("[:]".into())
+        );
     }
 
     #[test]
