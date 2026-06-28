@@ -7562,6 +7562,40 @@ impl StdContext for Interpreter<'_> {
                 return Some(b);
             }
         }
+        // Synthesized `Comparable` for an enum that declares the conformance but
+        // defines no `<`: order by case-declaration index, then lexicographically
+        // by associated values (Swift's derived ordering, since 5.3).
+        if let (SwiftValue::Enum(ea), SwiftValue::Enum(eb)) = (a, b) {
+            if ea.type_name == eb.type_name
+                && self
+                    .all_protocols(&ea.type_name)
+                    .iter()
+                    .any(|p| p == "Comparable")
+            {
+                // Case index in declaration order; differing cases decide it.
+                let indices = self.enums.get(&ea.type_name).and_then(|def| {
+                    let ia = def.cases.iter().position(|c| c.name == ea.case)?;
+                    let ib = def.cases.iter().position(|c| c.name == eb.case)?;
+                    Some((ia, ib))
+                });
+                if let Some((ia, ib)) = indices {
+                    if ia != ib {
+                        return Some(ia < ib);
+                    }
+                    // Same case: lexicographic comparison over payloads.
+                    let (pa, pb) = (ea.payload.clone(), eb.payload.clone());
+                    for (va, vb) in pa.iter().zip(pb.iter()) {
+                        if self.value_less_than(va, vb)? {
+                            return Some(true);
+                        }
+                        if self.value_less_than(vb, va)? {
+                            return Some(false);
+                        }
+                    }
+                    return Some(false);
+                }
+            }
+        }
         None
     }
 }
