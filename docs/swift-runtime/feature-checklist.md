@@ -204,7 +204,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 |---|---|----|----|-------|
 | [x] | Protocol declaration (methods/props/init) | ✅ | ★★★ | R4 |
 | [x] | Conformance + **witness tables** (msf ConformanceTable) | ✅ | ★★★ | R4 |
-| [~] | Protocol inheritance | ✅ | ★★ | R4 |
+| [x] | Protocol inheritance | ✅ | ★★ | R4 |
 | [x] | Protocol composition `P & Q` | ✅ | ★★ | R4 |
 | [x] | Default implementations (in extensions) | ✅ | ★★★ | R4 |
 | [x] | Associated types (msf AssocTypeTable) | ✅ | ★★★ | R4 |
@@ -214,7 +214,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [~] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [x] | Conditional conformance | ✅ | ★★★ | R4 |
-| [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
+| [x] | Synthesized `Equatable`/`Hashable`/`Comparable` (enum `Comparable` ordered by case then payload; non-`Comparable` payloads aren't statically rejected — they trap at use) | ✅ | ★★★ | R4 |
 | [x] | Synthesized `Codable` (Encodable/Decodable; structs, nested/array/optional fields, RawRepresentable enums) | ✅ | ★★★★ | R5 |
 
 ### 4b. Generics
@@ -252,7 +252,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `throw` statement | ✅ | ★★ | R5 |
 | [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
 | [x] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
-| [~] | `rethrows` | ✅ | ★★★ | R5 |
+| [~] | `rethrows` (runtime ✓; static `try`-effect checking not enforced) | ✅ | ★★★ | R5 |
 | [~] | Typed throws `throws(E)` (Swift 6) | ⚠️ | ★★★ | R5 |
 | [x] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
 | [x] | Error propagation through call stack | ✅ | ★★★ | R5 |
@@ -332,7 +332,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [ ] | Attached macros `@Macro` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Macro declarations | ✅(AST_MACRO_DECL) | ★★★★ | R6+ |
 | [x] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
-| [~] | `#warning` / `#error` | ⚠️ | ★ | R1 |
+| [x] | `#warning` / `#error` | ⚠️ | ★ | R1 |
 | [ ] | `@freestanding` / `@attached` roles | ⚠️ | ★★★★ | R6+ |
 | [x] | `@resultBuilder` (DSL transform) | ✅ | ✅ | R6+ |
 | [x] | Result-builder method synthesis | ✅ | ✅ | R6+ |
@@ -451,8 +451,8 @@ inventories plus per-framework runtime registries. See
 |---|---|----|-------|
 | [x] | Framework inventory/coverage loop (`--framework`, scope manifests, registry dumps) | ★★ | R5+ |
 | [x] | Foundation proof slice: `Data`/`UUID` constructors and core properties | ★★ | R5+ |
-| [~] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
-| [ ] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
+| [x] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
+| [x] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
 | [x] | SwiftUI measurement descriptor and runtime ADR (ADR-0006, `docs/plan/swiftui-support.md`) | ★★★★ | R6+ |
 | [x] | SwiftUI v1 Counter slice: `View`/`@State`/`@ViewBuilder` shim, `Text`/`Button`/`VStack`/`HStack`/`Spacer`, token modifiers, UIIR + diff + tap dispatch (Layers A/B/C green) | ★★★★ | R6+ |
 | [ ] | SwiftUI Tier 2+: shapes/`ZStack`/composition, `ForEach`/identity, bindings, observation | ★★★★ | R6+ |

@@ -3889,6 +3889,17 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Struct(obj) => {
                 let type_name = obj.type_name.clone();
+                // `IndexPath[i]` reads its `i`th element (a Foundation builtin
+                // backed by a `_indexes` array, with no user `subscript`).
+                if type_name == "IndexPath" {
+                    if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                        let i = subscript_index(indices)?;
+                        return items
+                            .get(i)
+                            .cloned()
+                            .ok_or_else(|| trap(format!("index {i} out of range")));
+                    }
+                }
                 // Select the overload whose arity matches the index count.
                 let getter = self.structs.get(&type_name).and_then(|d| {
                     d.subscripts
@@ -6483,15 +6494,24 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
-                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet)
-                    && args.iter().any(|arg| arg.label.is_some())
-                {
-                    return Err(EvalError::Type(format!(
-                        "{}.{} does not accept argument labels",
-                        kind.type_name(),
-                        method
-                    ))
-                    .into());
+                // `IndexPath`/`IndexSet` intrinsics take positional arguments.
+                // The sole exception is `IndexSet.update(with:)`, whose one
+                // argument is labelled `with:` (and requires that label).
+                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
+                    let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
+                    let labels_valid = args.iter().all(|arg| match arg.label.as_deref() {
+                        Some("with") => is_update,
+                        Some(_) => false,
+                        None => !is_update,
+                    });
+                    if !labels_valid {
+                        return Err(EvalError::Type(format!(
+                            "{}.{} called with unexpected argument label(s)",
+                            kind.type_name(),
+                            method
+                        ))
+                        .into());
+                    }
                 }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
@@ -7607,6 +7627,40 @@ impl StdContext for Interpreter<'_> {
                 self.call_struct_method(SwiftValue::Void, &tn, "<", args, None)
             {
                 return Some(b);
+            }
+        }
+        // Synthesized `Comparable` for an enum that declares the conformance but
+        // defines no `<`: order by case-declaration index, then lexicographically
+        // by associated values (Swift's derived ordering, since 5.3).
+        if let (SwiftValue::Enum(ea), SwiftValue::Enum(eb)) = (a, b) {
+            if ea.type_name == eb.type_name
+                && self
+                    .all_protocols(&ea.type_name)
+                    .iter()
+                    .any(|p| p == "Comparable")
+            {
+                // Case index in declaration order; differing cases decide it.
+                let indices = self.enums.get(&ea.type_name).and_then(|def| {
+                    let ia = def.cases.iter().position(|c| c.name == ea.case)?;
+                    let ib = def.cases.iter().position(|c| c.name == eb.case)?;
+                    Some((ia, ib))
+                });
+                if let Some((ia, ib)) = indices {
+                    if ia != ib {
+                        return Some(ia < ib);
+                    }
+                    // Same case: lexicographic comparison over payloads.
+                    let (pa, pb) = (ea.payload.clone(), eb.payload.clone());
+                    for (va, vb) in pa.iter().zip(pb.iter()) {
+                        if self.value_less_than(va, vb)? {
+                            return Some(true);
+                        }
+                        if self.value_less_than(vb, va)? {
+                            return Some(false);
+                        }
+                    }
+                    return Some(false);
+                }
             }
         }
         None

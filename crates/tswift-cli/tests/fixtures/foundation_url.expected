@@ -1,0 +1,38 @@
+https
+example.com
+8080
+user
+pass
+/path/to/file.txt
+q=1&x=2
+frag
+file.txt
+txt
+[/, path, to, file.txt]
+https://user:pass@example.com:8080/path/to/file.txt?q=1&x=2#frag
+false
+true
+true file /tmp/data.json json
+https://a.com/dir/sub
+https://a.com/dir.zip
+https://a.com/
+https://a.com/a/b
+https://a.com/x/y
+https://a.com/x/
+true
+key val
+true
+true
+https host.com /p
+2
+http://host.com/p?a=1&b=2
+https://x.com/y
+true nil /tmp/a file:///tmp/a
+true
+[::1] 9000
+true
+/a b
+hello world
+true
+.bashrc
+https://h/p?z=9

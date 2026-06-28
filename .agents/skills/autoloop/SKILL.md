@@ -60,12 +60,12 @@ Create a check list for each of the four gates, and **do not proceed to the next
 - Pick the next experiment idea from the strategy list (generate new ones when exhausted).
 - Study code base or documentation to understand the problem and how to implement the idea.
 - Create an implementation plan, with clear steps and expected outcomes, break down into small and atomic size steps.
-- Implement the change by using `/skill:tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
+- Implement the change by using skill `/tdd` skill to guide the development: write a failing test first, then the minimal code to pass it.
 - `git add` the changes (do **not** commit yet).
 
 #### Gate 2 — Review
 
-- Dispatch a code reviewer subagent (`gpt-5.5`) to review code (See `/skill:requesting-code-review`)
+- Dispatch a pi code reviewer subagent (`gpt-5.5`) to review code (See skill `/requesting-code-review`)
 - Fix Important issues before proceeding
 - Note Minor issues for later
 - Push back if reviewer is wrong (with reasoning)

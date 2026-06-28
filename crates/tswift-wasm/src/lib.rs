@@ -4,6 +4,8 @@ use tswift_core::Interpreter;
 use tswift_frontend::Analysis;
 use wasm_bindgen::prelude::*;
 
+mod swiftui;
+
 /// Compile and run a single Swift source string, returning a JSON result.
 ///
 /// This is the wasm entry point. The heavy lifting lives in [`run_swift_impl`],
@@ -29,15 +31,33 @@ fn run_swift_impl(source: &str) -> String {
     };
 
     let mut diagnostics = String::new();
+    let mut had_error = false;
     for diagnostic in analysis.diagnostics() {
+        let kind = if diagnostic.is_error() {
+            "error"
+        } else {
+            "warning"
+        };
         diagnostics.push_str(&format!(
-            "{}:{}: {}\n",
+            "{}:{}: {kind}: {}\n",
             diagnostic.line, diagnostic.col, diagnostic.message
         ));
+        had_error |= diagnostic.is_error();
     }
 
     let ast_preview = analysis.root().dump_json();
     let compile_elapsed = elapsed_ms(started);
+
+    // An error-severity diagnostic (e.g. `#error`, a type error) fails
+    // compilation: report it as such and never enter the run phase.
+    if had_error {
+        return format!(
+            "{{\"ok\":false,\"backend\":\"wasm\",\"compile\":{{\"ok\":false,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":null}}",
+            escape_json(&diagnostics),
+            escape_json(&truncate(&ast_preview, 6_000)),
+            compile_elapsed
+        );
+    }
 
     let run_started = now_ms();
     let analysis: &'static Analysis = Box::leak(Box::new(analysis));
@@ -91,7 +111,7 @@ fn truncate(value: &str, max: usize) -> String {
     )
 }
 
-fn escape_json(value: &str) -> String {
+pub(crate) fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
@@ -153,7 +173,7 @@ fn now_ms() -> f64 {
 
 /// Forward Rust panics to `console.error` so the browser shows a real message
 /// instead of an opaque `RuntimeError: unreachable`.
-fn install_panic_hook() {
+pub(crate) fn install_panic_hook() {
     use std::sync::Once;
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {
@@ -206,11 +226,31 @@ mod tests {
 
     #[test]
     fn syntax_error_reports_compile_failure() {
-        // Parse/semantic errors are recorded as diagnostics: analysis succeeds
-        // structurally but the interpreter refuses to run.
+        // Parse/semantic errors are error-severity diagnostics: compilation
+        // fails and the run phase is skipped entirely (`run: null`).
         let json = run_swift_impl("let = = =");
         assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
-        assert!(json.contains("\"run\":{\"ok\":false"), "json={json}");
+        assert!(json.contains("\"compile\":{\"ok\":false"), "json={json}");
+        assert!(json.contains("\"run\":null"), "json={json}");
+    }
+
+    #[test]
+    fn pound_error_reports_compile_failure() {
+        // `#error` is an error-severity diagnostic: compile fails, run skipped.
+        let json = run_swift_impl("#error(\"boom\")");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"compile\":{\"ok\":false"), "json={json}");
+        assert!(json.contains("\"run\":null"), "json={json}");
+        assert!(json.contains("error: boom"), "json={json}");
+    }
+
+    #[test]
+    fn pound_warning_compiles_and_runs() {
+        // `#warning` is advisory: compile succeeds and the program runs.
+        let json = run_swift_impl("#warning(\"note\")\nprint(\"ok\")");
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
+        assert!(json.contains("warning: note"), "json={json}");
     }
 
     #[test]
