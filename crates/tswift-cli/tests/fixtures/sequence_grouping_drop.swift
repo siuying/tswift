@@ -20,3 +20,9 @@ print(nums.drop(while: { $0 > 100 }))
 
 // Symmetry with prefix(while:).
 print(Array(nums.prefix(while: { $0 < 3 })))
+
+// Empty inputs.
+let empty: [Int] = []
+print(empty.drop(while: { $0 < 3 }))
+let emptyGroups = Dictionary(grouping: empty) { $0 }
+print(emptyGroups.count)

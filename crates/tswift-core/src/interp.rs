@@ -7566,16 +7566,34 @@ impl<'w> Interpreter<'w> {
             let elements = materialize_sequence(&seq.value)
                 .ok_or_else(|| EvalError::Type("grouping: expects a sequence".into()))?;
             // The discriminator closure arrives either labelled `by:` or as a
-            // trailing closure (unlabelled).
-            let by = labeled("by")
-                .map(|a| a.value.clone())
-                .or_else(|| {
-                    args.iter()
-                        .find(|a| a.label.is_none() && matches!(a.value, SwiftValue::Closure(_)))
-                        .map(|a| a.value.clone())
-                })
-                .ok_or_else(|| EvalError::Type("grouping expects a `by:` closure".into()))?;
-            let SwiftValue::Closure(id) = by else {
+            // single trailing (unlabelled) closure. Reject any other argument so
+            // a stray value or a second closure cannot be silently dropped or
+            // mistaken for the discriminator.
+            let mut by: Option<SwiftValue> = None;
+            for a in args {
+                match a.label.as_deref() {
+                    Some("grouping") => {}
+                    Some("by") | None if matches!(a.value, SwiftValue::Closure(_)) => {
+                        if by.replace(a.value.clone()).is_some() {
+                            return Err(EvalError::Type(
+                                "Dictionary(grouping:by:) takes a single discriminator closure"
+                                    .into(),
+                            )
+                            .into());
+                        }
+                    }
+                    other => {
+                        return Err(EvalError::Type(format!(
+                            "Dictionary(grouping:by:) called with unexpected argument {}",
+                            other.unwrap_or("_")
+                        ))
+                        .into())
+                    }
+                }
+            }
+            let SwiftValue::Closure(id) =
+                by.ok_or_else(|| EvalError::Type("grouping expects a `by:` closure".into()))?
+            else {
                 return Err(EvalError::Type("grouping by: expects a closure".into()).into());
             };
             let mut pairs: Vec<(SwiftValue, Vec<SwiftValue>)> = Vec::new();
