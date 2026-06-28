@@ -43,10 +43,23 @@ let package = Package(
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         .library(name: "TSwiftCore", targets: ["TSwiftCore"]),
+        .library(name: "TSwiftUI", targets: ["TSwiftUI"]),
+    ],
+    dependencies: [
+        .package(path: "../UiirRenderer"),
     ],
     targets: [
         ffiTarget,
         .target(name: "TSwiftCore", dependencies: ["TSwiftFFI"]),
         .testTarget(name: "TSwiftCoreTests", dependencies: ["TSwiftCore"]),
+        .target(
+            name: "TSwiftUI",
+            dependencies: [
+                "TSwiftCore",
+                "TSwiftFFI",
+                .product(name: "UiirRenderer", package: "UiirRenderer"),
+            ]
+        ),
+        .testTarget(name: "TSwiftUITests", dependencies: ["TSwiftUI"]),
     ]
 )

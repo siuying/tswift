@@ -7,7 +7,9 @@ import TSwiftFFI
 /// Not thread-safe: confine a context to a single thread/actor.
 public final class TSwiftContext {
     /// Opaque pointer to the Rust `Context`. Never null while this object lives.
-    let handle: OpaquePointer
+    /// `package`-visible so the sibling `TSwiftUI` module can drive the same
+    /// context, without exposing the raw pointer to external consumers.
+    package let handle: OpaquePointer
 
     public init() {
         guard let handle = tswift_context_new() else {
