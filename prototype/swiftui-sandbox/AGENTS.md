@@ -19,9 +19,9 @@
   `.applyPatches(...)`. The page (`src/pages/index.astro`) is only editor + wasm
   glue + device chrome.
 - When the runtime gains a new SwiftUI view kind or modifier, teach the
-  **canvas** about it (`web/swiftui-canvas/src/apply-patch.ts` for the DOM
-  primitive, `src/modifier-css.ts` for styling) so every surface benefits, then
-  add a preset here to exercise it.
+  **canvas** about it (in `web/swiftui-canvas/src/`: `apply-patch.ts` for the DOM
+  primitive, `modifier-css.ts` for styling) so every surface benefits, then add a
+  preset here to exercise it.
 - The wasm entry points live in `crates/tswift-wasm/src/swiftui.rs`; the UIIR /
   patch wire format is defined by `crates/tswift-swiftui/src/{uiir,diff}.rs` and
   consumed by `web/swiftui-canvas/src/apply-patch.ts`.
