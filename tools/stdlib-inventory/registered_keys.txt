@@ -121,11 +121,14 @@ Set.update
 String.append
 String.contains
 String.count
+String.debugDescription
+String.description
 String.first
 String.firstMatch
 String.flatMap
 String.hasPrefix
 String.hasSuffix
+String.hashValue
 String.isASCII
 String.isEmpty
 String.isHexDigit
@@ -142,7 +145,9 @@ String.map
 String.matches
 String.prefix
 String.prefixMatch
+String.removeAll
 String.replacing
+String.reserveCapacity
 String.reversed
 String.split
 String.suffix

@@ -40,6 +40,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "isLowercase", is_lowercase);
     interp.register_property(s, "isASCII", is_ascii);
     interp.register_property(s, "isHexDigit", is_hex_digit);
+    interp.register_property(s, "description", description);
+    interp.register_property(s, "debugDescription", debug_description);
+    interp.register_property(s, "hashValue", hash_value);
 
     let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -72,6 +75,22 @@ pub fn install(interp: &mut Interpreter<'_>) {
         MethodEntry {
             mutating: true,
             func: append,
+        },
+    );
+    interp.register_intrinsic(
+        s,
+        "removeAll",
+        MethodEntry {
+            mutating: true,
+            func: remove_all,
+        },
+    );
+    interp.register_intrinsic(
+        s,
+        "reserveCapacity",
+        MethodEntry {
+            mutating: true,
+            func: reserve_capacity,
         },
     );
 }
@@ -338,6 +357,55 @@ fn append(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
     })
 }
 
+/// `String.description` — the string itself.
+fn description(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Str(str_of(&recv)?))
+}
+
+/// `String.debugDescription` — the string wrapped in quotes with the common
+/// escapes applied, matching Swift's debug rendering for simple text.
+fn debug_description(recv: SwiftValue) -> StdResult {
+    let s = str_of(&recv)?;
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    Ok(SwiftValue::Str(out))
+}
+
+/// `String.hashValue` — a deterministic per-run hash. Swift seeds its hasher
+/// per process, so only equal hashes for equal strings are observable; an
+/// FNV-1a digest of the bytes models that with a stable witness.
+fn hash_value(recv: SwiftValue) -> StdResult {
+    let s = str_of(&recv)?;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(SwiftValue::int(i128::from(h as i64)))
+}
+
+/// `String.removeAll(keepingCapacity:)` — empty the string in place.
+fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    val(SwiftValue::Void, SwiftValue::Str(String::new()))
+}
+
+/// `String.reserveCapacity(_:)` — a no-op here; storage growth is implicit.
+fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let s = str_of(&recv)?;
+    val(SwiftValue::Void, SwiftValue::Str(s))
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 type Outcomes = Result<Outcome, StdError>;
@@ -431,6 +499,29 @@ mod tests {
         assert_eq!(graphemes("🇺🇸").len(), 1); // regional-indicator flag
         assert_eq!(graphemes("👨\u{200D}👩\u{200D}👧").len(), 1); // ZWJ family
         assert_eq!(graphemes("ab🇺🇸c").len(), 4);
+    }
+
+    #[test]
+    fn describe_and_hash() {
+        assert_eq!(description(s("hi")).unwrap(), s("hi"));
+        assert_eq!(
+            debug_description(s("a\tb\"c")).unwrap(),
+            s("\"a\\tb\\\"c\"")
+        );
+        assert_eq!(hash_value(s("abc")).unwrap(), hash_value(s("abc")).unwrap());
+        assert_ne!(hash_value(s("abc")).unwrap(), hash_value(s("abd")).unwrap());
+    }
+
+    #[test]
+    fn remove_all_and_reserve() {
+        let mut m = M;
+        assert_eq!(
+            remove_all(&mut m, s("keep"), vec![]).unwrap().receiver,
+            s("")
+        );
+        let r = reserve_capacity(&mut m, s("grow"), vec![SwiftValue::int(99)]).unwrap();
+        assert_eq!(r.receiver, s("grow"));
+        assert_eq!(r.result, SwiftValue::Void);
     }
 
     #[test]
