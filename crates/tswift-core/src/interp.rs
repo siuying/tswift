@@ -374,6 +374,10 @@ pub struct Interpreter<'w> {
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
+    /// Per-group cancellation flag (set by `cancelAll()`), so children added
+    /// *after* cancellation are spawned cancelled and `addTaskUnlessCancelled`
+    /// can refuse to add one.
+    group_cancelled: Vec<bool>,
     /// `with*Continuation` slots, one per continuation handed to a body. The
     /// state machine (`Pending` → `Resumed` → `Consumed`) lets `resume(...)`
     /// diagnose both double resume *and* late resume after the enclosing
@@ -481,6 +485,7 @@ impl<'w> Interpreter<'w> {
             tasks: Vec::new(),
             current_task: Vec::new(),
             groups: Vec::new(),
+            group_cancelled: Vec::new(),
             continuations: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
@@ -3011,19 +3016,21 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Register a 0-argument closure body as a task and return its handle index.
-    fn spawn_task_closure(&mut self, closure_id: usize) -> usize {
+    /// Spawn a task body. A *structured* child (`inherit = true`) inherits its
+    /// enclosing task's cancellation (ADR-0005); a detached task
+    /// (`inherit = false`) starts uncancelled regardless of context.
+    fn spawn_task_closure(&mut self, closure_id: usize, inherit: bool) -> usize {
         let id = self.tasks.len();
-        // A child task spawned inside an already-cancelled task inherits its
-        // cancellation (structured-concurrency propagation, ADR-0005).
-        let inherited = self
-            .current_task
-            .last()
-            .is_some_and(|&parent| self.tasks[parent].cancelled);
+        let cancelled = inherit
+            && self
+                .current_task
+                .last()
+                .is_some_and(|&parent| self.tasks[parent].cancelled);
         self.tasks.push(TaskSlot {
             closure: closure_id,
             class_ctx: self.class_ctx.clone(),
             state: TaskState::Pending,
-            cancelled: inherited,
+            cancelled,
         });
         id
     }
@@ -3040,7 +3047,7 @@ impl<'w> Interpreter<'w> {
             },
             captured,
         ));
-        self.spawn_task_closure(closure_id)
+        self.spawn_task_closure(closure_id, true)
     }
 
     /// Whether the innermost running task is cancelled (`false` when no task is
@@ -3135,7 +3142,9 @@ impl<'w> Interpreter<'w> {
                 let closure = self
                     .eval_body_closure(arg_nodes)?
                     .ok_or_else(|| EvalError::Unsupported("Task without a body closure".into()))?;
-                Ok(Some(SwiftValue::Task(self.spawn_task_closure(closure))))
+                Ok(Some(SwiftValue::Task(
+                    self.spawn_task_closure(closure, true),
+                )))
             }
             "withTaskGroup" | "withThrowingTaskGroup" => {
                 let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
@@ -3143,6 +3152,7 @@ impl<'w> Interpreter<'w> {
                 })?;
                 let gid = self.groups.len();
                 self.groups.push(Vec::new());
+                self.group_cancelled.push(false);
                 let result = self.call_closure(body, vec![SwiftValue::TaskGroup(gid)]);
                 // The group's children are structured: drain any not consumed by
                 // a `for await` so they complete before the group returns.
@@ -3228,11 +3238,22 @@ impl<'w> Interpreter<'w> {
                         let closure = Self::first_closure(&args).ok_or_else(|| {
                             EvalError::Unsupported("addTask without a body closure".into())
                         })?;
-                        let tid = self.spawn_task_closure(closure);
+                        // `addTaskUnlessCancelled` adds nothing (and returns
+                        // `false`) once the group is cancelled.
+                        if method == "addTaskUnlessCancelled" && self.group_cancelled[gid] {
+                            return Ok(Some(SwiftValue::Bool(false)));
+                        }
+                        let tid = self.spawn_task_closure(closure, false);
+                        // A child added to an already-cancelled group starts
+                        // cancelled (structured-concurrency propagation).
+                        if self.group_cancelled[gid] {
+                            self.tasks[tid].cancelled = true;
+                        }
                         self.groups[gid].push(tid);
                         Ok(Some(SwiftValue::Bool(true)))
                     }
                     "cancelAll" => {
+                        self.group_cancelled[gid] = true;
                         for &tid in &self.groups[gid].clone() {
                             self.tasks[tid].cancelled = true;
                         }
@@ -6375,7 +6396,9 @@ impl<'w> Interpreter<'w> {
                     let closure = Self::first_closure(&args).ok_or_else(|| {
                         EvalError::Unsupported("Task.detached without a body closure".into())
                     })?;
-                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure)));
+                    // A detached task is not a structured child: it never
+                    // inherits the spawning task's cancellation.
+                    return Ok(SwiftValue::Task(self.spawn_task_closure(closure, false)));
                 }
                 // `Task.checkCancellation()` throws `CancellationError` when the
                 // running task is cancelled, else does nothing.

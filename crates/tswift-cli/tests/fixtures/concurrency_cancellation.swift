@@ -36,14 +36,40 @@ func propagation() async {
     print("child inherited cancel:", await outer.value)
 }
 
-func topLevel() async {
-    // Outside any task body, `Task.isCancelled` is false.
-    print("top-level isCancelled:", Task.isCancelled)
+func detachedNotInherited() async {
+    // A detached task is *not* a structured child: it never inherits the
+    // spawning task's cancellation.
+    let outer = Task { () -> Bool in
+        let d = Task.detached { Task.isCancelled }
+        return await d.value
+    }
+    outer.cancel()
+    print("detached inherited cancel:", await outer.value)
+}
+
+func groupCancellation() async {
+    let sum = await withTaskGroup(of: Int.self) { group -> Int in
+        group.addTask { 1 }
+        group.cancelAll()
+        // Refused once the group is cancelled.
+        let added = group.addTaskUnlessCancelled { 2 }
+        print("addTaskUnlessCancelled after cancel:", added)
+        // A child added after cancelAll() starts cancelled.
+        group.addTask { Task.isCancelled ? 100 : 0 }
+        var total = 0
+        for await v in group { total += v }
+        return total
+    }
+    print("group sum:", sum)
 }
 
 Task {
     await cooperative()
     await checking()
     await propagation()
-    await topLevel()
+    await detachedNotInherited()
+    await groupCancellation()
 }
+
+// Outside any task body, `Task.isCancelled` is false.
+print("top-level isCancelled:", Task.isCancelled)
