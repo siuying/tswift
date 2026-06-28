@@ -65,6 +65,120 @@ export class SwiftUICanvas extends HTMLElement {
       }
       .root { display: flex; justify-content: center; padding: 16px; }
       button { font: inherit; border: none; background: transparent; cursor: pointer; color: inherit; }
+
+      /* ── iOS theme ──────────────────────────────────────────────
+         Opt-in (\`theme="ios"\`) skin that restyles the control primitives to
+         resemble iOS. Scoped under :host([theme="ios"]) so the default skin —
+         and its snapshot baselines — is untouched. Controls are matched by the
+         \`data-kind\` PatchApplier sets on each element. A SwiftUI modifier
+         (e.g. .background(_)) is applied inline and still wins, except where a
+         field's base box needs !important to beat its inline default. */
+      :host([theme="ios"]) { font-family: -apple-system, system-ui, sans-serif; }
+
+      :host([theme="ios"]) [data-kind="Button"] {
+        color: #007aff;
+        font-size: 17px;
+        padding: 4px 6px;
+        border-radius: 8px;
+      }
+      :host([theme="ios"]) [data-kind="Button"]:active { opacity: 0.4; }
+
+      /* Toggle → iOS switch */
+      :host([theme="ios"]) [data-kind="Toggle"] { justify-content: space-between; width: 100%; }
+      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"] {
+        appearance: none;
+        -webkit-appearance: none;
+        position: relative;
+        flex: none;
+        width: 51px;
+        height: 31px;
+        border-radius: 31px;
+        background: #e9e9ea;
+        transition: background 0.2s ease;
+        cursor: pointer;
+      }
+      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 27px;
+        height: 27px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        transition: transform 0.2s ease;
+      }
+      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked { background: #34c759; }
+      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked::after { transform: translateX(20px); }
+
+      /* TextField / SecureField → rounded field (overrides the inline base box) */
+      :host([theme="ios"]) [data-kind="TextField"],
+      :host([theme="ios"]) [data-kind="SecureField"] {
+        padding: 7px 11px !important;
+        border: 0.5px solid #c6c6c8 !important;
+        border-radius: 10px !important;
+        background: var(--swiftui-system-background) !important;
+        color: var(--swiftui-label) !important;
+        font-size: 17px !important;
+        outline: none;
+      }
+
+      /* Slider → thin track with a blue fill + white knob */
+      :host([theme="ios"]) [data-kind="Slider"] {
+        appearance: none;
+        -webkit-appearance: none;
+        height: 4px;
+        border-radius: 2px;
+        cursor: pointer;
+        background: linear-gradient(
+          to right,
+          #007aff var(--swiftui-slider-fill, 0%),
+          #d1d1d6 var(--swiftui-slider-fill, 0%)
+        );
+      }
+      :host([theme="ios"]) [data-kind="Slider"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 27px;
+        height: 27px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 1px rgba(0, 0, 0, 0.2);
+        margin-top: -11.5px;
+      }
+      :host([theme="ios"]) [data-kind="Slider"]::-moz-range-thumb {
+        width: 27px;
+        height: 27px;
+        border: none;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+      }
+
+      /* Stepper → joined −/+ segmented control */
+      :host([theme="ios"]) [data-kind="Stepper"] { justify-content: space-between; width: 100%; }
+      :host([theme="ios"]) [data-kind="Stepper"] button {
+        width: 46px;
+        height: 32px;
+        font-size: 20px;
+        color: var(--swiftui-label);
+        background: rgba(120, 120, 128, 0.16);
+      }
+      :host([theme="ios"]) [data-kind="Stepper"] button:nth-of-type(1) {
+        border-radius: 8px 0 0 8px;
+        box-shadow: 1px 0 0 rgba(120, 120, 128, 0.3);
+      }
+      :host([theme="ios"]) [data-kind="Stepper"] button:nth-of-type(2) { border-radius: 0 8px 8px 0; }
+
+      /* Picker → tinted menu-style control */
+      :host([theme="ios"]) [data-kind="Picker"] {
+        font-size: 15px;
+        color: #007aff;
+        background: rgba(120, 120, 128, 0.12);
+        border: none;
+        border-radius: 8px;
+        padding: 6px 10px;
+      }
     `;
     this.mountPoint = document.createElement("div");
     this.mountPoint.className = "root";
