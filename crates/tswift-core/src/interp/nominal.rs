@@ -3,8 +3,7 @@ use tswift_frontend::{Node, NodeKind};
 use super::{
     clone_method, clone_params, expand_directives, field_type_name, generic_param_names, is_expr,
     is_value_node, parse_params, ClassDef, ComputedProp, EnumCaseDef, EnumDef, Interpreter,
-    MethodDef, Param, ProtoDef, RawKind, StoredProp, StructDef, SubscriptDef, MOD_LAZY,
-    MOD_MUTATING, MOD_STATIC, MOD_WEAK,
+    MethodDef, Param, ProtoDef, RawKind, StoredProp, StructDef, SubscriptDef,
 };
 use crate::value::{IntWidth, SwiftValue};
 
@@ -146,9 +145,9 @@ impl<'w> Interpreter<'w> {
                             MethodDef {
                                 params: parse_params(&member),
                                 body: member.find_child(NodeKind::Block),
-                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                                mutating: member.is_mutating(),
                                 generic_params: generic_param_names(&member),
-                                is_static: member.modifiers() & MOD_STATIC != 0,
+                                is_static: member.is_static(),
                             },
                         );
                     }
@@ -164,7 +163,7 @@ impl<'w> Interpreter<'w> {
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
                                     setter_nonmutating: acc.setter_nonmutating,
-                                    is_static: member.modifiers() & MOD_STATIC != 0,
+                                    is_static: member.is_static(),
                                 },
                             );
                         }
@@ -368,9 +367,9 @@ impl<'w> Interpreter<'w> {
                             MethodDef {
                                 params: parse_params(&member),
                                 body: member.find_child(NodeKind::Block),
-                                mutating: member.modifiers() & MOD_MUTATING != 0,
+                                mutating: member.is_mutating(),
                                 generic_params: generic_param_names(&member),
-                                is_static: member.modifiers() & MOD_STATIC != 0,
+                                is_static: member.is_static(),
                             },
                         );
                     }
@@ -386,7 +385,7 @@ impl<'w> Interpreter<'w> {
                                     setter: acc.setter_body,
                                     setter_param: acc.setter_param,
                                     setter_nonmutating: acc.setter_nonmutating,
-                                    is_static: member.modifiers() & MOD_STATIC != 0,
+                                    is_static: member.is_static(),
                                 },
                             );
                         }
@@ -443,7 +442,7 @@ impl<'w> Interpreter<'w> {
                     init_overloads.push(clone_method(&def));
                     init = Some(def);
                 }
-                NodeKind::SubscriptDecl if member.modifiers() & MOD_STATIC != 0 => {
+                NodeKind::SubscriptDecl if member.is_static() => {
                     let acc = member.var_accessors();
                     let sbody = acc
                         .getter_body
@@ -468,7 +467,7 @@ impl<'w> Interpreter<'w> {
                                 body: member.find_child(NodeKind::Block),
                                 mutating: false,
                                 generic_params: generic_param_names(&member),
-                                is_static: member.modifiers() & MOD_STATIC != 0,
+                                is_static: member.is_static(),
                             },
                         );
                     }
@@ -486,10 +485,10 @@ impl<'w> Interpreter<'w> {
                                 setter: acc.setter_body,
                                 setter_param: acc.setter_param,
                                 setter_nonmutating: acc.setter_nonmutating,
-                                is_static: member.modifiers() & MOD_STATIC != 0,
+                                is_static: member.is_static(),
                             },
                         );
-                    } else if member.modifiers() & MOD_STATIC != 0 {
+                    } else if member.is_static() {
                         // A `static` stored property is type-level storage; defer
                         // its initializer until the class is registered so it can
                         // reference its own type.
@@ -497,9 +496,7 @@ impl<'w> Interpreter<'w> {
                             static_inits.push((pname.clone(), def));
                         }
                     } else {
-                        if member.modifiers() & MOD_WEAK != 0
-                            || member.ownership().as_deref() == Some("weak")
-                        {
+                        if member.ownership().as_deref() == Some("weak") {
                             weak_fields.push(pname.clone());
                         }
                         let default = member.children().find(|c| is_value_node(c));
@@ -523,7 +520,7 @@ impl<'w> Interpreter<'w> {
                             name: pname,
                             ty: field_type_name(&member),
                             default,
-                            lazy: member.modifiers() & MOD_LAZY != 0,
+                            lazy: member.is_lazy(),
                             will_set,
                             did_set,
                         });
@@ -612,7 +609,7 @@ impl<'w> Interpreter<'w> {
                     let getter = acc
                         .getter_body
                         .or_else(|| member.find_child(NodeKind::Block));
-                    if member.modifiers() & MOD_STATIC != 0 {
+                    if member.is_static() {
                         static_subscript = Some(MethodDef {
                             params: parse_params(&member),
                             body: getter,
@@ -633,11 +630,10 @@ impl<'w> Interpreter<'w> {
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
-                        let mods = member.modifiers();
                         let params = parse_params(&member);
                         let body = member.find_child(NodeKind::Block);
-                        let mutating = mods & MOD_MUTATING != 0;
-                        let is_static = mods & MOD_STATIC != 0;
+                        let mutating = member.is_mutating();
+                        let is_static = member.is_static();
                         let def = MethodDef {
                             params,
                             body,
@@ -656,8 +652,7 @@ impl<'w> Interpreter<'w> {
                     let Some(pname) = member.decl_name() else {
                         continue;
                     };
-                    let mods = member.modifiers();
-                    let is_static = mods & MOD_STATIC != 0;
+                    let is_static = member.is_static();
                     let acc = member.var_accessors();
                     if acc.is_computed {
                         computed.insert(
@@ -707,7 +702,7 @@ impl<'w> Interpreter<'w> {
                                 name: pname,
                                 ty: field_type_name(&member),
                                 default,
-                                lazy: mods & MOD_LAZY != 0,
+                                lazy: member.is_lazy(),
                                 will_set,
                                 did_set,
                             });
