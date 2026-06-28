@@ -44,12 +44,39 @@ void           tswift_string_free(char*);
 
 Mirrors `tswift-wasm`'s `run_swift` / `swiftui_compile` / `swiftui_dispatch`.
 
+5. **Hand-written header, not cbindgen.** The surface is tiny (6 fns, one opaque
+   type); a ~15-line `.h` is diff-reviewable with zero offline/vendoring cost
+   (cbindgen is not in `Cargo.lock` and can't be `cargo install`ed offline). A
+   drift check (a compile-time symbol check in the example app) keeps the `.h`
+   and the Rust `extern "C"` signatures in sync. Escalate to a checked-in
+   *generated* header only if the surface grows.
+
+## Packaging (locked)
+
+- **Slices**: iOS device (`aarch64-apple-ios`), iOS sim (fat: `aarch64` +
+  `x86_64-apple-ios-sim`), macOS (fat: `aarch64` + `x86_64-apple-darwin`). Mac
+  matters — example apps and `UiirRenderer` snapshot tests are macOS-hosted.
+- **Header**: `crates/tswift-ffi/include/tswift_ffi.h` (single source of truth),
+  copied into each xcframework slice's `Headers/` by the build script.
+- **One SwiftPM package `ios/TSwift/`** exposing two products `TSwiftCore` and
+  `TSwiftUI` over one private `TSwiftFFI` binary target. `TSwiftUI` depends on
+  the existing `UiirRenderer`.
+- **Local-override-else-pinned-remote `binaryTarget`.** `Package.swift` picks a
+  git-ignored local `ios/TSwift/Artifacts/TSwiftFFI.xcframework` if present,
+  else downloads the pinned released zip via `url` + `checksum` read from a
+  committed `ios/TSwift/ffi.pin` (JSON: `{version, url, checksum}`).
+- **Host**: a **GitHub Release asset** (not GitHub Packages — that registry does
+  not host raw binaries). Pinned by a dedicated **`ffi-vN`** tag, bumped by the
+  publish script, giving the binary ABI its own version line.
+- **Two scripts**: `scripts/build-xcframework.sh` (cargo ×targets → `lipo` →
+  `xcodebuild -create-xcframework` → local `Artifacts/`) and
+  `scripts/publish-xcframework.sh` (zip → `swift package compute-checksum` →
+  `gh release create/upload` → rewrite `ffi.pin`), the latter run on demand.
+- Network note: the offline rule is **crates.io-only**; SwiftPM already fetches
+  `swift-snapshot-testing`, so a remote `binaryTarget` is consistent.
+
 ## Open branches (still to grill)
 
-- **cbindgen** as a dev/one-shot tool vs build-dependency (not in `Cargo.lock`;
-  offline — may need vendoring; confirm with user).
-- **xcframework packaging**: device + simulator + arch slices; SwiftPM
-  `binaryTarget` vs build script; where the generated header lives.
 - **`TSwiftUI` session driver**: how it drives a live render session against
   `UiirRenderer`'s patch applier (which already consumes UIIR + patch JSON).
 - **Two example apps**: CodeSandbox-style split view (TSwiftCore);
