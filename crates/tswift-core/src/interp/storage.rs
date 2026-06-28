@@ -1088,6 +1088,18 @@ impl<'w> Interpreter<'w> {
                         if let Some(v) = double_type_constant(&member) {
                             return Ok(SwiftValue::Double(v));
                         }
+                        // Integer-typed format statics. `Float` is modelled on
+                        // f64 here but keeps its own IEEE single field widths.
+                        let (exp_bits, sig_bits) = if type_name == "Float" {
+                            (8, 23)
+                        } else {
+                            (11, 52)
+                        };
+                        match member.as_str() {
+                            "exponentBitCount" => return Ok(SwiftValue::int(exp_bits)),
+                            "significandBitCount" => return Ok(SwiftValue::int(sig_bits)),
+                            _ => {}
+                        }
                     }
                     // Static property of a struct or class type: `Type.prop`.
                     if self.structs.contains_key(&type_name)
