@@ -36,6 +36,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     mutating(interp, "removeLast", remove_last);
     mutating(interp, "removeFirst", remove_first);
     mutating(interp, "removeAll", remove_all);
+    mutating(interp, "removeSubrange", remove_subrange);
+    mutating(interp, "reverse", reverse);
     mutating(interp, "reserveCapacity", reserve_capacity);
     mutating(interp, "replaceSubrange", replace_subrange);
     nonmutating(interp, "distance", distance);
@@ -254,14 +256,67 @@ fn remove_first(
     })
 }
 
-/// `Array.removeAll(keepingCapacity:)` — empty the array (capacity ignored).
+/// `Array.removeAll(keepingCapacity:)` empties the array; the
+/// `removeAll(where:)` overload (detected by a closure argument) instead drops
+/// only the elements satisfying the predicate. `keepingCapacity` is a `Bool`,
+/// so the two overloads are told apart by argument type.
 fn remove_all(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut v = items(recv)?;
+    if let Some(SwiftValue::Closure(id)) = args.iter().find(|a| matches!(a, SwiftValue::Closure(_)))
+    {
+        let id = *id;
+        let mut kept = Vec::new();
+        for elem in v.iter().cloned() {
+            let keep = !ctx
+                .call_closure(id, vec![elem.clone()])?
+                .as_bool()
+                .unwrap_or(false);
+            if keep {
+                kept.push(elem);
+            }
+        }
+        return Ok(Outcome {
+            result: SwiftValue::Void,
+            receiver: SwiftValue::Array(Rc::new(kept)),
+        });
+    }
+    Rc::make_mut(&mut v).clear();
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(v),
+    })
+}
+
+/// `Array.removeSubrange(_:)` — delete the elements in a range, in place.
+fn remove_subrange(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut v = items(recv)?;
+    let range = args.first().ok_or_else(|| {
+        StdError::Error(EvalError::Type("removeSubrange(_:) expects a range".into()))
+    })?;
+    let (start, end) = range_bounds(range, v.len(), "removeSubrange(_:)")?;
+    Rc::make_mut(&mut v).drain(start..end);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(v),
+    })
+}
+
+/// `Array.reverse()` — reverse the elements in place.
+fn reverse(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
     _a: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
-    Rc::make_mut(&mut v).clear();
+    Rc::make_mut(&mut v).reverse();
     Ok(Outcome {
         result: SwiftValue::Void,
         receiver: SwiftValue::Array(v),
