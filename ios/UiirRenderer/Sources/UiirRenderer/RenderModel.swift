@@ -35,10 +35,14 @@ public final class RenderModel: ObservableObject {
                 )
             }
         case let .setArgs(id, args):
+            // A whole-args replacement (matches the runtime's `args_json`, which
+            // emits every visible arg, and the web applier). Merging would leak
+            // a stale arg when one disappears (e.g. `ScrollView(.horizontal)` ->
+            // `ScrollView {}` must drop `axes`).
             mutate(id) { node in
                 node = UiirNode(
                     id: node.id, kind: node.kind,
-                    args: merged(node.args, args),
+                    args: args,
                     modifiers: node.modifiers, children: node.children
                 )
             }

@@ -1,13 +1,16 @@
 Button.init
 Capsule.init
 Circle.init
+Divider.init
 Ellipse.init
 ForEach.init
+Group.init
 HStack.init
 List.init
 Picker.init
 Rectangle.init
 RoundedRectangle.init
+ScrollView.init
 Section.init
 SecureField.init
 Slider.init

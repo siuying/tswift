@@ -279,6 +279,12 @@ struct TextCase {
     static let uppercase = TextCase(token: "uppercase")
     static let lowercase = TextCase(token: "lowercase")
 }
+// `ScrollView(.horizontal)` — scroll-axis token namespace (Swift's `Axis.Set`).
+struct Axis {
+    let token: String
+    static let horizontal = Axis(token: "horizontal")
+    static let vertical = Axis(token: "vertical")
+}
 "#;
 
 /// The token string carried by a prelude token struct (`Color`/`Font`/
@@ -289,7 +295,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
     };
     if !matches!(
         obj.type_name.as_str(),
-        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase"
+        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase" | "Axis"
     ) {
         return None;
     }
@@ -309,6 +315,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("ForEach", foreach_init);
     interp.register_free_fn("List", list_init);
     interp.register_free_fn("Section", section_init);
+    interp.register_free_fn("Group", group_init);
+    interp.register_free_fn("Divider", divider_init);
+    interp.register_free_fn("ScrollView", scrollview_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
     interp.register_free_fn("Toggle", toggle_init);
@@ -356,9 +365,8 @@ pub fn registered_keys() -> Vec<String> {
         .filter_map(|key| match key.as_str() {
             "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
             | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
-            | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse" => {
-                Some(format!("{key}.init"))
-            }
+            | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
+            | "Group" | "Divider" | "ScrollView" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -603,15 +611,16 @@ fn picker_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     ))
 }
 
-/// Expand any `ForEach` container among a Picker's content into its rows, so
-/// each tagged option becomes a direct child of the `Picker`.
+/// Expand any transparent container (`ForEach`, `Group`) among a Picker's
+/// content into its rows, recursively, so each tagged option becomes a direct
+/// child of the `Picker` (the host option lowerers expect flat option views).
 fn flatten_picker_options(children: Vec<SwiftValue>) -> Vec<SwiftValue> {
     let mut out = Vec::new();
     for child in children {
-        if view_type_name(&child) == Some("ForEach") {
+        if matches!(view_type_name(&child), Some("ForEach") | Some("Group")) {
             if let SwiftValue::Struct(obj) = &child {
                 if let Some(SwiftValue::Array(rows)) = obj.get(CHILDREN_FIELD) {
-                    out.extend(rows.iter().cloned());
+                    out.extend(flatten_picker_options(rows.iter().cloned().collect()));
                     continue;
                 }
             }
@@ -828,6 +837,39 @@ fn capsule_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
 /// `Ellipse()` — an elliptical shape leaf.
 fn ellipse_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Ellipse", Vec::new()))
+}
+
+/// `Group { ... }` — a transparent container: it groups views for shared
+/// modifiers without adding layout, laying its children out as if inline.
+fn group_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    Ok(container_value("Group", collect_children(ctx, args)?))
+}
+
+/// `Divider()` — a thin rule separating content along the container's axis.
+fn divider_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(view_value("Divider", Vec::new()))
+}
+
+/// `ScrollView(_ axes:) { ... }` — a scrollable container. Captures an optional
+/// leading `Axis` token (`.horizontal`/`.vertical`; default vertical) as the
+/// `axes` field; `showsIndicators:` is parsed-and-dropped.
+fn scrollview_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut axes: Option<SwiftValue> = None;
+    let mut rest: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("showsIndicators") => {} // visual-only; ignored for now
+            _ if matches!(token_of(&arg.value), Some(("Axis", _))) => axes = Some(arg.value),
+            _ => rest.push(arg),
+        }
+    }
+    let children = collect_children(ctx, rest)?;
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(axes) = axes {
+        fields.push(("axes".into(), axes));
+    }
+    fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    Ok(view_value("ScrollView", fields))
 }
 
 /// `Spacer(minLength:)` — flexible empty space with an optional minimum length
@@ -1249,13 +1291,16 @@ mod tests {
                 "Button.init",
                 "Capsule.init",
                 "Circle.init",
+                "Divider.init",
                 "Ellipse.init",
                 "ForEach.init",
+                "Group.init",
                 "HStack.init",
                 "List.init",
                 "Picker.init",
                 "Rectangle.init",
                 "RoundedRectangle.init",
+                "ScrollView.init",
                 "Section.init",
                 "SecureField.init",
                 "Slider.init",
@@ -1898,6 +1943,39 @@ struct V: View {
             Some(SwiftValue::Array(items)) => items.iter().cloned().collect(),
             _ => Vec::new(),
         }
+    }
+
+    #[test]
+    fn picker_flattens_group_wrapped_options() {
+        // A `Group` inside a `Picker` is transparent: its tagged children must
+        // flatten into direct option views, not a single opaque container.
+        let view = render_to_string(
+            r#"struct V: View {
+    @State private var sel = "a"
+    var body: some View {
+        Picker("Pick", selection: $sel) {
+            Group { Text("A").tag("a"); Text("B").tag("b") }
+        }
+    }
+}"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(!json.contains("Group"), "Group must be flattened: {json}");
+        assert_eq!(
+            json.matches(r#""kind":"Text""#).count(),
+            2,
+            "two options: {json}"
+        );
+    }
+
+    #[test]
+    fn stack_alignment_is_an_explicit_unsupported_error() {
+        let err = render_err(
+            r#"struct V: View { var body: some View { VStack(alignment: .leading) { Text("x") } } }"#,
+            "V",
+        );
+        assert!(err.contains("alignment"), "clear deferral error: {err}");
     }
 
     #[test]

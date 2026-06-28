@@ -36,6 +36,14 @@ public enum ViewFactory {
         arg(node, key)?.doubleValue.map { CGFloat($0) }
     }
 
+    /// `ScrollView` scroll axes from its `axes` token arg; default vertical.
+    private static func scrollAxes(_ node: UiirNode) -> Axis.Set {
+        if case let .token(tag, name)? = arg(node, "axes"), tag == "axis", name == "horizontal" {
+            return .horizontal
+        }
+        return .vertical
+    }
+
     private static func bool(_ node: UiirNode, _ key: String, _ fallback: Bool = false) -> Bool {
         arg(node, key)?.boolValue ?? fallback
     }
@@ -152,6 +160,12 @@ public enum ViewFactory {
             return AnyView(ZStack { renderChildren(node, sink) })
         case "Spacer":
             return AnyView(Spacer(minLength: optLength(node, "minLength")))
+        case "Group":
+            return AnyView(Group { renderChildren(node, sink) })
+        case "Divider":
+            return AnyView(Divider())
+        case "ScrollView":
+            return AnyView(ScrollView(scrollAxes(node)) { renderChildren(node, sink) })
 
         case "ForEach":
             return AnyView(renderChildren(node, sink))
