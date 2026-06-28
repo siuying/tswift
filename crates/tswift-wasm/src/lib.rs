@@ -4,6 +4,8 @@ use tswift_core::Interpreter;
 use tswift_frontend::Analysis;
 use wasm_bindgen::prelude::*;
 
+mod swiftui;
+
 /// Compile and run a single Swift source string, returning a JSON result.
 ///
 /// This is the wasm entry point. The heavy lifting lives in [`run_swift_impl`],
@@ -91,7 +93,7 @@ fn truncate(value: &str, max: usize) -> String {
     )
 }
 
-fn escape_json(value: &str) -> String {
+pub(crate) fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
@@ -153,7 +155,7 @@ fn now_ms() -> f64 {
 
 /// Forward Rust panics to `console.error` so the browser shows a real message
 /// instead of an opaque `RuntimeError: unreachable`.
-fn install_panic_hook() {
+pub(crate) fn install_panic_hook() {
     use std::sync::Once;
     static HOOK: Once = Once::new();
     HOOK.call_once(|| {

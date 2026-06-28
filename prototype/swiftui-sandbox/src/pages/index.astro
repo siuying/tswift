@@ -1,0 +1,194 @@
+---
+import '../styles/global.css';
+import { presets } from '../presets/index.js';
+
+const sample = presets[0].code;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>tswift · SwiftUI sandbox</title>
+  </head>
+  <body>
+    <script define:vars={{ sample, presets }}>
+      window.__TSWIFT_SAMPLE__ = sample;
+      window.__TSWIFT_PRESETS__ = presets;
+    </script>
+
+    <main class="shell">
+      <!-- ── Editor card ─────────────────────────────────────────── -->
+      <section class="card editor-card">
+        <header class="card-head">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="filename" id="filename">ContentView.swift</span>
+          <span class="badge" id="mode">● EDIT · LIVE</span>
+          <span class="head-spacer"></span>
+          <select class="preset-select" id="preset-select" aria-label="Load a preset"></select>
+        </header>
+        <div class="editor-wrap">
+          <pre class="gutter" id="gutter" aria-hidden="true">1</pre>
+          <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="SwiftUI source"></textarea>
+        </div>
+        <footer class="card-foot">
+          <span class="pipeline">swift → lexer → parser → sema → <strong>uiir</strong> → canvas</span>
+          <span class="compile-state" id="compile-state">idle</span>
+        </footer>
+      </section>
+
+      <!-- ── Preview card ────────────────────────────────────────── -->
+      <section class="card preview-card">
+        <header class="card-head">
+          <span class="badge live"><i class="pulse"></i> Live preview</span>
+          <span class="head-spacer"></span>
+          <span class="hint" id="preview-hint">tap the controls</span>
+        </header>
+        <div class="stage">
+          <div class="device">
+            <div class="device-screen" id="preview"></div>
+          </div>
+        </div>
+        <footer class="card-foot">
+          <span class="pipeline" id="root-name">—</span>
+          <span class="compile-state" id="render-state">waiting</span>
+        </footer>
+      </section>
+    </main>
+
+    <p class="proto-note">PROTOTYPE — throwaway SwiftUI sandbox · one file, rendered live through the Rust frontend + SwiftUI render host (wasm).</p>
+
+    <script>
+      import initWasm, { swiftUICompile, swiftUIDispatch } from '../wasm/tswift_wasm.js';
+      import { renderTree } from '../renderer.js';
+
+      const presets = window.__TSWIFT_PRESETS__.filter((p) => p.supported !== false);
+      const source = document.getElementById('source');
+      const gutter = document.getElementById('gutter');
+      const preview = document.getElementById('preview');
+      const select = document.getElementById('preset-select');
+      const compileState = document.getElementById('compile-state');
+      const renderState = document.getElementById('render-state');
+      const rootName = document.getElementById('root-name');
+      const previewHint = document.getElementById('preview-hint');
+
+      let wasmReady = false;
+      let debounce = null;
+
+      // ── Preset menu ─────────────────────────────────────────────
+      const groups = new Map();
+      for (const p of presets) {
+        if (!groups.has(p.group)) groups.set(p.group, []);
+        groups.get(p.group).push(p);
+      }
+      for (const [group, items] of groups) {
+        const og = document.createElement('optgroup');
+        og.label = group;
+        for (const item of items) {
+          const opt = document.createElement('option');
+          opt.value = item.code;
+          opt.textContent = item.label;
+          og.appendChild(opt);
+        }
+        select.appendChild(og);
+      }
+
+      // ── Editor: line-number gutter ──────────────────────────────
+      function syncGutter() {
+        const lines = source.value.split('\n').length;
+        let out = '';
+        for (let i = 1; i <= lines; i++) out += i + '\n';
+        gutter.textContent = out;
+      }
+      source.addEventListener('scroll', () => { gutter.scrollTop = source.scrollTop; });
+
+      // ── Dispatch: route an event into the live session, re-render ─
+      function dispatch(id, event, value) {
+        if (!wasmReady) return;
+        try {
+          const res = JSON.parse(swiftUIDispatch(id, event, value));
+          if (res.ok) {
+            renderTree(preview, res.tree, dispatch);
+            renderState.textContent = 'updated';
+          } else {
+            renderState.textContent = 'event error';
+            showError(res.error);
+          }
+        } catch (err) {
+          renderState.textContent = 'event crash';
+          showError(err.message);
+        }
+      }
+
+      function showError(message) {
+        preview.innerHTML = '';
+        const box = document.createElement('pre');
+        box.className = 'err';
+        box.textContent = message;
+        preview.appendChild(box);
+      }
+
+      // ── Compile + render the current source ─────────────────────
+      function compile() {
+        if (!wasmReady) return;
+        compileState.textContent = 'compiling…';
+        try {
+          const res = JSON.parse(swiftUICompile(source.value));
+          if (res.ok) {
+            renderTree(preview, res.tree, dispatch);
+            compileState.textContent = '✓ compiled';
+            compileState.classList.add('ok');
+            renderState.textContent = 'rendered';
+            rootName.textContent = res.root;
+          } else {
+            compileState.textContent = '✗ failed';
+            compileState.classList.remove('ok');
+            renderState.textContent = '—';
+            showError(res.error);
+          }
+        } catch (err) {
+          compileState.textContent = '✗ crash';
+          compileState.classList.remove('ok');
+          showError(err.message);
+        }
+      }
+
+      function scheduleCompile() {
+        syncGutter();
+        clearTimeout(debounce);
+        debounce = setTimeout(compile, 350);
+      }
+
+      source.addEventListener('input', scheduleCompile);
+
+      // Tab key inserts spaces instead of leaving the editor.
+      source.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+        e.preventDefault();
+        const start = source.selectionStart;
+        const end = source.selectionEnd;
+        source.value = source.value.slice(0, start) + '    ' + source.value.slice(end);
+        source.selectionStart = source.selectionEnd = start + 4;
+        scheduleCompile();
+      });
+
+      select.addEventListener('change', () => {
+        source.value = select.value;
+        scheduleCompile();
+        compile();
+      });
+
+      // ── Boot ────────────────────────────────────────────────────
+      source.value = window.__TSWIFT_SAMPLE__;
+      syncGutter();
+      compileState.textContent = 'loading wasm…';
+      initWasm().then(() => {
+        wasmReady = true;
+        compile();
+      }).catch((err) => {
+        compileState.textContent = 'wasm failed';
+        showError(err.message);
+      });
+    </script>
+  </body>
+</html>
