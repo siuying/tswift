@@ -20,13 +20,13 @@ The frontend provides type _shapes_; `tswift-std` provides the _behaviour_.
 
 ## Overall coverage
 
-<CoverageBar label="Standard Library" done={19} total={26} />
+<CoverageBar label="Standard Library" done={26} total={31} />
 
 ---
 
 ## Core Value Types
 
-<CoverageBar label="Core value types" done={6} total={8} />
+<CoverageBar label="Core value types" done={7} total={8} />
 
 | Status | Type | Notes |
 |--------|------|-------|
@@ -43,7 +43,7 @@ The frontend provides type _shapes_; `tswift-std` provides the _behaviour_.
 
 ## Collections
 
-<CoverageBar label="Collections" done={4} total={5} />
+<CoverageBar label="Collections" done={5} total={5} />
 
 | Status | Type | Notes |
 |--------|------|-------|
@@ -51,20 +51,20 @@ The frontend provides type _shapes_; `tswift-std` provides the _behaviour_.
 | ✅ | `Dictionary<Key,Value>` + CoW | `keys`, `values`, `merging`, `filter`, `mapValues` |
 | ✅ | `Set<Element>` + CoW | `union`, `intersection`, `subtracting`, `symmetricDifference` |
 | ✅ | `ContiguousArray` / `ArraySlice` | Backed by Array in the runtime |
-| ⬜ | `isKnownUniquelyReferenced` | CoW correctness helper — not exposed |
+| ✅ | `isKnownUniquelyReferenced` | CoW correctness helper for custom CoW types |
 
 ---
 
 ## Protocols That Drive the Language
 
-<CoverageBar label="Key protocols" done={7} total={10} />
+<CoverageBar label="Key protocols" done={8} total={11} />
 
 | Status | Protocol | Notes |
 |--------|---------|-------|
 | ✅ | `Equatable` / `Hashable` / `Comparable` | Synthesised for structs/enums with synthesised conformance |
 | ✅ | `Sequence` / `IteratorProtocol` | Custom sequences via `makeIterator()` |
 | ⬜ | `Collection` / `BidirectionalCollection` / `RandomAccessCollection` | Index arithmetic not yet fully implemented |
-| ⬜ | `RangeReplaceableCollection` | |
+| 🟡 | `RangeReplaceableCollection` | `append(contentsOf:)`, `insert(contentsOf:at:)`, `removeSubrange`, `removeAll(where:)`, `reverse` on Array |
 | ✅ | `ExpressibleBy*Literal` | All literal-conversion protocols |
 | ✅ | `CustomStringConvertible` / `CustomDebugStringConvertible` | |
 | ✅ | `RawRepresentable` / `CaseIterable` | Enum conformances synthesised |

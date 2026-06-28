@@ -16,14 +16,14 @@ import CoverageBar from '../../components/CoverageBar.astro';
   <div class="status-grid" style="margin-bottom:3rem">
     <div class="status-card">
       <h3>Language</h3>
-      <div class="pct-big high">82%</div>
-      <p style="font-size:.85rem">Tiers 0–9 · 140 of 171 features</p>
+      <div class="pct-big high">95%</div>
+      <p style="font-size:.85rem">Tiers 0–9 · 183 of 193 features</p>
       <a href="/status/language" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
       <h3>Standard Library</h3>
-      <div class="pct-big mid">73%</div>
-      <p style="font-size:.85rem">19 of 26 major areas</p>
+      <div class="pct-big high">84%</div>
+      <p style="font-size:.85rem">26 of 31 major areas</p>
       <a href="/status/stdlib" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
@@ -43,16 +43,16 @@ import CoverageBar from '../../components/CoverageBar.astro';
   <h2>Language tiers</h2>
   <p>The Swift language surface is organised into tiers by complexity and dependency order.</p>
 
-  <CoverageBar label="Tier 0 — Lexical &amp; Literals" done={17} total={17} href="/status/language" />
-  <CoverageBar label="Tier 1 — Core Imperative (functions, control flow)" done={20} total={22} href="/status/language" />
-  <CoverageBar label="Tier 2 — Value &amp; Nominal Types" done={25} total={28} href="/status/language" />
-  <CoverageBar label="Tier 3 — Reference Types &amp; ARC" done={19} total={20} href="/status/language" />
-  <CoverageBar label="Tier 4 — Protocols, Generics, Extensions" done={23} total={27} href="/status/language" />
-  <CoverageBar label="Tier 5 — Error Handling" done={8}  total={10} href="/status/language" />
-  <CoverageBar label="Tier 6 — Advanced Types &amp; Expressions" done={7}  total={13} href="/status/language" />
-  <CoverageBar label="Tier 7 — Concurrency" done={9}  total={14} href="/status/language" />
+  <CoverageBar label="Tier 0 — Lexical &amp; Literals" done={18} total={18} href="/status/language" />
+  <CoverageBar label="Tier 1 — Core Imperative (functions, control flow)" done={30} total={30} href="/status/language" />
+  <CoverageBar label="Tier 2 — Value &amp; Nominal Types" done={31} total={32} href="/status/language" />
+  <CoverageBar label="Tier 3 — Reference Types &amp; ARC" done={25} total={25} href="/status/language" />
+  <CoverageBar label="Tier 4 — Protocols, Generics, Extensions" done={27} total={31} href="/status/language" />
+  <CoverageBar label="Tier 5 — Error Handling" done={10} total={10} href="/status/language" />
+  <CoverageBar label="Tier 6 — Advanced Types &amp; Expressions" done={13} total={13} href="/status/language" />
+  <CoverageBar label="Tier 7 — Concurrency" done={13} total={14} href="/status/language" />
   <CoverageBar label="Tier 8 — Macros &amp; Metaprogramming" done={4}  total={8}  href="/status/language" />
-  <CoverageBar label="Tier 9 — Attributes, Access Control, Operators" done={8}  total={20} href="/status/language" />
+  <CoverageBar label="Tier 9 — Attributes, Access Control, Operators" done={12} total={12} href="/status/language" />
 
   <h2 style="margin-top:2rem">Roadmap</h2>
   <p>Implementation phases follow the runtime design plan (R0–R6+):</p>

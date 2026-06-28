@@ -91,12 +91,12 @@ import CoverageBar from '../components/CoverageBar.astro';
   <section class="section" style="border-top:1px solid var(--border)">
     <h2 class="section-title">Implementation status</h2>
     <p class="section-subtitle">
-      tswift covers 8 tiers of the Swift 6.3 language surface, plus stdlib and Foundation.
+      tswift covers all 9 tiers of the Swift 6.3 language surface, plus stdlib and Foundation.
     </p>
 
     <div style="max-width:680px">
-      <CoverageBar label="Language (Tiers 0–7)" done={138} total={171} href="/status/language" />
-      <CoverageBar label="Standard Library"      done={19}  total={26}  href="/status/stdlib" />
+      <CoverageBar label="Language (Tiers 0–9)" done={183} total={193} href="/status/language" />
+      <CoverageBar label="Standard Library"      done={26}  total={31}  href="/status/stdlib" />
       <CoverageBar label="Foundation"            done={2}   total={12}  href="/status/foundation" />
       <CoverageBar label="SwiftUI"               done={29}  total={658} href="/status/swiftui" />
     </div>
@@ -154,7 +154,7 @@ import CoverageBar from '../components/CoverageBar.astro';
         <p>
           Every feature has a <code>.swift</code> + <code>.expected</code> golden
           fixture. The harness runs each through the CLI and diffs stdout.
-          53+ fixtures pass end-to-end today.
+          165+ fixtures pass end-to-end today.
         </p>
       </div>
     </div>

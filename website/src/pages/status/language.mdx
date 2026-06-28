@@ -190,18 +190,18 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 |--------|---------|
 | ✅ | Protocol declaration (methods/props/init) |
 | ✅ | Conformance + witness tables |
-| 🟡 | Protocol inheritance |
+| ✅ | Protocol inheritance |
 | ✅ | Protocol composition `P & Q` |
 | ✅ | Default implementations (in extensions) |
 | ✅ | Associated types |
 | ✅ | Protocol as type / existential `any P` |
 | ✅ | `Self` requirements |
 | ✅ | Protocol witness for operators |
-| ⬜ | Optional protocol requirements (`@objc optional`) |
+| ✅ | Optional protocol requirements (`@objc optional`) |
 | ✅ | Class-only protocols (`AnyObject`) |
 | ✅ | Conditional conformance |
-| 🟡 | Synthesized `Equatable`/`Hashable`/`Comparable` |
-| 🟡 | Synthesized `Codable` |
+| ✅ | Synthesized `Equatable`/`Hashable`/`Comparable` |
+| ✅ | Synthesized `Codable` |
 
 ### Generics
 
@@ -218,7 +218,7 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 | ⬜ | Primary associated types (`some Collection<Int>`) |
 | ⬜ | Parameter packs / variadic generics `each` |
 | ⬜ | Integer generic parameters (`let N: Int`) |
-| ⬜ | `~Copyable` / `~Escapable` |
+| ✅ | `~Copyable` / `~Escapable` |
 
 ### Extensions
 
@@ -241,7 +241,7 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 | ✅ | `throw` statement |
 | ✅ | `do` / `catch` (+ pattern catches) |
 | ✅ | `try` / `try?` / `try!` |
-| 🟡 | `rethrows` |
+| ✅ | `rethrows` |
 | 🟡 | Typed throws `throws(E)` (Swift 6) |
 | ✅ | `defer` statements (LIFO on scope exit) |
 | ✅ | Error propagation through call stack |
@@ -259,13 +259,13 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 | ✅ | `type(of:)` dynamic type |
 | ✅ | Key paths `\Root.path` |
 | ✅ | Key-path expressions as functions |
-| ⬜ | `@dynamicMemberLookup` |
-| ⬜ | `@dynamicCallable` |
-| ⬜ | `#selector` / `#keyPath` |
-| ⬜ | `Self` type in return position |
+| ✅ | `@dynamicMemberLookup` |
+| ✅ | `@dynamicCallable` |
+| ✅ | `#selector` / `#keyPath` |
+| ✅ | `Self` type in return position |
 | ✅ | Implicit member expr `.foo` |
-| ⬜ | `consume` / `borrow` operators |
-| ⬜ | `discard self` |
+| ✅ | `consume` / `borrow` operators |
+| ✅ | `discard self` |
 
 ---
 
@@ -281,14 +281,14 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 | ✅ | `async let` |
 | ✅ | `Task` / `Task.detached` |
 | ✅ | Task groups (`withTaskGroup`) |
-| 🟡 | Task cancellation |
+| ✅ | Task cancellation |
 | ✅ | `actor` declarations + isolation |
 | 🟡 | Actor reentrancy / serial executor |
 | ✅ | `@MainActor` / global actors |
 | 🟡 | `nonisolated` / `isolated` params |
 | 🟡 | `Sendable` checking |
 | ✅ | `AsyncSequence` / `for await` |
-| ⬜ | Continuations (`withCheckedContinuation`) |
+| ✅ | Continuations (`withCheckedContinuation`) |
 | ⬜ | Strict concurrency (Swift 6 mode) |
 
 ---
@@ -301,7 +301,7 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 | ⬜ | Attached macros `@Macro` |
 | ⬜ | Macro declarations |
 | ✅ | Built-in `#file`/`#line`/`#function`/`#column` |
-| 🟡 | `#warning` / `#error` |
+| ✅ | `#warning` / `#error` |
 | ⬜ | `@freestanding` / `@attached` roles |
 | ✅ | `@resultBuilder` (DSL transform) |
 | ✅ | Result-builder method synthesis |
@@ -314,9 +314,9 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 
 | Status | Feature |
 |--------|---------|
-| ⬜ | `open` `public` `internal` `fileprivate` `private` |
-| ⬜ | `package` access level |
-| ⬜ | Access on setters `private(set)` |
+| ✅ | `open` `public` `internal` `fileprivate` `private` |
+| ✅ | `package` access level |
+| ✅ | Access on setters `private(set)` |
 | 🟡 | Module boundaries / `import` |
 
 ### Custom Operators
@@ -334,5 +334,5 @@ Coverage of the Swift 6.3 language surface across Tiers 0–9.
 |--------|---------|
 | ✅ | Conditional compilation `#if`/`#elseif`/`#else`/`#endif` |
 | ✅ | `#if` platform/arch/compiler/`canImport`/`swift()` |
-| ⬜ | `#sourceLocation` line control |
-| ⬜ | `#available` / `#unavailable` conditions |
+| ✅ | `#sourceLocation` line control |
+| ✅ | `#available` / `#unavailable` conditions |

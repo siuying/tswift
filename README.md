@@ -46,11 +46,14 @@ hard memory semantics become native Rust idioms rather than features we re-imple
 We get memory safety for free in the evaluator and there is no `unsafe` code anywhere
 in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 
-> **Status:** actively developed. Tiers 0–7 of the Swift feature surface (literals,
-> control flow, value/reference types, ARC, protocols, generics, error handling,
-> `Codable`, async/await, actors, task groups) are substantially implemented and
-> covered by 53+ golden fixtures. Macros (Tier 8) and a bytecode VM for speed
-> (Tier 6) are future work. See
+> **Status:** actively developed. Tiers 0–9 of the Swift feature surface
+> (literals, control flow, value/reference types, ARC, protocols, generics,
+> error handling, `Codable`, async/await, actors, task groups, access control,
+> key paths, ownership operators, `@dynamicMemberLookup`, `@dynamicCallable`,
+> continuations, result builders) are substantially implemented — 183 of 193
+> tracked language features (**95%**) — and verified by 165+ golden fixtures.
+> Macro expansion (Tier 8 freestanding/attached) and a bytecode VM for speed are
+> future work. See
 > [`docs/swift-runtime/feature-checklist.md`](docs/swift-runtime/feature-checklist.md)
 > for the per-feature status.
 
