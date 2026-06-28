@@ -6110,6 +6110,21 @@ impl<'w> Interpreter<'w> {
             return self.eval_method_call(callee, arg_nodes);
         }
 
+        // A type literal applied to arguments is a collection constructor:
+        // `[Int]()`, `[String: Int]()`, `[Int](repeating: 0, count: 3)`. The
+        // callee literal is *not* evaluated (its elements are type names, not
+        // values), so this is handled before generic argument evaluation.
+        if matches!(
+            callee.kind(),
+            NodeKind::ArrayLiteral | NodeKind::DictLiteral
+        ) {
+            let args = self.eval_args_with(arg_nodes, None)?;
+            if callee.kind() == NodeKind::DictLiteral {
+                return Ok(SwiftValue::Dict(Rc::new(Vec::new())));
+            }
+            return Ok(self.construct_array_literal_ctor(&args));
+        }
+
         // Structured-concurrency entry points (ADR-0005). Handled before
         // argument evaluation so a metatype label like `of: Int.self` is never
         // eagerly evaluated; only the trailing body closure matters.
@@ -6231,21 +6246,22 @@ impl<'w> Interpreter<'w> {
                 });
             }
 
+            // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
+            // `Dictionary<K,V>()`. The parser erases the generic arguments, so
+            // the callee is the bare type name with no arguments.
+            if args.is_empty() && self.env.get(&name).is_none() {
+                match name.as_str() {
+                    "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
+                    "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
+                    "Dictionary" => return Ok(SwiftValue::Dict(Rc::new(Vec::new()))),
+                    _ => {}
+                }
+            }
+
             // `Array(repeating:count:)` — build an array of repeated elements.
             if name == "Array" && self.env.get("Array").is_none() {
-                let repeating = args
-                    .iter()
-                    .find(|a| a.label.as_deref() == Some("repeating"))
-                    .map(|a| a.value.clone());
-                let count = args
-                    .iter()
-                    .find(|a| a.label.as_deref() == Some("count"))
-                    .and_then(|a| match &a.value {
-                        SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-                        _ => None,
-                    });
-                if let (Some(elem), Some(n)) = (repeating, count) {
-                    return Ok(SwiftValue::Array(Rc::new(vec![elem; n])));
+                if let Some(v) = self.array_repeating_count(&args) {
+                    return Ok(v);
                 }
             }
 
@@ -7537,6 +7553,32 @@ impl<'w> Interpreter<'w> {
 
     /// Attempt a numeric/string conversion `Type(value)`. Returns `Ok(None)` if
     /// `name` is not a known conversion type.
+    /// `[T](...)` array constructor: `[T](repeating: x, count: n)` builds a
+    /// repeated array; any other argument shape (including none) yields an empty
+    /// array.
+    fn construct_array_literal_ctor(&self, args: &[CallArg]) -> SwiftValue {
+        self.array_repeating_count(args)
+            .unwrap_or_else(|| SwiftValue::Array(Rc::new(Vec::new())))
+    }
+
+    /// `repeating:count:` array construction, shared by `Array(repeating:count:)`
+    /// and `[T](repeating:count:)`. `None` when the labels are absent or the
+    /// count is not a non-negative integer.
+    fn array_repeating_count(&self, args: &[CallArg]) -> Option<SwiftValue> {
+        let repeating = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("repeating"))
+            .map(|a| a.value.clone())?;
+        let count = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("count"))
+            .and_then(|a| match &a.value {
+                SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+                _ => None,
+            })?;
+        Some(SwiftValue::Array(Rc::new(vec![repeating; count])))
+    }
+
     /// Build a dictionary from `Dictionary(uniqueKeysWithValues:)` (a sequence
     /// of key/value tuples) or `Dictionary(grouping:by:)` (bucket elements by a
     /// key closure). Returns `None` if the args match neither initializer.
