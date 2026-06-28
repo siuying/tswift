@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("frameworks.toml")
-FIXTURES = ROOT / "crates/qswift-cli/tests/fixtures"
+FIXTURES = ROOT / "crates/tswift-cli/tests/fixtures"
 FREE_SECTION = "(free functions)"
 
 MEMBER_RE = re.compile(
