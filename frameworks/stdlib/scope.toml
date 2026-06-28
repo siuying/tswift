@@ -26,8 +26,13 @@ sequence_types = [
 # the value collections (Set/Dictionary/Range equality added in ops.rs).
 [core_members]
 Array = ["+", "+=", "=="]
-Int = ["+", "+=", "=="]
-String = ["+", "+=", "=="]
+Int = [
+  "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
+  "==", "!=", "<", "<=", ">", ">=",
+  "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>",
+]
+String = ["+", "+=", "==", "<"]
+Bool = ["&&", "||", "=="]
 Set = ["=="]
 Dictionary = ["=="]
 Range = ["=="]
@@ -42,7 +47,5 @@ Double = [
   "leastNonzeroMagnitude",
   "leastNormalMagnitude",
   "ulpOfOne",
-  "+",
-  "+=",
-  "==",
+  "+", "+=", "-", "-=", "*", "*=", "/", "/=", "==",
 ]
