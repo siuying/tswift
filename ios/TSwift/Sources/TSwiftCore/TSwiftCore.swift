@@ -31,20 +31,30 @@ public enum TSwiftCore {
         return decode(raw)
     }
 
+    /// The result-JSON envelope returned by `tswift_run`.
+    private struct RunEnvelope: Decodable {
+        struct Compile: Decodable { let ok: Bool; let stderr: String }
+        struct Run: Decodable { let ok: Bool; let stdout: String }
+        let ok: Bool
+        let compile: Compile?
+        let run: Run?
+    }
+
     private static func decode(_ raw: String) -> RunResult {
-        guard let object = (try? JSONSerialization.jsonObject(with: Data(raw.utf8)))
-            as? [String: Any]
-        else {
+        let envelope: RunEnvelope
+        do {
+            envelope = try JSONDecoder().decode(RunEnvelope.self, from: Data(raw.utf8))
+        } catch {
             // A null return or unparseable envelope is an FFI-level failure;
             // surface the raw payload so it is not silently swallowed.
             let detail = raw.isEmpty ? "tswift_run returned null" : raw
             return RunResult(ok: false, stdout: "", diagnostics: detail, raw: raw)
         }
-        let ok = object["ok"] as? Bool ?? false
-        let run = object["run"] as? [String: Any]
-        let stdout = run?["stdout"] as? String ?? ""
-        let compile = object["compile"] as? [String: Any]
-        let diagnostics = compile?["stderr"] as? String ?? ""
-        return RunResult(ok: ok, stdout: stdout, diagnostics: diagnostics, raw: raw)
+        return RunResult(
+            ok: envelope.ok,
+            stdout: envelope.run?.stdout ?? "",
+            diagnostics: envelope.compile?.stderr ?? "",
+            raw: raw
+        )
     }
 }
