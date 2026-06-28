@@ -29,7 +29,7 @@ mod nominal;
 mod pattern;
 mod storage;
 
-use self::concurrency::{ContinuationState, TaskSlot};
+use self::concurrency::Scheduler;
 
 // Declaration modifier bits used by this milestone (see msf.h §9).
 const MOD_STATIC: u32 = 1 << 5;
@@ -374,26 +374,11 @@ pub struct Interpreter<'w> {
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
     main_type: Option<String>,
-    /// The structured-concurrency task table (see ADR-0005). Each `async let`,
-    /// `Task { }`, and `group.addTask` pushes a slot; `await`-ing a
-    /// `SwiftValue::Task` drives the matching slot to completion.
-    tasks: Vec<TaskSlot>,
-    /// Stack of currently-executing task ids (innermost last), so
-    /// `Task.isCancelled` / `Task.checkCancellation()` reflect the running
-    /// task's cooperative-cancellation flag (ADR-0005).
-    current_task: Vec<usize>,
-    /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
-    /// drained in order by `for await`.
-    groups: Vec<Vec<usize>>,
-    /// Per-group cancellation flag (set by `cancelAll()`), so children added
-    /// *after* cancellation are spawned cancelled and `addTaskUnlessCancelled`
-    /// can refuse to add one.
-    group_cancelled: Vec<bool>,
-    /// `with*Continuation` slots, one per continuation handed to a body. The
-    /// state machine (`Pending` → `Resumed` → `Consumed`) lets `resume(...)`
-    /// diagnose both double resume *and* late resume after the enclosing
-    /// `with*Continuation` has already read the value.
-    continuations: Vec<ContinuationState>,
+    /// The structured-concurrency state machine (ADR-0005): the task table, the
+    /// running-task stack, task groups, and continuation slots, behind one
+    /// seam. Driving methods on the interpreter delegate all task/group/
+    /// continuation bookkeeping here; see [`Scheduler`].
+    sched: Scheduler,
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
@@ -462,11 +447,7 @@ impl<'w> Interpreter<'w> {
             class_ctx: Vec::new(),
             defer_stack: Vec::new(),
             main_type: None,
-            tasks: Vec::new(),
-            current_task: Vec::new(),
-            groups: Vec::new(),
-            group_cancelled: Vec::new(),
-            continuations: Vec::new(),
+            sched: Scheduler::default(),
             filename: "main.swift".into(),
             depth: 0,
             // SplitMix64 tolerates any seed (including 0), so the wall-clock

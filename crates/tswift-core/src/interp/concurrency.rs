@@ -7,7 +7,7 @@ use crate::value::{StructObj, SwiftValue};
 
 /// A spawned structured-concurrency task: a zero-argument closure producing the
 /// task's result, plus the class context it was spawned in and its run state.
-pub(super) struct TaskSlot {
+struct TaskSlot {
     /// Index into [`Interpreter::closures`] of the task body (a 0-arg thunk).
     closure: usize,
     /// The `super`/`self` dispatch context captured at spawn time.
@@ -31,7 +31,7 @@ enum TaskState {
 /// `Consumed` is what lets the runtime trap on a *late* resume (after the
 /// continuation's value has already been read back) the same way it traps on a
 /// double resume.
-pub(super) enum ContinuationState {
+enum ContinuationState {
     /// Handed to the body but not yet resumed.
     Pending,
     /// `resume(...)` stored an outcome that has not been read yet.
@@ -41,14 +41,204 @@ pub(super) enum ContinuationState {
     Consumed,
 }
 
+/// The outcome of asking the [`Scheduler`] to begin running a task — the result
+/// of the `Pending`/`Running`/`Done` transition, decided without evaluating
+/// anything. The interpreter turns a [`TaskRun::Start`] into an actual run.
+pub(super) enum TaskRun {
+    /// The task already finished; here is its memoized outcome.
+    Memoized(Eval),
+    /// The task is mid-flight on the current stack — awaiting it is a deadlock.
+    Deadlock,
+    /// The task was pending and is now marked running; evaluate `closure` under
+    /// `class_ctx`, then report back via [`Scheduler::complete_task`].
+    Start { closure: usize, class_ctx: Vec<String> },
+}
+
+/// The structured-concurrency state machine (ADR-0005), owning the task table,
+/// the running-task stack, task groups, and continuation slots. Every state
+/// transition here is *pure* — it never evaluates Swift — so the subtle
+/// invariants (task `Pending`→`Running`→`Done`, continuation
+/// `Pending`→`Resumed`→`Consumed`, cancellation propagation) are unit-testable
+/// without running a program. The interpreter owns the *driving* loops that
+/// call back into evaluation; this owns the bookkeeping they delegate to.
+#[derive(Default)]
+pub(super) struct Scheduler {
+    /// The task table. Each `async let`, `Task { }`, and `group.addTask` pushes
+    /// a slot; `await`-ing a `SwiftValue::Task` drives the matching slot.
+    tasks: Vec<TaskSlot>,
+    /// Stack of currently-executing task ids (innermost last), so
+    /// `Task.isCancelled` / `checkCancellation()` reflect the running task's
+    /// cooperative-cancellation flag.
+    current_task: Vec<usize>,
+    /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
+    /// drained in order by `for await`.
+    groups: Vec<Vec<usize>>,
+    /// Per-group cancellation flag (set by `cancelAll()`), so children added
+    /// *after* cancellation are spawned cancelled and `addTaskUnlessCancelled`
+    /// can refuse to add one.
+    group_cancelled: Vec<bool>,
+    /// `with*Continuation` slots, one per continuation handed to a body.
+    continuations: Vec<ContinuationState>,
+}
+
+impl Scheduler {
+    // --- task lifecycle ---
+
+    /// Register a 0-argument closure body as a task and return its handle. A
+    /// *structured* child (`inherit`) inherits the innermost running task's
+    /// cancellation; a detached task starts uncancelled regardless of context.
+    fn spawn(&mut self, closure: usize, class_ctx: Vec<String>, inherit: bool) -> usize {
+        let cancelled = inherit
+            && self
+                .current_task
+                .last()
+                .is_some_and(|&parent| self.tasks[parent].cancelled);
+        let id = self.tasks.len();
+        self.tasks.push(TaskSlot {
+            closure,
+            class_ctx,
+            state: TaskState::Pending,
+            cancelled,
+        });
+        id
+    }
+
+    /// Decide how to run task `id`: return its memoized result if `Done`, flag a
+    /// deadlock if it is already `Running`, or transition `Pending`→`Running`
+    /// (pushing it onto the running stack) and return the body to evaluate. The
+    /// caller must pair a [`TaskRun::Start`] with [`complete_task`].
+    fn begin_task(&mut self, id: usize) -> TaskRun {
+        match &self.tasks[id].state {
+            TaskState::Done(result) => return TaskRun::Memoized(result.clone()),
+            TaskState::Running => return TaskRun::Deadlock,
+            TaskState::Pending => {}
+        }
+        let closure = self.tasks[id].closure;
+        let class_ctx = self.tasks[id].class_ctx.clone();
+        self.tasks[id].state = TaskState::Running;
+        self.current_task.push(id);
+        TaskRun::Start { closure, class_ctx }
+    }
+
+    /// Record task `id`'s outcome and pop it off the running stack, completing
+    /// the `Running`→`Done` transition begun by [`begin_task`].
+    fn complete_task(&mut self, id: usize, result: Eval) {
+        self.current_task.pop();
+        self.tasks[id].state = TaskState::Done(result);
+    }
+
+    /// The number of spawned tasks (their ids are `0..task_count()`).
+    fn task_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    /// Whether task `id` is still `Pending` (not yet started).
+    fn is_task_pending(&self, id: usize) -> bool {
+        matches!(self.tasks[id].state, TaskState::Pending)
+    }
+
+    /// Whether the innermost running task is cancelled (`false` at top level).
+    fn current_task_cancelled(&self) -> bool {
+        self.current_task
+            .last()
+            .is_some_and(|&id| self.tasks[id].cancelled)
+    }
+
+    /// Whether task `id` is cancelled.
+    fn task_cancelled(&self, id: usize) -> bool {
+        self.tasks[id].cancelled
+    }
+
+    /// Mark task `id` cancelled (cooperative; checked at `checkCancellation()`).
+    fn cancel_task(&mut self, id: usize) {
+        self.tasks[id].cancelled = true;
+    }
+
+    // --- task groups ---
+
+    /// Open a new task group and return its id.
+    fn new_group(&mut self) -> usize {
+        let gid = self.groups.len();
+        self.groups.push(Vec::new());
+        self.group_cancelled.push(false);
+        gid
+    }
+
+    /// Whether group `gid` has been cancelled via `cancelAll()`.
+    fn is_group_cancelled(&self, gid: usize) -> bool {
+        self.group_cancelled[gid]
+    }
+
+    /// Add child task `tid` to group `gid`; a child added to an already-
+    /// cancelled group starts cancelled (structured-concurrency propagation).
+    fn add_to_group(&mut self, gid: usize, tid: usize) {
+        if self.group_cancelled[gid] {
+            self.tasks[tid].cancelled = true;
+        }
+        self.groups[gid].push(tid);
+    }
+
+    /// Cancel group `gid` and every child currently in it.
+    fn cancel_group(&mut self, gid: usize) {
+        self.group_cancelled[gid] = true;
+        for i in 0..self.groups[gid].len() {
+            let tid = self.groups[gid][i];
+            self.tasks[tid].cancelled = true;
+        }
+    }
+
+    /// Remove and return group `gid`'s child ids, in add order (for draining).
+    fn take_group(&mut self, gid: usize) -> Vec<usize> {
+        std::mem::take(&mut self.groups[gid])
+    }
+
+    // --- continuations ---
+
+    /// Open a new `Pending` continuation slot and return its id.
+    fn new_continuation(&mut self) -> usize {
+        let cid = self.continuations.len();
+        self.continuations.push(ContinuationState::Pending);
+        cid
+    }
+
+    /// Whether continuation `cid` is still `Pending` (not yet resumed).
+    fn continuation_pending(&self, cid: usize) -> bool {
+        matches!(self.continuations[cid], ContinuationState::Pending)
+    }
+
+    /// Whether continuation `cid` has been resumed but not yet consumed.
+    fn continuation_resumed(&self, cid: usize) -> bool {
+        matches!(self.continuations[cid], ContinuationState::Resumed(_))
+    }
+
+    /// Store `outcome` on continuation `cid`, transitioning `Pending`→`Resumed`.
+    /// Returns `false` (and changes nothing) if the slot is not `Pending` — the
+    /// caller turns that into the double/late-resume trap.
+    fn resume_continuation(&mut self, cid: usize, outcome: Eval) -> bool {
+        if !matches!(self.continuations[cid], ContinuationState::Pending) {
+            return false;
+        }
+        self.continuations[cid] = ContinuationState::Resumed(outcome);
+        true
+    }
+
+    /// Read continuation `cid`'s outcome and mark it `Consumed` so a later
+    /// resume traps. Returns `None` if it was never resumed (the caller traps).
+    fn consume_continuation(&mut self, cid: usize) -> Option<Eval> {
+        match std::mem::replace(&mut self.continuations[cid], ContinuationState::Consumed) {
+            ContinuationState::Resumed(result) => Some(result),
+            _ => None,
+        }
+    }
+}
+
 impl<'w> Interpreter<'w> {
     /// `await <expr>`: evaluate the operand, then, if it is a task handle, drive
     /// that task to completion and yield its result. Awaiting any other value is
     /// the identity (an `await f()` on an inline `async` call already ran).
     pub(super) fn eval_await(&mut self, node: &Node<'static>) -> Eval {
         let inner = node
-            .children()
-            .next()
+            .first_child()
             .ok_or_else(|| EvalError::Unsupported("await without an operand".into()))?;
         let value = self.eval(&inner)?;
         self.await_value(value)
@@ -72,13 +262,11 @@ impl<'w> Interpreter<'w> {
     /// Whether the innermost running task is cancelled (`false` when no task is
     /// on the stack, i.e. top-level code).
     pub(super) fn current_task_cancelled(&self) -> bool {
-        self.current_task
-            .last()
-            .is_some_and(|&id| self.tasks[id].cancelled)
+        self.sched.current_task_cancelled()
     }
 
     pub(super) fn task_cancelled(&self, task_id: usize) -> bool {
-        self.tasks[task_id].cancelled
+        self.sched.task_cancelled(task_id)
     }
 
     /// Run every spawned-but-unawaited task to completion. Called at the end of
@@ -86,16 +274,7 @@ impl<'w> Interpreter<'w> {
     /// concurrency guarantees a child finishes before its scope exits; here the
     /// whole program is the outermost scope).
     pub(super) fn drain_pending_tasks(&mut self) -> Result<(), Signal> {
-        let mut i = 0;
-        while i < self.tasks.len() {
-            if matches!(self.tasks[i].state, TaskState::Pending) {
-                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
-                    return Err(sig);
-                }
-            }
-            i += 1;
-        }
-        Ok(())
+        self.drive_pending(0, |_| false)
     }
 
     /// Dispatch the free-function concurrency entry points (`Task { }`,
@@ -119,9 +298,7 @@ impl<'w> Interpreter<'w> {
                 let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
                     EvalError::Unsupported("withTaskGroup without a body closure".into())
                 })?;
-                let gid = self.groups.len();
-                self.groups.push(Vec::new());
-                self.group_cancelled.push(false);
+                let gid = self.sched.new_group();
                 let result = self.call_closure(body, vec![SwiftValue::TaskGroup(gid)]);
                 // The group's children are structured: drain any not consumed by
                 // a `for await` so they complete before the group returns.
@@ -198,23 +375,16 @@ impl<'w> Interpreter<'w> {
                         })?;
                         // `addTaskUnlessCancelled` adds nothing (and returns
                         // `false`) once the group is cancelled.
-                        if method == "addTaskUnlessCancelled" && self.group_cancelled[gid] {
+                        if method == "addTaskUnlessCancelled" && self.sched.is_group_cancelled(gid)
+                        {
                             return Ok(Some(SwiftValue::Bool(false)));
                         }
                         let tid = self.spawn_task_closure(closure, false);
-                        // A child added to an already-cancelled group starts
-                        // cancelled (structured-concurrency propagation).
-                        if self.group_cancelled[gid] {
-                            self.tasks[tid].cancelled = true;
-                        }
-                        self.groups[gid].push(tid);
+                        self.sched.add_to_group(gid, tid);
                         Ok(Some(SwiftValue::Bool(true)))
                     }
                     "cancelAll" => {
-                        self.group_cancelled[gid] = true;
-                        for &tid in &self.groups[gid].clone() {
-                            self.tasks[tid].cancelled = true;
-                        }
+                        self.sched.cancel_group(gid);
                         Ok(Some(SwiftValue::Void))
                     }
                     "waitForAll" => {
@@ -228,7 +398,7 @@ impl<'w> Interpreter<'w> {
                 let tid = *tid;
                 match method {
                     "cancel" => {
-                        self.tasks[tid].cancelled = true;
+                        self.sched.cancel_task(tid);
                         Ok(Some(SwiftValue::Void))
                     }
                     _ => Ok(None),
@@ -243,10 +413,9 @@ impl<'w> Interpreter<'w> {
                 let outcome = self.continuation_outcome(&args)?;
                 // `CheckedContinuation` traps on a second *or late* resume: only
                 // a still-`Pending` slot accepts the outcome.
-                if !matches!(self.continuations[cid], ContinuationState::Pending) {
+                if !self.sched.resume_continuation(cid, outcome) {
                     return Err(trap("continuation resumed more than once".into()));
                 }
-                self.continuations[cid] = ContinuationState::Resumed(outcome);
                 Ok(Some(SwiftValue::Void))
             }
             _ => Ok(None),
@@ -256,7 +425,7 @@ impl<'w> Interpreter<'w> {
     /// Consume a group's children for `for await`, returning their results in
     /// completion order (our cooperative executor runs them in add order).
     pub(super) fn drain_group_results(&mut self, gid: usize) -> Result<Vec<SwiftValue>, Signal> {
-        let ids = std::mem::take(&mut self.groups[gid]);
+        let ids = self.sched.take_group(gid);
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             out.push(self.run_task(id)?);
@@ -278,19 +447,8 @@ impl<'w> Interpreter<'w> {
     /// enclosing task's cancellation (ADR-0005); a detached task
     /// (`inherit = false`) starts uncancelled regardless of context.
     fn spawn_task_closure(&mut self, closure_id: usize, inherit: bool) -> usize {
-        let id = self.tasks.len();
-        let cancelled = inherit
-            && self
-                .current_task
-                .last()
-                .is_some_and(|&parent| self.tasks[parent].cancelled);
-        self.tasks.push(TaskSlot {
-            closure: closure_id,
-            class_ctx: self.class_ctx.clone(),
-            state: TaskState::Pending,
-            cancelled,
-        });
-        id
+        let class_ctx = self.class_ctx.clone();
+        self.sched.spawn(closure_id, class_ctx, inherit)
     }
 
     /// A fresh `CancellationError` value (the stdlib error thrown by
@@ -306,22 +464,17 @@ impl<'w> Interpreter<'w> {
     /// return its memoized outcome. Re-awaiting a finished task returns the
     /// stored result; awaiting a task that is mid-flight is a deadlock trap.
     fn run_task(&mut self, id: usize) -> Eval {
-        match &self.tasks[id].state {
-            TaskState::Done(result) => return result.clone(),
-            TaskState::Running => {
+        let (closure, ctx) = match self.sched.begin_task(id) {
+            TaskRun::Memoized(result) => return result,
+            TaskRun::Deadlock => {
                 return Err(trap("await on a task awaiting itself (deadlock)".into()));
             }
-            TaskState::Pending => {}
-        }
-        let closure = self.tasks[id].closure;
-        let ctx = self.tasks[id].class_ctx.clone();
-        self.tasks[id].state = TaskState::Running;
+            TaskRun::Start { closure, class_ctx } => (closure, class_ctx),
+        };
         let saved_ctx = std::mem::replace(&mut self.class_ctx, ctx);
-        self.current_task.push(id);
         let result = self.call_closure(closure, Vec::new());
-        self.current_task.pop();
         self.class_ctx = saved_ctx;
-        self.tasks[id].state = TaskState::Done(result.clone());
+        self.sched.complete_task(id, result.clone());
         result
     }
 
@@ -360,22 +513,20 @@ impl<'w> Interpreter<'w> {
         let body = self
             .eval_body_closure(arg_nodes)?
             .ok_or_else(|| EvalError::Unsupported(format!("{name} without a body closure")))?;
-        let cid = self.continuations.len();
-        self.continuations.push(ContinuationState::Pending);
-        let body_tasks_start = self.tasks.len();
+        let cid = self.sched.new_continuation();
+        let body_tasks_start = self.sched.task_count();
         self.call_closure(body, vec![SwiftValue::Continuation(cid)])?;
-        if matches!(self.continuations[cid], ContinuationState::Pending) {
+        if self.sched.continuation_pending(cid) {
             // The body parked the continuation in a task it spawned; drive only
             // those tasks (in spawn order) until one resumes the continuation.
             self.drive_tasks_until_resumed(cid, body_tasks_start)?;
         }
         // Read the value and mark the slot consumed so a later resume traps.
-        match std::mem::replace(&mut self.continuations[cid], ContinuationState::Consumed) {
-            ContinuationState::Resumed(result) => result,
-            _ => Err(trap(
+        self.sched.consume_continuation(cid).unwrap_or_else(|| {
+            Err(trap(
                 "continuation was not resumed before with*Continuation returned".into(),
-            )),
-        }
+            ))
+        })
     }
 
     /// Drive the tasks spawned at or after `start` (in spawn order) until the
@@ -384,19 +535,40 @@ impl<'w> Interpreter<'w> {
     /// genuine interpreter error propagates; an uncaught Swift `throw` from a
     /// detached task is dropped, matching [`drain_pending_tasks`].
     fn drive_tasks_until_resumed(&mut self, cid: usize, start: usize) -> Result<(), Signal> {
+        self.drive_pending(start, move |s| s.continuation_resumed(cid))
+    }
+
+    /// Drive pending tasks in spawn order from `start`, re-reading the task
+    /// count each pass so children spawned *during* the drive are picked up,
+    /// until `stop` holds or none remain. The shared engine behind
+    /// [`drain_pending_tasks`] and [`drive_tasks_until_resumed`].
+    fn drive_pending(
+        &mut self,
+        start: usize,
+        stop: impl Fn(&Scheduler) -> bool,
+    ) -> Result<(), Signal> {
         let mut i = start;
-        while i < self.tasks.len() {
-            if matches!(self.continuations[cid], ContinuationState::Resumed(_)) {
+        while i < self.sched.task_count() {
+            if stop(&self.sched) {
                 break;
             }
-            if matches!(self.tasks[i].state, TaskState::Pending) {
-                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
-                    return Err(sig);
-                }
+            if self.sched.is_task_pending(i) {
+                self.run_task_or_propagate(i)?;
             }
             i += 1;
         }
         Ok(())
+    }
+
+    /// Drive task `id`, dropping an uncaught Swift `throw` (a detached or
+    /// structured child does not surface its throw to the draining scope,
+    /// matching real structured-concurrency teardown) while propagating a
+    /// genuine interpreter [`Signal::Error`]. The single home of that policy.
+    fn run_task_or_propagate(&mut self, id: usize) -> Result<(), Signal> {
+        match self.run_task(id) {
+            Err(sig @ Signal::Error(_)) => Err(sig),
+            _ => Ok(()),
+        }
     }
 
     /// Decode a continuation `resume(...)` call's arguments into the outcome to
@@ -429,12 +601,108 @@ impl<'w> Interpreter<'w> {
     /// Run any still-pending child tasks of group `gid` (structured-concurrency
     /// guarantee: the group does not return until its children finish).
     fn drain_group(&mut self, gid: usize) -> Result<(), Signal> {
-        let ids = std::mem::take(&mut self.groups[gid]);
-        for id in ids {
-            if let Err(sig @ Signal::Error(_)) = self.run_task(id) {
-                return Err(sig);
-            }
+        for id in self.sched.take_group(gid) {
+            self.run_task_or_propagate(id)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A task runs `Pending` → `Running` (via `begin_task`) → `Done` (via
+    /// `complete_task`), and a re-`begin` returns the memoized outcome.
+    #[test]
+    fn task_lifecycle_pending_running_done_memoizes() {
+        let mut s = Scheduler::default();
+        let id = s.spawn(7, vec!["C".into()], false);
+        assert!(s.is_task_pending(id));
+
+        match s.begin_task(id) {
+            TaskRun::Start { closure, class_ctx } => {
+                assert_eq!(closure, 7);
+                assert_eq!(class_ctx, vec!["C".to_string()]);
+            }
+            _ => panic!("a pending task must Start"),
+        }
+        // Now Running: a concurrent begin reports a deadlock.
+        assert!(!s.is_task_pending(id));
+        assert!(matches!(s.begin_task(id), TaskRun::Deadlock));
+
+        s.complete_task(id, Ok(SwiftValue::Bool(true)));
+        match s.begin_task(id) {
+            TaskRun::Memoized(Ok(SwiftValue::Bool(true))) => {}
+            _ => panic!("completed task must memoize its outcome"),
+        }
+    }
+
+    /// A structured child inherits its parent's cancellation; a detached child
+    /// does not.
+    #[test]
+    fn cancellation_inherits_for_structured_children_only() {
+        let mut s = Scheduler::default();
+        let parent = s.spawn(0, Vec::new(), false);
+        // Enter the parent and cancel it, so it is the innermost running task.
+        assert!(matches!(s.begin_task(parent), TaskRun::Start { .. }));
+        s.cancel_task(parent);
+        assert!(s.current_task_cancelled());
+
+        let structured = s.spawn(1, Vec::new(), true);
+        let detached = s.spawn(2, Vec::new(), false);
+        assert!(s.task_cancelled(structured), "structured child inherits");
+        assert!(!s.task_cancelled(detached), "detached child does not");
+    }
+
+    /// A cancelled group cancels its current children and any added afterwards.
+    #[test]
+    fn group_cancellation_propagates_to_present_and_future_children() {
+        let mut s = Scheduler::default();
+        let gid = s.new_group();
+        let early = s.spawn(0, Vec::new(), false);
+        s.add_to_group(gid, early);
+
+        s.cancel_group(gid);
+        assert!(s.is_group_cancelled(gid));
+        assert!(s.task_cancelled(early), "present child is cancelled");
+
+        let late = s.spawn(1, Vec::new(), false);
+        s.add_to_group(gid, late);
+        assert!(s.task_cancelled(late), "child added post-cancel starts cancelled");
+
+        assert_eq!(s.take_group(gid), vec![early, late]);
+        assert!(s.take_group(gid).is_empty(), "taking a group drains it");
+    }
+
+    /// A continuation accepts exactly one resume; the value is read once, and a
+    /// second or late resume is rejected.
+    #[test]
+    fn continuation_resumes_once_then_rejects() {
+        let mut s = Scheduler::default();
+        let cid = s.new_continuation();
+        assert!(s.continuation_pending(cid));
+
+        assert!(s.resume_continuation(cid, Ok(SwiftValue::Bool(true))));
+        assert!(s.continuation_resumed(cid));
+        // A second resume (still before consume) is rejected.
+        assert!(!s.resume_continuation(cid, Ok(SwiftValue::Bool(false))));
+
+        match s.consume_continuation(cid) {
+            Some(Ok(SwiftValue::Bool(true))) => {}
+            _ => panic!("consume returns the first resumed value"),
+        }
+        // After consume the slot is gone: a late resume is rejected, and a
+        // second consume yields nothing (the caller turns that into a trap).
+        assert!(!s.resume_continuation(cid, Ok(SwiftValue::Void)));
+        assert!(s.consume_continuation(cid).is_none());
+    }
+
+    /// An unresumed continuation has no outcome to consume.
+    #[test]
+    fn unresumed_continuation_consumes_to_none() {
+        let mut s = Scheduler::default();
+        let cid = s.new_continuation();
+        assert!(s.consume_continuation(cid).is_none());
     }
 }
