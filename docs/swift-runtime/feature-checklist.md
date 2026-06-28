@@ -215,7 +215,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [x] | Conditional conformance | ✅ | ★★★ | R4 |
 | [~] | Synthesized `Equatable`/`Hashable`/`Comparable` | ✅ | ★★★ | R4 |
-| [~] | Synthesized `Codable` (Encodable/Decodable) | ✅ | ★★★★ | R5 |
+| [x] | Synthesized `Codable` (Encodable/Decodable; structs, nested/array/optional fields, RawRepresentable enums) | ✅ | ★★★★ | R5 |
 
 ### 4b. Generics
 | ✓ | Feature | FE | RT | Phase |
