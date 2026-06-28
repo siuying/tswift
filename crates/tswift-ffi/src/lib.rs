@@ -11,6 +11,7 @@
 use std::ffi::{c_char, CStr, CString};
 
 mod run;
+mod swiftui;
 mod util;
 
 /// The lifespan-owning VM handle handed to C as an opaque pointer — the native
@@ -18,14 +19,14 @@ mod util;
 /// (grown in later tasks: one-shot run state, then the SwiftUI render session).
 /// Created with [`tswift_context_new`] and freed with [`tswift_context_free`].
 pub struct Context {
-    // Persistent state is added by T2 (`tswift_run`) and T3 (the SwiftUI render
-    // session). The handle's T1 job is lifespan ownership and the `unsafe` seam.
-    _private: (),
+    /// The live SwiftUI render session (T3), if one has been compiled. Owns its
+    /// interpreter bundle and is reclaimed on recompile or `Context` free.
+    swiftui: Option<swiftui::SwiftUiSession>,
 }
 
 impl Context {
     fn new() -> Self {
-        Context { _private: () }
+        Context { swiftui: None }
     }
 }
 
@@ -128,6 +129,54 @@ pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) ->
         return into_json_ptr(arg_error_json("source is null or not valid UTF-8"));
     };
     into_json_ptr(run::run_impl(source))
+}
+
+/// Compile a SwiftUI program through `ctx`, render its root view, and start a
+/// live render session (replacing any prior one). Returns owned UIIR JSON;
+/// release it with [`tswift_string_free`].
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `source` must be
+/// null or a valid NUL-terminated C string. The returned pointer is owned by
+/// the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_swiftui_compile(
+    ctx: *mut Context,
+    source: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(swiftui::compile_error_json("null context"));
+    };
+    let Some(source) = borrow_str(source) else {
+        return into_json_ptr(swiftui::compile_error_json(
+            "source is null or not valid UTF-8",
+        ));
+    };
+    into_json_ptr(swiftui::compile(&mut ctx.swiftui, source))
+}
+
+/// Route a host event into `ctx`'s live render session and return an owned
+/// patch-stream JSON; release it with [`tswift_string_free`]. `event_json` is
+/// an object `{"id":string,"event":string,"value"?:scalar}`.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `event_json` must
+/// be null or a valid NUL-terminated C string. The returned pointer is owned by
+/// the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_swiftui_dispatch(
+    ctx: *mut Context,
+    event_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(swiftui::dispatch_error_json("null context"));
+    };
+    let Some(event_json) = borrow_str(event_json) else {
+        return into_json_ptr(swiftui::dispatch_error_json(
+            "event_json is null or not valid UTF-8",
+        ));
+    };
+    into_json_ptr(swiftui::dispatch(&mut ctx.swiftui, event_json))
 }
 
 #[cfg(test)]
