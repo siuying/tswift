@@ -16,8 +16,25 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "quotientAndRemainder",
         int_quotient_and_remainder,
     );
-    // Int property.
+    // Int properties.
     interp.register_property(BuiltinReceiver::Int, "magnitude", int_magnitude);
+    interp.register_property(BuiltinReceiver::Int, "bitWidth", int_bit_width);
+    interp.register_property(
+        BuiltinReceiver::Int,
+        "nonzeroBitCount",
+        int_nonzero_bit_count,
+    );
+    interp.register_property(
+        BuiltinReceiver::Int,
+        "leadingZeroBitCount",
+        int_leading_zero_bit_count,
+    );
+    interp.register_property(
+        BuiltinReceiver::Int,
+        "trailingZeroBitCount",
+        int_trailing_zero_bit_count,
+    );
+    interp.register_property(BuiltinReceiver::Int, "byteSwapped", int_byte_swapped);
 
     // Double methods.
     method(interp, BuiltinReceiver::Double, "rounded", double_rounded);
@@ -28,11 +45,34 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "truncatingRemainder",
         double_truncating_remainder,
     );
+    interp.register_intrinsic(
+        BuiltinReceiver::Double,
+        "negate",
+        MethodEntry {
+            mutating: true,
+            func: double_negate,
+        },
+    );
     // Double properties.
     interp.register_property(BuiltinReceiver::Double, "magnitude", double_magnitude);
     interp.register_property(BuiltinReceiver::Double, "isNaN", double_is_nan);
     interp.register_property(BuiltinReceiver::Double, "isFinite", double_is_finite);
     interp.register_property(BuiltinReceiver::Double, "isInfinite", double_is_infinite);
+    interp.register_property(BuiltinReceiver::Double, "isZero", double_is_zero);
+    interp.register_property(BuiltinReceiver::Double, "isNormal", double_is_normal);
+    interp.register_property(BuiltinReceiver::Double, "isSubnormal", double_is_subnormal);
+}
+
+/// Width-masked unsigned bit pattern of an integer (two's complement within
+/// `width`). Used by the bit-counting properties.
+fn bit_pattern(i: IntValue) -> (u128, u32) {
+    let bits = i.width.bits();
+    let mask: u128 = if bits >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    };
+    ((i.raw as u128) & mask, bits)
 }
 
 /// Register a non-mutating method intrinsic.
@@ -104,6 +144,46 @@ fn int_magnitude(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Int(IntValue::new(i.raw.abs(), i.width)))
 }
 
+/// `Int.bitWidth` — the number of bits in this integer's representation.
+fn int_bit_width(recv: SwiftValue) -> StdResult {
+    let i = as_int(&recv)?;
+    Ok(SwiftValue::int(i128::from(i.width.bits())))
+}
+
+/// `Int.nonzeroBitCount` — population count of the two's-complement pattern.
+fn int_nonzero_bit_count(recv: SwiftValue) -> StdResult {
+    let (v, _) = bit_pattern(as_int(&recv)?);
+    Ok(SwiftValue::int(i128::from(v.count_ones())))
+}
+
+/// `Int.leadingZeroBitCount` — zero bits above the most-significant set bit.
+fn int_leading_zero_bit_count(recv: SwiftValue) -> StdResult {
+    let (v, bits) = bit_pattern(as_int(&recv)?);
+    let leading = v.leading_zeros() - (128 - bits);
+    Ok(SwiftValue::int(i128::from(leading)))
+}
+
+/// `Int.trailingZeroBitCount` — zero bits below the least-significant set bit
+/// (the full width when the value is zero).
+fn int_trailing_zero_bit_count(recv: SwiftValue) -> StdResult {
+    let (v, bits) = bit_pattern(as_int(&recv)?);
+    let trailing = if v == 0 { bits } else { v.trailing_zeros() };
+    Ok(SwiftValue::int(i128::from(trailing)))
+}
+
+/// `Int.byteSwapped` — the value with its bytes in reverse order.
+fn int_byte_swapped(recv: SwiftValue) -> StdResult {
+    let i = as_int(&recv)?;
+    let (v, bits) = bit_pattern(i);
+    let nbytes = (bits / 8) as usize;
+    let mut swapped: u128 = 0;
+    for b in 0..nbytes {
+        let byte = (v >> (8 * b)) & 0xff;
+        swapped |= byte << (8 * (nbytes - 1 - b));
+    }
+    Ok(SwiftValue::Int(IntValue::wrapped(i.width, swapped as i128)))
+}
+
 // ---- Double ----------------------------------------------------------------
 
 /// `Double.rounded()` — round to the nearest integer, ties away from zero.
@@ -146,6 +226,27 @@ fn double_is_finite(recv: SwiftValue) -> StdResult {
 
 fn double_is_infinite(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(as_double(&recv)?.is_infinite()))
+}
+
+fn double_is_zero(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(as_double(&recv)? == 0.0))
+}
+
+fn double_is_normal(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(as_double(&recv)?.is_normal()))
+}
+
+fn double_is_subnormal(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Bool(as_double(&recv)?.is_subnormal()))
+}
+
+/// `Double.negate()` — flip the sign in place (`mutating func negate()`).
+fn double_negate(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let d = as_double(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Double(-d),
+    })
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -234,6 +335,66 @@ mod tests {
         assert!(
             int_quotient_and_remainder(&mut c, SwiftValue::int(1), vec![SwiftValue::int(0)])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn int_bit_properties() {
+        assert_eq!(
+            int_bit_width(SwiftValue::int(42)).unwrap(),
+            SwiftValue::int(64)
+        );
+        assert_eq!(
+            int_nonzero_bit_count(SwiftValue::int(42)).unwrap(),
+            SwiftValue::int(3)
+        );
+        assert_eq!(
+            int_leading_zero_bit_count(SwiftValue::int(42)).unwrap(),
+            SwiftValue::int(58)
+        );
+        assert_eq!(
+            int_trailing_zero_bit_count(SwiftValue::int(42)).unwrap(),
+            SwiftValue::int(1)
+        );
+        // Zero has no set bits: full-width leading and trailing zero counts.
+        assert_eq!(
+            int_leading_zero_bit_count(SwiftValue::int(0)).unwrap(),
+            SwiftValue::int(64)
+        );
+        assert_eq!(
+            int_trailing_zero_bit_count(SwiftValue::int(0)).unwrap(),
+            SwiftValue::int(64)
+        );
+        assert_eq!(
+            int_byte_swapped(SwiftValue::int(1)).unwrap(),
+            SwiftValue::int(72057594037927936)
+        );
+    }
+
+    #[test]
+    fn double_classification_and_negate() {
+        let mut c = MockCtx;
+        assert_eq!(
+            double_negate(&mut c, SwiftValue::Double(3.5), vec![])
+                .unwrap()
+                .receiver,
+            SwiftValue::Double(-3.5)
+        );
+        assert_eq!(
+            double_is_zero(SwiftValue::Double(0.0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            double_is_normal(SwiftValue::Double(1.0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            double_is_normal(SwiftValue::Double(0.0)).unwrap(),
+            SwiftValue::Bool(false)
+        );
+        assert_eq!(
+            double_is_subnormal(SwiftValue::Double(1.0)).unwrap(),
+            SwiftValue::Bool(false)
         );
     }
 
