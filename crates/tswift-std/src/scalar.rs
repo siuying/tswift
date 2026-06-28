@@ -16,6 +16,24 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "quotientAndRemainder",
         int_quotient_and_remainder,
     );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "addingReportingOverflow",
+        int_adding_reporting_overflow,
+    );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "subtractingReportingOverflow",
+        int_subtracting_reporting_overflow,
+    );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "multipliedReportingOverflow",
+        int_multiplied_reporting_overflow,
+    );
     // Int properties.
     interp.register_property(BuiltinReceiver::Int, "magnitude", int_magnitude);
     interp.register_property(BuiltinReceiver::Int, "bitWidth", int_bit_width);
@@ -184,6 +202,57 @@ fn int_byte_swapped(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Int(IntValue::wrapped(i.width, swapped as i128)))
 }
 
+/// Shared body for the `*ReportingOverflow(by:)` methods: apply `op` in wide
+/// arithmetic, wrap the result into `self`'s width, and report whether the
+/// mathematical result fell outside that width.
+fn int_reporting_overflow(
+    who: &str,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+    op: impl Fn(i128, i128) -> i128,
+) -> Outcomes {
+    let a = as_int(&recv)?;
+    let b = as_int(args.first().ok_or_else(|| arg_err(who))?)?;
+    let wide = op(a.raw, b.raw);
+    let partial = IntValue::wrapped(a.width, wide);
+    let overflow = wide < a.width.min() || wide > a.width.max();
+    let tuple = SwiftValue::tuple_labeled(
+        vec![SwiftValue::Int(partial), SwiftValue::Bool(overflow)],
+        vec![
+            Some("partialValue".to_string()),
+            Some("overflow".to_string()),
+        ],
+    );
+    ok(tuple, recv)
+}
+
+/// `Int.addingReportingOverflow(_:)` — `(partialValue, overflow)` for `self + other`.
+fn int_adding_reporting_overflow(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    int_reporting_overflow("addingReportingOverflow(_:)", recv, args, |a, b| a + b)
+}
+
+/// `Int.subtractingReportingOverflow(_:)` — `(partialValue, overflow)` for `self - other`.
+fn int_subtracting_reporting_overflow(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    int_reporting_overflow("subtractingReportingOverflow(_:)", recv, args, |a, b| a - b)
+}
+
+/// `Int.multipliedReportingOverflow(by:)` — `(partialValue, overflow)` for `self * other`.
+fn int_multiplied_reporting_overflow(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    int_reporting_overflow("multipliedReportingOverflow(by:)", recv, args, |a, b| a * b)
+}
+
 // ---- Double ----------------------------------------------------------------
 
 /// `Double.rounded()` — round to the nearest integer, ties away from zero.
@@ -336,6 +405,33 @@ mod tests {
             int_quotient_and_remainder(&mut c, SwiftValue::int(1), vec![SwiftValue::int(0)])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn reporting_overflow() {
+        let mut c = MockCtx;
+        let r =
+            int_adding_reporting_overflow(&mut c, SwiftValue::int(10), vec![SwiftValue::int(5)])
+                .unwrap()
+                .result;
+        assert_eq!(
+            r,
+            SwiftValue::tuple(vec![SwiftValue::int(15), SwiftValue::Bool(false)])
+        );
+        // Int8 overflow: 100 * 2 = 200 wraps and reports overflow.
+        let max = SwiftValue::Int(IntValue::new(100, tswift_core::IntWidth::I8));
+        let r = int_multiplied_reporting_overflow(
+            &mut c,
+            max,
+            vec![SwiftValue::Int(IntValue::new(2, tswift_core::IntWidth::I8))],
+        )
+        .unwrap()
+        .result;
+        if let SwiftValue::Tuple(elems, _) = r {
+            assert_eq!(elems[1], SwiftValue::Bool(true));
+        } else {
+            panic!("expected a tuple");
+        }
     }
 
     #[test]

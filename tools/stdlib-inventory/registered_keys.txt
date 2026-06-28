@@ -51,6 +51,7 @@ Double.negate
 Double.rounded
 Double.squareRoot
 Double.truncatingRemainder
+Int.addingReportingOverflow
 Int.bitWidth
 Int.byteSwapped
 Int.flatMap
@@ -58,9 +59,11 @@ Int.isMultiple
 Int.leadingZeroBitCount
 Int.magnitude
 Int.map
+Int.multipliedReportingOverflow
 Int.nonzeroBitCount
 Int.quotientAndRemainder
 Int.signum
+Int.subtractingReportingOverflow
 Int.trailingZeroBitCount
 Optional.flatMap
 Optional.map
