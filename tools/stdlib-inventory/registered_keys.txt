@@ -27,6 +27,7 @@ Bool.hashValue
 Bool.map
 Bool.random
 Bool.toggle
+Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
 Dictionary.filter
@@ -35,7 +36,10 @@ Dictionary.keys
 Dictionary.mapValues
 Dictionary.merge
 Dictionary.merging
+Dictionary.popFirst
+Dictionary.removeAll
 Dictionary.removeValue
+Dictionary.reserveCapacity
 Dictionary.updateValue
 Dictionary.values
 Double.addProduct
