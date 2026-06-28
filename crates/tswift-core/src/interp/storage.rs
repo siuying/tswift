@@ -198,7 +198,7 @@ impl<'w> Interpreter<'w> {
                 .into()),
             }
         };
-        let child = node.children().next();
+        let child = node.first_child();
         match (node.kind(), op.as_deref()) {
             (NodeKind::PrefixExpr, Some("..<")) => {
                 let hi = bound_int(self, &child.unwrap())?;
@@ -1024,7 +1024,7 @@ impl<'w> Interpreter<'w> {
             .ok_or_else(|| EvalError::Unsupported("member without a name".into()))?;
 
         // Shorthand `.case` (no base): construct the inferred enum case.
-        let Some(base) = node.children().next() else {
+        let Some(base) = node.first_child() else {
             if member == "." {
                 member = node.op_text().unwrap_or(member);
             }
@@ -1377,7 +1377,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::IdentExpr if target.text().as_deref() == Some("_") => Ok(()),
             NodeKind::MemberExpr => {
                 // A class-instance member mutates in place (reference semantics).
-                if let Some(base) = target.children().next() {
+                if let Some(base) = target.first_child() {
                     let base_value = self.eval(&base)?;
                     if let SwiftValue::Object(obj) = &base_value {
                         let field = target.text().ok_or_else(|| {
@@ -1433,7 +1433,7 @@ impl<'w> Interpreter<'w> {
             }
             NodeKind::MemberExpr => {
                 let member = node.text()?;
-                let base = node.children().next()?;
+                let base = node.first_child()?;
                 let mut place = self.resolve_place(&base)?;
                 place.path.push(member);
                 Some(place)
