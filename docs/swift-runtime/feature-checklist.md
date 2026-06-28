@@ -419,7 +419,7 @@ biggest sustained effort. Scope deliberately.*
 | [x] | `Equatable` / `Hashable` / `Comparable` | ★★★ | R4 |
 | [x] | `Sequence` / `IteratorProtocol` | ★★★ | R4 |
 | [ ] | `Collection` / `BidirectionalCollection` / `RandomAccess` | ★★★★ | R4 |
-| [ ] | `RangeReplaceableCollection` | ★★★ | R4 |
+| [~] | `RangeReplaceableCollection` (Array: `append`/`insert(contentsOf:)`, `removeSubrange`, `removeAll(where:)`, `reverse`, `replaceSubrange`) | ★★★ | R4 |
 | [x] | `ExpressibleBy*Literal` (literal conversion) | ★★★ | R2 |
 | [x] | `CustomStringConvertible` / `Debug…` | ★★ | R2 |
 | [x] | `RawRepresentable` / `CaseIterable` | ★★ | R2 |

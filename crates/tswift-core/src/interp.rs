@@ -3965,6 +3965,73 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Read `base[indices]`.
+    /// `Array.append(contentsOf:)` / `Array.insert(contentsOf:at:)` — splice the
+    /// elements of a sequence into the receiver, writing the result back through
+    /// `base`'s lvalue. The `contentsOf:` argument must be a flattenable
+    /// sequence (array or integer range); `at:` (for `insert`) is the index.
+    fn array_splice_contents_of(
+        &mut self,
+        receiver: SwiftValue,
+        base: &Node<'static>,
+        method: &str,
+        args: Vec<CallArg>,
+    ) -> Eval {
+        let SwiftValue::Array(items) = receiver else {
+            return Err(EvalError::Type("append/insert on a non-array receiver".into()).into());
+        };
+        let mut out = items.as_ref().clone();
+        // Validate the exact call shape so a stray/duplicate label cannot be
+        // silently ignored: `append(contentsOf:)` takes only `contentsOf:`;
+        // `insert(contentsOf:at:)` takes exactly `contentsOf:` and `at:`.
+        let allowed: &[&str] = if method == "append" {
+            &["contentsOf"]
+        } else {
+            &["contentsOf", "at"]
+        };
+        let mut seen = std::collections::HashSet::new();
+        for arg in &args {
+            match arg.label.as_deref() {
+                Some(label) if allowed.contains(&label) && seen.insert(label) => {}
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "Array.{method} called with unexpected argument label {}",
+                        other.unwrap_or("_")
+                    ))
+                    .into())
+                }
+            }
+        }
+        let contents = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("contentsOf"))
+            .map(|a| a.value.clone())
+            .ok_or_else(|| EvalError::Type("missing contentsOf: argument".into()))?;
+        let extra = materialize_sequence(&contents).ok_or_else(|| {
+            EvalError::Type(format!(
+                "cannot use {} as a sequence for contentsOf:",
+                contents.type_name()
+            ))
+        })?;
+        if method == "append" {
+            out.extend(extra);
+        } else {
+            let at = args
+                .iter()
+                .find(|a| a.label.as_deref() == Some("at"))
+                .and_then(|a| match &a.value {
+                    SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+                    _ => None,
+                })
+                .ok_or_else(|| EvalError::Type("insert(contentsOf:at:) needs an index".into()))?;
+            if at > out.len() {
+                return Err(trap(format!("insert index {at} out of range")));
+            }
+            out.splice(at..at, extra);
+        }
+        self.assign_value_to(base, SwiftValue::Array(Rc::new(out)))?;
+        Ok(SwiftValue::Void)
+    }
+
     fn read_subscript(&mut self, base: &SwiftValue, indices: &[SwiftValue]) -> Eval {
         // `base[keyPath: kp]` — a key-path subscript walks the path from `base`.
         if let [idx] = indices {
@@ -6635,6 +6702,32 @@ impl<'w> Interpreter<'w> {
             ) {
                 return result;
             }
+        }
+
+        // `Array.append(contentsOf:)` / `insert(contentsOf:at:)` concatenate or
+        // splice a whole sequence rather than adding one element. The argument
+        // label is dropped before the value-only intrinsic seam, so the
+        // sequence-flattening overloads are resolved here while labels survive.
+        if matches!(
+            BuiltinReceiver::of(&base_value),
+            Some(BuiltinReceiver::Array)
+        ) && matches!(method.as_str(), "append" | "insert")
+        {
+            let args = self.eval_args(arg_nodes)?;
+            if args
+                .iter()
+                .any(|a| a.label.as_deref() == Some("contentsOf"))
+            {
+                return self.array_splice_contents_of(base_value, &base, &method, args);
+            }
+            // Plain single-element overload: dispatch with the already-evaluated
+            // arguments (avoid re-evaluating side-effecting argument exprs).
+            let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+            let place = self.resolve_place(&base);
+            if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
+                return result;
+            }
+            unreachable!("Array.{method} intrinsic registered above");
         }
 
         // Standard-library intrinsic registry (layer 1): type-specific members
