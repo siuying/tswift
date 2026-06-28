@@ -1081,6 +1081,26 @@ impl<'w> Interpreter<'w> {
                             }
                         };
                     }
+                    // Floating-point type constants: `Double.pi`, `.infinity`,
+                    // `.nan`, and the magnitude/ulp bounds. `Float` shares the
+                    // f64 model here, so the same values answer for both.
+                    if type_name == "Double" || type_name == "Float" {
+                        if let Some(v) = double_type_constant(&member) {
+                            return Ok(SwiftValue::Double(v));
+                        }
+                        // Integer-typed format statics. `Float` is modelled on
+                        // f64 here but keeps its own IEEE single field widths.
+                        let (exp_bits, sig_bits) = if type_name == "Float" {
+                            (8, 23)
+                        } else {
+                            (11, 52)
+                        };
+                        match member.as_str() {
+                            "exponentBitCount" => return Ok(SwiftValue::int(exp_bits)),
+                            "significandBitCount" => return Ok(SwiftValue::int(sig_bits)),
+                            _ => {}
+                        }
+                    }
                     // Static property of a struct or class type: `Type.prop`.
                     if self.structs.contains_key(&type_name)
                         || self.classes.contains_key(&type_name)
@@ -1536,5 +1556,34 @@ impl<'w> Interpreter<'w> {
         let sub = self.read_struct_member(&container, head)?;
         let new_sub = self.set_in(sub, rest, value)?;
         self.set_struct_field(container, head, new_sub)
+    }
+}
+
+/// The value of a `Double`/`Float` type-level constant, if `member` names one.
+/// Covers the `FloatingPoint` static properties the runtime models.
+fn double_type_constant(member: &str) -> Option<f64> {
+    Some(match member {
+        "pi" => std::f64::consts::PI,
+        "infinity" => f64::INFINITY,
+        "nan" => f64::NAN,
+        "greatestFiniteMagnitude" => f64::MAX,
+        "leastNonzeroMagnitude" => f64::from_bits(1),
+        "leastNormalMagnitude" => f64::MIN_POSITIVE,
+        "ulpOfOne" => f64::EPSILON,
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::double_type_constant;
+
+    #[test]
+    fn double_constants() {
+        assert_eq!(double_type_constant("pi"), Some(std::f64::consts::PI));
+        assert_eq!(double_type_constant("infinity"), Some(f64::INFINITY));
+        assert!(double_type_constant("nan").unwrap().is_nan());
+        assert!(double_type_constant("leastNonzeroMagnitude").unwrap() > 0.0);
+        assert_eq!(double_type_constant("bogus"), None);
     }
 }

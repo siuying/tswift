@@ -21,6 +21,16 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        (SwiftValue::Set(a), SwiftValue::Set(b)) => set_binary(op, a, b),
+        (SwiftValue::Dict(a), SwiftValue::Dict(b)) => dict_binary(op, a, b),
+        (
+            SwiftValue::Range { lo, hi, inclusive },
+            SwiftValue::Range {
+                lo: lo2,
+                hi: hi2,
+                inclusive: inc2,
+            },
+        ) => range_binary(op, (*lo, *hi, *inclusive), (*lo2, *hi2, *inc2)),
         // `IndexPath` is `Comparable`: compare its element list lexicographically.
         (SwiftValue::Struct(a), SwiftValue::Struct(b))
             if a.type_name == "IndexPath" && b.type_name == "IndexPath" =>
@@ -229,6 +239,50 @@ fn array_binary(
     }
 }
 
+/// `Set` equality is order-independent: equal size with mutual membership.
+fn set_binary(
+    op: &str,
+    a: &std::rc::Rc<Vec<SwiftValue>>,
+    b: &std::rc::Rc<Vec<SwiftValue>>,
+) -> Result<SwiftValue, String> {
+    let eq = a.len() == b.len() && a.iter().all(|x| b.contains(x));
+    match op {
+        "==" => Ok(SwiftValue::Bool(eq)),
+        "!=" => Ok(SwiftValue::Bool(!eq)),
+        _ => Err(format!("operator `{op}` cannot apply to Set and Set")),
+    }
+}
+
+/// `Dictionary` equality is order-independent: equal size with each key bound
+/// to an equal value on both sides.
+fn dict_binary(
+    op: &str,
+    a: &std::rc::Rc<Vec<(SwiftValue, SwiftValue)>>,
+    b: &std::rc::Rc<Vec<(SwiftValue, SwiftValue)>>,
+) -> Result<SwiftValue, String> {
+    let eq = a.len() == b.len()
+        && a.iter()
+            .all(|(k, v)| b.iter().any(|(k2, v2)| k2 == k && v2 == v));
+    match op {
+        "==" => Ok(SwiftValue::Bool(eq)),
+        "!=" => Ok(SwiftValue::Bool(!eq)),
+        _ => Err(format!("operator `{op}` cannot apply to Dictionary")),
+    }
+}
+
+/// `Range`/`ClosedRange` equality compares the bounds and end style.
+fn range_binary(
+    op: &str,
+    a: (i128, i128, bool),
+    b: (i128, i128, bool),
+) -> Result<SwiftValue, String> {
+    match op {
+        "==" => Ok(SwiftValue::Bool(a == b)),
+        "!=" => Ok(SwiftValue::Bool(a != b)),
+        _ => Err(format!("operator `{op}` cannot apply to ranges")),
+    }
+}
+
 fn compare_op(op: &str, a: i128, b: i128) -> Option<bool> {
     Some(match op {
         "==" => a == b,
@@ -319,6 +373,48 @@ mod tests {
         assert_eq!(
             binary("<", &path(&[1]), &path(&[1, 0])).unwrap(),
             SwiftValue::Bool(true)
+        );
+    }
+
+    #[test]
+    fn collection_equality_is_order_independent() {
+        use std::rc::Rc;
+        let set = |xs: &[i128]| SwiftValue::Set(Rc::new(xs.iter().copied().map(int).collect()));
+        // Sets compare by membership, ignoring insertion order.
+        assert_eq!(
+            binary("==", &set(&[1, 2]), &set(&[2, 1])).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            binary("!=", &set(&[1, 2]), &set(&[1, 3])).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        let dict = |pairs: &[(i128, i128)]| {
+            SwiftValue::Dict(Rc::new(
+                pairs.iter().map(|(k, v)| (int(*k), int(*v))).collect(),
+            ))
+        };
+        assert_eq!(
+            binary("==", &dict(&[(1, 10), (2, 20)]), &dict(&[(2, 20), (1, 10)])).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            binary("==", &dict(&[(1, 10)]), &dict(&[(1, 11)])).unwrap(),
+            SwiftValue::Bool(false)
+        );
+        // Ranges compare bounds and end style: half-open != closed.
+        let range = |lo, hi, inc| SwiftValue::Range {
+            lo,
+            hi,
+            inclusive: inc,
+        };
+        assert_eq!(
+            binary("==", &range(1, 3, false), &range(1, 3, false)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            binary("==", &range(1, 3, true), &range(1, 3, false)).unwrap(),
+            SwiftValue::Bool(false)
         );
     }
 

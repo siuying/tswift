@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("frameworks.toml")
-FIXTURES = ROOT / "crates/qswift-cli/tests/fixtures"
+FIXTURES = ROOT / "crates/tswift-cli/tests/fixtures"
 FREE_SECTION = "(free functions)"
 
 MEMBER_RE = re.compile(
@@ -135,11 +135,39 @@ def table_string_list(scope: dict, table: str, key: str) -> set[str]:
     return set(raw) if isinstance(raw, list) else set()
 
 
+# Binary/compound operator tokens credited when they appear *whitespace-
+# delimited* in a fixture (` a + b `, ` x &<< 3 `). Requiring spaces on both
+# sides is what keeps generics (`Set<Int>`), `inout` (`&x`), arrows (`->`),
+# unary minus (`-5`), and `//` comments from registering as operator usage.
+# Sorted longest-first so the alternation prefers `&<<`/`<=`/`+=` over `&`/`<`/`+`.
+_OP_TOKENS = sorted(
+    [
+        "&<<", "&>>", "&&", "||", "==", "!=", "<=", ">=", "<<", ">>",
+        "&+", "&-", "&*", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+        "+", "-", "*", "/", "%", "<", ">", "&", "|", "^",
+    ],
+    key=len,
+    reverse=True,
+)
+
+
+def _strip_literals(src: str) -> str:
+    """Blank out comments and string literals before operator scanning so that
+    operators inside `"a < b"` or `// note +` are never counted."""
+    src = re.sub(r'"""(?:.|\n)*?"""', '""', src)
+    src = re.sub(r"//[^\n]*", " ", src)
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r'"(?:\\.|[^"\\\n])*"', '""', src)
+    return src
+
+
 def fixture_tokens(framework: str, prefix: str | None) -> set[str]:
     tokens: set[str] = set()
     member_re = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)")
     call_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-    operator_re = re.compile(r"(?<![=!<>+\-*/%&|^])(?:\+=|==|\+)(?![=+])")
+    operator_re = re.compile(
+        r"(?<=\s)(?:" + "|".join(re.escape(t) for t in _OP_TOKENS) + r")(?=\s)"
+    )
 
     candidates: list[Path]
     if framework == "stdlib":
@@ -156,7 +184,7 @@ def fixture_tokens(framework: str, prefix: str | None) -> set[str]:
         src = swift.read_text()
         tokens.update(member_re.findall(src))
         tokens.update(call_re.findall(src))
-        tokens.update(operator_re.findall(src))
+        tokens.update(operator_re.findall(_strip_literals(src)))
     return tokens
 
 

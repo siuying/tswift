@@ -16,6 +16,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(d, "isEmpty", is_empty);
     interp.register_property(d, "keys", keys);
     interp.register_property(d, "values", values);
+    interp.register_property(d, "capacity", capacity);
+    interp.register_property(d, "hashValue", hash_value);
+    interp.register_property(d, "description", description);
 
     interp.register_intrinsic(
         d,
@@ -73,6 +76,30 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: compact_map_values,
         },
     );
+    interp.register_intrinsic(
+        d,
+        "removeAll",
+        MethodEntry {
+            mutating: true,
+            func: remove_all,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "reserveCapacity",
+        MethodEntry {
+            mutating: true,
+            func: reserve_capacity,
+        },
+    );
+    interp.register_intrinsic(
+        d,
+        "popFirst",
+        MethodEntry {
+            mutating: true,
+            func: pop_first,
+        },
+    );
 }
 
 fn pairs(recv: SwiftValue) -> Result<Rc<Pairs>, StdError> {
@@ -88,6 +115,37 @@ fn pairs(recv: SwiftValue) -> Result<Rc<Pairs>, StdError> {
 // ---- properties ------------------------------------------------------------
 
 fn count(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(pairs(recv)?.len() as i128))
+}
+
+/// `Dictionary.description` — the bracketed `[key: value, …]` rendering (`[:]`
+/// when empty). Pairs appear in insertion order here, unlike Swift's hashed
+/// order.
+fn description(recv: SwiftValue) -> StdResult {
+    pairs(recv.clone())?;
+    Ok(SwiftValue::Str(recv.to_string()))
+}
+
+/// `Dictionary.hashValue` — an order-independent digest over the key/value
+/// pairs: equal dictionaries hash equally regardless of insertion order. Each
+/// pair is hashed by combining its key and value digests, then the pair
+/// digests are merged with a commutative wrapping sum.
+fn hash_value(recv: SwiftValue) -> StdResult {
+    let store = pairs(recv)?;
+    let mut acc: u64 = 0;
+    for (k, v) in store.iter() {
+        let kd = crate::set::value_digest(k);
+        let vd = crate::set::value_digest(v);
+        // Order-sensitive within a pair, commutative across pairs.
+        acc = acc.wrapping_add(kd.wrapping_mul(0x0000_0100_0000_01b3) ^ vd);
+    }
+    acc ^= store.len() as u64;
+    Ok(SwiftValue::int(i128::from(acc as i64)))
+}
+
+/// `Dictionary.capacity` — a lower bound modelled as the live element count
+/// (Swift guarantees `capacity >= count`; exact reserve sizing is not modelled).
+fn capacity(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(pairs(recv)?.len() as i128))
 }
 
@@ -261,6 +319,45 @@ fn compact_map_values(
 
 // ---- helpers ---------------------------------------------------------------
 
+/// `Dictionary.removeAll(keepingCapacity:)` — drop every pair in place.
+fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Dict(Rc::new(Vec::new())),
+    })
+}
+
+/// `Dictionary.reserveCapacity(_:)` — a no-op here; storage grows implicitly.
+fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `Dictionary.popFirst()` — remove and return the first `(key, value)` pair,
+/// or `nil` when empty. Iteration order is unspecified, so callers should not
+/// rely on which pair is returned for a multi-element dictionary.
+fn pop_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut p = pairs(recv)?;
+    let store = Rc::make_mut(&mut p);
+    if store.is_empty() {
+        return Ok(Outcome {
+            result: SwiftValue::Nil,
+            receiver: SwiftValue::Dict(p),
+        });
+    }
+    let (k, v) = store.remove(0);
+    let element = SwiftValue::tuple_labeled(
+        vec![k, v],
+        vec![Some("key".to_string()), Some("value".to_string())],
+    );
+    Ok(Outcome {
+        result: element,
+        receiver: SwiftValue::Dict(p),
+    })
+}
+
 type Outcomes = Result<Outcome, StdError>;
 
 fn type_err(msg: String) -> StdError {
@@ -319,6 +416,58 @@ mod tests {
                 .map(|(k, v)| (SwiftValue::Str((*k).into()), SwiftValue::int(*v)))
                 .collect(),
         ))
+    }
+
+    #[test]
+    fn description_renders_pairs() {
+        assert_eq!(
+            description(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            SwiftValue::Str("[a: 1, b: 2]".into())
+        );
+        assert_eq!(
+            description(SwiftValue::Dict(Rc::new(Vec::new()))).unwrap(),
+            SwiftValue::Str("[:]".into())
+        );
+    }
+
+    #[test]
+    fn hash_value_is_order_independent() {
+        // Equal dictionaries hash equally regardless of insertion order.
+        assert_eq!(
+            hash_value(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            hash_value(dict(&[("b", 2), ("a", 1)])).unwrap()
+        );
+        // A differing value changes the hash.
+        assert_ne!(
+            hash_value(dict(&[("a", 1)])).unwrap(),
+            hash_value(dict(&[("a", 2)])).unwrap()
+        );
+    }
+
+    #[test]
+    fn pop_first_remove_all_and_capacity() {
+        let mut c = Summer;
+        // popFirst returns the leading pair and shrinks the dictionary.
+        let d = dict(&[("only", 9)]);
+        let out = pop_first(&mut c, d, vec![]).unwrap();
+        assert_eq!(
+            out.result,
+            SwiftValue::tuple(vec![SwiftValue::Str("only".into()), SwiftValue::int(9)])
+        );
+        assert!(matches!(out.receiver, SwiftValue::Dict(p) if p.is_empty()));
+        // popFirst on an empty dictionary is nil.
+        let empty = SwiftValue::Dict(Rc::new(Vec::new()));
+        assert_eq!(
+            pop_first(&mut c, empty, vec![]).unwrap().result,
+            SwiftValue::Nil
+        );
+        // removeAll empties; capacity is at least the element count.
+        let out = remove_all(&mut c, dict(&[("a", 1), ("b", 2)]), vec![]).unwrap();
+        assert!(matches!(out.receiver, SwiftValue::Dict(p) if p.is_empty()));
+        assert_eq!(
+            capacity(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            SwiftValue::int(2)
+        );
     }
 
     #[test]

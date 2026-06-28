@@ -16,6 +16,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     let s = BuiltinReceiver::Set;
     interp.register_property(s, "count", count);
     interp.register_property(s, "isEmpty", is_empty);
+    interp.register_property(s, "capacity", capacity);
+    interp.register_property(s, "hashValue", hash_value);
+    interp.register_property(s, "description", description);
 
     let mut mutating = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -34,6 +37,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
     mutating("formIntersection", form_intersection);
     mutating("subtract", subtract);
     mutating("formSymmetricDifference", form_symmetric_difference);
+    mutating("removeAll", remove_all);
+    mutating("reserveCapacity", reserve_capacity);
+    mutating("removeFirst", remove_first);
+    mutating("popFirst", pop_first);
 
     let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -105,6 +112,56 @@ fn is_empty(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(elements(&recv)?.is_empty()))
 }
 
+/// FNV-1a digest of a byte slice (the shared hashing primitive here).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// A stable per-value digest for the scalar element kinds a `Set` can hold.
+pub(crate) fn value_digest(v: &SwiftValue) -> u64 {
+    match v {
+        SwiftValue::Int(i) => fnv1a(&(i.raw as u64).to_le_bytes()),
+        SwiftValue::Double(d) => {
+            let bits = if *d == 0.0 { 0 } else { d.to_bits() };
+            fnv1a(&bits.to_le_bytes())
+        }
+        SwiftValue::Str(s) => fnv1a(s.as_bytes()),
+        SwiftValue::Bool(b) => fnv1a(&[u8::from(*b)]),
+        _ => fnv1a(&[0]),
+    }
+}
+
+/// `Set.description` — the bracketed element list, e.g. `[1, 2, 3]`. Elements
+/// appear in insertion order (deterministic here), unlike Swift's hashed order.
+fn description(recv: SwiftValue) -> StdResult {
+    elements(&recv)?;
+    Ok(SwiftValue::Str(recv.to_string()))
+}
+
+/// `Set.hashValue` — an order-independent digest: equal sets (regardless of
+/// insertion order) hash equally. The element digests are combined with a
+/// commutative wrapping sum, then mixed with the count.
+fn hash_value(recv: SwiftValue) -> StdResult {
+    let items = elements(&recv)?;
+    let mut acc: u64 = 0;
+    for e in &items {
+        acc = acc.wrapping_add(value_digest(e));
+    }
+    acc ^= fnv1a(&(items.len() as u64).to_le_bytes());
+    Ok(SwiftValue::int(i128::from(acc as i64)))
+}
+
+/// `Set.capacity` — a lower bound modelled as the live element count
+/// (Swift guarantees `capacity >= count`; exact reserve sizing is not modelled).
+fn capacity(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(elements(&recv)?.len() as i128))
+}
+
 // ---- membership mutation ---------------------------------------------------
 
 /// `insert(_:)` — returns `(inserted, memberAfterInsert)`.
@@ -152,6 +209,52 @@ fn update(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
             items.push(el);
             SwiftValue::Nil
         }
+    };
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
+}
+
+/// `Set.removeAll(keepingCapacity:)` — drop every element in place.
+fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Set(Rc::new(Vec::new())),
+    })
+}
+
+/// `Set.reserveCapacity(_:)` — a no-op here; storage grows implicitly.
+fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `Set.removeFirst()` — remove and return the first element. Traps when empty,
+/// matching Swift. Iteration order is unspecified for multi-element sets.
+fn remove_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    if items.is_empty() {
+        return Err(StdError::Error(EvalError::Trap(
+            "can't remove first element from an empty collection".into(),
+        )));
+    }
+    let first = items.remove(0);
+    Ok(Outcome {
+        result: first,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
+}
+
+/// `Set.popFirst()` — remove and return the first element, or `nil` when empty.
+fn pop_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    let result = if items.is_empty() {
+        SwiftValue::Nil
+    } else {
+        items.remove(0)
     };
     Ok(Outcome {
         result,
@@ -317,6 +420,52 @@ mod tests {
         };
         out.sort();
         out
+    }
+
+    #[test]
+    fn description_renders_bracketed_list() {
+        assert_eq!(
+            description(s(&[1, 2, 3])).unwrap(),
+            SwiftValue::Str("[1, 2, 3]".into())
+        );
+    }
+
+    #[test]
+    fn hash_value_is_order_independent() {
+        // Equal sets hash equally regardless of element order.
+        assert_eq!(
+            hash_value(s(&[1, 2, 3])).unwrap(),
+            hash_value(s(&[3, 2, 1])).unwrap()
+        );
+        // Different membership hashes differently.
+        assert_ne!(
+            hash_value(s(&[1, 2, 3])).unwrap(),
+            hash_value(s(&[1, 2])).unwrap()
+        );
+    }
+
+    #[test]
+    fn capacity_remove_first_and_pop() {
+        let mut m = M;
+        assert_eq!(capacity(s(&[1, 2, 3])).unwrap(), SwiftValue::int(3));
+        // removeFirst yields an element and shrinks the set.
+        let out = remove_first(&mut m, s(&[42]), vec![]).unwrap();
+        assert_eq!(out.result, SwiftValue::int(42));
+        assert!(matches!(out.receiver, SwiftValue::Set(p) if p.is_empty()));
+        // removeFirst on an empty set traps.
+        assert!(remove_first(&mut m, s(&[]), vec![]).is_err());
+        // popFirst is nil on empty, Some otherwise.
+        assert_eq!(
+            pop_first(&mut m, s(&[]), vec![]).unwrap().result,
+            SwiftValue::Nil
+        );
+        assert_eq!(
+            pop_first(&mut m, s(&[7]), vec![]).unwrap().result,
+            SwiftValue::int(7)
+        );
+        // removeAll empties the set.
+        let cleared = remove_all(&mut m, s(&[1, 2, 3]), vec![]).unwrap();
+        assert!(matches!(cleared.receiver, SwiftValue::Set(p) if p.is_empty()));
     }
 
     #[test]

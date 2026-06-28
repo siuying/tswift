@@ -19,5 +19,36 @@ sequence_types = [
   "ReversedCollection",
 ]
 
+# Operators are evaluated directly by the interpreter (tswift-core `ops.rs`),
+# not the method registry. Only the `+`, `+=`, `==` tokens the fixture scanner
+# recognises are listed here, against the types whose `ops.rs` arms implement
+# them: arithmetic/concatenation `+`/`+=` for Int/Double/String, and `==` for
+# the value collections (Set/Dictionary/Range equality added in ops.rs).
 [core_members]
 Array = ["+", "+=", "=="]
+Int = [
+  "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
+  "==", "!=", "<", "<=", ">", ">=",
+  "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>",
+]
+String = ["+", "+=", "==", "<"]
+Bool = ["&&", "||", "=="]
+Set = ["=="]
+Dictionary = ["=="]
+Range = ["=="]
+Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue"]
+# Floating-point type constants resolved directly by the interpreter
+# (interp/storage.rs `double_type_constant`), plus the `+`/`+=`/`==` operators
+# from `ops.rs`. Neither path goes through the method registry.
+Double = [
+  "pi",
+  "infinity",
+  "nan",
+  "greatestFiniteMagnitude",
+  "leastNonzeroMagnitude",
+  "leastNormalMagnitude",
+  "ulpOfOne",
+  "exponentBitCount",
+  "significandBitCount",
+  "+", "+=", "-", "-=", "*", "*=", "/", "/=", "==",
+]
