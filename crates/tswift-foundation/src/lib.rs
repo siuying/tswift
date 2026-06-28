@@ -9,8 +9,8 @@ mod url;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext,
+    StdError, StdResult, StructObj, SwiftValue,
 };
 
 /// Register every currently-supported Foundation builtin into `interp`.
@@ -50,6 +50,20 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: index_path_appending,
         },
     );
+    interp.register_property(
+        BuiltinReceiver::IndexPath,
+        "startIndex",
+        index_path_start_index,
+    );
+    interp.register_property(BuiltinReceiver::IndexPath, "endIndex", index_path_end_index);
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexPath,
+        "dropLast",
+        MethodEntry {
+            mutating: false,
+            func: index_path_drop_last,
+        },
+    );
 
     interp.register_free_fn("IndexSet", index_set_init);
     interp.register_property(BuiltinReceiver::IndexSet, "count", index_set_count);
@@ -72,6 +86,67 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: index_set_insert,
         },
     );
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "remove",
+        MethodEntry {
+            mutating: true,
+            func: index_set_remove,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "removeAll",
+        MethodEntry {
+            mutating: true,
+            func: index_set_remove_all,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "update",
+        MethodEntry {
+            mutating: true,
+            func: index_set_update,
+        },
+    );
+    let non_mutating: [(&str, IntrinsicFn); 7] = [
+        ("union", index_set_union),
+        ("intersection", index_set_intersection),
+        ("symmetricDifference", index_set_symmetric_difference),
+        ("integerGreaterThan", index_set_integer_greater_than),
+        ("integerLessThan", index_set_integer_less_than),
+        ("integerGreaterThanOrEqualTo", index_set_integer_ge),
+        ("integerLessThanOrEqualTo", index_set_integer_le),
+    ];
+    for (name, func) in non_mutating {
+        interp.register_intrinsic(
+            BuiltinReceiver::IndexSet,
+            name,
+            MethodEntry {
+                mutating: false,
+                func,
+            },
+        );
+    }
+    let mutating: [(&str, IntrinsicFn); 3] = [
+        ("formUnion", index_set_form_union),
+        ("formIntersection", index_set_form_intersection),
+        (
+            "formSymmetricDifference",
+            index_set_form_symmetric_difference,
+        ),
+    ];
+    for (name, func) in mutating {
+        interp.register_intrinsic(
+            BuiltinReceiver::IndexSet,
+            name,
+            MethodEntry {
+                mutating: true,
+                func,
+            },
+        );
+    }
 }
 
 /// Every Foundation entry registered by [`install`], as coverage keys.
@@ -355,6 +430,44 @@ fn index_path_is_empty(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(index_path_indexes(&recv)?.is_empty()))
 }
 
+/// `startIndex` — always `0` (an `IndexPath` is a zero-based collection).
+fn index_path_start_index(_recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(0))
+}
+
+/// `endIndex` — the past-the-end position, i.e. the element count.
+fn index_path_end_index(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(index_path_indexes(&recv)?.len() as i128))
+}
+
+/// `dropLast(_:)` — a new `IndexPath` without its last `k` (default 1) indexes.
+fn index_path_drop_last(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let k = match args.as_slice() {
+        [] => 1,
+        [n] => {
+            let n = int_arg(n, "IndexPath.dropLast")?;
+            if n < 0 {
+                return Err(type_error(
+                    "IndexPath.dropLast: can't drop a negative number of elements",
+                ));
+            }
+            n as usize
+        }
+        _ => return Err(type_error("IndexPath.dropLast expects zero or one Int")),
+    };
+    let mut indexes = index_path_indexes(&recv)?;
+    let keep = indexes.len().saturating_sub(k);
+    indexes.truncate(keep);
+    Ok(Outcome {
+        result: index_path_value(indexes),
+        receiver: recv,
+    })
+}
+
 fn index_path_append(
     _ctx: &mut dyn StdContext,
     recv: SwiftValue,
@@ -527,6 +640,253 @@ fn index_set_insert(
             vec![Some("inserted".into()), Some("memberAfterInsert".into())],
         ),
         receiver: index_set_value(values),
+    })
+}
+
+/// `remove(_:)` — drop `value`, returning the removed element or `nil`.
+fn index_set_remove(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.remove expects one Int"));
+    }
+    let value = int_arg(&args[0], "IndexSet.remove")?;
+    let mut values = index_set_values(&recv)?;
+    let removed = values.remove(&value);
+    Ok(Outcome {
+        result: if removed {
+            SwiftValue::int(value)
+        } else {
+            SwiftValue::Nil
+        },
+        receiver: index_set_value(values),
+    })
+}
+
+/// `removeAll()` — empty the set.
+fn index_set_remove_all(
+    _ctx: &mut dyn StdContext,
+    _recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("IndexSet.removeAll expects no arguments"));
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_set_value(BTreeSet::new()),
+    })
+}
+
+/// `update(with:)` — insert `value`, returning the equal member it replaced
+/// (`value` itself if already present, else `nil`).
+fn index_set_update(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.update expects one Int"));
+    }
+    let value = int_arg(&args[0], "IndexSet.update")?;
+    let mut values = index_set_values(&recv)?;
+    let existed = !values.insert(value);
+    Ok(Outcome {
+        result: if existed {
+            SwiftValue::int(value)
+        } else {
+            SwiftValue::Nil
+        },
+        receiver: index_set_value(values),
+    })
+}
+
+/// The other operand of a set-algebra method, as a sorted integer set.
+fn other_index_set(args: &[SwiftValue], context: &str) -> Result<BTreeSet<i128>, StdError> {
+    if args.len() != 1 {
+        return Err(type_error(format!("{context} expects one IndexSet")));
+    }
+    index_set_values(&args[0])
+}
+
+fn index_set_union(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.union")?;
+    let result = index_set_values(&recv)?.union(&other).copied().collect();
+    Ok(Outcome {
+        result: index_set_value(result),
+        receiver: recv,
+    })
+}
+
+fn index_set_intersection(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.intersection")?;
+    let result = index_set_values(&recv)?
+        .intersection(&other)
+        .copied()
+        .collect();
+    Ok(Outcome {
+        result: index_set_value(result),
+        receiver: recv,
+    })
+}
+
+fn index_set_symmetric_difference(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.symmetricDifference")?;
+    let result = index_set_values(&recv)?
+        .symmetric_difference(&other)
+        .copied()
+        .collect();
+    Ok(Outcome {
+        result: index_set_value(result),
+        receiver: recv,
+    })
+}
+
+fn index_set_form_union(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.formUnion")?;
+    let result = index_set_values(&recv)?.union(&other).copied().collect();
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_set_value(result),
+    })
+}
+
+fn index_set_form_intersection(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.formIntersection")?;
+    let result = index_set_values(&recv)?
+        .intersection(&other)
+        .copied()
+        .collect();
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_set_value(result),
+    })
+}
+
+fn index_set_form_symmetric_difference(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = other_index_set(&args, "IndexSet.formSymmetricDifference")?;
+    let result = index_set_values(&recv)?
+        .symmetric_difference(&other)
+        .copied()
+        .collect();
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_set_value(result),
+    })
+}
+
+/// Shared helper for the `integer{Greater,Less}Than[OrEqualTo]` family:
+/// return the closest member matching `pred` relative to `value`, or `nil`.
+fn index_set_nearest(
+    recv: &SwiftValue,
+    args: &[SwiftValue],
+    context: &str,
+    pick_max: bool,
+    pred: impl Fn(i128, i128) -> bool,
+) -> Result<SwiftValue, StdError> {
+    if args.len() != 1 {
+        return Err(type_error(format!("{context} expects one Int")));
+    }
+    let value = int_arg(&args[0], context)?;
+    let values = index_set_values(recv)?;
+    let candidate = values.iter().copied().filter(|&m| pred(m, value));
+    let found = if pick_max {
+        candidate.max()
+    } else {
+        candidate.min()
+    };
+    Ok(found.map(SwiftValue::int).unwrap_or(SwiftValue::Nil))
+}
+
+fn index_set_integer_greater_than(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let result = index_set_nearest(
+        &recv,
+        &args,
+        "IndexSet.integerGreaterThan",
+        false,
+        |m, v| m > v,
+    )?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn index_set_integer_less_than(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let result = index_set_nearest(&recv, &args, "IndexSet.integerLessThan", true, |m, v| m < v)?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn index_set_integer_ge(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let result = index_set_nearest(
+        &recv,
+        &args,
+        "IndexSet.integerGreaterThanOrEqualTo",
+        false,
+        |m, v| m >= v,
+    )?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn index_set_integer_le(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let result = index_set_nearest(
+        &recv,
+        &args,
+        "IndexSet.integerLessThanOrEqualTo",
+        true,
+        |m, v| m <= v,
+    )?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
     })
 }
 
