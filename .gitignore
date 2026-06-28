@@ -8,3 +8,6 @@ ios/TSwift/Artifacts/
 # SwiftPM build output
 ios/TSwift/.build/
 .build/
+
+# xcframework publish staging
+dist/
