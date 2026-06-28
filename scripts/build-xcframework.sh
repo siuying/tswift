@@ -55,18 +55,21 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "==> Lipo'ing fat simulator and macOS slices"
+# Keep the `lib` prefix (SwiftPM rejects static libraries without it); make the
+# names unique by staging each fat slice in its own directory.
+mkdir -p "$STAGE/sim" "$STAGE/mac"
 lipo -create "$(lib_path "$SIM_ARM")" "$(lib_path "$SIM_X86")" \
-  -output "$STAGE/sim-$LIB"
+  -output "$STAGE/sim/$LIB"
 lipo -create "$(lib_path "$MAC_ARM")" "$(lib_path "$MAC_X86")" \
-  -output "$STAGE/mac-$LIB"
+  -output "$STAGE/mac/$LIB"
 
 echo "==> Creating $XCFRAMEWORK"
 rm -rf "$XCFRAMEWORK"
 mkdir -p "$OUT_DIR"
 xcodebuild -create-xcframework \
   -library "$(lib_path "$IOS")" -headers "$HEADERS" \
-  -library "$STAGE/sim-$LIB" -headers "$HEADERS" \
-  -library "$STAGE/mac-$LIB" -headers "$HEADERS" \
+  -library "$STAGE/sim/$LIB" -headers "$HEADERS" \
+  -library "$STAGE/mac/$LIB" -headers "$HEADERS" \
   -output "$XCFRAMEWORK"
 
 echo "==> Done: $XCFRAMEWORK"

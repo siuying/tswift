@@ -1,0 +1,4 @@
+module TSwiftFFI {
+    header "tswift_ffi.h"
+    export *
+}
