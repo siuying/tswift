@@ -27,6 +27,7 @@ Bool.hashValue
 Bool.map
 Bool.random
 Bool.toggle
+Bool.unsafelyUnwrapped
 Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
@@ -81,6 +82,7 @@ Double.significandBitPattern
 Double.squareRoot
 Double.truncatingRemainder
 Double.ulp
+Double.unsafelyUnwrapped
 Int.addingReportingOverflow
 Int.advanced
 Int.bitWidth
@@ -103,9 +105,11 @@ Int.remainderReportingOverflow
 Int.signum
 Int.subtractingReportingOverflow
 Int.trailingZeroBitCount
+Int.unsafelyUnwrapped
 Int.words
 Optional.flatMap
 Optional.map
+Optional.unsafelyUnwrapped
 Range.clamped
 Range.contains
 Range.count
@@ -205,6 +209,7 @@ String.reversed
 String.split
 String.suffix
 String.unicodeScalars
+String.unsafelyUnwrapped
 String.uppercased
 String.utf16
 String.utf8

@@ -11,7 +11,7 @@
 //! the sequence meaning wins (documented limitation).
 
 use tswift_core::{
-    BuiltinReceiver, Interpreter, MethodEntry, Outcome, StdContext, StdError, SwiftValue,
+    BuiltinReceiver, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult, SwiftValue,
 };
 
 /// Receiver kinds a present optional's wrapped value can take (excluding Array).
@@ -28,7 +28,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
     for kind in WRAPPED_KINDS {
         interp.register_intrinsic(kind, "map", entry());
         interp.register_intrinsic(kind, "flatMap", entry());
+        // `unsafelyUnwrapped` yields the wrapped value. (`nil.unsafelyUnwrapped`
+        // follows the interpreter's optional-member semantics on `Nil`.)
+        interp.register_property(kind, "unsafelyUnwrapped", unsafely_unwrapped);
     }
+}
+
+/// `Optional.unsafelyUnwrapped` — the wrapped value of a present optional.
+fn unsafely_unwrapped(recv: SwiftValue) -> StdResult {
+    Ok(recv)
 }
 
 fn entry() -> MethodEntry {
@@ -96,6 +104,18 @@ mod tests {
             .unwrap()
             .result;
         assert_eq!(out, SwiftValue::int(10));
+    }
+
+    #[test]
+    fn unsafely_unwrapped_returns_wrapped_value() {
+        assert_eq!(
+            unsafely_unwrapped(SwiftValue::int(5)).unwrap(),
+            SwiftValue::int(5)
+        );
+        assert_eq!(
+            unsafely_unwrapped(SwiftValue::Str("hi".into())).unwrap(),
+            SwiftValue::Str("hi".into())
+        );
     }
 
     #[test]

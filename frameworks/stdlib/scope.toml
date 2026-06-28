@@ -36,7 +36,7 @@ Bool = ["&&", "||", "=="]
 Set = ["=="]
 Dictionary = ["=="]
 Range = ["=="]
-Optional = ["==", "!="]
+Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue"]
 # Floating-point type constants resolved directly by the interpreter
 # (interp/storage.rs `double_type_constant`), plus the `+`/`+=`/`==` operators
 # from `ops.rs`. Neither path goes through the method registry.
