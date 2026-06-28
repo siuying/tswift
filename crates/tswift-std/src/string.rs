@@ -15,8 +15,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    BuiltinReceiver, Captures, EvalError, Interpreter, MethodEntry, Outcome, Regex, StdContext,
-    StdError, StdResult, SwiftValue,
+    BuiltinReceiver, Captures, EvalError, IntValue, IntWidth, Interpreter, MethodEntry, Outcome,
+    Regex, StdContext, StdError, StdResult, SwiftValue,
 };
 
 /// Register the `String` intrinsics of this slice.
@@ -43,6 +43,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "description", description);
     interp.register_property(s, "debugDescription", debug_description);
     interp.register_property(s, "hashValue", hash_value);
+    interp.register_property(s, "utf8", utf8_view);
+    interp.register_property(s, "utf16", utf16_view);
+    interp.register_property(s, "unicodeScalars", unicode_scalars_view);
 
     let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -395,6 +398,36 @@ fn hash_value(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(i128::from(h as i64)))
 }
 
+/// `String.utf8` — the UTF-8 code units as an array of `UInt8` values. The
+/// view's lazy semantics are not modelled; the materialised array supports
+/// `count`, iteration, and `Array(_:)` conversion, which is the common surface.
+fn utf8_view(recv: SwiftValue) -> StdResult {
+    let bytes = str_of(&recv)?
+        .bytes()
+        .map(|b| SwiftValue::Int(IntValue::new(i128::from(b), IntWidth::U8)))
+        .collect();
+    Ok(SwiftValue::Array(Rc::new(bytes)))
+}
+
+/// `String.utf16` — the UTF-16 code units as an array of `UInt16` values.
+fn utf16_view(recv: SwiftValue) -> StdResult {
+    let units = str_of(&recv)?
+        .encode_utf16()
+        .map(|u| SwiftValue::Int(IntValue::new(i128::from(u), IntWidth::U16)))
+        .collect();
+    Ok(SwiftValue::Array(Rc::new(units)))
+}
+
+/// `String.unicodeScalars` — the Unicode scalar values as an array of `UInt32`
+/// (each scalar modelled by its numeric `.value`).
+fn unicode_scalars_view(recv: SwiftValue) -> StdResult {
+    let scalars = str_of(&recv)?
+        .chars()
+        .map(|c| SwiftValue::Int(IntValue::new(i128::from(c as u32), IntWidth::U32)))
+        .collect();
+    Ok(SwiftValue::Array(Rc::new(scalars)))
+}
+
 /// `String.removeAll(keepingCapacity:)` — empty the string in place.
 fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
     val(SwiftValue::Void, SwiftValue::Str(String::new()))
@@ -499,6 +532,28 @@ mod tests {
         assert_eq!(graphemes("🇺🇸").len(), 1); // regional-indicator flag
         assert_eq!(graphemes("👨\u{200D}👩\u{200D}👧").len(), 1); // ZWJ family
         assert_eq!(graphemes("ab🇺🇸c").len(), 4);
+    }
+
+    #[test]
+    fn unicode_views() {
+        // UTF-8 of "é" is two bytes (0xC3 0xA9); ASCII "AB" is [65, 66] as UInt8.
+        let raws = |v: SwiftValue| match v {
+            SwiftValue::Array(a) => a
+                .iter()
+                .map(|e| match e {
+                    SwiftValue::Int(i) => i.raw,
+                    _ => -1,
+                })
+                .collect::<Vec<_>>(),
+            _ => panic!("expected an array view"),
+        };
+        assert_eq!(raws(utf8_view(s("AB")).unwrap()), vec![65, 66]);
+        let accented = utf8_view(s("é")).unwrap();
+        assert!(matches!(accented, SwiftValue::Array(a) if a.len() == 2));
+        let units = utf16_view(s("AB")).unwrap();
+        assert!(matches!(units, SwiftValue::Array(a) if a.len() == 2));
+        let scalars = unicode_scalars_view(s("AB")).unwrap();
+        assert!(matches!(scalars, SwiftValue::Array(a) if a.len() == 2));
     }
 
     #[test]

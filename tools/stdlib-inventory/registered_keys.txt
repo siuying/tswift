@@ -186,7 +186,10 @@ String.reserveCapacity
 String.reversed
 String.split
 String.suffix
+String.unicodeScalars
 String.uppercased
+String.utf16
+String.utf8
 String.wholeMatch
 abs
 assert
