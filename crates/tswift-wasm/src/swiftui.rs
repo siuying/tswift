@@ -17,10 +17,10 @@ use std::cell::RefCell;
 
 use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
-use tswift_frontend::{Analysis, Node, NodeKind};
+use tswift_frontend::Analysis;
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{uiir, PRELUDE};
+use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 use wasm_bindgen::prelude::*;
 
 use crate::{escape_json, install_panic_hook};
@@ -166,62 +166,6 @@ fn parse_payload(value: &str) -> Option<SwiftValue> {
         Json::Str(s) => Some(SwiftValue::Str(s)),
         _ => None,
     }
-}
-
-/// Find the root `View` struct to render: the one no other view *constructs*
-/// inside a view body. Ported from `tswift-cli`'s `swiftui` subcommand so the
-/// browser host picks the same top-level screen.
-fn find_root_view(analysis: &Analysis) -> Option<String> {
-    use std::collections::HashSet;
-    let mut views: Vec<String> = Vec::new();
-    let mut constructed: HashSet<String> = HashSet::new();
-
-    fn callee_name(node: &Node<'_>) -> Option<String> {
-        if node.kind() != NodeKind::CallExpr {
-            return None;
-        }
-        let callee = node.children().next()?;
-        if callee.kind() == NodeKind::IdentExpr {
-            callee.text()
-        } else {
-            None
-        }
-    }
-
-    fn walk(
-        node: Node<'_>,
-        in_view: bool,
-        views: &mut Vec<String>,
-        constructed: &mut HashSet<String>,
-    ) {
-        let mut child_in_view = in_view;
-        if node.kind() == NodeKind::StructDecl {
-            let conforms_view = node
-                .children()
-                .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("View"));
-            if conforms_view {
-                if let Some(name) = node.text() {
-                    views.push(name);
-                }
-                child_in_view = true;
-            }
-        }
-        if in_view {
-            if let Some(name) = callee_name(&node) {
-                constructed.insert(name);
-            }
-        }
-        for child in node.children() {
-            walk(child, child_in_view, views, constructed);
-        }
-    }
-
-    walk(analysis.root(), false, &mut views, &mut constructed);
-    views
-        .iter()
-        .find(|v| !constructed.contains(*v))
-        .or_else(|| views.first())
-        .cloned()
 }
 
 #[cfg(test)]

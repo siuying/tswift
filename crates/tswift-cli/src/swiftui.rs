@@ -9,10 +9,10 @@ use std::process::ExitCode;
 
 use tswift_core::json::{self, Json};
 use tswift_core::Interpreter;
-use tswift_frontend::{Analysis, AnalyzeError, NodeKind};
+use tswift_frontend::{Analysis, AnalyzeError};
 use tswift_swiftui::diff::{self, Patch};
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{uiir, PRELUDE};
+use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 
 /// Dispatch the `swiftui` subcommand family.
 pub fn run(mut args: impl Iterator<Item = String>) -> ExitCode {
@@ -141,71 +141,6 @@ fn dispatch(path: &str, events_path: &str) -> ExitCode {
 
 fn analyze(source: &str) -> Result<Analysis, AnalyzeError> {
     Analysis::analyze(source, "swiftui.swift")
-}
-
-/// Find the root `View` struct to render: the one no other view *constructs*.
-///
-/// In a composed scene every sub-view is referenced by a `CallExpr` whose callee
-/// is an `IdentExpr` (`InfoRow(...)`), so the top-level screen is the View whose
-/// name never appears as such a callee. This avoids picking a parameterised
-/// child (which can't be instantiated with no arguments). Falls back to the
-/// first View struct when the references are cyclic or there is only one.
-fn find_root_view(analysis: &Analysis) -> Option<String> {
-    use std::collections::HashSet;
-    // All structs conforming to `View`, in document order.
-    let mut views: Vec<String> = Vec::new();
-    // Names constructed (`Foo(...)`) *inside a `View` body* — composition sites.
-    // Scoping to view bodies avoids counting a preview/app entry reference to
-    // the real root (which would otherwise mark it "used" and hide it).
-    let mut constructed: HashSet<String> = HashSet::new();
-
-    fn callee_name(node: &tswift_frontend::Node<'_>) -> Option<String> {
-        // A construction `Foo(...)` is a CallExpr whose first child is the
-        // callee `IdentExpr`.
-        if node.kind() != NodeKind::CallExpr {
-            return None;
-        }
-        let callee = node.children().next()?;
-        if callee.kind() == NodeKind::IdentExpr {
-            callee.text()
-        } else {
-            None
-        }
-    }
-
-    fn walk(
-        node: tswift_frontend::Node<'_>,
-        in_view: bool,
-        views: &mut Vec<String>,
-        constructed: &mut HashSet<String>,
-    ) {
-        let mut child_in_view = in_view;
-        if node.kind() == NodeKind::StructDecl {
-            let conforms_view = node
-                .children()
-                .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("View"));
-            if conforms_view {
-                if let Some(name) = node.text() {
-                    views.push(name);
-                }
-                child_in_view = true;
-            }
-        }
-        if in_view {
-            if let Some(name) = callee_name(&node) {
-                constructed.insert(name);
-            }
-        }
-        for child in node.children() {
-            walk(child, child_in_view, views, constructed);
-        }
-    }
-    walk(analysis.root(), false, &mut views, &mut constructed);
-    views
-        .iter()
-        .find(|v| !constructed.contains(*v))
-        .or_else(|| views.first())
-        .cloned()
 }
 
 /// Parse an events JSON file: `[ {"id":"0.1","event":"tap","value":<json>?}, … ]`.

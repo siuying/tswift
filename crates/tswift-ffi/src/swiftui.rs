@@ -12,10 +12,10 @@
 
 use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
-use tswift_frontend::{Analysis, Node, NodeKind};
+use tswift_frontend::Analysis;
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{uiir, PRELUDE};
+use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 
 use crate::util::escape_json;
 
@@ -228,62 +228,6 @@ pub(crate) fn dispatch_error_json(message: &str) -> String {
         "{{\"ok\":false,\"patches\":null,\"error\":\"{}\"}}",
         escape_json(message)
     )
-}
-
-/// Find the root `View` struct: the one no other view constructs in its body.
-/// Ported verbatim from `tswift-wasm`'s `swiftui` host so both pick the same
-/// top-level screen.
-fn find_root_view(analysis: &Analysis) -> Option<String> {
-    use std::collections::HashSet;
-    let mut views: Vec<String> = Vec::new();
-    let mut constructed: HashSet<String> = HashSet::new();
-
-    fn callee_name(node: &Node<'_>) -> Option<String> {
-        if node.kind() != NodeKind::CallExpr {
-            return None;
-        }
-        let callee = node.children().next()?;
-        if callee.kind() == NodeKind::IdentExpr {
-            callee.text()
-        } else {
-            None
-        }
-    }
-
-    fn walk(
-        node: Node<'_>,
-        in_view: bool,
-        views: &mut Vec<String>,
-        constructed: &mut HashSet<String>,
-    ) {
-        let mut child_in_view = in_view;
-        if node.kind() == NodeKind::StructDecl {
-            let conforms_view = node
-                .children()
-                .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("View"));
-            if conforms_view {
-                if let Some(name) = node.text() {
-                    views.push(name);
-                }
-                child_in_view = true;
-            }
-        }
-        if in_view {
-            if let Some(name) = callee_name(&node) {
-                constructed.insert(name);
-            }
-        }
-        for child in node.children() {
-            walk(child, child_in_view, views, constructed);
-        }
-    }
-
-    walk(analysis.root(), false, &mut views, &mut constructed);
-    views
-        .iter()
-        .find(|v| !constructed.contains(*v))
-        .or_else(|| views.first())
-        .cloned()
 }
 
 #[cfg(test)]
