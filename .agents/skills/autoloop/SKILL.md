@@ -7,6 +7,13 @@ description: Autonomous iterative problem-solving loop. Given any problem (fix a
 
 An autonomous iterate-and-bookkeep loop. Each iteration goes through four gates before a commit lands: **implement → review → verify → commit**.
 
+1. Survey & Plan
+2. Repeat until goal is reached or user interrupts:
+   - Implement
+   - Review
+   - Verify
+   - Commit or Discard
+
 ## Phase 1 — Survey & Plan
 
 1. Read `AGENTS.md`, `README.md`, or equivalent project root docs.
