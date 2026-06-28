@@ -150,6 +150,7 @@ fn diag(ast: &Ast, node: NodeId, message: String) -> Diagnostic {
         message,
         line: ast.node(node).line(),
         col: ast.node(node).col(),
+        severity: crate::Severity::Error,
     }
 }
 
