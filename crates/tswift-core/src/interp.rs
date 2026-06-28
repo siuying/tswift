@@ -3913,12 +3913,38 @@ impl<'w> Interpreter<'w> {
             return Err(EvalError::Type("append/insert on a non-array receiver".into()).into());
         };
         let mut out = items.as_ref().clone();
+        // Validate the exact call shape so a stray/duplicate label cannot be
+        // silently ignored: `append(contentsOf:)` takes only `contentsOf:`;
+        // `insert(contentsOf:at:)` takes exactly `contentsOf:` and `at:`.
+        let allowed: &[&str] = if method == "append" {
+            &["contentsOf"]
+        } else {
+            &["contentsOf", "at"]
+        };
+        let mut seen = std::collections::HashSet::new();
+        for arg in &args {
+            match arg.label.as_deref() {
+                Some(label) if allowed.contains(&label) && seen.insert(label) => {}
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "Array.{method} called with unexpected argument label {}",
+                        other.unwrap_or("_")
+                    ))
+                    .into())
+                }
+            }
+        }
         let contents = args
             .iter()
             .find(|a| a.label.as_deref() == Some("contentsOf"))
             .map(|a| a.value.clone())
             .ok_or_else(|| EvalError::Type("missing contentsOf: argument".into()))?;
-        let extra = self.flatten_sequence(&contents)?;
+        let extra = materialize_sequence(&contents).ok_or_else(|| {
+            EvalError::Type(format!(
+                "cannot use {} as a sequence for contentsOf:",
+                contents.type_name()
+            ))
+        })?;
         if method == "append" {
             out.extend(extra);
         } else {
@@ -3937,24 +3963,6 @@ impl<'w> Interpreter<'w> {
         }
         self.assign_value_to(base, SwiftValue::Array(Rc::new(out)))?;
         Ok(SwiftValue::Void)
-    }
-
-    /// Flatten a sequence value into its element vector (arrays pass through;
-    /// an integer `Range` materialises its integers).
-    fn flatten_sequence(&self, value: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
-        match value {
-            SwiftValue::Array(items) => Ok(items.as_ref().clone()),
-            SwiftValue::Range { lo, hi, inclusive } => {
-                let end = if *inclusive { *hi + 1 } else { *hi };
-                Ok((*lo..end).map(SwiftValue::int).collect())
-            }
-            SwiftValue::Set(items) => Ok(items.as_ref().clone()),
-            other => Err(EvalError::Type(format!(
-                "cannot use {} as a sequence for contentsOf:",
-                other.type_name()
-            ))
-            .into()),
-        }
     }
 
     fn read_subscript(&mut self, base: &SwiftValue, indices: &[SwiftValue]) -> Eval {
