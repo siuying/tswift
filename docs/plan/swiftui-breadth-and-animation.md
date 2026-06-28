@@ -92,10 +92,14 @@ explicit) · `Divider` · `ScrollView` (`.vertical` first, then axes →
 web `overflow:auto` + flex direction, iOS `ScrollView`).
 
 ### Batch C4 — Visual decoration (compositing) modifiers
-`background(_ view)` (beyond color — a node hosting a node; `write_value` already
-serializes a nested view) · `overlay(_ view, alignment:)` · `clipShape` ·
-`clipped` · `border` · `shadow`. Web = positioned wrapper / box-shadow; iOS =
-native. *Needs node-in-modifier compositing; after layout is solid.*
+**Shipped (#191):** `clipShape` (nested shape descriptor → host clip) · `clipped` ·
+`border` · `shadow`. Web = box-shadow / border-radius / overflow; iOS = native
+(+ `UiirValue.array` so nested shape nodes decode).
+**Deferred (follow-up):** `background(_ view)` and `overlay(_ view, alignment:)` —
+arbitrary-view compositing needs a detached/namespaced host renderer (the nested
+view has its own `0`-rooted id space; can't reuse the patch-addressed builder).
+`alignment:` also hits the leading-dot blocker (#189). `.background(<color>)`
+already works (C0).
 
 ### Batch C5 — Content views
 `Label(_, systemImage:)` · `Image(systemName:)` (web: **SF-Symbol → icon-set/SVG

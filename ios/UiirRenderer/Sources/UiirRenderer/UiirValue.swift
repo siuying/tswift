@@ -13,6 +13,9 @@ public indirect enum UiirValue: Decodable, Equatable {
     case token(tag: String, name: String)
     /// An arbitrary object, e.g. `.frame` -> `{ "width": 200, "height": 120 }`.
     case object([String: UiirValue])
+    /// A JSON array, e.g. the `modifiers`/`children` of a nested view value
+    /// carried by a modifier like `.clipShape(Circle())`.
+    case array([UiirValue])
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -24,6 +27,8 @@ public indirect enum UiirValue: Decodable, Equatable {
             self = .number(n)
         } else if let s = try? container.decode(String.self) {
             self = .string(s)
+        } else if let arr = try? container.decode([UiirValue].self) {
+            self = .array(arr)
         } else if let dict = try? container.decode([String: UiirValue].self) {
             if case let .string(tag)? = dict["$"], case let .string(name)? = dict["name"] {
                 self = .token(tag: tag, name: name)

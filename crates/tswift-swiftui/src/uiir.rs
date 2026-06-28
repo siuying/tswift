@@ -305,6 +305,17 @@ mod tests {
     }
 
     #[test]
+    fn c4_decoration_modifiers_serialize() {
+        let json = render_json(
+            r#"Text("x").border(.red, width: 2).shadow(color: .gray, radius: 4, x: 0, y: 2).clipShape(Circle()).clipped()"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"border","value":{"value":{"$":"color","name":"red"},"width":2}},{"name":"shadow","value":{"color":{"$":"color","name":"gray"},"radius":4,"x":0,"y":2}},{"name":"clipShape","value":{"id":"0","kind":"Circle","args":{},"modifiers":[],"children":[]}},{"name":"clipped","value":null}],"children":[]}"#
+        );
+    }
+
+    #[test]
     fn frame_and_padding_encode_object_and_null_values() {
         let json = render_json("Text(\"x\").padding().frame(width: 56, height: 56)");
         assert_eq!(

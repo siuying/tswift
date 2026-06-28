@@ -89,6 +89,22 @@ extension UiirValue {
         }
     }
 
+    /// Resolve a nested shape descriptor (a UIIR node value carried by
+    /// `.clipShape(...)`) to a type-erased `AnyShape`.
+    var asClipShape: AnyShape? {
+        guard case let .object(o) = self, case let .string(kind)? = o["kind"] else { return nil }
+        switch kind {
+        case "Circle": return AnyShape(Circle())
+        case "Ellipse": return AnyShape(Ellipse())
+        case "Capsule": return AnyShape(Capsule())
+        case "Rectangle": return AnyShape(Rectangle())
+        case "RoundedRectangle":
+            let r = o["args"]?.member("cornerRadius")?.doubleValue ?? 8
+            return AnyShape(RoundedRectangle(cornerRadius: CGFloat(r)))
+        default: return nil
+        }
+    }
+
     /// Resolve a `{ "$": "textCase", "name": ... }` token to a `Text.Case`.
     var asTextCase: Text.Case? {
         guard case let .token(tag, name) = self, tag == "textCase" else { return nil }

@@ -73,6 +73,12 @@ modifier!(modifier_multiline_text_alignment, "multilineTextAlignment");
 modifier!(modifier_text_case, "textCase");
 // C2 — layout. `.offset(x:y:)` shifts a view by a fixed translation.
 modifier!(modifier_offset, "offset");
+// C4 — visual decoration. `clipShape` carries a nested shape descriptor
+// (a view value); `border`/`shadow` carry color tokens + numeric lengths.
+modifier!(modifier_clipped, "clipped");
+modifier!(modifier_clip_shape, "clipShape");
+modifier!(modifier_border, "border");
+modifier!(modifier_shadow, "shadow");
 
 /// Field holding the `ObservableObject`s a view provides to its subtree via
 /// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
@@ -144,6 +150,10 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("multilineTextAlignment", modifier_multiline_text_alignment),
     ("textCase", modifier_text_case),
     ("offset", modifier_offset),
+    ("clipped", modifier_clipped),
+    ("clipShape", modifier_clip_shape),
+    ("border", modifier_border),
+    ("shadow", modifier_shadow),
     ("environmentObject", modifier_environment_object),
 ];
 
@@ -1312,6 +1322,9 @@ mod tests {
                 "VStack.init",
                 "View.background",
                 "View.bold",
+                "View.border",
+                "View.clipShape",
+                "View.clipped",
                 "View.cornerRadius",
                 "View.environmentObject",
                 "View.fill",
@@ -1326,6 +1339,7 @@ mod tests {
                 "View.offset",
                 "View.opacity",
                 "View.padding",
+                "View.shadow",
                 "View.strikethrough",
                 "View.tag",
                 "View.textCase",
