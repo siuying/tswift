@@ -274,16 +274,7 @@ impl<'w> Interpreter<'w> {
     /// concurrency guarantees a child finishes before its scope exits; here the
     /// whole program is the outermost scope).
     pub(super) fn drain_pending_tasks(&mut self) -> Result<(), Signal> {
-        let mut i = 0;
-        while i < self.sched.task_count() {
-            if self.sched.is_task_pending(i) {
-                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
-                    return Err(sig);
-                }
-            }
-            i += 1;
-        }
-        Ok(())
+        self.drive_pending(0, |_| false)
     }
 
     /// Dispatch the free-function concurrency entry points (`Task { }`,
@@ -544,19 +535,40 @@ impl<'w> Interpreter<'w> {
     /// genuine interpreter error propagates; an uncaught Swift `throw` from a
     /// detached task is dropped, matching [`drain_pending_tasks`].
     fn drive_tasks_until_resumed(&mut self, cid: usize, start: usize) -> Result<(), Signal> {
+        self.drive_pending(start, move |s| s.continuation_resumed(cid))
+    }
+
+    /// Drive pending tasks in spawn order from `start`, re-reading the task
+    /// count each pass so children spawned *during* the drive are picked up,
+    /// until `stop` holds or none remain. The shared engine behind
+    /// [`drain_pending_tasks`] and [`drive_tasks_until_resumed`].
+    fn drive_pending(
+        &mut self,
+        start: usize,
+        stop: impl Fn(&Scheduler) -> bool,
+    ) -> Result<(), Signal> {
         let mut i = start;
         while i < self.sched.task_count() {
-            if self.sched.continuation_resumed(cid) {
+            if stop(&self.sched) {
                 break;
             }
             if self.sched.is_task_pending(i) {
-                if let Err(sig @ Signal::Error(_)) = self.run_task(i) {
-                    return Err(sig);
-                }
+                self.run_task_or_propagate(i)?;
             }
             i += 1;
         }
         Ok(())
+    }
+
+    /// Drive task `id`, dropping an uncaught Swift `throw` (a detached or
+    /// structured child does not surface its throw to the draining scope,
+    /// matching real structured-concurrency teardown) while propagating a
+    /// genuine interpreter [`Signal::Error`]. The single home of that policy.
+    fn run_task_or_propagate(&mut self, id: usize) -> Result<(), Signal> {
+        match self.run_task(id) {
+            Err(sig @ Signal::Error(_)) => Err(sig),
+            _ => Ok(()),
+        }
     }
 
     /// Decode a continuation `resume(...)` call's arguments into the outcome to
@@ -589,11 +601,8 @@ impl<'w> Interpreter<'w> {
     /// Run any still-pending child tasks of group `gid` (structured-concurrency
     /// guarantee: the group does not return until its children finish).
     fn drain_group(&mut self, gid: usize) -> Result<(), Signal> {
-        let ids = self.sched.take_group(gid);
-        for id in ids {
-            if let Err(sig @ Signal::Error(_)) = self.run_task(id) {
-                return Err(sig);
-            }
+        for id in self.sched.take_group(gid) {
+            self.run_task_or_propagate(id)?;
         }
         Ok(())
     }
