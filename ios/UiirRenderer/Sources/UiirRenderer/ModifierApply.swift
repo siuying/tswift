@@ -45,9 +45,24 @@ enum ModifierApply {
             }
             return AnyView(view.padding())
         case "frame":
+            // Fixed width/height, or numeric min/max bounds (C2). `.infinity`
+            // is deferred (issue #189), so all bounds here are finite lengths.
             let w = mod.value.member("width")?.asLength
             let h = mod.value.member("height")?.asLength
-            return AnyView(view.frame(width: w, height: h))
+            if w != nil || h != nil {
+                return AnyView(view.frame(width: w, height: h))
+            }
+            return AnyView(view.frame(
+                minWidth: mod.value.member("minWidth")?.asLength,
+                maxWidth: mod.value.member("maxWidth")?.asLength,
+                minHeight: mod.value.member("minHeight")?.asLength,
+                maxHeight: mod.value.member("maxHeight")?.asLength
+            ))
+        case "offset":
+            return AnyView(view.offset(
+                x: mod.value.member("x")?.asLength ?? 0,
+                y: mod.value.member("y")?.asLength ?? 0
+            ))
         case "fill":
             // `.fill` on a shape is handled in the ViewFactory (shapes need the
             // ShapeStyle overload). As a chained modifier we approximate with

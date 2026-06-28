@@ -71,6 +71,8 @@ modifier!(modifier_tint, "tint");
 modifier!(modifier_line_limit, "lineLimit");
 modifier!(modifier_multiline_text_alignment, "multilineTextAlignment");
 modifier!(modifier_text_case, "textCase");
+// C2 — layout. `.offset(x:y:)` shifts a view by a fixed translation.
+modifier!(modifier_offset, "offset");
 
 /// Field holding the `ObservableObject`s a view provides to its subtree via
 /// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
@@ -141,6 +143,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("lineLimit", modifier_line_limit),
     ("multilineTextAlignment", modifier_multiline_text_alignment),
     ("textCase", modifier_text_case),
+    ("offset", modifier_offset),
     ("environmentObject", modifier_environment_object),
 ];
 
@@ -406,17 +409,48 @@ fn text_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// shim: the trailing closure is evaluated as a result-builder block and each
 /// view-valued statement becomes a child.
 fn vstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("VStack", collect_children(ctx, args)?))
+    stack_init("VStack", ctx, args)
 }
 
 /// `HStack { ... }` — horizontal container.
 fn hstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("HStack", collect_children(ctx, args)?))
+    stack_init("HStack", ctx, args)
 }
 
 /// `ZStack { ... }` — depth (overlay) container; children stack back-to-front.
 fn zstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("ZStack", collect_children(ctx, args)?))
+    stack_init("ZStack", ctx, args)
+}
+
+/// Shared `VStack`/`HStack`/`ZStack` builder: capture a `spacing:` arg (a CGFloat
+/// gap between children) as a constructor field, then collect the children from
+/// the trailing `@ViewBuilder` closure. `alignment:` is parsed-and-dropped for
+/// now (its `.leading`/`.center`/`.trailing` tokens need typed resolution to
+/// avoid colliding with `TextAlignment`; deferred — see issue #189).
+fn stack_init(type_name: &str, ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut spacing: Option<SwiftValue> = None;
+    let mut rest: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("spacing") => spacing = Some(arg.value),
+            // `alignment:` needs typed token resolution to avoid colliding with
+            // `TextAlignment` / unresolvable `.top`/`.bottom`; deferred. Surface
+            // an explicit error rather than silently mis-render (issue #189).
+            Some("alignment") => {
+                return Err(type_error(format!(
+                    "{type_name}(alignment:) is not yet supported (deferred, issue #189); omit it"
+                )))
+            }
+            _ => rest.push(arg),
+        }
+    }
+    let children = collect_children(ctx, rest)?;
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(spacing) = spacing {
+        fields.push(("spacing".into(), spacing));
+    }
+    fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    Ok(view_value(type_name, fields))
 }
 
 /// `ForEach(_ data, id:, content:)` — a keyed sequence of views. Each element
@@ -796,9 +830,16 @@ fn ellipse_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(view_value("Ellipse", Vec::new()))
 }
 
-/// `Spacer()` — flexible empty space.
-fn spacer_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
-    Ok(view_value("Spacer", Vec::new()))
+/// `Spacer(minLength:)` — flexible empty space with an optional minimum length
+/// along the stack's axis.
+fn spacer_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    for arg in args {
+        if arg.label.as_deref() == Some("minLength") {
+            fields.push(("minLength".into(), arg.value));
+        }
+    }
+    Ok(view_value("Spacer", fields))
 }
 
 /// Internal field on a `Toggle`: the `Binding<Bool>` its `set` event writes to.
@@ -1237,6 +1278,7 @@ mod tests {
                 "View.italic",
                 "View.lineLimit",
                 "View.multilineTextAlignment",
+                "View.offset",
                 "View.opacity",
                 "View.padding",
                 "View.strikethrough",

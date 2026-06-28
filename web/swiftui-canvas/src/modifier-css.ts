@@ -222,10 +222,29 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
       }
       case "frame": {
         if (value && typeof value === "object" && !("$" in value)) {
-          const w = cssLength((value as Record<string, UiirValue>).width);
-          const h = cssLength((value as Record<string, UiirValue>).height);
+          const f = value as Record<string, UiirValue>;
+          const w = cssLength(f.width);
+          const h = cssLength(f.height);
           if (w) el.style.width = w;
           if (h) el.style.height = h;
+          // Numeric min/max bounds (C2). `.infinity` is deferred (issue #189).
+          const minW = cssLength(f.minWidth);
+          const maxW = cssLength(f.maxWidth);
+          const minH = cssLength(f.minHeight);
+          const maxH = cssLength(f.maxHeight);
+          if (minW) el.style.minWidth = minW;
+          if (maxW) el.style.maxWidth = maxW;
+          if (minH) el.style.minHeight = minH;
+          if (maxH) el.style.maxHeight = maxH;
+        }
+        break;
+      }
+      case "offset": {
+        if (value && typeof value === "object" && !("$" in value)) {
+          const o = value as Record<string, UiirValue>;
+          const x = typeof o.x === "number" ? o.x : 0;
+          const y = typeof o.y === "number" ? o.y : 0;
+          el.style.transform = `translate(${x}px, ${y}px)`;
         }
         break;
       }

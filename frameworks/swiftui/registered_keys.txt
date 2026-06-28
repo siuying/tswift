@@ -30,6 +30,7 @@ View.frame
 View.italic
 View.lineLimit
 View.multilineTextAlignment
+View.offset
 View.opacity
 View.padding
 View.strikethrough
