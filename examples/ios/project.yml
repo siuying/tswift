@@ -1,0 +1,29 @@
+name: TSwiftExample
+options:
+  bundleIdPrefix: dev.tswift
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  TSwift:
+    path: ../../ios/TSwift
+  UiirRenderer:
+    path: ../../ios/UiirRenderer
+targets:
+  TSwiftExample:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    dependencies:
+      - package: TSwift
+        product: TSwiftCore
+      - package: TSwift
+        product: TSwiftUI
+      - package: UiirRenderer
+        product: UiirRenderer
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tswift.example
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"

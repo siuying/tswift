@@ -11,3 +11,6 @@ ios/TSwift/.build/
 
 # xcframework publish staging
 dist/
+
+# xcodegen-generated project
+examples/ios/*.xcodeproj
