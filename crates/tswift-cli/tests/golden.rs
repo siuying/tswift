@@ -188,6 +188,73 @@ fn ast_snapshots_match() {
     }
 }
 
+/// Helper: run `src` through the CLI and return (success, stdout, stderr).
+fn run_source(name: &str, src: &str) -> (bool, String, String) {
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, src).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .expect("spawn tswift");
+    let _ = std::fs::remove_file(&path);
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// Foundation `IndexPath`/`IndexSet` edge semantics that the happy-path golden
+/// fixture cannot express (errors abort the run).
+#[test]
+fn index_value_edge_cases() {
+    // A wrong argument label on a positional intrinsic is rejected.
+    let (ok, _, err) = run_source(
+        "tswift_idx_bad_label.swift",
+        "import Foundation\nvar q = IndexSet(integersIn: 1...3)\nprint(q.contains(with: 2))\n",
+    );
+    assert!(!ok, "bad label must fail");
+    assert!(err.contains("unexpected argument label"), "stderr: {err}");
+
+    // `update` requires its `with:` label (Swift `update(with:)`).
+    let (ok, _, err) = run_source(
+        "tswift_idx_update_nolabel.swift",
+        "import Foundation\nvar q = IndexSet(integersIn: 1...3)\nlet _ = q.update(4)\n",
+    );
+    assert!(!ok, "update without `with:` must fail");
+    assert!(err.contains("unexpected argument label"), "stderr: {err}");
+
+    // `dropLast` traps on a negative count.
+    let (ok, _, err) = run_source(
+        "tswift_idx_droplast_neg.swift",
+        "import Foundation\nprint(IndexPath(indexes: [1, 2, 3]).dropLast(-1).count)\n",
+    );
+    assert!(!ok, "negative dropLast must trap");
+    assert!(err.contains("negative number"), "stderr: {err}");
+
+    // An out-of-range IndexPath subscript traps.
+    let (ok, _, err) = run_source(
+        "tswift_idx_subscript_oob.swift",
+        "import Foundation\nprint(IndexPath(indexes: [1, 2])[5])\n",
+    );
+    assert!(!ok, "out-of-range subscript must trap");
+    assert!(err.contains("out of range"), "stderr: {err}");
+
+    // Empty-set nearest-member queries return nil; set algebra contents.
+    let (ok, out, err) = run_source(
+        "tswift_idx_empty_queries.swift",
+        "import Foundation\n\
+         let empty = IndexSet()\n\
+         print(empty.integerGreaterThan(3) ?? -1)\n\
+         var a = IndexSet(integersIn: 1...3)\n\
+         a.formSymmetricDifference(IndexSet(integersIn: 2...4))\n\
+         print(a.contains(1), a.contains(2), a.contains(4))\n",
+    );
+    assert!(ok, "stderr: {err}");
+    assert_eq!(out, "-1\ntrue false true\n");
+}
+
 /// A deliberately broken fixture must make the harness notice a mismatch — this
 /// guards the harness itself against silently passing.
 #[test]

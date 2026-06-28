@@ -439,7 +439,15 @@ fn index_path_drop_last(
 ) -> Result<Outcome, StdError> {
     let k = match args.as_slice() {
         [] => 1,
-        [n] => int_arg(n, "IndexPath.dropLast")?.max(0) as usize,
+        [n] => {
+            let n = int_arg(n, "IndexPath.dropLast")?;
+            if n < 0 {
+                return Err(type_error(
+                    "IndexPath.dropLast: can't drop a negative number of elements",
+                ));
+            }
+            n as usize
+        }
         _ => return Err(type_error("IndexPath.dropLast expects zero or one Int")),
     };
     let mut indexes = index_path_indexes(&recv)?;

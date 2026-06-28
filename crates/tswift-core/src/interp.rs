@@ -6427,19 +6427,24 @@ impl<'w> Interpreter<'w> {
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
             if self.intrinsics.contains_key(&(kind, method.clone())) {
                 let args = self.eval_args(arg_nodes)?;
-                // `IndexPath`/`IndexSet` intrinsics take positional arguments,
-                // except `update(with:)` whose sole argument is labelled.
-                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet)
-                    && args
-                        .iter()
-                        .any(|arg| arg.label.is_some() && arg.label.as_deref() != Some("with"))
-                {
-                    return Err(EvalError::Type(format!(
-                        "{}.{} does not accept argument labels",
-                        kind.type_name(),
-                        method
-                    ))
-                    .into());
+                // `IndexPath`/`IndexSet` intrinsics take positional arguments.
+                // The sole exception is `IndexSet.update(with:)`, whose one
+                // argument is labelled `with:` (and requires that label).
+                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
+                    let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
+                    let labels_valid = args.iter().all(|arg| match arg.label.as_deref() {
+                        Some("with") => is_update,
+                        Some(_) => false,
+                        None => !is_update,
+                    });
+                    if !labels_valid {
+                        return Err(EvalError::Type(format!(
+                            "{}.{} called with unexpected argument label(s)",
+                            kind.type_name(),
+                            method
+                        ))
+                        .into());
+                    }
                 }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
