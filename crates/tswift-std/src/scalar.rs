@@ -48,6 +48,18 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     method(interp, BuiltinReceiver::Int, "distance", int_distance);
     method(interp, BuiltinReceiver::Int, "advanced", int_advanced);
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "multipliedFullWidth",
+        int_multiplied_full_width,
+    );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "dividingFullWidth",
+        int_dividing_full_width,
+    );
     // Int properties.
     interp.register_property(BuiltinReceiver::Int, "magnitude", int_magnitude);
     interp.register_property(BuiltinReceiver::Int, "description", int_description);
@@ -69,6 +81,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
         int_trailing_zero_bit_count,
     );
     interp.register_property(BuiltinReceiver::Int, "byteSwapped", int_byte_swapped);
+    interp.register_property(BuiltinReceiver::Int, "words", int_words);
 
     // Double methods.
     method(interp, BuiltinReceiver::Double, "rounded", double_rounded);
@@ -391,6 +404,94 @@ fn int_advanced(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>
         SwiftValue::Int(IntValue::new(a.raw + by.raw, a.width)),
         recv,
     )
+}
+
+/// The unsigned (`Magnitude`) counterpart of an integer width.
+fn magnitude_width(w: IntWidth) -> IntWidth {
+    match w {
+        IntWidth::I8 | IntWidth::U8 => IntWidth::U8,
+        IntWidth::I16 | IntWidth::U16 => IntWidth::U16,
+        IntWidth::I32 | IntWidth::U32 => IntWidth::U32,
+        IntWidth::I64 | IntWidth::U64 => IntWidth::U64,
+    }
+}
+
+/// `Int.multipliedFullWidth(by:)` — the exact double-width product split into
+/// `(high: Self, low: Magnitude)`. The product of two `w`-bit integers fits in
+/// `2w ≤ 128` bits, so an `i128` holds it without loss.
+fn int_multiplied_full_width(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let a = as_int(&recv)?;
+    let b = as_int(
+        args.first()
+            .ok_or_else(|| arg_err("multipliedFullWidth(by:)"))?,
+    )?;
+    let bits = a.width.bits();
+    let full = a.raw * b.raw;
+    let high = full >> bits;
+    let low = full & ((1i128 << bits) - 1);
+    let tuple = SwiftValue::tuple_labeled(
+        vec![
+            SwiftValue::Int(IntValue::new(high, a.width)),
+            SwiftValue::Int(IntValue::new(low, magnitude_width(a.width))),
+        ],
+        vec![Some("high".to_string()), Some("low".to_string())],
+    );
+    ok(tuple, recv)
+}
+
+/// `Int.dividingFullWidth(_:)` — divide the double-width dividend
+/// `(high: Self, low: Magnitude)` by `self`, returning
+/// `(quotient: Self, remainder: Self)`. Traps on a zero divisor or a quotient
+/// that does not fit in `Self`, matching Swift.
+fn int_dividing_full_width(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let a = as_int(&recv)?;
+    let parts = match args.first() {
+        Some(SwiftValue::Tuple(t, _)) if t.len() == 2 => t,
+        _ => {
+            return Err(arg_err("dividingFullWidth(_:)"));
+        }
+    };
+    let high = as_int(&parts[0])?;
+    let low = as_int(&parts[1])?;
+    if a.raw == 0 {
+        return Err(StdError::Error(EvalError::Trap("division by zero".into())));
+    }
+    let bits = a.width.bits();
+    let dividend = (high.raw << bits) + (low.raw & ((1i128 << bits) - 1));
+    let quotient = dividend / a.raw;
+    let remainder = dividend % a.raw;
+    let q = IntValue::new(quotient, a.width);
+    if !q.in_range() {
+        return Err(StdError::Error(EvalError::Trap(
+            "quotient overflows in dividingFullWidth".into(),
+        )));
+    }
+    let tuple = SwiftValue::tuple_labeled(
+        vec![
+            SwiftValue::Int(q),
+            SwiftValue::Int(IntValue::new(remainder, a.width)),
+        ],
+        vec![Some("quotient".to_string()), Some("remainder".to_string())],
+    );
+    ok(tuple, recv)
+}
+
+/// `Int.words` — the value's words as `UInt`, low-order first. The modelled
+/// integers are at most one machine word, so this yields a single element.
+fn int_words(recv: SwiftValue) -> StdResult {
+    let a = as_int(&recv)?;
+    let word = a.raw as u64;
+    Ok(SwiftValue::Array(std::rc::Rc::new(vec![SwiftValue::Int(
+        IntValue::new(i128::from(word), IntWidth::U64),
+    )])))
 }
 
 /// `Int.description` — the base-10 textual form.
@@ -862,6 +963,55 @@ mod tests {
         assert!(
             int_quotient_and_remainder(&mut c, SwiftValue::int(1), vec![SwiftValue::int(0)])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn full_width_multiply_divide_and_words() {
+        let mut c = MockCtx;
+        // 1000 * 1000 fits in the low word.
+        let m =
+            int_multiplied_full_width(&mut c, SwiftValue::int(1000), vec![SwiftValue::int(1000)])
+                .unwrap()
+                .result;
+        assert_eq!(
+            m,
+            SwiftValue::tuple_labeled(
+                vec![
+                    SwiftValue::int(0),
+                    SwiftValue::Int(IntValue::new(1_000_000, IntWidth::U64))
+                ],
+                vec![Some("high".into()), Some("low".into())],
+            )
+        );
+        // dividingFullWidth reconstructs the dividend and divides.
+        let dividend = SwiftValue::tuple_labeled(
+            vec![SwiftValue::int(0), SwiftValue::int(100)],
+            vec![Some("high".into()), Some("low".into())],
+        );
+        let d = int_dividing_full_width(&mut c, SwiftValue::int(10), vec![dividend])
+            .unwrap()
+            .result;
+        assert_eq!(
+            d,
+            SwiftValue::tuple_labeled(
+                vec![SwiftValue::int(10), SwiftValue::int(0)],
+                vec![Some("quotient".into()), Some("remainder".into())],
+            )
+        );
+        // A zero divisor traps.
+        let z = SwiftValue::tuple_labeled(
+            vec![SwiftValue::int(0), SwiftValue::int(1)],
+            vec![Some("high".into()), Some("low".into())],
+        );
+        assert!(int_dividing_full_width(&mut c, SwiftValue::int(0), vec![z]).is_err());
+        // words sign-extends to a single UInt word.
+        assert_eq!(
+            int_words(SwiftValue::Int(IntValue::new(-1, IntWidth::I8))).unwrap(),
+            SwiftValue::Array(std::rc::Rc::new(vec![SwiftValue::Int(IntValue::new(
+                i128::from(u64::MAX),
+                IntWidth::U64
+            ))]))
         );
     }
 

@@ -87,12 +87,14 @@ Int.byteSwapped
 Int.description
 Int.distance
 Int.dividedReportingOverflow
+Int.dividingFullWidth
 Int.flatMap
 Int.hashValue
 Int.isMultiple
 Int.leadingZeroBitCount
 Int.magnitude
 Int.map
+Int.multipliedFullWidth
 Int.multipliedReportingOverflow
 Int.nonzeroBitCount
 Int.quotientAndRemainder
@@ -100,6 +102,7 @@ Int.remainderReportingOverflow
 Int.signum
 Int.subtractingReportingOverflow
 Int.trailingZeroBitCount
+Int.words
 Optional.flatMap
 Optional.map
 Range.clamped
