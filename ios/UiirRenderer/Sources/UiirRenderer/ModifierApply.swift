@@ -59,6 +59,40 @@ enum ModifierApply {
             // Picker option identity — applied via `.tag(...)` in the factory,
             // not as a visual modifier; ignore here.
             break
+        // C1 — text & universal styling modifiers.
+        case "bold":
+            return AnyView(view.bold())
+        case "italic":
+            return AnyView(view.italic())
+        case "underline":
+            return AnyView(view.underline())
+        case "strikethrough":
+            return AnyView(view.strikethrough())
+        case "opacity":
+            if case let .number(n) = mod.value {
+                return AnyView(view.opacity(n))
+            }
+        case "foregroundStyle":
+            // v1 supports color foreground styles; gradients/materials deferred.
+            if let c = mod.value.asColor {
+                return AnyView(view.foregroundStyle(c))
+            }
+        case "tint":
+            if let c = mod.value.asColor {
+                return AnyView(view.tint(c))
+            }
+        case "lineLimit":
+            if case let .number(n) = mod.value {
+                return AnyView(view.lineLimit(Int(n)))
+            }
+        case "multilineTextAlignment":
+            if let a = mod.value.asTextAlignment {
+                return AnyView(view.multilineTextAlignment(a))
+            }
+        case "textCase":
+            if let c = mod.value.asTextCase {
+                return AnyView(view.textCase(c))
+            }
         default:
             break
         }

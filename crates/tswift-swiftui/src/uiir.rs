@@ -173,6 +173,8 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "Color" => "color",
             "Font" => "textStyle",
             "FontWeight" => "weight",
+            "TextAlignment" => "textAlign",
+            "TextCase" => "textCase",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -245,6 +247,17 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"VStack","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"Text","args":{"verbatim":"a"},"modifiers":[],"children":[]},{"id":"0.1","kind":"Text","args":{"verbatim":"b"},"modifiers":[],"children":[]}]}"#
+        );
+    }
+
+    #[test]
+    fn c1_text_styling_modifiers_serialize() {
+        let json = render_json(
+            r#"Text("hi").bold().italic().opacity(0.5).foregroundStyle(.red).tint(.blue).lineLimit(2).multilineTextAlignment(.center).textCase(.uppercase)"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"bold","value":null},{"name":"italic","value":null},{"name":"opacity","value":0.5},{"name":"foregroundStyle","value":{"$":"color","name":"red"}},{"name":"tint","value":{"$":"color","name":"blue"}},{"name":"lineLimit","value":2},{"name":"multilineTextAlignment","value":{"$":"textAlign","name":"center"}},{"name":"textCase","value":{"$":"textCase","name":"uppercase"}}],"children":[]}"#
         );
     }
 

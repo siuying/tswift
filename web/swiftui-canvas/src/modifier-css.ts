@@ -45,6 +45,19 @@ const FONT_WEIGHT: Record<string, string> = {
   black: "900",
 };
 
+/** `.multilineTextAlignment(.center)` → CSS `text-align`. */
+const TEXT_ALIGN: Record<string, string> = {
+  leading: "left",
+  center: "center",
+  trailing: "right",
+};
+
+/** `.textCase(.uppercase)` → CSS `text-transform`. */
+const TEXT_TRANSFORM: Record<string, string> = {
+  uppercase: "uppercase",
+  lowercase: "lowercase",
+};
+
 /** Named SwiftUI colors → CSS colors (approximate iOS system palette). */
 const COLOR: Record<string, string> = {
   // Dynamic system colors resolve to CSS variables that adapt to light/dark
@@ -95,6 +108,13 @@ function cssLength(value: UiirValue): string | undefined {
   return undefined;
 }
 
+/** Append a `text-decoration-line` keyword without dropping existing ones, so
+ * `.underline().strikethrough()` yields both lines (matching SwiftUI). */
+function addDecoration(el: HTMLElement, line: string): void {
+  const current = el.style.textDecorationLine;
+  el.style.textDecorationLine = current ? `${current} ${line}` : line;
+}
+
 /**
  * Apply an ordered modifier list to `el`'s inline style. Order matters
  * (`.padding().background()` ≠ `.background().padding()`); later writes win,
@@ -132,6 +152,62 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
         // A shape's fill drives `currentColor` (shape backgrounds use it).
         const c = cssColor(value);
         if (c) el.style.color = c;
+        break;
+      }
+      // C1 — text & universal styling modifiers.
+      case "bold": {
+        el.style.fontWeight = "700";
+        break;
+      }
+      case "italic": {
+        el.style.fontStyle = "italic";
+        break;
+      }
+      case "underline": {
+        addDecoration(el, "underline");
+        break;
+      }
+      case "strikethrough": {
+        addDecoration(el, "line-through");
+        break;
+      }
+      case "opacity": {
+        if (typeof value === "number") el.style.opacity = String(value);
+        break;
+      }
+      case "foregroundStyle": {
+        const c = cssColor(value);
+        if (c) el.style.color = c;
+        break;
+      }
+      case "tint": {
+        const c = cssColor(value);
+        if (c) el.style.accentColor = c;
+        break;
+      }
+      case "lineLimit": {
+        // The `-webkit-box` clamp requires overriding `display`, which would
+        // destroy a container's flex/grid layout. SwiftUI's `lineLimit` only
+        // affects text rendering, so restrict the clamp to text nodes; on
+        // containers it is a no-op (descendant inheritance is deferred).
+        if (typeof value === "number" && el.dataset.kind === "Text") {
+          el.style.display = "-webkit-box";
+          el.style.setProperty("-webkit-box-orient", "vertical");
+          el.style.setProperty("-webkit-line-clamp", String(value));
+          el.style.overflow = "hidden";
+        }
+        break;
+      }
+      case "multilineTextAlignment": {
+        if (isToken(value, "textAlign")) {
+          el.style.textAlign = TEXT_ALIGN[value.name] ?? "left";
+        }
+        break;
+      }
+      case "textCase": {
+        if (isToken(value, "textCase")) {
+          el.style.textTransform = TEXT_TRANSFORM[value.name] ?? "none";
+        }
         break;
       }
       case "cornerRadius": {
