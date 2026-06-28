@@ -77,4 +77,25 @@ extension UiirValue {
         if case let .number(n) = self { return CGFloat(n) }
         return nil
     }
+
+    /// Resolve a `{ "$": "textAlign", "name": ... }` token to a `TextAlignment`.
+    var asTextAlignment: TextAlignment? {
+        guard case let .token(tag, name) = self, tag == "textAlign" else { return nil }
+        switch name {
+        case "leading": return .leading
+        case "center": return .center
+        case "trailing": return .trailing
+        default: return nil
+        }
+    }
+
+    /// Resolve a `{ "$": "textCase", "name": ... }` token to a `Text.Case`.
+    var asTextCase: Text.Case? {
+        guard case let .token(tag, name) = self, tag == "textCase" else { return nil }
+        switch name {
+        case "uppercase": return .uppercase
+        case "lowercase": return .lowercase
+        default: return nil
+        }
+    }
 }

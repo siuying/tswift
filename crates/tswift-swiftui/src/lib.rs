@@ -60,6 +60,17 @@ modifier!(modifier_foreground_color, "foregroundColor");
 modifier!(modifier_background, "background");
 modifier!(modifier_fill, "fill");
 modifier!(modifier_tag, "tag");
+// C1 — text & universal styling modifiers (no new node kinds).
+modifier!(modifier_bold, "bold");
+modifier!(modifier_italic, "italic");
+modifier!(modifier_underline, "underline");
+modifier!(modifier_strikethrough, "strikethrough");
+modifier!(modifier_opacity, "opacity");
+modifier!(modifier_foreground_style, "foregroundStyle");
+modifier!(modifier_tint, "tint");
+modifier!(modifier_line_limit, "lineLimit");
+modifier!(modifier_multiline_text_alignment, "multilineTextAlignment");
+modifier!(modifier_text_case, "textCase");
 
 /// Field holding the `ObservableObject`s a view provides to its subtree via
 /// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
@@ -120,6 +131,16 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("background", modifier_background),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
+    ("bold", modifier_bold),
+    ("italic", modifier_italic),
+    ("underline", modifier_underline),
+    ("strikethrough", modifier_strikethrough),
+    ("opacity", modifier_opacity),
+    ("foregroundStyle", modifier_foreground_style),
+    ("tint", modifier_tint),
+    ("lineLimit", modifier_line_limit),
+    ("multilineTextAlignment", modifier_multiline_text_alignment),
+    ("textCase", modifier_text_case),
     ("environmentObject", modifier_environment_object),
 ];
 
@@ -242,6 +263,19 @@ struct FontWeight {
     static let heavy = FontWeight(token: "heavy")
     static let black = FontWeight(token: "black")
 }
+// `.multilineTextAlignment(.center)` — text alignment token namespace.
+struct TextAlignment {
+    let token: String
+    static let leading = TextAlignment(token: "leading")
+    static let center = TextAlignment(token: "center")
+    static let trailing = TextAlignment(token: "trailing")
+}
+// `.textCase(.uppercase)` — text-case token namespace (Swift's `Text.Case`).
+struct TextCase {
+    let token: String
+    static let uppercase = TextCase(token: "uppercase")
+    static let lowercase = TextCase(token: "lowercase")
+}
 "#;
 
 /// The token string carried by a prelude token struct (`Color`/`Font`/
@@ -250,7 +284,10 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
     let SwiftValue::Struct(obj) = value else {
         return None;
     };
-    if !matches!(obj.type_name.as_str(), "Color" | "Font" | "FontWeight") {
+    if !matches!(
+        obj.type_name.as_str(),
+        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase"
+    ) {
         return None;
     }
     match obj.get("token") {
@@ -1188,15 +1225,25 @@ mod tests {
                 "Toggle.init",
                 "VStack.init",
                 "View.background",
+                "View.bold",
                 "View.cornerRadius",
                 "View.environmentObject",
                 "View.fill",
                 "View.font",
                 "View.fontWeight",
                 "View.foregroundColor",
+                "View.foregroundStyle",
                 "View.frame",
+                "View.italic",
+                "View.lineLimit",
+                "View.multilineTextAlignment",
+                "View.opacity",
                 "View.padding",
+                "View.strikethrough",
                 "View.tag",
+                "View.textCase",
+                "View.tint",
+                "View.underline",
                 "ZStack.init",
             ]
         );
