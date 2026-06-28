@@ -4,6 +4,8 @@
 //! interpreter, expose live `registered_keys()` for coverage tooling, and keep
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
+mod url;
+
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
@@ -13,6 +15,7 @@ use tswift_core::{
 
 /// Register every currently-supported Foundation builtin into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
+    url::install(interp);
     interp.register_free_fn("Data", data_init);
     interp.register_property(BuiltinReceiver::Data, "count", data_count);
     interp.register_property(BuiltinReceiver::Data, "isEmpty", data_is_empty);
@@ -84,11 +87,17 @@ pub fn registered_keys() -> Vec<String> {
             "UUID" => Some("UUID.init".to_string()),
             "IndexPath" => Some("IndexPath.init".to_string()),
             "IndexSet" => Some("IndexSet.init".to_string()),
+            "URL" => Some("URL.init".to_string()),
+            "URLComponents" => Some("URLComponents.init".to_string()),
+            "URLQueryItem" => Some("URLQueryItem.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
                     || other.starts_with("IndexPath.")
-                    || other.starts_with("IndexSet.") =>
+                    || other.starts_with("IndexSet.")
+                    || other.starts_with("URL.")
+                    || other.starts_with("URLComponents.")
+                    || other.starts_with("URLQueryItem.") =>
             {
                 Some(other.to_string())
             }
@@ -100,7 +109,7 @@ pub fn registered_keys() -> Vec<String> {
     keys
 }
 
-fn type_error(message: impl Into<String>) -> StdError {
+pub(crate) fn type_error(message: impl Into<String>) -> StdError {
     StdError::Error(EvalError::Type(message.into()))
 }
 
