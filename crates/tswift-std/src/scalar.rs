@@ -1,8 +1,8 @@
 //! Scalar-value method and property intrinsics for `Int` and `Double`.
 
 use tswift_core::{
-    format_double, BuiltinReceiver, EvalError, IntValue, Interpreter, MethodEntry, Outcome,
-    StdContext, StdError, StdResult, SwiftValue,
+    format_double, BuiltinReceiver, EvalError, IntValue, IntWidth, Interpreter, MethodEntry,
+    Outcome, StdContext, StdError, StdResult, SwiftValue,
 };
 
 /// Register the `Int`/`Double` intrinsics of this slice.
@@ -145,6 +145,27 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     interp.register_property(BuiltinReceiver::Double, "nextUp", double_next_up);
     interp.register_property(BuiltinReceiver::Double, "ulp", double_ulp);
+    interp.register_property(BuiltinReceiver::Double, "bitPattern", double_bit_pattern);
+    interp.register_property(BuiltinReceiver::Double, "exponent", double_exponent);
+    interp.register_property(BuiltinReceiver::Double, "significand", double_significand);
+    interp.register_property(BuiltinReceiver::Double, "binade", double_binade);
+    interp.register_property(
+        BuiltinReceiver::Double,
+        "exponentBitPattern",
+        double_exponent_bit_pattern,
+    );
+    interp.register_property(
+        BuiltinReceiver::Double,
+        "significandBitPattern",
+        double_significand_bit_pattern,
+    );
+    interp.register_property(BuiltinReceiver::Double, "isCanonical", double_is_canonical);
+    interp.register_property(
+        BuiltinReceiver::Double,
+        "isSignalingNaN",
+        double_is_signaling_nan,
+    );
+    interp.register_property(BuiltinReceiver::Double, "hashValue", double_hash_value);
 }
 
 /// Width-masked unsigned bit pattern of an integer (two's complement within
@@ -514,6 +535,120 @@ fn double_next_up(recv: SwiftValue) -> StdResult {
 fn double_ulp(recv: SwiftValue) -> StdResult {
     let d = as_double(&recv)?;
     Ok(SwiftValue::Double(d.next_up() - d))
+}
+
+/// Decompose a finite, non-zero double into its unbiased `exponent` and the
+/// significand magnitude in `[1, 2)`. Scaling by two is exact in binary
+/// floating point, so the loop introduces no rounding error.
+fn decode_double(x: f64) -> Option<(i128, f64)> {
+    if !x.is_finite() || x == 0.0 {
+        return None;
+    }
+    let mut m = x.abs();
+    let mut e: i128 = 0;
+    while m >= 2.0 {
+        m /= 2.0;
+        e += 1;
+    }
+    while m < 1.0 {
+        m *= 2.0;
+        e -= 1;
+    }
+    Some((e, m))
+}
+
+/// `Double.bitPattern` — the IEEE-754 storage as a `UInt64`.
+fn double_bit_pattern(recv: SwiftValue) -> StdResult {
+    let bits = as_double(&recv)?.to_bits();
+    Ok(SwiftValue::Int(IntValue::new(
+        i128::from(bits),
+        IntWidth::U64,
+    )))
+}
+
+/// `Double.exponent` — the unbiased base-2 exponent (`Int.min` for zero,
+/// `Int.max` for non-finite values), matching `FloatingPoint.exponent`.
+fn double_exponent(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let e = if x == 0.0 {
+        i128::from(i64::MIN)
+    } else if !x.is_finite() {
+        i128::from(i64::MAX)
+    } else {
+        decode_double(x).unwrap().0
+    };
+    Ok(SwiftValue::int(e))
+}
+
+/// `Double.significand` — the significand magnitude in `[1, 2)` for finite
+/// non-zero values; `0`, `inf`, `nan` map to themselves.
+fn double_significand(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let s = if x == 0.0 || !x.is_finite() {
+        x.abs()
+    } else {
+        decode_double(x).unwrap().1
+    };
+    Ok(SwiftValue::Double(s))
+}
+
+/// `Double.binade` — the value `sign * 2 ** exponent` (the start of the binade
+/// containing `self`).
+fn double_binade(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let b = if x == 0.0 || !x.is_finite() {
+        x
+    } else {
+        let (e, _) = decode_double(x).unwrap();
+        2f64.powi(e as i32).copysign(x)
+    };
+    Ok(SwiftValue::Double(b))
+}
+
+/// `Double.exponentBitPattern` — the raw biased exponent field (`UInt`).
+fn double_exponent_bit_pattern(recv: SwiftValue) -> StdResult {
+    let bits = as_double(&recv)?.to_bits();
+    let raw = (bits >> 52) & 0x7ff;
+    Ok(SwiftValue::Int(IntValue::new(
+        i128::from(raw),
+        IntWidth::U64,
+    )))
+}
+
+/// `Double.significandBitPattern` — the raw 52-bit fraction field (`UInt64`).
+fn double_significand_bit_pattern(recv: SwiftValue) -> StdResult {
+    let bits = as_double(&recv)?.to_bits();
+    let frac = bits & 0x000f_ffff_ffff_ffff;
+    Ok(SwiftValue::Int(IntValue::new(
+        i128::from(frac),
+        IntWidth::U64,
+    )))
+}
+
+/// `Double.isCanonical` — always true: every `Double` bit pattern is canonical.
+fn double_is_canonical(recv: SwiftValue) -> StdResult {
+    as_double(&recv)?;
+    Ok(SwiftValue::Bool(true))
+}
+
+/// `Double.isSignalingNaN` — a NaN with the signaling (quiet) bit cleared.
+fn double_is_signaling_nan(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let signaling = x.is_nan() && (x.to_bits() & 0x0008_0000_0000_0000) == 0;
+    Ok(SwiftValue::Bool(signaling))
+}
+
+/// `Double.hashValue` — a stable digest where equal values (including
+/// `0.0`/`-0.0`) hash equally; the per-process seed Swift uses is not modelled.
+fn double_hash_value(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let bits = if x == 0.0 { 0u64 } else { x.to_bits() };
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bits.to_le_bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(SwiftValue::int(i128::from(h as i64)))
 }
 
 /// `Double.negate()` — flip the sign in place (`mutating func negate()`).
@@ -927,6 +1062,48 @@ mod tests {
             .unwrap()
             .result,
             SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn double_bit_decomposition() {
+        let d = SwiftValue::Double(3.0);
+        assert_eq!(
+            double_bit_pattern(d.clone()).unwrap(),
+            SwiftValue::Int(IntValue::new(4_613_937_818_241_073_152, IntWidth::U64))
+        );
+        assert_eq!(double_exponent(d.clone()).unwrap(), SwiftValue::int(1));
+        assert_eq!(
+            double_significand(d.clone()).unwrap(),
+            SwiftValue::Double(1.5)
+        );
+        assert_eq!(double_binade(d).unwrap(), SwiftValue::Double(2.0));
+        // Sub-one and negative values.
+        assert_eq!(
+            double_exponent(SwiftValue::Double(0.75)).unwrap(),
+            SwiftValue::int(-1)
+        );
+        assert_eq!(
+            double_binade(SwiftValue::Double(-3.0)).unwrap(),
+            SwiftValue::Double(-2.0)
+        );
+        // Special-value exponents and the canonical/signaling flags.
+        assert_eq!(
+            double_exponent(SwiftValue::Double(0.0)).unwrap(),
+            SwiftValue::int(i128::from(i64::MIN))
+        );
+        assert_eq!(
+            double_is_canonical(SwiftValue::Double(f64::NAN)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            double_is_signaling_nan(SwiftValue::Double(f64::NAN)).unwrap(),
+            SwiftValue::Bool(false)
+        );
+        // Equal values (and signed zeros) hash equally.
+        assert_eq!(
+            double_hash_value(SwiftValue::Double(0.0)).unwrap(),
+            double_hash_value(SwiftValue::Double(-0.0)).unwrap()
         );
     }
 

@@ -44,13 +44,19 @@ Dictionary.updateValue
 Dictionary.values
 Double.addProduct
 Double.advanced
+Double.binade
+Double.bitPattern
 Double.debugDescription
 Double.description
 Double.distance
+Double.exponent
+Double.exponentBitPattern
 Double.flatMap
 Double.formRemainder
 Double.formSquareRoot
 Double.formTruncatingRemainder
+Double.hashValue
+Double.isCanonical
 Double.isEqual
 Double.isFinite
 Double.isInfinite
@@ -59,6 +65,7 @@ Double.isLessThanOrEqualTo
 Double.isNaN
 Double.isNormal
 Double.isSignMinus
+Double.isSignalingNaN
 Double.isSubnormal
 Double.isZero
 Double.magnitude
@@ -68,6 +75,8 @@ Double.nextUp
 Double.remainder
 Double.round
 Double.rounded
+Double.significand
+Double.significandBitPattern
 Double.squareRoot
 Double.truncatingRemainder
 Double.ulp
