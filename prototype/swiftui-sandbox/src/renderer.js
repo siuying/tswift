@@ -98,8 +98,11 @@ function applyModifiers(node, dom, modifiers) {
 }
 
 // Build a DOM element for one UIIR node. `dispatch(id, event, value)` routes
-// interaction back to the host.
-function renderNode(node, dispatch) {
+// interaction back to the host. `reuse` maps `"<id>:<type>"` → an existing
+// input element from the previous render: continuous-gesture controls (a Slider
+// being dragged, a focused TextField) are *reused* rather than recreated, so the
+// gesture/focus survives the re-render the host performs after every event.
+function renderNode(node, dispatch, reuse) {
   if (!node) return el('div');
   const { id, kind, args = {}, modifiers = [], children = [] } = node;
   let dom;
@@ -112,26 +115,26 @@ function renderNode(node, dispatch) {
 
     case 'VStack':
       dom = el('div', 'sw-vstack');
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
 
     case 'HStack':
       dom = el('div', 'sw-hstack');
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
 
     case 'ZStack':
       dom = el('div', 'sw-zstack');
       for (const child of children) {
         const layer = el('div', 'sw-zlayer');
-        layer.appendChild(renderNode(child, dispatch));
+        layer.appendChild(renderNode(child, dispatch, reuse));
         dom.appendChild(layer);
       }
       break;
 
     case 'List':
       dom = el('div', 'sw-list');
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
 
     case 'Section':
@@ -141,12 +144,12 @@ function renderNode(node, dispatch) {
         head.textContent = String(args.header).toUpperCase();
         dom.appendChild(head);
       }
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
 
     case 'ForEach':
       dom = el('div', 'sw-foreach');
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
 
     case 'Spacer':
@@ -173,22 +176,31 @@ function renderNode(node, dispatch) {
 
     case 'TextField':
     case 'SecureField': {
-      dom = el('input', 'sw-field');
-      dom.type = kind === 'SecureField' ? 'password' : 'text';
+      const type = kind === 'SecureField' ? 'password' : 'text';
+      dom = reuseInput(reuse, id, type) ?? el('input', 'sw-field');
+      dom.className = 'sw-field';
+      dom.type = type;
       dom.placeholder = args.title ?? '';
-      dom.value = args.text ?? '';
-      dom.addEventListener('input', () => dispatch(id, 'set', JSON.stringify(dom.value)));
+      const text = args.text ?? '';
+      if (dom.value !== text) dom.value = text;
+      // Property assignment (not addEventListener) so a reused element keeps a
+      // single, up-to-date handler instead of accumulating one per render.
+      dom.oninput = () => dispatch(id, 'set', JSON.stringify(dom.value));
       break;
     }
 
     case 'Slider': {
-      dom = el('input', 'sw-slider');
+      dom = reuseInput(reuse, id, 'range') ?? el('input', 'sw-slider');
+      dom.className = 'sw-slider';
       dom.type = 'range';
       dom.min = String(args.lowerBound ?? 0);
       dom.max = String(args.upperBound ?? 1);
       dom.step = String(args.step ?? 0.01);
-      dom.value = String(args.value ?? 0);
-      dom.addEventListener('input', () => dispatch(id, 'set', String(Number(dom.value))));
+      const value = String(args.value ?? 0);
+      // Only write the value when it actually changed: assigning mid-drag would
+      // interrupt the native thumb gesture.
+      if (dom.value !== value) dom.value = value;
+      dom.oninput = () => dispatch(id, 'set', String(Number(dom.value)));
       break;
     }
 
@@ -261,7 +273,7 @@ function renderNode(node, dispatch) {
     default:
       dom = el('div', 'sw-unknown');
       dom.textContent = `⟨${kind}⟩`;
-      for (const child of children) dom.appendChild(renderNode(child, dispatch));
+      for (const child of children) dom.appendChild(renderNode(child, dispatch, reuse));
       break;
   }
 
@@ -272,7 +284,18 @@ function renderNode(node, dispatch) {
   return dom;
 }
 
+// Look up a reusable input from the previous render by `"<id>:<type>"`.
+function reuseInput(reuse, id, type) {
+  return reuse ? reuse.get(`${id}:${type}`) : null;
+}
+
 // Render a full UIIR tree into `container`, wiring `dispatch` for interaction.
+// Existing `<input>` controls are indexed first so the new tree can reuse the
+// element currently being dragged/typed in, keeping the gesture/focus alive.
 export function renderTree(container, tree, dispatch) {
-  container.replaceChildren(renderNode(tree, dispatch));
+  const reuse = new Map();
+  for (const input of container.querySelectorAll('input')) {
+    if (input.dataset.uiirId) reuse.set(`${input.dataset.uiirId}:${input.type}`, input);
+  }
+  container.replaceChildren(renderNode(tree, dispatch, reuse));
 }

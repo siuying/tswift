@@ -7,6 +7,7 @@ struct ControlsView: View {
     var body: some View {
         VStack {
             Slider(value: $brightness, in: 0...1, step: 0.1)
+            Text("Brightness \(brightness)")
             Stepper("Volume", value: $volume, in: 0...100, step: 5)
             Text("Volume is \(volume)")
         }
