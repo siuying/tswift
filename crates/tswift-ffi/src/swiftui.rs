@@ -343,6 +343,21 @@ struct CounterView: View {
     }
 
     #[test]
+    fn repeated_compile_dispatch_is_stable() {
+        // Stress the reclaimable bundle: each recompile drops the previous
+        // session (interp + sink + analysis). A double-free/UAF in that path
+        // would crash here; a leak would show under a leak-checked run.
+        let mut slot = None;
+        for _ in 0..50 {
+            compile(&mut slot, COUNTER);
+            let after = dispatch(&mut slot, r#"{"id":"0.1","event":"tap"}"#);
+            assert!(after.contains("\"ok\":true"), "{after}");
+        }
+        // Dropping `slot` reclaims the final bundle.
+        drop(slot);
+    }
+
+    #[test]
     fn recompile_replaces_session_without_leaking() {
         let mut slot = None;
         compile(&mut slot, COUNTER);
