@@ -2275,6 +2275,17 @@ impl<'a> Parser<'a> {
             if lbp < min_bp {
                 break;
             }
+            // Postfix one-sided range `lhs...` (`PartialRangeFrom`): a `...`
+            // whose following token cannot begin an upper-bound expression.
+            if op.text == "..." && self.at_one_sided_range_end() {
+                self.bump();
+                let node = self
+                    .ast
+                    .add(NodeKind::PostfixExpr, Some("..."), op.line, op.col);
+                self.ast.append_child(node, lhs);
+                lhs = node;
+                continue;
+            }
             self.bump();
             let rhs = self.parse_expr(rbp)?;
             let bin = self

@@ -3628,11 +3628,75 @@ impl<'w> Interpreter<'w> {
         }
         let base_value = self.eval(&base)?;
         let index_nodes: Vec<Node<'static>> = kids.collect();
+        // A single one-sided range index (`a[2...]`, `a[..<2]`, `a[...2]`) is
+        // resolved against the base collection's length into a concrete
+        // `Range` before the generic index evaluation, which has no notion of
+        // partial ranges.
+        if let [only] = index_nodes.as_slice() {
+            if let Some(range) = self.eval_partial_range_index(only, &base_value)? {
+                return self.read_subscript(&base_value, &[range]);
+            }
+        }
         let indices: Vec<SwiftValue> = index_nodes
             .iter()
             .map(|n| self.eval(n))
             .collect::<Result<_, _>>()?;
         self.read_subscript(&base_value, &indices)
+    }
+
+    /// If `node` is a one-sided range form (`..<n` / `...n` prefix or `n...`
+    /// postfix), resolve it to a concrete `Range` over `base`'s length; else
+    /// `None`. The lower bound of an up-to/through range is `0`; the upper
+    /// bound of a from range is the collection's element count.
+    fn eval_partial_range_index(
+        &mut self,
+        node: &Node<'static>,
+        base: &SwiftValue,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let len = match base {
+            SwiftValue::Array(items) => items.len() as i128,
+            SwiftValue::Str(s) => crate::graphemes(s).len() as i128,
+            _ => return Ok(None),
+        };
+        let op = node.op_text();
+        let bound_int = |this: &mut Self, n: &Node<'static>| -> Result<i128, Signal> {
+            match this.eval(n)? {
+                SwiftValue::Int(i) => Ok(i.raw),
+                other => Err(EvalError::Type(format!(
+                    "range bound must be an integer, found {}",
+                    other.type_name()
+                ))
+                .into()),
+            }
+        };
+        let child = node.children().next();
+        match (node.kind(), op.as_deref()) {
+            (NodeKind::PrefixExpr, Some("..<")) => {
+                let hi = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo: 0,
+                    hi,
+                    inclusive: false,
+                }))
+            }
+            (NodeKind::PrefixExpr, Some("...")) => {
+                let hi = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo: 0,
+                    hi,
+                    inclusive: true,
+                }))
+            }
+            (NodeKind::PostfixExpr, Some("...")) => {
+                let lo = bound_int(self, &child.unwrap())?;
+                Ok(Some(SwiftValue::Range {
+                    lo,
+                    hi: len,
+                    inclusive: false,
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Evaluate a `static subscript` declared on `type_name`, addressed as
@@ -3855,6 +3919,24 @@ impl<'w> Interpreter<'w> {
         if let [idx] = indices {
             if let Some(components) = self.keypath_components(idx) {
                 return self.apply_keypath(base.clone(), &components);
+            }
+        }
+        // `base[range]` — slice an array or string by an integer range
+        // (two-sided `a..<b`/`a...b` or a one-sided partial range resolved
+        // by `eval_subscript` against the collection length).
+        if let [SwiftValue::Range { lo, hi, inclusive }] = indices {
+            let (lo, hi, inclusive) = (*lo, *hi, *inclusive);
+            match base {
+                SwiftValue::Array(items) => {
+                    let (start, end) = slice_bounds(lo, hi, inclusive, items.len())?;
+                    return Ok(SwiftValue::Array(Rc::new(items[start..end].to_vec())));
+                }
+                SwiftValue::Str(s) => {
+                    let chars = crate::graphemes(s);
+                    let (start, end) = slice_bounds(lo, hi, inclusive, chars.len())?;
+                    return Ok(SwiftValue::Str(chars[start..end].concat()));
+                }
+                _ => {}
             }
         }
         match base {
@@ -8213,6 +8295,30 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
 }
 
 /// Extract a single integer subscript index from evaluated index args.
+/// Resolve a `lo..<hi` / `lo...hi` integer range into validated `start..end`
+/// slice bounds against a collection of length `len`. Traps (Swift `fatalError`)
+/// when the range escapes `0...len` or is inverted.
+fn slice_bounds(lo: i128, hi: i128, inclusive: bool, len: usize) -> Result<(usize, usize), Signal> {
+    // Validate against the *raw* bounds first: both `a..<b` and `a...b` require
+    // `b >= a` (a closed `2...1` is inverted and traps). Computing `end` before
+    // this check would mask `inclusive` inversions, since `hi + 1` can lift an
+    // inverted upper bound back to `== lo`.
+    if lo < 0 || hi < lo {
+        return Err(trap(format!(
+            "invalid range {lo}..{}{hi} for collection of length {len}",
+            if inclusive { "=" } else { "<" }
+        )));
+    }
+    let end = if inclusive { hi + 1 } else { hi };
+    if end > len as i128 {
+        return Err(trap(format!(
+            "range {lo}..{}{hi} out of bounds for collection of length {len}",
+            if inclusive { "=" } else { "<" }
+        )));
+    }
+    Ok((lo as usize, end as usize))
+}
+
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     match indices.first() {
         Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),

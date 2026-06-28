@@ -56,7 +56,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Wrapping operators `&+ &- &*` (+ `&<<` `&>>`) | ✅ | ★★ | R1 |
 | [x] | Overflow-trapping integer semantics | ✅ | ★★ | R1 |
 | [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
-| [x] | Range operators `..<` `...` (+ one-sided) | ✅ | ★★ | R1 |
+| [x] | Range operators `..<` `...` (+ one-sided, incl. collection slicing `a[2...]`/`a[..<n]`/`a[lo..<hi]`) | ✅ | ★★ | R1 |
 | [x] | Identity operators `===` `!==` | ✅ | ★ | R3 |
 
 ---
