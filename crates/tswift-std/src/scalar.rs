@@ -34,8 +34,24 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "multipliedReportingOverflow",
         int_multiplied_reporting_overflow,
     );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "dividedReportingOverflow",
+        int_divided_reporting_overflow,
+    );
+    method(
+        interp,
+        BuiltinReceiver::Int,
+        "remainderReportingOverflow",
+        int_remainder_reporting_overflow,
+    );
+    method(interp, BuiltinReceiver::Int, "distance", int_distance);
+    method(interp, BuiltinReceiver::Int, "advanced", int_advanced);
     // Int properties.
     interp.register_property(BuiltinReceiver::Int, "magnitude", int_magnitude);
+    interp.register_property(BuiltinReceiver::Int, "description", int_description);
+    interp.register_property(BuiltinReceiver::Int, "hashValue", int_hash_value);
     interp.register_property(BuiltinReceiver::Int, "bitWidth", int_bit_width);
     interp.register_property(
         BuiltinReceiver::Int,
@@ -276,6 +292,100 @@ fn int_byte_swapped(recv: SwiftValue) -> StdResult {
         swapped |= byte << (8 * (nbytes - 1 - b));
     }
     Ok(SwiftValue::Int(IntValue::wrapped(i.width, swapped as i128)))
+}
+
+/// `Int.dividedReportingOverflow(by:)` — `(partialValue, overflow)` for `self / other`.
+/// Dividing by zero or overflowing (`min / -1`) reports `overflow == true`.
+fn int_divided_reporting_overflow(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let a = as_int(&recv)?;
+    let b = as_int(
+        args.first()
+            .ok_or_else(|| arg_err("dividedReportingOverflow(by:)"))?,
+    )?;
+    let (partial, overflow) = if b.raw == 0 {
+        (a.raw, true)
+    } else if a.raw == a.width.min() && b.raw == -1 {
+        (a.width.min(), true)
+    } else {
+        (a.raw / b.raw, false)
+    };
+    ok(overflow_pair(a.width, partial, overflow), recv)
+}
+
+/// `Int.remainderReportingOverflow(dividingBy:)` — `(partialValue, overflow)` for `self % other`.
+fn int_remainder_reporting_overflow(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Outcomes {
+    let a = as_int(&recv)?;
+    let b = as_int(
+        args.first()
+            .ok_or_else(|| arg_err("remainderReportingOverflow(dividingBy:)"))?,
+    )?;
+    let (partial, overflow) = if b.raw == 0 {
+        (a.raw, true)
+    } else if a.raw == a.width.min() && b.raw == -1 {
+        (0, true)
+    } else {
+        (a.raw % b.raw, false)
+    };
+    ok(overflow_pair(a.width, partial, overflow), recv)
+}
+
+/// Build the labelled `(partialValue, overflow)` tuple shared by the
+/// reporting-overflow division methods.
+fn overflow_pair(width: tswift_core::IntWidth, partial: i128, overflow: bool) -> SwiftValue {
+    SwiftValue::tuple_labeled(
+        vec![
+            SwiftValue::Int(IntValue::wrapped(width, partial)),
+            SwiftValue::Bool(overflow),
+        ],
+        vec![
+            Some("partialValue".to_string()),
+            Some("overflow".to_string()),
+        ],
+    )
+}
+
+/// `Int.distance(to:)` — `other - self` (the `Strideable` conformance).
+fn int_distance(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let a = as_int(&recv)?;
+    let other = as_int(args.first().ok_or_else(|| arg_err("distance(to:)"))?)?;
+    ok(
+        SwiftValue::Int(IntValue::new(other.raw - a.raw, a.width)),
+        recv,
+    )
+}
+
+/// `Int.advanced(by:)` — `self + amount` (the `Strideable` conformance).
+fn int_advanced(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let a = as_int(&recv)?;
+    let by = as_int(args.first().ok_or_else(|| arg_err("advanced(by:)"))?)?;
+    ok(
+        SwiftValue::Int(IntValue::new(a.raw + by.raw, a.width)),
+        recv,
+    )
+}
+
+/// `Int.description` — the base-10 textual form.
+fn int_description(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Str(as_int(&recv)?.raw.to_string()))
+}
+
+/// `Int.hashValue` — a deterministic per-run hash (FNV-1a over the raw bytes).
+fn int_hash_value(recv: SwiftValue) -> StdResult {
+    let raw = as_int(&recv)?.raw;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in (raw as u64).to_le_bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(SwiftValue::int(i128::from(h as i64)))
 }
 
 /// Shared body for the `*ReportingOverflow(by:)` methods: apply `op` in wide
@@ -617,6 +727,56 @@ mod tests {
         assert!(
             int_quotient_and_remainder(&mut c, SwiftValue::int(1), vec![SwiftValue::int(0)])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn divided_reporting_overflow_and_stride() {
+        let mut c = MockCtx;
+        let d =
+            int_divided_reporting_overflow(&mut c, SwiftValue::int(17), vec![SwiftValue::int(5)])
+                .unwrap()
+                .result;
+        assert_eq!(
+            d,
+            SwiftValue::tuple(vec![SwiftValue::int(3), SwiftValue::Bool(false)])
+        );
+        // Division by zero reports overflow and keeps the dividend.
+        let dz =
+            int_divided_reporting_overflow(&mut c, SwiftValue::int(1), vec![SwiftValue::int(0)])
+                .unwrap()
+                .result;
+        assert_eq!(
+            dz,
+            SwiftValue::tuple(vec![SwiftValue::int(1), SwiftValue::Bool(true)])
+        );
+        assert_eq!(
+            int_distance(&mut c, SwiftValue::int(10), vec![SwiftValue::int(25)])
+                .unwrap()
+                .result,
+            SwiftValue::int(15)
+        );
+        assert_eq!(
+            int_advanced(&mut c, SwiftValue::int(10), vec![SwiftValue::int(7)])
+                .unwrap()
+                .result,
+            SwiftValue::int(17)
+        );
+    }
+
+    #[test]
+    fn description_and_hash() {
+        assert_eq!(
+            int_description(SwiftValue::int(-42)).unwrap(),
+            SwiftValue::Str("-42".into())
+        );
+        assert_eq!(
+            int_hash_value(SwiftValue::int(42)).unwrap(),
+            int_hash_value(SwiftValue::int(42)).unwrap()
+        );
+        assert_ne!(
+            int_hash_value(SwiftValue::int(42)).unwrap(),
+            int_hash_value(SwiftValue::int(43)).unwrap()
         );
     }
 

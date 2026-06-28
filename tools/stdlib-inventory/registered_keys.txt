@@ -68,9 +68,14 @@ Double.squareRoot
 Double.truncatingRemainder
 Double.ulp
 Int.addingReportingOverflow
+Int.advanced
 Int.bitWidth
 Int.byteSwapped
+Int.description
+Int.distance
+Int.dividedReportingOverflow
 Int.flatMap
+Int.hashValue
 Int.isMultiple
 Int.leadingZeroBitCount
 Int.magnitude
@@ -78,6 +83,7 @@ Int.map
 Int.multipliedReportingOverflow
 Int.nonzeroBitCount
 Int.quotientAndRemainder
+Int.remainderReportingOverflow
 Int.signum
 Int.subtractingReportingOverflow
 Int.trailingZeroBitCount
