@@ -714,7 +714,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::AwaitExpr => self.eval_await(node),
             NodeKind::ReturnStmt => {
-                let value = match node.children().next() {
+                let value = match node.first_child() {
                     Some(e) => self.eval(&e)?,
                     None => SwiftValue::Void,
                 };
@@ -731,7 +731,7 @@ impl<'w> Interpreter<'w> {
             NodeKind::DoStmt => self.eval_do(node),
             NodeKind::TryExpr => self.eval_try(node),
             NodeKind::DeferStmt => {
-                if let Some(block) = node.children().next() {
+                if let Some(block) = node.first_child() {
                     if let Some(frame) = self.defer_stack.last_mut() {
                         frame.push(block);
                     }
@@ -910,7 +910,7 @@ impl<'w> Interpreter<'w> {
             return;
         }
         let params = parse_params(node);
-        let body = node.children().find(|c| c.kind() == NodeKind::Block);
+        let body = node.find_child(NodeKind::Block);
         let ret_tuple_labels = node
             .children()
             .find(|c| c.kind() == NodeKind::TypeRef)
@@ -1698,7 +1698,7 @@ impl<'w> Interpreter<'w> {
                 }
                 NodeKind::ClosureCapture => {
                     if let Some(name) = child.text() {
-                        let v = match child.children().next() {
+                        let v = match child.first_child() {
                             Some(expr) => self.eval(&expr)?,
                             None => self.env.get(&name).unwrap_or(SwiftValue::Nil),
                         };
@@ -1932,7 +1932,7 @@ impl<'w> Interpreter<'w> {
                 if let Some(name) = n.text() {
                     names.push(name);
                 }
-                cur = n.children().next();
+                cur = n.first_child();
             } else {
                 break;
             }
@@ -1952,7 +1952,7 @@ impl<'w> Interpreter<'w> {
             // selector as its name); `#keyPath(Type.a.b)` yields the dotted key
             // path string relative to the root type.
             "selector" => {
-                let chain = node.children().next().map(|c| Self::member_chain(&c));
+                let chain = node.first_child().map(|c| Self::member_chain(&c));
                 Ok(SwiftValue::Str(
                     chain.and_then(|c| c.last().cloned()).unwrap_or_default(),
                 ))
@@ -2569,7 +2569,7 @@ impl<'w> Interpreter<'w> {
                 // - refutable match (`if case .a(let v) = e`): any other
                 //   pattern — match it against the subject and bind on success.
                 NodeKind::LetDecl | NodeKind::VarDecl => {
-                    let pattern = cond.children().next().ok_or_else(|| {
+                    let pattern = cond.first_child().ok_or_else(|| {
                         EvalError::Unsupported("condition binding without a pattern".into())
                     })?;
                     // The subject/initializer follows the pattern (and any type
@@ -2672,19 +2672,18 @@ impl<'w> Interpreter<'w> {
 
     /// `repeat { … } while cond`.
     fn eval_repeat(&mut self, node: &Node<'static>) -> Eval {
-        let kids: Vec<Node<'static>> = node.children().collect();
-        let body = kids
-            .first()
+        let body = node
+            .first_child()
             .ok_or_else(|| EvalError::Unsupported("repeat without body".into()))?;
-        let cond = kids
-            .last()
+        let cond = node
+            .last_child()
             .ok_or_else(|| EvalError::Unsupported("repeat without condition".into()))?;
         let label = node.loop_label();
         loop {
-            if let LoopFlow::Break = self.run_loop_body(body, &label)? {
+            if let LoopFlow::Break = self.run_loop_body(&body, &label)? {
                 break;
             }
-            if !self.eval_condition(cond)? {
+            if !self.eval_condition(&cond)? {
                 break;
             }
         }
@@ -3801,7 +3800,7 @@ impl StdContext for Interpreter<'_> {
 /// Extract `T` from a metatype argument node `T.self`.
 fn metatype_name(node: &Node<'static>) -> Option<String> {
     if node.kind() == NodeKind::MemberExpr && node.text().as_deref() == Some("self") {
-        node.children().next().and_then(|b| b.text())
+        node.first_child().and_then(|b| b.text())
     } else {
         node.text()
     }
@@ -3862,7 +3861,7 @@ fn is_operator_name(name: &str) -> bool {
 /// Extract the generic type-parameter names from a declaration's
 /// `GenericParam` child. `<T: P, U>` yields `["T", "U"]`.
 fn generic_param_names(node: &Node<'static>) -> Vec<String> {
-    let Some(gp) = node.children().find(|c| c.kind() == NodeKind::GenericParam) else {
+    let Some(gp) = node.find_child(NodeKind::GenericParam) else {
         return Vec::new();
     };
     let Some(text) = gp.text() else {
@@ -4162,7 +4161,7 @@ fn literal_syntax_kind(node: &Node) -> Option<NodeKind> {
         | NodeKind::BoolLiteral
         | NodeKind::NilLiteral => Some(node.kind()),
         NodeKind::PrefixExpr if node.op_text().as_deref() == Some("-") => {
-            node.children().next().and_then(|child| match child.kind() {
+            node.first_child().and_then(|child| match child.kind() {
                 NodeKind::IntegerLiteral | NodeKind::FloatLiteral => Some(child.kind()),
                 _ => None,
             })

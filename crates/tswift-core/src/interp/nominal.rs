@@ -145,7 +145,7 @@ impl<'w> Interpreter<'w> {
                             mname,
                             MethodDef {
                                 params: parse_params(&member),
-                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                body: member.find_child(NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
                                 generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
@@ -367,7 +367,7 @@ impl<'w> Interpreter<'w> {
                             mname,
                             MethodDef {
                                 params: parse_params(&member),
-                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                body: member.find_child(NodeKind::Block),
                                 mutating: member.modifiers() & MOD_MUTATING != 0,
                                 generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
@@ -435,7 +435,7 @@ impl<'w> Interpreter<'w> {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
                         params: parse_params(&member),
-                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        body: member.find_child(NodeKind::Block),
                         mutating: false,
                         generic_params: generic_param_names(&member),
                         is_static: false,
@@ -447,7 +447,7 @@ impl<'w> Interpreter<'w> {
                     let acc = member.var_accessors();
                     let sbody = acc
                         .getter_body
-                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                        .or_else(|| member.find_child(NodeKind::Block));
                     static_subscript = Some(MethodDef {
                         params: parse_params(&member),
                         body: sbody,
@@ -457,7 +457,7 @@ impl<'w> Interpreter<'w> {
                     });
                 }
                 NodeKind::DeinitDecl => {
-                    deinit = member.children().find(|c| c.kind() == NodeKind::Block);
+                    deinit = member.find_child(NodeKind::Block);
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
@@ -465,7 +465,7 @@ impl<'w> Interpreter<'w> {
                             mname,
                             MethodDef {
                                 params: parse_params(&member),
-                                body: member.children().find(|c| c.kind() == NodeKind::Block),
+                                body: member.find_child(NodeKind::Block),
                                 mutating: false,
                                 generic_params: generic_param_names(&member),
                                 is_static: member.modifiers() & MOD_STATIC != 0,
@@ -599,7 +599,7 @@ impl<'w> Interpreter<'w> {
                 NodeKind::InitDecl => {
                     let def = MethodDef {
                         params: parse_params(&member),
-                        body: member.children().find(|c| c.kind() == NodeKind::Block),
+                        body: member.find_child(NodeKind::Block),
                         mutating: true,
                         generic_params: generic_param_names(&member),
                         is_static: false,
@@ -611,7 +611,7 @@ impl<'w> Interpreter<'w> {
                     let acc = member.var_accessors();
                     let getter = acc
                         .getter_body
-                        .or_else(|| member.children().find(|c| c.kind() == NodeKind::Block));
+                        .or_else(|| member.find_child(NodeKind::Block));
                     if member.modifiers() & MOD_STATIC != 0 {
                         static_subscript = Some(MethodDef {
                             params: parse_params(&member),
@@ -635,7 +635,7 @@ impl<'w> Interpreter<'w> {
                     if let Some(mname) = member.text() {
                         let mods = member.modifiers();
                         let params = parse_params(&member);
-                        let body = member.children().find(|c| c.kind() == NodeKind::Block);
+                        let body = member.find_child(NodeKind::Block);
                         let mutating = mods & MOD_MUTATING != 0;
                         let is_static = mods & MOD_STATIC != 0;
                         let def = MethodDef {

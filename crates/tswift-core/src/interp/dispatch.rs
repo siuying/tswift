@@ -744,7 +744,7 @@ impl<'w> Interpreter<'w> {
         }
 
         // Shorthand `.case(args)`: resolve the enum type from msf's inference.
-        let Some(base) = member.children().next() else {
+        let Some(base) = member.first_child() else {
             if let Some(tn) = self.resolve_member_enum(member, &method) {
                 let args = self.eval_args(arg_nodes)?;
                 let payload = args.into_iter().map(|a| a.value).collect();

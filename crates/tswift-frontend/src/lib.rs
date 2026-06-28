@@ -122,6 +122,11 @@ impl<'a> Node<'a> {
         self.child(0)
     }
 
+    /// This node's last direct child, if any.
+    pub fn last_child(&self) -> Option<Node<'a>> {
+        self.child_count().checked_sub(1).and_then(|i| self.child(i))
+    }
+
     /// The first direct child of the given [`NodeKind`], in source order.
     pub fn find_child(&self, kind: NodeKind) -> Option<Node<'a>> {
         self.children().find(|c| c.kind() == kind)
