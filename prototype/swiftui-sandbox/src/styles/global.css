@@ -159,6 +159,7 @@ html, body {
 .stage {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 22px;
@@ -174,18 +175,14 @@ html, body {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28), inset 0 0 0 2px #2a2a30;
   display: flex;
 }
-.device-screen {
+/* The shared host element fills the device screen and paints its own
+   (appearance-correct) background inside its Shadow DOM, so the page leaves
+   the element background transparent and lets the canvas own it. */
+#preview {
   flex: 1;
   border-radius: 26px;
-  background: #000;
-  color: #fff;
   overflow: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  font-family: var(--sans);
+  background: transparent;
 }
 
 .proto-note {
@@ -196,68 +193,8 @@ html, body {
   font-family: var(--mono);
 }
 
-/* ── SwiftUI primitives (rendered UIIR) ─────────────────────────── */
-.sw-text { font-size: 17px; }
-.sw-vstack { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.sw-hstack { display: flex; flex-direction: row; align-items: center; gap: 8px; }
-.sw-zstack { display: grid; place-items: center; }
-.sw-zstack > .sw-zlayer { grid-area: 1 / 1; display: grid; place-items: center; }
-.sw-spacer { flex: 1 1 auto; }
-.sw-foreach { display: contents; }
-.sw-list { display: flex; flex-direction: column; gap: 4px; align-self: stretch; }
-.sw-section { display: flex; flex-direction: column; gap: 4px; align-self: stretch; margin-bottom: 10px; }
-.sw-section-header { font-size: 11px; letter-spacing: 0.06em; color: #98989f; margin: 6px 0 2px; }
-
-.sw-button {
-  font: inherit;
-  font-size: 17px;
-  color: #fff;
-  background: #0a84ff;
-  border: 0;
-  border-radius: 10px;
-  padding: 8px 16px;
-  cursor: pointer;
-}
-.sw-button:active { filter: brightness(0.9); }
-
-.sw-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; align-self: stretch; }
-.sw-toggle input { width: 44px; height: 26px; appearance: none; background: #39393d; border-radius: 20px; position: relative; cursor: pointer; transition: background .15s; }
-.sw-toggle input:checked { background: #32d74b; }
-.sw-toggle input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.sw-toggle input:checked::after { transform: translateX(18px); }
-
-.sw-field {
-  font: inherit; font-size: 16px; color: #fff;
-  background: #1c1c1e; border: 1px solid #38383a; border-radius: 9px;
-  padding: 9px 12px; align-self: stretch;
-}
-.sw-field::placeholder { color: #6b6b70; }
-
-.sw-slider { width: 100%; accent-color: #0a84ff; }
-
-.sw-stepper { display: flex; align-items: center; gap: 10px; align-self: stretch; }
-.sw-stepper-label { flex: 1; }
-.sw-stepper-btn {
-  font: inherit; font-size: 18px; line-height: 1; width: 36px; height: 32px;
-  color: #fff; background: #2c2c2e; border: 0; border-radius: 8px; cursor: pointer;
-}
-
-.sw-picker { display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
-.sw-picker-label { font-size: 13px; color: #98989f; }
-.sw-segmented { display: flex; background: #1c1c1e; border-radius: 9px; padding: 2px; }
-.sw-segment {
-  flex: 1; font: inherit; font-size: 13px; color: #fff; background: transparent;
-  border: 0; border-radius: 7px; padding: 6px 8px; cursor: pointer;
-}
-.sw-segment.active { background: #48484a; }
-
-.sw-shape { background: #5e5ce6; }
-.sw-circle { width: 56px; height: 56px; border-radius: 50%; }
-.sw-capsule { width: 80px; height: 40px; border-radius: 999px; }
-.sw-ellipse { width: 80px; height: 50px; border-radius: 50%; }
-.sw-rect { width: 56px; height: 56px; }
-
-.sw-unknown { color: #ff9f0a; font-family: var(--mono); font-size: 12px; }
+/* SwiftUI primitive styling lives in the <swiftui-canvas> Shadow DOM
+   (web/swiftui-canvas), so the page only styles the chrome around it. */
 
 .err {
   color: #ff6b6b;
@@ -265,6 +202,6 @@ html, body {
   font-size: 12px;
   white-space: pre-wrap;
   text-align: left;
-  align-self: stretch;
-  margin: 0;
+  margin: 12px 0 0;
+  max-width: 248px;
 }

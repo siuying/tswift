@@ -18,6 +18,7 @@ use std::cell::RefCell;
 use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
 use tswift_frontend::{Analysis, Node, NodeKind};
+use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
 use tswift_swiftui::{uiir, PRELUDE};
 use wasm_bindgen::prelude::*;
@@ -42,9 +43,11 @@ pub fn swiftui_compile(source: &str) -> String {
     compile_impl(source)
 }
 
-/// Route a host event into the live session and return the re-rendered tree:
-/// `{"ok":bool,"tree":<uiir>|null,"error":string|null}`. `value` is a JSON
-/// scalar (a control's new value) or `""` for events without a payload (a tap).
+/// Route a host event into the live session and return a **patch stream** that
+/// the `<swiftui-canvas>` host applies in place (preserving focus, an in-flight
+/// slider drag, scroll position, &c.): `{"ok":bool,"patches":[…]|null,
+/// "error":string|null}`. `value` is a JSON scalar (a control's new value) or
+/// `""` for events without a payload (a tap).
 #[wasm_bindgen(js_name = swiftUIDispatch)]
 pub fn swiftui_dispatch(id: &str, event: &str, value: &str) -> String {
     install_panic_hook();
@@ -54,16 +57,27 @@ pub fn swiftui_dispatch(id: &str, event: &str, value: &str) -> String {
         let Some(session) = guard.as_mut() else {
             return dispatch_error("no active SwiftUI session — compile first");
         };
+        // Snapshot the tree before the event so we can diff it against the
+        // re-rendered tree and emit a minimal patch stream (the same engine the
+        // `tswift swiftui dispatch` CLI uses).
+        // Defensive: `SESSION` is only populated after `compile_impl` renders,
+        // so a session here has always rendered at least once.
+        let Some(before) = session.current_tree().cloned() else {
+            return dispatch_error("session has not rendered yet");
+        };
         let ev = Event {
             id: id.to_string(),
             event: event.to_string(),
             value: payload,
         };
         match session.dispatch(&ev) {
-            Ok(tree) => format!(
-                "{{\"ok\":true,\"tree\":{},\"error\":null}}",
-                uiir::to_json(&tree)
-            ),
+            Ok(after) => {
+                let patches = diff::diff(&before, &after);
+                format!(
+                    "{{\"ok\":true,\"patches\":{},\"error\":null}}",
+                    diff::to_json(&patches)
+                )
+            }
             Err(error) => dispatch_error(&error.to_string()),
         }
     })
@@ -134,7 +148,7 @@ fn compile_error(message: &str) -> String {
 
 fn dispatch_error(message: &str) -> String {
     format!(
-        "{{\"ok\":false,\"tree\":null,\"error\":\"{}\"}}",
+        "{{\"ok\":false,\"patches\":null,\"error\":\"{}\"}}",
         escape_json(message)
     )
 }
@@ -240,7 +254,7 @@ struct CounterView: View {
     }
 
     #[test]
-    fn dispatch_taps_a_button_and_rerenders() {
+    fn dispatch_taps_a_button_and_returns_a_patch_stream() {
         swiftui_compile(
             r#"
 struct CounterView: View {
@@ -257,7 +271,12 @@ struct CounterView: View {
         // The button is the second child of the root VStack: id "0.1".
         let after = swiftui_dispatch("0.1", "tap", "");
         assert!(ok_field(&after), "after={after}");
-        assert!(after.contains("\"verbatim\":\"1\""), "after={after}");
+        // The only change is the counter Text (id "0.0"), so the diff is a
+        // single in-place `setText` — not a full re-mount.
+        assert!(
+            after.contains(r#"{"op":"setText","id":"0.0","text":"1"}"#),
+            "after={after}"
+        );
     }
 
     #[test]
@@ -273,5 +292,6 @@ struct CounterView: View {
         SESSION.with(|s| *s.borrow_mut() = None);
         let json = swiftui_dispatch("0", "tap", "");
         assert!(json.contains("\"ok\":false"), "json={json}");
+        assert!(json.contains("\"patches\":null"), "json={json}");
     }
 }

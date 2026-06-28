@@ -13,9 +13,15 @@
 
 ## Rendering
 
-- `src/renderer.js` turns the UIIR JSON (from `swiftUICompile` /
-  `swiftUIDispatch`) into DOM. When the runtime gains a new SwiftUI view kind or
-  modifier, add a `case` here (and a CSS rule in `src/styles/global.css`) — an
-  unhandled kind renders as `⟨Kind⟩`.
-- The wasm entry points live in `crates/tswift-wasm/src/swiftui.rs`; the UIIR
-  wire format is defined by `crates/tswift-swiftui/src/uiir.rs`.
+- The DOM is rendered by the shared **`web/swiftui-canvas`** package — do **not**
+  add a renderer here. `swiftUICompile` returns a UIIR tree fed to
+  `<swiftui-canvas>.mount(...)`; `swiftUIDispatch` returns a patch stream fed to
+  `.applyPatches(...)`. The page (`src/pages/index.astro`) is only editor + wasm
+  glue + device chrome.
+- When the runtime gains a new SwiftUI view kind or modifier, teach the
+  **canvas** about it (in `web/swiftui-canvas/src/`: `apply-patch.ts` for the DOM
+  primitive, `modifier-css.ts` for styling) so every surface benefits, then add a
+  preset here to exercise it.
+- The wasm entry points live in `crates/tswift-wasm/src/swiftui.rs`; the UIIR /
+  patch wire format is defined by `crates/tswift-swiftui/src/{uiir,diff}.rs` and
+  consumed by `web/swiftui-canvas/src/apply-patch.ts`.

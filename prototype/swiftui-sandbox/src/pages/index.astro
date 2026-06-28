@@ -32,7 +32,7 @@ const sample = presets[0].code;
           <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="SwiftUI source"></textarea>
         </div>
         <footer class="card-foot">
-          <span class="pipeline">swift → lexer → parser → sema → <strong>uiir</strong> → canvas</span>
+          <span class="pipeline">swift → lexer → parser → sema → uiir → <strong>canvas</strong></span>
           <span class="compile-state" id="compile-state">idle</span>
         </footer>
       </section>
@@ -46,8 +46,9 @@ const sample = presets[0].code;
         </header>
         <div class="stage">
           <div class="device">
-            <div class="device-screen" id="preview"></div>
+            <swiftui-canvas id="preview"></swiftui-canvas>
           </div>
+          <pre class="err" id="err" hidden></pre>
         </div>
         <footer class="card-foot">
           <span class="pipeline" id="root-name">—</span>
@@ -56,21 +57,23 @@ const sample = presets[0].code;
       </section>
     </main>
 
-    <p class="proto-note">PROTOTYPE — throwaway SwiftUI sandbox · one file, rendered live through the Rust frontend + SwiftUI render host (wasm).</p>
+    <p class="proto-note">PROTOTYPE — throwaway SwiftUI sandbox · one file, rendered live through the Rust frontend + SwiftUI render host, displayed by &lt;swiftui-canvas&gt;.</p>
 
     <script>
       import initWasm, { swiftUICompile, swiftUIDispatch } from '../wasm/tswift_wasm.js';
-      import { renderTree } from '../renderer.js';
+      // The shared, dependency-free render host (the single source of DOM truth).
+      // Imported straight from the sibling package's source, like its own example.
+      import '../../../../web/swiftui-canvas/src/canvas.ts';
 
       const presets = window.__TSWIFT_PRESETS__.filter((p) => p.supported !== false);
       const source = document.getElementById('source');
       const gutter = document.getElementById('gutter');
       const preview = document.getElementById('preview');
+      const errBox = document.getElementById('err');
       const select = document.getElementById('preset-select');
       const compileState = document.getElementById('compile-state');
       const renderState = document.getElementById('render-state');
       const rootName = document.getElementById('root-name');
-      const previewHint = document.getElementById('preview-hint');
 
       let wasmReady = false;
       let debounce = null;
@@ -102,39 +105,29 @@ const sample = presets[0].code;
       }
       source.addEventListener('scroll', () => { gutter.scrollTop = source.scrollTop; });
 
-      // ── Dispatch: route an event into the live session, re-render ─
-      // Re-rendering replaces the DOM, so capture the focused control (by its
-      // UIIR id) plus caret position and restore them afterward — without this
-      // a TextField loses focus on every keystroke.
-      function captureFocus() {
-        const active = document.activeElement;
-        if (!active || !preview.contains(active) || !active.dataset.uiirId) return null;
-        const snap = { id: active.dataset.uiirId };
-        if (typeof active.selectionStart === 'number') {
-          snap.start = active.selectionStart;
-          snap.end = active.selectionEnd;
-        }
-        return snap;
+      function showError(message) {
+        errBox.textContent = message;
+        errBox.hidden = false;
+      }
+      function clearError() {
+        errBox.hidden = true;
+        errBox.textContent = '';
       }
 
-      function restoreFocus(snap) {
-        if (!snap) return;
-        const next = preview.querySelector(`[data-uiir-id="${snap.id}"]`);
-        if (!next) return;
-        next.focus();
-        if (snap.start != null && typeof next.setSelectionRange === 'function') {
-          try { next.setSelectionRange(snap.start, snap.end); } catch {}
-        }
-      }
-
-      function dispatch(id, event, value) {
+      // ── Interaction: the canvas emits `swiftui-event`; route it into
+      //    the live session and apply the returned patch stream in place.
+      //    The canvas preserves focus / in-flight drags structurally — no
+      //    capture-and-restore hacks needed.
+      preview.addEventListener('swiftui-event', (e) => {
         if (!wasmReady) return;
+        const { id, event, value } = e.detail;
+        // The wasm boundary takes the payload as a JSON scalar string; `""`
+        // means "no payload" (a tap).
+        const payload = value == null ? '' : JSON.stringify(value);
         try {
-          const snap = captureFocus();
-          const res = JSON.parse(swiftUIDispatch(id, event, value));
+          const res = JSON.parse(swiftUIDispatch(id, event, payload));
           if (res.ok) {
-            renderTree(preview, res.tree, dispatch);
-            restoreFocus(snap);
+            preview.applyPatches(res.patches);
             renderState.textContent = 'updated';
           } else {
             renderState.textContent = 'event error';
@@ -144,15 +137,7 @@ const sample = presets[0].code;
           renderState.textContent = 'event crash';
           showError(err.message);
         }
-      }
-
-      function showError(message) {
-        preview.innerHTML = '';
-        const box = document.createElement('pre');
-        box.className = 'err';
-        box.textContent = message;
-        preview.appendChild(box);
-      }
+      });
 
       // ── Compile + render the current source ─────────────────────
       function compile() {
@@ -161,7 +146,8 @@ const sample = presets[0].code;
         try {
           const res = JSON.parse(swiftUICompile(source.value));
           if (res.ok) {
-            renderTree(preview, res.tree, dispatch);
+            clearError();
+            preview.mount(res.tree);
             compileState.textContent = '✓ compiled';
             compileState.classList.add('ok');
             renderState.textContent = 'rendered';
@@ -200,7 +186,7 @@ const sample = presets[0].code;
 
       select.addEventListener('change', () => {
         source.value = select.value;
-        scheduleCompile();
+        syncGutter();
         compile();
       });
 
