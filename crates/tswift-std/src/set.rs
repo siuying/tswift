@@ -16,6 +16,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     let s = BuiltinReceiver::Set;
     interp.register_property(s, "count", count);
     interp.register_property(s, "isEmpty", is_empty);
+    interp.register_property(s, "capacity", capacity);
 
     let mut mutating = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -34,6 +35,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
     mutating("formIntersection", form_intersection);
     mutating("subtract", subtract);
     mutating("formSymmetricDifference", form_symmetric_difference);
+    mutating("removeAll", remove_all);
+    mutating("reserveCapacity", reserve_capacity);
+    mutating("removeFirst", remove_first);
+    mutating("popFirst", pop_first);
 
     let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -105,6 +110,12 @@ fn is_empty(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(elements(&recv)?.is_empty()))
 }
 
+/// `Set.capacity` — a lower bound modelled as the live element count
+/// (Swift guarantees `capacity >= count`; exact reserve sizing is not modelled).
+fn capacity(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(elements(&recv)?.len() as i128))
+}
+
 // ---- membership mutation ---------------------------------------------------
 
 /// `insert(_:)` — returns `(inserted, memberAfterInsert)`.
@@ -152,6 +163,52 @@ fn update(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> O
             items.push(el);
             SwiftValue::Nil
         }
+    };
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
+}
+
+/// `Set.removeAll(keepingCapacity:)` — drop every element in place.
+fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Set(Rc::new(Vec::new())),
+    })
+}
+
+/// `Set.reserveCapacity(_:)` — a no-op here; storage grows implicitly.
+fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `Set.removeFirst()` — remove and return the first element. Traps when empty,
+/// matching Swift. Iteration order is unspecified for multi-element sets.
+fn remove_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    if items.is_empty() {
+        return Err(StdError::Error(EvalError::Trap(
+            "can't remove first element from an empty collection".into(),
+        )));
+    }
+    let first = items.remove(0);
+    Ok(Outcome {
+        result: first,
+        receiver: SwiftValue::Set(Rc::new(items)),
+    })
+}
+
+/// `Set.popFirst()` — remove and return the first element, or `nil` when empty.
+fn pop_first(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    let result = if items.is_empty() {
+        SwiftValue::Nil
+    } else {
+        items.remove(0)
     };
     Ok(Outcome {
         result,
@@ -317,6 +374,30 @@ mod tests {
         };
         out.sort();
         out
+    }
+
+    #[test]
+    fn capacity_remove_first_and_pop() {
+        let mut m = M;
+        assert_eq!(capacity(s(&[1, 2, 3])).unwrap(), SwiftValue::int(3));
+        // removeFirst yields an element and shrinks the set.
+        let out = remove_first(&mut m, s(&[42]), vec![]).unwrap();
+        assert_eq!(out.result, SwiftValue::int(42));
+        assert!(matches!(out.receiver, SwiftValue::Set(p) if p.is_empty()));
+        // removeFirst on an empty set traps.
+        assert!(remove_first(&mut m, s(&[]), vec![]).is_err());
+        // popFirst is nil on empty, Some otherwise.
+        assert_eq!(
+            pop_first(&mut m, s(&[]), vec![]).unwrap().result,
+            SwiftValue::Nil
+        );
+        assert_eq!(
+            pop_first(&mut m, s(&[7]), vec![]).unwrap().result,
+            SwiftValue::int(7)
+        );
+        // removeAll empties the set.
+        let cleared = remove_all(&mut m, s(&[1, 2, 3]), vec![]).unwrap();
+        assert!(matches!(cleared.receiver, SwiftValue::Set(p) if p.is_empty()));
     }
 
     #[test]

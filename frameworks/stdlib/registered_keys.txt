@@ -126,6 +126,7 @@ Sequence.sorted
 Sequence.split
 Sequence.starts
 Sequence.suffix
+Set.capacity
 Set.count
 Set.formIntersection
 Set.formSymmetricDifference
@@ -138,7 +139,11 @@ Set.isStrictSubset
 Set.isStrictSuperset
 Set.isSubset
 Set.isSuperset
+Set.popFirst
 Set.remove
+Set.removeAll
+Set.removeFirst
+Set.reserveCapacity
 Set.subtract
 Set.subtracting
 Set.symmetricDifference
