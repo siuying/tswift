@@ -31,6 +31,7 @@ Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
 Dictionary.filter
+Dictionary.hashValue
 Dictionary.isEmpty
 Dictionary.keys
 Dictionary.mapValues
@@ -151,6 +152,7 @@ Set.count
 Set.formIntersection
 Set.formSymmetricDifference
 Set.formUnion
+Set.hashValue
 Set.insert
 Set.intersection
 Set.isDisjoint

@@ -17,6 +17,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "count", count);
     interp.register_property(s, "isEmpty", is_empty);
     interp.register_property(s, "capacity", capacity);
+    interp.register_property(s, "hashValue", hash_value);
 
     let mut mutating = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -108,6 +109,43 @@ fn count(recv: SwiftValue) -> StdResult {
 
 fn is_empty(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Bool(elements(&recv)?.is_empty()))
+}
+
+/// FNV-1a digest of a byte slice (the shared hashing primitive here).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// A stable per-value digest for the scalar element kinds a `Set` can hold.
+pub(crate) fn value_digest(v: &SwiftValue) -> u64 {
+    match v {
+        SwiftValue::Int(i) => fnv1a(&(i.raw as u64).to_le_bytes()),
+        SwiftValue::Double(d) => {
+            let bits = if *d == 0.0 { 0 } else { d.to_bits() };
+            fnv1a(&bits.to_le_bytes())
+        }
+        SwiftValue::Str(s) => fnv1a(s.as_bytes()),
+        SwiftValue::Bool(b) => fnv1a(&[u8::from(*b)]),
+        _ => fnv1a(&[0]),
+    }
+}
+
+/// `Set.hashValue` — an order-independent digest: equal sets (regardless of
+/// insertion order) hash equally. The element digests are combined with a
+/// commutative wrapping sum, then mixed with the count.
+fn hash_value(recv: SwiftValue) -> StdResult {
+    let items = elements(&recv)?;
+    let mut acc: u64 = 0;
+    for e in &items {
+        acc = acc.wrapping_add(value_digest(e));
+    }
+    acc ^= fnv1a(&(items.len() as u64).to_le_bytes());
+    Ok(SwiftValue::int(i128::from(acc as i64)))
 }
 
 /// `Set.capacity` — a lower bound modelled as the live element count
@@ -374,6 +412,20 @@ mod tests {
         };
         out.sort();
         out
+    }
+
+    #[test]
+    fn hash_value_is_order_independent() {
+        // Equal sets hash equally regardless of element order.
+        assert_eq!(
+            hash_value(s(&[1, 2, 3])).unwrap(),
+            hash_value(s(&[3, 2, 1])).unwrap()
+        );
+        // Different membership hashes differently.
+        assert_ne!(
+            hash_value(s(&[1, 2, 3])).unwrap(),
+            hash_value(s(&[1, 2])).unwrap()
+        );
     }
 
     #[test]

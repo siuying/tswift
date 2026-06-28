@@ -17,6 +17,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(d, "keys", keys);
     interp.register_property(d, "values", values);
     interp.register_property(d, "capacity", capacity);
+    interp.register_property(d, "hashValue", hash_value);
 
     interp.register_intrinsic(
         d,
@@ -114,6 +115,23 @@ fn pairs(recv: SwiftValue) -> Result<Rc<Pairs>, StdError> {
 
 fn count(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(pairs(recv)?.len() as i128))
+}
+
+/// `Dictionary.hashValue` — an order-independent digest over the key/value
+/// pairs: equal dictionaries hash equally regardless of insertion order. Each
+/// pair is hashed by combining its key and value digests, then the pair
+/// digests are merged with a commutative wrapping sum.
+fn hash_value(recv: SwiftValue) -> StdResult {
+    let store = pairs(recv)?;
+    let mut acc: u64 = 0;
+    for (k, v) in store.iter() {
+        let kd = crate::set::value_digest(k);
+        let vd = crate::set::value_digest(v);
+        // Order-sensitive within a pair, commutative across pairs.
+        acc = acc.wrapping_add(kd.wrapping_mul(0x0000_0100_0000_01b3) ^ vd);
+    }
+    acc ^= store.len() as u64;
+    Ok(SwiftValue::int(i128::from(acc as i64)))
 }
 
 /// `Dictionary.capacity` — a lower bound modelled as the live element count
@@ -389,6 +407,20 @@ mod tests {
                 .map(|(k, v)| (SwiftValue::Str((*k).into()), SwiftValue::int(*v)))
                 .collect(),
         ))
+    }
+
+    #[test]
+    fn hash_value_is_order_independent() {
+        // Equal dictionaries hash equally regardless of insertion order.
+        assert_eq!(
+            hash_value(dict(&[("a", 1), ("b", 2)])).unwrap(),
+            hash_value(dict(&[("b", 2), ("a", 1)])).unwrap()
+        );
+        // A differing value changes the hash.
+        assert_ne!(
+            hash_value(dict(&[("a", 1)])).unwrap(),
+            hash_value(dict(&[("a", 2)])).unwrap()
+        );
     }
 
     #[test]
