@@ -3,8 +3,9 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, SwiftValue,
+    collection_range_bounds, materialize_builtin_sequence, Arg, BuiltinReceiver, EvalError,
+    Interpreter, LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StdResult,
+    SwiftValue,
 };
 
 /// Register the `Array` intrinsics of this slice.
@@ -29,9 +30,20 @@ pub fn install(interp: &mut Interpreter<'_>) {
             },
         );
     };
-    mutating(interp, "append", append);
+    let label_aware =
+        |interp: &mut Interpreter<'_>, name: &str, func: tswift_core::LabeledIntrinsicFn| {
+            interp.register_labeled_intrinsic(
+                BuiltinReceiver::Array,
+                name,
+                LabeledMethodEntry {
+                    mutating: true,
+                    func,
+                },
+            );
+        };
+    label_aware(interp, "append", append_labeled);
     mutating(interp, "sort", sort);
-    mutating(interp, "insert", insert);
+    label_aware(interp, "insert", insert_labeled);
     mutating(interp, "remove", remove_at);
     mutating(interp, "removeLast", remove_last);
     mutating(interp, "removeFirst", remove_first);
@@ -100,26 +112,7 @@ fn ensure_index(index: i128, len: i128, who: &str) -> Result<(), StdError> {
 }
 
 fn range_bounds(range: &SwiftValue, len: usize, who: &str) -> Result<(usize, usize), StdError> {
-    let SwiftValue::Range { lo, hi, inclusive } = range else {
-        return Err(StdError::Error(EvalError::Type(format!(
-            "{who} expects a range"
-        ))));
-    };
-    let end = if *inclusive {
-        hi.checked_add(1).ok_or_else(|| {
-            StdError::Error(EvalError::Trap(format!("{who} range upperBound overflow")))
-        })?
-    } else {
-        *hi
-    };
-    ensure_index(*lo, len as i128, who)?;
-    ensure_index(end, len as i128, who)?;
-    if *lo > end {
-        return Err(StdError::Error(EvalError::Trap(format!(
-            "{who} range lowerBound exceeds upperBound"
-        ))));
-    }
-    Ok((*lo as usize, end as usize))
+    collection_range_bounds(range, len, who).map_err(StdError::Error)
 }
 
 fn array_arg(value: &SwiftValue, who: &str) -> Result<Vec<SwiftValue>, StdError> {
@@ -130,6 +123,31 @@ fn array_arg(value: &SwiftValue, who: &str) -> Result<Vec<SwiftValue>, StdError>
             other.type_name()
         )))),
     }
+}
+
+fn values(args: Vec<Arg>) -> Vec<SwiftValue> {
+    args.into_iter().map(|a| a.value).collect()
+}
+
+fn contents_arg(args: &[Arg], method: &str) -> Result<Option<Vec<SwiftValue>>, StdError> {
+    let mut contents = None;
+    for arg in args {
+        if arg.label.as_deref() == Some("contentsOf") {
+            if contents.is_some() {
+                return Err(StdError::Error(EvalError::Type(format!(
+                    "Array.{method} called with duplicate contentsOf:"
+                ))));
+            }
+            let value = materialize_builtin_sequence(&arg.value).ok_or_else(|| {
+                StdError::Error(EvalError::Type(format!(
+                    "cannot use {} as a sequence for contentsOf:",
+                    arg.value.type_name()
+                )))
+            })?;
+            contents = Some(value);
+        }
+    }
+    Ok(contents)
 }
 
 /// `Array.append(_:)` — push one element onto the end, in place.
@@ -156,6 +174,31 @@ fn append(
         result: SwiftValue::Void,
         receiver: SwiftValue::Array(items),
     })
+}
+
+/// `Array.append(_:)` / `Array.append(contentsOf:)` — label-aware overloads.
+fn append_labeled(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let Some(extra) = contents_arg(&args, "append")? else {
+        return append(ctx, recv, values(args)).map(Some);
+    };
+    if args
+        .iter()
+        .any(|a| a.label.as_deref() != Some("contentsOf"))
+    {
+        return Err(StdError::Error(EvalError::Type(
+            "Array.append(contentsOf:) takes only contentsOf:".into(),
+        )));
+    }
+    let mut items = items(recv)?;
+    Rc::make_mut(&mut items).extend(extra);
+    Ok(Some(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(items),
+    }))
 }
 
 /// `Array.sort()` / `Array.sort(by:)` — sort in place.
@@ -199,6 +242,52 @@ fn insert(
         result: SwiftValue::Void,
         receiver: SwiftValue::Array(v),
     })
+}
+
+/// `Array.insert(_:at:)` / `Array.insert(contentsOf:at:)` label-aware overloads.
+fn insert_labeled(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let Some(extra) = contents_arg(&args, "insert")? else {
+        return insert(ctx, recv, values(args)).map(Some);
+    };
+    let mut at = None;
+    for arg in &args {
+        match arg.label.as_deref() {
+            Some("contentsOf") => {}
+            Some("at") => match &arg.value {
+                SwiftValue::Int(i) if i.raw >= 0 && at.is_none() => at = Some(i.raw as usize),
+                _ => {
+                    return Err(StdError::Error(EvalError::Type(
+                        "insert(contentsOf:at:) needs one non-negative at: index".into(),
+                    )))
+                }
+            },
+            _ => {
+                return Err(StdError::Error(EvalError::Type(
+                    "Array.insert(contentsOf:at:) takes contentsOf: and at:".into(),
+                )))
+            }
+        }
+    }
+    let at = at.ok_or_else(|| {
+        StdError::Error(EvalError::Type(
+            "insert(contentsOf:at:) needs an at: index".into(),
+        ))
+    })?;
+    let mut items = items(recv)?;
+    if at > items.len() {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "insert index {at} out of range"
+        ))));
+    }
+    Rc::make_mut(&mut items).splice(at..at, extra);
+    Ok(Some(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Array(items),
+    }))
 }
 
 /// `Array.remove(at:)` — remove and return the element at an index.
