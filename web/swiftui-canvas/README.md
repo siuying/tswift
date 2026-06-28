@@ -55,6 +55,23 @@ canvas.addEventListener("swiftui-event", async (e) => {
 The driver (`renderTree`/`dispatch`) is transport-agnostic: in the browser it is
 the wasm `SwiftUISession`; offline it is `tswift swiftui render|dispatch`.
 
+## Attributes
+
+The element is configured by two optional attributes (both pure CSS, so they can
+be set or changed at any time):
+
+| Attribute | Values | Default | Effect |
+| --- | --- | --- | --- |
+| `appearance` | `light` \| `dark` | auto (follows `prefers-color-scheme`) | Pins the light/dark color variables and `color-scheme` (so native controls match), regardless of the OS setting. |
+| `theme` | `ios` | the minimal default skin | Restyles the control primitives (switch, rounded field, filled slider, segmented stepper, tinted picker, blue text buttons) to resemble iOS. The iOS palette adapts to the active appearance. |
+
+```html
+<swiftui-canvas appearance="light" theme="ios"></swiftui-canvas>
+```
+
+A SwiftUI modifier (e.g. `.foregroundColor(_)`, `.background(_)`) is applied as
+an inline style and always wins over a theme rule.
+
 ## Development
 
 ```sh
