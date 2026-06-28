@@ -23,8 +23,17 @@ do {
     print("caught error")
 }
 
-// `rethrows` composes: a rethrows wrapper around another rethrows function.
-func twice(_ f: () throws -> Int) rethrows -> Int {
-    return try f() + f()
+// `rethrows` composes: a rethrows wrapper that forwards to another rethrows
+// function (`applyTwice`). Non-throwing arg -> no `try` needed at either layer.
+func applyTwiceWrapper(_ f: (Int) throws -> Int, _ x: Int) rethrows -> Int {
+    return try applyTwice(f, to: x)
 }
-print(twice { 21 })
+print(applyTwiceWrapper({ $0 * 10 }, 2))
+
+// Throwing arg propagates through both rethrows layers and is caught.
+do {
+    print(try applyTwiceWrapper(doubleOrThrow, 80))
+    print("unreached")
+} catch {
+    print("caught nested")
+}
