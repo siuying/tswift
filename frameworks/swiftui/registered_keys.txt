@@ -4,10 +4,15 @@ Circle.init
 Divider.init
 Ellipse.init
 ForEach.init
+Form.init
+Grid.init
+GridRow.init
 Group.init
 HStack.init
 Image.init
 Label.init
+LazyHStack.init
+LazyVStack.init
 List.init
 Picker.init
 ProgressView.init

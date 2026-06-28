@@ -179,6 +179,17 @@ public enum ViewFactory {
                 return AnyView(ProgressView(value: value, total: total))
             }
             return AnyView(ProgressView())
+        // C6 — lazy stacks, grids, Form.
+        case "LazyVStack":
+            return AnyView(LazyVStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+        case "LazyHStack":
+            return AnyView(LazyHStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+        case "Grid":
+            return AnyView(Grid { renderChildren(node, sink) })
+        case "GridRow":
+            return AnyView(GridRow { renderChildren(node, sink) })
+        case "Form":
+            return AnyView(Form { renderChildren(node, sink) })
 
         case "ForEach":
             return AnyView(renderChildren(node, sink))
