@@ -6721,6 +6721,29 @@ impl<'w> Interpreter<'w> {
         }
         let type_binding = self.infer_type_bindings(&generics, &params, &args);
         self.type_bindings.push(type_binding);
+        // For a `mutating` struct method with an lvalue receiver, take the
+        // receiver out of its storage so `self` becomes its sole owner *aside
+        // from other logical bindings* (the `var y = x` aliases). `make_mut`
+        // then clones the `StructObj` — retaining its reference-type fields —
+        // exactly when the value is shared, so a class-backed CoW buffer reads
+        // the right answer from `isKnownUniquelyReferenced`. A unique value
+        // keeps strong count 1 and is mutated in place. The end-of-call
+        // write-back restores the storage we vacated here.
+        let this = if mutating && matches!(this, SwiftValue::Struct(_)) {
+            if let Some(place) = &base_place {
+                drop(this);
+                let mut taken = self.read_place(place)?;
+                self.write_place(place, SwiftValue::Void)?;
+                if let SwiftValue::Struct(rc) = &mut taken {
+                    let _ = Rc::make_mut(rc);
+                }
+                taken
+            } else {
+                this
+            }
+        } else {
+            this
+        };
         // Run isolated from the caller's locals: the body sees globals, its
         // parameters, and `self`/its members, but not enclosing variables.
         let saved_env = self.env.enter_isolated();

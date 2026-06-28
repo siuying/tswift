@@ -1,6 +1,9 @@
-# Known limitation: `isKnownUniquelyReferenced` and struct-embedded CoW
+# `isKnownUniquelyReferenced` and struct-embedded CoW
 
-**Status:** documented gap (not human-blocked; deferred as an architectural change).
+**Status:** RESOLVED. The struct-buffer idiom below now reports the correct
+uniqueness. See `crates/tswift-cli/tests/fixtures/known_uniquely_referenced.swift`.
+
+The original gap and its analysis are kept below for context.
 
 ## What works
 
@@ -18,10 +21,22 @@ print(isKnownUniquelyReferenced(&box)) // false
 
 This is covered by `crates/tswift-cli/tests/fixtures/stdlib_s1_utilities.swift`.
 
-## What does not work
+## The fix
+
+`call_struct_method` (`crates/tswift-core/src/interp.rs`) now, for a `mutating`
+struct method with an lvalue receiver, **takes** the receiver out of its storage
+and runs `Rc::make_mut` on the `StructObj` before binding `self`. Vacating the
+storage slot means `self` is the sole owner *modulo other logical bindings*
+(`var y = x` aliases), so `make_mut` clones — and retains the reference-type
+fields — exactly when the value is logically shared. A unique value keeps strong
+count 1 and is mutated in place. The end-of-call write-back restores the vacated
+slot. This realises **Option 2** below without the brittle `== 2` calibration,
+because the take removes the receiver's own storage reference from the count.
+
+## Previously broken (now fixed)
 
 The idiomatic copy-on-write *buffer* pattern — a `struct` wrapping a `class`
-storage object — returns the wrong answer:
+storage object — used to return the wrong answer:
 
 ```swift
 struct Buffer {
