@@ -8217,8 +8217,18 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
 /// slice bounds against a collection of length `len`. Traps (Swift `fatalError`)
 /// when the range escapes `0...len` or is inverted.
 fn slice_bounds(lo: i128, hi: i128, inclusive: bool, len: usize) -> Result<(usize, usize), Signal> {
+    // Validate against the *raw* bounds first: both `a..<b` and `a...b` require
+    // `b >= a` (a closed `2...1` is inverted and traps). Computing `end` before
+    // this check would mask `inclusive` inversions, since `hi + 1` can lift an
+    // inverted upper bound back to `== lo`.
+    if lo < 0 || hi < lo {
+        return Err(trap(format!(
+            "invalid range {lo}..{}{hi} for collection of length {len}",
+            if inclusive { "=" } else { "<" }
+        )));
+    }
     let end = if inclusive { hi + 1 } else { hi };
-    if lo < 0 || end < lo || end > len as i128 {
+    if end > len as i128 {
         return Err(trap(format!(
             "range {lo}..{}{hi} out of bounds for collection of length {len}",
             if inclusive { "=" } else { "<" }
