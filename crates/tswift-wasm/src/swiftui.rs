@@ -60,6 +60,8 @@ pub fn swiftui_dispatch(id: &str, event: &str, value: &str) -> String {
         // Snapshot the tree before the event so we can diff it against the
         // re-rendered tree and emit a minimal patch stream (the same engine the
         // `tswift swiftui dispatch` CLI uses).
+        // Defensive: `SESSION` is only populated after `compile_impl` renders,
+        // so a session here has always rendered at least once.
         let Some(before) = session.current_tree().cloned() else {
             return dispatch_error("session has not rendered yet");
         };
@@ -290,5 +292,6 @@ struct CounterView: View {
         SESSION.with(|s| *s.borrow_mut() = None);
         let json = swiftui_dispatch("0", "tap", "");
         assert!(json.contains("\"ok\":false"), "json={json}");
+        assert!(json.contains("\"patches\":null"), "json={json}");
     }
 }
