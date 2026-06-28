@@ -83,6 +83,7 @@ export class SwiftUICanvas extends HTMLElement {
         font-family: -apple-system, system-ui, sans-serif;
         --ios-tint: #007aff;
         --ios-switch-off: #e9e9ea;
+        --ios-toggle-on: #34c759;
         --ios-track: #d1d1d6;
         --ios-field-border: #c6c6c8;
         --ios-fill: rgba(120, 120, 128, 0.12);
@@ -93,6 +94,7 @@ export class SwiftUICanvas extends HTMLElement {
         :host([theme="ios"]:not([appearance="light"])) {
           --ios-tint: #0a84ff;
           --ios-switch-off: #39393d;
+          --ios-toggle-on: #30d158;
           --ios-track: #48484a;
           --ios-field-border: #38383a;
           --ios-fill: rgba(120, 120, 128, 0.24);
@@ -102,6 +104,7 @@ export class SwiftUICanvas extends HTMLElement {
       :host([theme="ios"][appearance="dark"]) {
         --ios-tint: #0a84ff;
         --ios-switch-off: #39393d;
+        --ios-toggle-on: #30d158;
         --ios-track: #48484a;
         --ios-field-border: #38383a;
         --ios-fill: rgba(120, 120, 128, 0.24);
@@ -142,7 +145,7 @@ export class SwiftUICanvas extends HTMLElement {
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
         transition: transform 0.2s ease;
       }
-      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked { background: #34c759; }
+      :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked { background: var(--ios-toggle-on); }
       :host([theme="ios"]) [data-kind="Toggle"] input[type="checkbox"]:checked::after { transform: translateX(20px); }
 
       /* TextField / SecureField → rounded field. Higher specificity than the
