@@ -8,6 +8,4 @@ description = "tswift SwiftUI render host: view primitives evaluated into a host
 
 [dependencies]
 tswift-core.workspace = true
-
-[dev-dependencies]
 tswift-frontend.workspace = true

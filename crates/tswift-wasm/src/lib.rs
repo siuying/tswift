@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 
+use tswift_core::result_json::{self, CompileReport, RunReport};
 use tswift_core::Interpreter;
 use tswift_frontend::Analysis;
 use wasm_bindgen::prelude::*;
 
 mod swiftui;
+
+const BACKEND: &str = "wasm";
 
 /// Compile and run a single Swift source string, returning a JSON result.
 ///
@@ -22,10 +25,15 @@ fn run_swift_impl(source: &str) -> String {
     let analysis = match Analysis::analyze(source, "main.swift") {
         Ok(analysis) => analysis,
         Err(error) => {
-            return format!(
-                "{{\"ok\":false,\"backend\":\"wasm\",\"compile\":{{\"ok\":false,\"stderr\":\"{}\",\"astPreview\":\"\",\"elapsedMs\":{}}},\"run\":null}}",
-                escape_json(&error.to_string()),
-                elapsed_ms(started)
+            return result_json::result(
+                BACKEND,
+                CompileReport {
+                    ok: false,
+                    diagnostics: &error.to_string(),
+                    ast_preview: "",
+                    elapsed_ms: elapsed_ms(started),
+                },
+                None,
             );
         }
     };
@@ -51,11 +59,15 @@ fn run_swift_impl(source: &str) -> String {
     // An error-severity diagnostic (e.g. `#error`, a type error) fails
     // compilation: report it as such and never enter the run phase.
     if had_error {
-        return format!(
-            "{{\"ok\":false,\"backend\":\"wasm\",\"compile\":{{\"ok\":false,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":null}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, 6_000)),
-            compile_elapsed
+        return result_json::result(
+            BACKEND,
+            CompileReport {
+                ok: false,
+                diagnostics: &diagnostics,
+                ast_preview: &ast_preview,
+                elapsed_ms: compile_elapsed,
+            },
+            None,
         );
     }
 
@@ -71,60 +83,25 @@ fn run_swift_impl(source: &str) -> String {
     let run_elapsed = elapsed_ms(run_started);
     let stdout = String::from_utf8_lossy(&stdout);
 
-    match run_result {
-        Ok(()) => format!(
-            "{{\"ok\":true,\"backend\":\"wasm\",\"compile\":{{\"ok\":true,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":{{\"ok\":true,\"stdout\":\"{}\",\"stderr\":\"\",\"elapsedMs\":{}}}}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, 6_000)),
-            compile_elapsed,
-            escape_json(&truncate(&stdout, 24_000)),
-            run_elapsed
-        ),
-        Err(error) => format!(
-            "{{\"ok\":false,\"backend\":\"wasm\",\"compile\":{{\"ok\":true,\"stderr\":\"{}\",\"astPreview\":\"{}\",\"elapsedMs\":{}}},\"run\":{{\"ok\":false,\"stdout\":\"{}\",\"stderr\":\"error: {}\",\"elapsedMs\":{}}}}}",
-            escape_json(&diagnostics),
-            escape_json(&truncate(&ast_preview, 6_000)),
-            compile_elapsed,
-            escape_json(&truncate(&stdout, 24_000)),
-            escape_json(&error.to_string()),
-            run_elapsed
-        ),
-    }
-}
-
-fn truncate(value: &str, max: usize) -> String {
-    if value.len() <= max {
-        return value.to_string();
-    }
-
-    // Slice on a UTF-8 char boundary at or before `max`; a raw byte slice would
-    // panic when the limit falls inside a multibyte character.
-    let mut end = max;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    format!(
-        "{}\n\n[prototype truncated {} bytes]",
-        &value[..end],
-        value.len() - end
+    let run_stderr = match &run_result {
+        Ok(()) => String::new(),
+        Err(error) => format!("error: {}", error),
+    };
+    result_json::result(
+        BACKEND,
+        CompileReport {
+            ok: true,
+            diagnostics: &diagnostics,
+            ast_preview: &ast_preview,
+            elapsed_ms: compile_elapsed,
+        },
+        Some(RunReport {
+            ok: run_result.is_ok(),
+            stdout: &stdout,
+            stderr: &run_stderr,
+            elapsed_ms: run_elapsed,
+        }),
     )
-}
-
-pub(crate) fn escape_json(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04x}", ch as u32)),
-            ch => escaped.push(ch),
-        }
-    }
-    escaped
 }
 
 // ── Platform shims ──────────────────────────────────────────────────────────
@@ -261,20 +238,6 @@ mod tests {
         // compile.ok is the first "ok" field and must be true.
         assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
         assert!(json.contains("\"run\":{\"ok\":false"), "json={json}");
-    }
-
-    #[test]
-    fn truncate_respects_utf8_boundaries() {
-        // A multibyte character straddling the limit must not panic; truncation
-        // falls back to the previous char boundary.
-        let s = "a\u{1F600}b"; // 'a' + 4-byte emoji + 'b'
-                               // max=2 lands inside the emoji (bytes 1..5); expect only "a" kept.
-        let out = truncate(s, 2);
-        assert!(out.starts_with('a'), "out={out}");
-        assert!(out.contains("truncated"), "out={out}");
-        assert!(!out.contains('\u{1F600}'), "out={out}");
-        // A limit on a boundary keeps the whole prefix.
-        assert_eq!(truncate(s, s.len()), s);
     }
 
     #[test]

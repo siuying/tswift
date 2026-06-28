@@ -25,6 +25,7 @@ use tswift_core::{
     Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn, StructObj,
     SwiftValue,
 };
+use tswift_frontend::{Analysis, Node, NodeKind};
 
 /// Field name holding a view's ordered modifier list.
 pub const MODIFIERS_FIELD: &str = "_modifiers";
@@ -1058,6 +1059,70 @@ pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
         }
         _ => None,
     }
+}
+
+/// Find the program's root `View` struct to render: the one no other view
+/// *constructs* inside a view body.
+///
+/// In a composed scene every sub-view is referenced by a `CallExpr` whose callee
+/// is an `IdentExpr` (`InfoRow(...)`), so the top-level screen is the View whose
+/// name never appears as such a callee. This avoids picking a parameterised
+/// child (which can't be instantiated with no arguments). Falls back to the
+/// first View struct when the references are cyclic or there is only one.
+///
+/// The canonical home for this heuristic — the CLI, the wasm host, and the
+/// native FFI host all pick the same top-level screen by calling here.
+pub fn find_root_view(analysis: &Analysis) -> Option<String> {
+    use std::collections::HashSet;
+    let mut views: Vec<String> = Vec::new();
+    let mut constructed: HashSet<String> = HashSet::new();
+
+    fn callee_name(node: &Node<'_>) -> Option<String> {
+        if node.kind() != NodeKind::CallExpr {
+            return None;
+        }
+        let callee = node.children().next()?;
+        if callee.kind() == NodeKind::IdentExpr {
+            callee.text()
+        } else {
+            None
+        }
+    }
+
+    fn walk(
+        node: Node<'_>,
+        in_view: bool,
+        views: &mut Vec<String>,
+        constructed: &mut HashSet<String>,
+    ) {
+        let mut child_in_view = in_view;
+        if node.kind() == NodeKind::StructDecl {
+            let conforms_view = node
+                .children()
+                .any(|c| c.kind() == NodeKind::TypeRef && c.text().as_deref() == Some("View"));
+            if conforms_view {
+                if let Some(name) = node.text() {
+                    views.push(name);
+                }
+                child_in_view = true;
+            }
+        }
+        if in_view {
+            if let Some(name) = callee_name(&node) {
+                constructed.insert(name);
+            }
+        }
+        for child in node.children() {
+            walk(child, child_in_view, views, constructed);
+        }
+    }
+
+    walk(analysis.root(), false, &mut views, &mut constructed);
+    views
+        .iter()
+        .find(|v| !constructed.contains(*v))
+        .or_else(|| views.first())
+        .cloned()
 }
 
 /// A node's stable identity key ([`KEY_FIELD`]), set on `ForEach`-generated

@@ -12,6 +12,7 @@ mod interp;
 pub mod json;
 mod ops;
 pub mod regex;
+pub mod result_json;
 mod stdlib;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod suspend;
