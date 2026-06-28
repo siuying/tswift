@@ -430,7 +430,8 @@ fn stable_hash(value: &SwiftValue) -> u64 {
         SwiftValue::Function(id)
         | SwiftValue::Closure(id)
         | SwiftValue::Task(id)
-        | SwiftValue::TaskGroup(id) => mix(0xa0, *id as u64),
+        | SwiftValue::TaskGroup(id)
+        | SwiftValue::Continuation(id) => mix(0xa0, *id as u64),
         SwiftValue::Struct(obj) => obj.fields.iter().fold(0xb0, |h, (name, field)| {
             mix(
                 mix(h, stable_hash(&SwiftValue::Str(name.clone()))),

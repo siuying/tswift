@@ -370,6 +370,10 @@ pub struct Interpreter<'w> {
     /// `withTaskGroup` groups: each holds the task ids added via `addTask`,
     /// drained in order by `for await`.
     groups: Vec<Vec<usize>>,
+    /// `with*Continuation` slots: each holds the outcome a `resume(...)` call
+    /// stored (`Some(Ok)` for a value, `Some(Err)` for `resume(throwing:)`),
+    /// or `None` while the continuation is still pending.
+    continuations: Vec<Option<Eval>>,
     /// Source file name for `#file`.
     filename: String,
     depth: usize,
@@ -457,6 +461,7 @@ impl<'w> Interpreter<'w> {
             main_type: None,
             tasks: Vec::new(),
             groups: Vec::new(),
+            continuations: Vec::new(),
             filename: "main.swift".into(),
             depth: 0,
             // SplitMix64 tolerates any seed (including 0), so the wall-clock
@@ -3099,7 +3104,39 @@ impl<'w> Interpreter<'w> {
                 self.drain_group(gid)?;
                 result.map(Some)
             }
+            "withCheckedContinuation"
+            | "withUnsafeContinuation"
+            | "withCheckedThrowingContinuation"
+            | "withUnsafeThrowingContinuation" => self.eval_with_continuation(arg_nodes).map(Some),
             _ => Ok(None),
+        }
+    }
+
+    /// `await with*Continuation { continuation in ... }`: hand the body a
+    /// continuation handle, run it, then read back whatever `resume(...)` stored.
+    ///
+    /// Our executor runs to completion at each `await` (ADR-0005), so the body
+    /// either resumes the continuation inline or hands it to a spawned `Task`.
+    /// After the body returns we drain still-pending tasks (giving such a task
+    /// a chance to resume) before reading the slot. An unresumed continuation
+    /// traps, mirroring `CheckedContinuation`'s misuse diagnostic.
+    fn eval_with_continuation(&mut self, arg_nodes: &[Node<'static>]) -> Eval {
+        let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
+            EvalError::Unsupported("withCheckedContinuation without a body closure".into())
+        })?;
+        let cid = self.continuations.len();
+        self.continuations.push(None);
+        self.call_closure(body, vec![SwiftValue::Continuation(cid)])?;
+        if self.continuations[cid].is_none() {
+            // The body may have parked the continuation in a Task; run pending
+            // tasks so it gets resumed before we give up.
+            self.drain_pending_tasks()?;
+        }
+        match self.continuations[cid].take() {
+            Some(result) => result,
+            None => Err(trap(
+                "continuation was not resumed before with*Continuation returned".into(),
+            )),
         }
     }
 
@@ -3147,7 +3184,48 @@ impl<'w> Interpreter<'w> {
                     _ => Ok(None),
                 }
             }
+            SwiftValue::Continuation(cid) => {
+                let cid = *cid;
+                if method != "resume" {
+                    return Ok(None);
+                }
+                let args = self.eval_args(arg_nodes)?;
+                let outcome = self.continuation_outcome(&args)?;
+                // `CheckedContinuation` traps on a second resume; mirror that.
+                if self.continuations[cid].is_some() {
+                    return Err(trap("continuation resumed more than once".into()));
+                }
+                self.continuations[cid] = Some(outcome);
+                Ok(Some(SwiftValue::Void))
+            }
             _ => Ok(None),
+        }
+    }
+
+    /// Decode a continuation `resume(...)` call's arguments into the outcome to
+    /// store: `resume()` / `resume(returning:)` yield a value; `resume(throwing:)`
+    /// a thrown error; `resume(with: .success/.failure)` either, per the `Result`.
+    fn continuation_outcome(&self, args: &[CallArg]) -> Result<Eval, Signal> {
+        match args.first() {
+            // `resume()` — Void continuation.
+            None => Ok(Ok(SwiftValue::Void)),
+            Some(arg) => match arg.label.as_deref() {
+                Some("throwing") => Ok(Err(Signal::Throw(arg.value.clone()))),
+                Some("with") => match &arg.value {
+                    SwiftValue::Enum(e) if e.case == "success" => {
+                        Ok(Ok(e.payload.first().cloned().unwrap_or(SwiftValue::Void)))
+                    }
+                    SwiftValue::Enum(e) if e.case == "failure" => Ok(Err(Signal::Throw(
+                        e.payload.first().cloned().unwrap_or(SwiftValue::Void),
+                    ))),
+                    other => Err(trap(format!(
+                        "resume(with:) expects a Result, got {}",
+                        other.type_name()
+                    ))),
+                },
+                // `resume(returning:)` or an unlabeled value.
+                _ => Ok(Ok(arg.value.clone())),
+            },
         }
     }
 
@@ -9040,6 +9118,77 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         )
         .unwrap();
         assert_eq!(out, "6\n");
+    }
+
+    #[test]
+    fn checked_continuation_resumes_inline() {
+        let out = run(
+            "func value() async -> Int {\n  await withCheckedContinuation { c in\n    c.resume(returning: 42)\n  }\n}\nfunc run() async { print(await value()) }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "42\n");
+    }
+
+    #[test]
+    fn unsafe_continuation_resumes_from_a_spawned_task() {
+        // The body parks the continuation in a `Task`; draining pending tasks
+        // resumes it before `withUnsafeContinuation` reads the slot.
+        let out = run(
+            "func value() async -> Int {\n  await withUnsafeContinuation { c in\n    Task { c.resume(returning: 7) }\n  }\n}\nfunc run() async { print(await value()) }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "7\n");
+    }
+
+    #[test]
+    fn throwing_continuation_propagates_resume_throwing() {
+        let out = run(
+            "struct Boom: Error {}\nfunc value() async throws -> Int {\n  try await withCheckedThrowingContinuation { c in\n    c.resume(throwing: Boom())\n  }\n}\nfunc run() async {\n  do { _ = try await value() } catch { print(\"caught\") }\n}\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "caught\n");
+    }
+
+    #[test]
+    fn continuation_resume_with_result_unwraps_success() {
+        let out = run(
+            "func value() async -> Int {\n  await withCheckedContinuation { c in\n    c.resume(with: .success(99))\n  }\n}\nfunc run() async { print(await value()) }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "99\n");
+    }
+
+    #[test]
+    fn void_continuation_resumes_with_no_value() {
+        let out = run(
+            "func wait() async {\n  await withCheckedContinuation { c in\n    c.resume()\n  }\n}\nfunc run() async { await wait(); print(\"done\") }\nrun()\n",
+        )
+        .unwrap();
+        assert_eq!(out, "done\n");
+    }
+
+    #[test]
+    fn unresumed_continuation_traps() {
+        let err = run(
+            "func value() async -> Int {\n  await withCheckedContinuation { c in\n    let _ = 0\n  }\n}\nfunc run() async { print(await value()) }\nrun()\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Trap(ref m) if m.contains("not resumed")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn double_resume_traps() {
+        let err = run(
+            "func value() async -> Int {\n  await withCheckedContinuation { c in\n    c.resume(returning: 1)\n    c.resume(returning: 2)\n  }\n}\nfunc run() async { print(await value()) }\nrun()\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Trap(ref m) if m.contains("more than once")),
+            "got {err:?}"
+        );
     }
 
     #[test]

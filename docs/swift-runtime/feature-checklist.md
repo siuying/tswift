@@ -302,7 +302,7 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 | [~] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
 | [~] | `Sendable` checking | ✅ | ★★★ | R6+ |
 | [x] | `AsyncSequence` / `for await` | ⚠️ | ★★★★ | R6+ |
-| [ ] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |
+| [x] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |
 | [ ] | Strict concurrency (Swift 6 mode) | ✅ | ★★★ | R6+ |
 
 **Implemented this milestone (#12):** `async`/`await`, `async let`,
@@ -311,10 +311,13 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 (serialized for free on one thread), `@MainActor`/global-actor annotations
 (accepted; run on the cooperative main), custom `AsyncSequence`/`for await`.
 `Sendable` and `@Sendable` are **accepted and parsed but not statically checked**
-(every value is effectively sendable on one thread). **Gaps:** preemptive
-ordering / `Task.yield` interleaving (the `corosensei` primitive in
-`suspend.rs` is the migration path), continuations, and strict-concurrency
-diagnostics. See ADR-0005 for the fidelity boundary.
+(every value is effectively sendable on one thread), plus
+`withCheckedContinuation`/`withUnsafeContinuation` (and their throwing variants)
+with `resume(returning:)`/`resume(throwing:)`/`resume(with:)`/`resume()`, resumed
+inline or from a spawned `Task` (drained before the slot is read). **Gaps:**
+preemptive ordering / `Task.yield` interleaving (the `corosensei` primitive in
+`suspend.rs` is the migration path) and strict-concurrency diagnostics. See
+ADR-0005 for the fidelity boundary.
 
 ---
 

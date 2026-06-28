@@ -193,6 +193,10 @@ pub enum SwiftValue {
     /// group table. `addTask` appends children; `for await` drains their
     /// results.
     TaskGroup(usize),
+    /// A `withCheckedContinuation`/`withUnsafeContinuation` continuation: an
+    /// index into the interpreter's continuation table. `resume(...)` fills the
+    /// slot; the enclosing `with*Continuation` reads it back as its result.
+    Continuation(usize),
     /// A metatype value, e.g. `Int.self` or `type(of: x)`. Carries the spelled
     /// type name; printing it renders the bare type name like Swift.
     Metatype(String),
@@ -305,6 +309,7 @@ impl SwiftValue {
             SwiftValue::Closure(_) => "closure".into(),
             SwiftValue::Task(_) => "Task".into(),
             SwiftValue::TaskGroup(_) => "TaskGroup".into(),
+            SwiftValue::Continuation(_) => "Continuation".into(),
             SwiftValue::Metatype(name) => format!("{name}.Type"),
         }
     }
@@ -449,6 +454,7 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Closure(_) => write!(f, "(Function)"),
             SwiftValue::Task(_) => write!(f, "Task"),
             SwiftValue::TaskGroup(_) => write!(f, "TaskGroup"),
+            SwiftValue::Continuation(_) => write!(f, "Continuation"),
             SwiftValue::Metatype(name) => write!(f, "{name}"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;
