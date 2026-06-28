@@ -1,109 +1,123 @@
 ---
 layout: ../../layouts/Doc.astro
 title: SwiftUI
-description: SwiftUI implementation roadmap and plan for the tswift runtime.
+description: SwiftUI implementation status and roadmap for the tswift runtime.
 section: status
 ---
 
 import Mermaid from '../../components/Mermaid.astro';
+import CoverageBar from '../../components/CoverageBar.astro';
 
 # SwiftUI
 
-SwiftUI is Apple's declarative UI framework. Implementing it in tswift is a
-multi-stage challenge involving language features, a layout engine, and a
-platform rendering target.
+SwiftUI is Apple's declarative UI framework. tswift renders it **without a Swift
+toolchain, LLVM, or native compilation**: the interpreter instantiates a `View`,
+runs `body`, produces a host-neutral **UIIR** view tree, diffs it into a **patch
+stream**, and a dependency-free host applies those patches to real UI.
 
-**Current status: not started.** SwiftUI is planned for after Tier 8
-(macros/result builders) is complete.
+**Current status: foundational tiers shipped.** The Counter slice (v1) plus
+Tiers 2–5 — composition, dynamic collections, input controls, and observation —
+are implemented and gated by deterministic goldens. Async (Tier 6), layout /
+geometry (Tier 7), and navigation (Tier 8) are not started.
+
+<CoverageBar label="SwiftUI surface (types & members)" done={29} total={658} href="/status/swiftui" />
+
+The surface number counts individual API members across the iOS SDK SwiftUI
+interface; it is low because each shipped view exposes many initializers and
+modifiers we don't need yet. The **functional** coverage — enough to render and
+interact with real view hierarchies — is much further along, as the tiers below
+show.
 
 ---
 
-## Why it's hard
+## How it renders
 
-<Mermaid caption="SwiftUI dependencies on unimplemented features">
+<Mermaid caption="tswift SwiftUI pipeline (shipped through Tier 5)">
 {`
-flowchart TD
-    swiftui["SwiftUI\\nruntime support"]
+flowchart LR
+    src["Swift View\\nsource"]
+    interp["Interpreter\\n+ tswift-swiftui\\nbuiltins"]
+    tree["Render-node tree\\n(owns @State,\\nkeyed identity)"]
+    uiir["UIIR\\nview tree"]
+    diff["Rust diff\\nengine"]
+    host["Host applier\\n(web + iOS)"]
 
-    rb["@resultBuilder\\n(Tier 8 — macros)\\n⬜ Not implemented"]
-    macros["Macro expansion engine\\n⬜ Not implemented"]
-    layout["Layout engine\\n⬜ Not designed"]
-    render["Rendering target\\n(DOM / Canvas / Metal)\\n⬜ TBD"]
-    obs["Observable / @State\\n@Binding / @StateObject\\n⬜ Not implemented"]
+    src --> interp --> tree --> uiir --> diff --> host
+    host -- "events" --> interp
 
-    rb --> swiftui
-    macros --> rb
-    layout --> swiftui
-    render --> swiftui
-    obs --> swiftui
-
-    style swiftui fill:#1a0d2e,stroke:#a855f7,color:#eeeef5
-    style rb      fill:#1e1e27,stroke:#ff7070,color:#ff9999
-    style macros  fill:#1e1e27,stroke:#ff7070,color:#ff9999
-    style layout  fill:#1e1e27,stroke:#888,color:#8888a0
-    style render  fill:#1e1e27,stroke:#888,color:#8888a0
-    style obs     fill:#1e1e27,stroke:#ff7070,color:#ff9999
+    style src   fill:#1a0d2e,stroke:#a855f7,color:#eeeef5
+    style host  fill:#0d2e1a,stroke:#34c759,color:#eeeef5
 `}
 </Mermaid>
 
----
-
-## Blockers
-
-### 1. `@resultBuilder` (Tier 8)
-
-`@ViewBuilder` is a result builder — syntactic sugar that transforms a series
-of view expressions into a single `some View`. The Swift compiler expands this
-at compile time using the macro system.
-
-tswift does not yet have a macro-expansion engine. This is the **primary
-blocker** for SwiftUI.
-
-### 2. Property wrapper macros: `@State`, `@Binding`, `@ObservedObject`
-
-SwiftUI's reactivity system relies on property wrappers backed by observable
-stores. While `@propertyWrapper` is partially implemented in tswift, the
-observation side (e.g. `Observation.framework` with `@Observable`) requires
-the `@attached` macro system.
-
-### 3. Layout engine
-
-SwiftUI's layout is a tree of `Layout` protocol conformances. A faithful
-implementation needs:
-
-- `Layout` protocol: `sizeThatFits`, `placeSubviews`
-- Geometry proxies: `GeometryReader`, `GeometryProxy`
-- Alignment guides
-
-For a headless (testing) target, an approximation that returns bounding boxes
-is sufficient.
-
-### 4. Rendering target
-
-On the web, SwiftUI views would need to map to DOM elements or a `<canvas>`.
-This is a significant engineering effort separate from the runtime.
+The same patch protocol drives two hosts: the web `<swiftui-canvas>` custom
+element, and a native iOS SwiftUI applier used for screenshot verification.
 
 ---
 
-## Planned phases
+## Tier roadmap
 
-| Phase | Goal |
-|-------|------|
-| **SwiftUI-0** | `@resultBuilder` language feature (unblocks `@ViewBuilder`) |
-| **SwiftUI-1** | `View` protocol + basic view hierarchy (headless) |
-| **SwiftUI-2** | `@State`, `@Binding`, `@Observable` — property wrappers |
-| **SwiftUI-3** | Layout engine (`VStack`, `HStack`, `ZStack`, `Spacer`) |
-| **SwiftUI-4** | Text, Image, Button, List, NavigationStack |
-| **SwiftUI-5** | DOM rendering target for the web playground |
+| Tier | Mechanism | Status |
+|------|-----------|--------|
+| **v1** | Counter slice — `VStack`/`Text`/`Button`, `@State`, modifiers, full render→diff→patch loop | ✅ |
+| **Tier 2** | View composition & demo tabs (Greeting/Stack/Profile) — `HStack`/`ZStack`/`Spacer`, shapes, `Toggle` | ✅ |
+| **Tier 3** | Dynamic collections & identity — `List`/`Section`/`ForEach`, keyed diff with `move`/`insert`/`remove` | ✅ |
+| **Tier 4** | Bindings & input controls — `TextField`/`SecureField`/`Slider`/`Stepper`/`Picker` | ✅ |
+| **Tier 5** | Observation & shared model — `ObservableObject`/`@Published`/`@StateObject`/`@EnvironmentObject` | 🟡 |
+| **Tier 6** | `Task` & async push channel | ⬜ |
+| **Tier 7** | Layout & geometry — `GeometryReader`, alignment | ⬜ |
+| **Tier 8** | Navigation & presentation — `NavigationStack`, sheets | ⬜ |
+
+Tier 5 is partial: observation is implemented; `@Environment(\.keyPath)` is the
+one deferred item.
 
 ---
 
-## What you can do now
+## Views & controls implemented
 
-While SwiftUI itself isn't supported, you can already run:
+| Category | Types |
+|----------|-------|
+| **Layout** | `VStack` ✅ · `HStack` ✅ · `ZStack` ✅ · `Spacer` ✅ |
+| **Collections** | `List` ✅ · `Section` ✅ · `ForEach` ✅ |
+| **Text & actions** | `Text` ✅ · `Button` ✅ · `Toggle` ✅ |
+| **Input controls** | `TextField` ✅ · `SecureField` ✅ · `Slider` ✅ · `Stepper` ✅ · `Picker` ✅ |
+| **Shapes** | `Circle` ✅ · `Rectangle` ✅ · `RoundedRectangle` ✅ · `Capsule` ✅ · `Ellipse` ✅ |
+| **Not started** | `ScrollView` ⬜ · `Grid`/`LazyVGrid` ⬜ · `NavigationStack` ⬜ · `TabView` ⬜ · `Form` ⬜ · `GeometryReader` ⬜ · `AsyncImage` ⬜ · `ProgressView` ⬜ |
 
-- View model logic written as plain Swift `struct` / `class`
-- `Codable` models that SwiftUI views would bind to
-- Pure functions that transform state
+**Modifiers:** `font`, `fontWeight`, `foregroundColor`, `padding`, `background`,
+`cornerRadius`, `frame`, `fill`, and `tag` are wired through to both hosts.
+Semantic colors (`.primary`/`.secondary`) and the system background adapt to
+light/dark.
+
+---
+
+## Verification
+
+Every slice is checked by an autonomous loop — no Apple toolchain required to
+gate a change.
+
+| Layer | What it checks | Status |
+|-------|----------------|--------|
+| **A — Surface** | API inventory vs the iOS SDK SwiftUI interface | ✅ |
+| **B — UIIR goldens** | initial render produces the exact expected view tree | ✅ |
+| **C — Interaction goldens** | events produce the exact expected patch stream | ✅ |
+| **D — Screenshot diff** | render UIIR to real SwiftUI (iOS) and the web host, screenshot both | 🟡 |
+
+**Layer D** runs both halves locally today: a native `UiirRenderer` SwiftPM
+package builds real SwiftUI from the UIIR fixtures and snapshots them, and a
+Playwright harness drives the `<swiftui-canvas>` element through the same
+`mount → applyPatches` loop. Both capture a **device × appearance matrix**
+(iPhone + iPad, light + dark), so token/CSS drift between the web and native
+renderers is surfaced side by side. Perceptual-diff tooling and a CI job are the
+remaining pieces.
+
+---
+
+## What you can run now
+
+- SwiftUI `View`s built from the implemented views, controls, and shapes above
+- `@State`-driven interaction (the Counter and demo tabs)
+- `ObservableObject` / `@StateObject` shared model state
+- Dynamic `List`/`ForEach` with add/remove/reorder
 
 Try it in the [Playground →](/playground)
