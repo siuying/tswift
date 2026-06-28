@@ -11,6 +11,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Range, "upperBound", upper_bound);
     interp.register_property(BuiltinReceiver::Range, "count", count);
     interp.register_property(BuiltinReceiver::Range, "isEmpty", is_empty);
+    interp.register_property(BuiltinReceiver::Range, "description", description);
+    interp.register_property(BuiltinReceiver::Range, "debugDescription", description);
 
     interp.register_intrinsic(
         BuiltinReceiver::Range,
@@ -26,6 +28,22 @@ pub fn install(interp: &mut Interpreter<'_>) {
         MethodEntry {
             mutating: false,
             func: clamped,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::Range,
+        "overlaps",
+        MethodEntry {
+            mutating: false,
+            func: overlaps,
+        },
+    );
+    interp.register_intrinsic(
+        BuiltinReceiver::Range,
+        "distance",
+        MethodEntry {
+            mutating: false,
+            func: distance,
         },
     );
 }
@@ -116,6 +134,56 @@ fn clamped(
     })
 }
 
+/// `Range.description` / `debugDescription` — `lo..<hi` or `lo...hi`.
+fn description(v: SwiftValue) -> StdResult {
+    let (lo, hi, inclusive) = parts(&v)?;
+    let op = if inclusive { "..." } else { "..<" };
+    Ok(SwiftValue::Str(format!("{lo}{op}{hi}")))
+}
+
+/// `Range.overlaps(_:)` — whether the two ranges share at least one element.
+fn overlaps(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let (lo, hi, inclusive) = parts(&recv)?;
+    let (olo, ohi, oinc) = parts(
+        args.first()
+            .ok_or_else(|| StdError::Error(EvalError::Type("overlaps expects a range".into())))?,
+    )?;
+    let end = if inclusive { hi + 1 } else { hi };
+    let oend = if oinc { ohi + 1 } else { ohi };
+    // Non-empty half-open intervals [lo, end) and [olo, oend) overlap iff each
+    // starts before the other ends.
+    let inside = lo < end && olo < oend && lo < oend && olo < end;
+    Ok(Outcome {
+        result: SwiftValue::Bool(inside),
+        receiver: recv,
+    })
+}
+
+/// `Range.distance(from:to:)` — signed element distance `to - from` for the
+/// integer index space.
+fn distance(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let int = |v: Option<&SwiftValue>| match v {
+        Some(SwiftValue::Int(i)) => Ok(i.raw),
+        _ => Err(StdError::Error(EvalError::Type(
+            "distance(from:to:) expects integer indices".into(),
+        ))),
+    };
+    let from = int(args.first())?;
+    let to = int(args.get(1))?;
+    Ok(Outcome {
+        result: SwiftValue::int(to - from),
+        receiver: recv,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +236,47 @@ mod tests {
                 .unwrap()
                 .result,
             SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn description_overlaps_distance() {
+        let mut c = MockCtx;
+        assert_eq!(
+            description(exclusive(1, 5)).unwrap(),
+            SwiftValue::Str("1..<5".into())
+        );
+        let closed = SwiftValue::Range {
+            lo: 1,
+            hi: 5,
+            inclusive: true,
+        };
+        assert_eq!(
+            description(closed).unwrap(),
+            SwiftValue::Str("1...5".into())
+        );
+        assert_eq!(
+            overlaps(&mut c, exclusive(1, 5), vec![exclusive(3, 8)])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(true)
+        );
+        // Adjacent half-open ranges do not overlap.
+        assert_eq!(
+            overlaps(&mut c, exclusive(1, 5), vec![exclusive(5, 8)])
+                .unwrap()
+                .result,
+            SwiftValue::Bool(false)
+        );
+        assert_eq!(
+            distance(
+                &mut c,
+                exclusive(0, 10),
+                vec![SwiftValue::int(2), SwiftValue::int(7)]
+            )
+            .unwrap()
+            .result,
+            SwiftValue::int(5)
         );
     }
 

@@ -96,8 +96,12 @@ Optional.map
 Range.clamped
 Range.contains
 Range.count
+Range.debugDescription
+Range.description
+Range.distance
 Range.isEmpty
 Range.lowerBound
+Range.overlaps
 Range.upperBound
 Sequence.allSatisfy
 Sequence.compactMap
