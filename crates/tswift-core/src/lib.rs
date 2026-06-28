@@ -6,6 +6,7 @@
 //! integer-width overflow/wrap semantics.
 
 mod env;
+mod fragment_cache;
 pub mod grapheme;
 mod interp;
 pub mod json;
