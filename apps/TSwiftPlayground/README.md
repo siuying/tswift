@@ -19,6 +19,9 @@ RenderHostView(model:) + .uiirEventSink(…)        (UiirRenderer)
 The runtime bridge (`PreviewSession` over `tswift-ffi`) and the renderer
 (`UiirRenderer`) are reused unchanged from `ios/`.
 
+![TSwift Playground running in the iOS Simulator: a Runestone code editor on top
+showing a SwiftUI `CounterView`, and the live interactive preview below.](docs/screenshot.png)
+
 ## Build & run
 
 The project is generated with [xcodegen](https://github.com/yonaskolb/XcodeGen)
