@@ -1,5 +1,5 @@
 {
-  "version": "ffi-v2",
-  "url": "https://github.com/siuying/tswift/releases/download/ffi-v2/TSwiftFFI.xcframework.zip",
-  "checksum": "5853fb0dc2beca5d4e9d6c1c887c02bc3a33bdf9d4f23909b7b68ee4bd90db93"
+  "version": "ffi-v3",
+  "url": "https://github.com/siuying/tswift/releases/download/ffi-v3/TSwiftFFI.xcframework.zip",
+  "checksum": "27009a9b53daf73eb03db220f413629be8f00a3a1b448b34b7988920f355e434"
 }
