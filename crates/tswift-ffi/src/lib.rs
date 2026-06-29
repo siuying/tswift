@@ -314,9 +314,8 @@ mod tests {
     fn diagnostics_clean_swiftui_source_is_ok_and_empty() {
         // A well-formed View must lint clean (the spliced prelude resolves
         // View/Text/VStack/Button, and its own lines are filtered out).
-        let json = diagnostics(
-            "struct V: View {\n  var body: some View {\n    Text(\"hi\")\n  }\n}",
-        );
+        let json =
+            diagnostics("struct V: View {\n  var body: some View {\n    Text(\"hi\")\n  }\n}");
         assert!(json.contains("\"ok\":true"), "{json}");
         assert!(json.contains("\"diagnostics\":[]"), "{json}");
     }

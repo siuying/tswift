@@ -37,7 +37,9 @@ pub fn swift_diagnostics(source: &str) -> String {
 fn diagnose_impl(source: &str) -> String {
     let analysis = match Analysis::analyze(source, "main.swift") {
         Ok(analysis) => analysis,
-        Err(error) => return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())]),
+        Err(error) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())])
+        }
     };
 
     let mut items = Vec::new();
