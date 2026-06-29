@@ -13,7 +13,14 @@
   "dependencies": {
     "@astrojs/mdx": "^7.0.0",
     "@astrojs/react": "^6.0.0",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/legacy-modes": "^6.5.3",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/state": "^6.7.0",
+    "@codemirror/view": "^6.43.4",
+    "@lezer/highlight": "^1.2.3",
     "astro": "^7.0.3",
+    "codemirror": "^6.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

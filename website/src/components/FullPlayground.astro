@@ -12,13 +12,12 @@
         <span class="filename">main.swift</span>
         <span id="fp-meta" style="color:var(--muted);font-size:.75rem">0 lines</span>
       </div>
-      <textarea
+      <div
         id="fp-source"
-        class="editor-area"
-        spellcheck="false"
+        class="editor-area editor-cm"
         aria-label="Swift source code"
-        style="min-height:520px"
-      ></textarea>
+        style="min-height:520px;padding:0"
+      ></div>
       <div class="run-bar">
         <button id="fp-run" class="run-btn" disabled>▶ Run</button>
         <span id="fp-status" class="status-badge">loading…</span>
@@ -82,6 +81,7 @@
   // truth) — imported straight from the sibling package source, like its own
   // example. Registers the <swiftui-canvas> custom element on import.
   import '../../../web/swiftui-canvas/src/canvas.ts';
+  import { createSwiftEditor } from '../lib/swift-editor.js';
 
   const ALL_PRESETS = [
     { group: 'Basics',       label: 'Hello World',      code: `// Hello, tswift!
@@ -407,7 +407,13 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
 
   // ── DOM ──────────────────────────────────────────────────────────
   const presetBar = document.getElementById('fp-preset-bar');
-  const source    = document.getElementById('fp-source');
+  // CodeMirror editor (Swift highlighting + frontend-diagnostics linter), wrapped
+  // in a textarea-like shim (`.value`, input events) so the rest of this script
+  // is unchanged. The linter pulls `swiftDiagnostics` from wasm once it loads.
+  const source    = createSwiftEditor({
+    parent: document.getElementById('fp-source'),
+    getDiagnose: () => (swiftDiagnostics ? (text) => JSON.parse(swiftDiagnostics(text)) : null),
+  });
   const runBtn    = document.getElementById('fp-run');
   const clearBtn  = document.getElementById('fp-clear');
   const statusEl  = document.getElementById('fp-status');
@@ -496,6 +502,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
   let runSwift = null;
   let swiftUICompile = null;
   let swiftUIDispatch = null;
+  let swiftDiagnostics = null;
 
   // Route a canvas interaction (button tap / control change) back into the
   // live session and apply the returned patch stream in place.
@@ -525,8 +532,11 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
       runSwift = mod.runSwift;
       swiftUICompile = mod.swiftUICompile;
       swiftUIDispatch = mod.swiftUIDispatch;
+      swiftDiagnostics = mod.swiftDiagnostics;
       runBtn.disabled = false;
       setStatus('idle', 'idle');
+      // Lint the initial document now that the frontend is available.
+      source.forceLint();
     } catch (err) {
       setStatus('error', 'wasm failed');
       stdout.textContent = `Failed to load runtime:\n${err.message}`;
