@@ -409,6 +409,8 @@ export class PatchApplier {
       if (typeof args.spacing === "number" && kind !== "ZStack") {
         el.style.gap = `${args.spacing}px`;
       }
+      // `alignment:` positions children on the stack's cross axis (C2, #189).
+      applyStackAlignment(el, kind, args.alignment);
     } else if (kind === "Spacer") {
       // `minLength:` is the spacer's minimum length along the stack axis (C2).
       if (typeof args.minLength === "number") {
@@ -528,6 +530,62 @@ export class PatchApplier {
  * nodes (a `Section`'s `.section-header`) and an optionally excluded element
  * (the node being moved). Returns `null` to append at the end.
  */
+/** Cross-axis flex `align-items` keyword for a 1-D stack alignment token. */
+const STACK_CROSS_ALIGN: Record<string, string> = {
+  leading: "flex-start",
+  trailing: "flex-end",
+  top: "flex-start",
+  bottom: "flex-end",
+  center: "center",
+  firstTextBaseline: "first baseline",
+  lastTextBaseline: "last baseline",
+};
+
+/** ZStack `place-items` (`align justify`) for a 2-D alignment token. The
+ * baseline-relative 2-D alignments have no CSS grid analogue, so their vertical
+ * component approximates to centered (matching the other host's intent). */
+const ZSTACK_PLACE: Record<string, string> = {
+  center: "center center",
+  leading: "center start",
+  trailing: "center end",
+  top: "start center",
+  bottom: "end center",
+  topLeading: "start start",
+  topTrailing: "start end",
+  bottomLeading: "end start",
+  bottomTrailing: "end end",
+  leadingFirstTextBaseline: "center start",
+  centerFirstTextBaseline: "center center",
+  trailingFirstTextBaseline: "center end",
+};
+
+/** The UIIR token tag a stack kind's `alignment:` carries (so a mis-namespaced
+ * token is ignored rather than silently applied — parity with iOS, which
+ * matches on the tag). */
+const STACK_ALIGN_TAG: Record<string, string> = {
+  VStack: "hAlign",
+  LazyVStack: "hAlign",
+  HStack: "vAlign",
+  LazyHStack: "vAlign",
+  ZStack: "align",
+};
+
+/** Apply a stack's `alignment:` arg on its cross axis (issue #189). VStack
+ * (column) and HStack (row) use flex `align-items`; ZStack uses grid
+ * `place-items`. The token's tag must match the stack's expected namespace. */
+function applyStackAlignment(el: HTMLElement, kind: string, alignment: unknown): void {
+  const token = alignment as { $?: string; name?: string } | undefined;
+  const name = token?.name;
+  if (!name || token?.$ !== STACK_ALIGN_TAG[kind]) return;
+  if (kind === "ZStack") {
+    const place = ZSTACK_PLACE[name];
+    if (place) el.style.placeItems = place;
+    return;
+  }
+  const align = STACK_CROSS_ALIGN[name];
+  if (align) el.style.alignItems = align;
+}
+
 function patchRef(
   parent: HTMLElement,
   index: number,

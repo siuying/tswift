@@ -423,9 +423,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // Stacks carry a typed `alignment:` so its leading-dot token resolves
     // against the right 1-D/2-D namespace (`VStack` → `HorizontalAlignment`,
     // `HStack` → `VerticalAlignment`, `ZStack` → `Alignment`) instead of
-    // colliding with `TextAlignment`/`Edge` (issue #203). Honoring the resolved
-    // alignment is wired in the hosts under issue #189; until then `stack_init`
-    // returns a clear deferral error.
+    // colliding with `TextAlignment`/`Edge` (issue #203). `stack_init`
+    // serializes the resolved token and the hosts apply it on the cross axis
+    // (issue #189).
     interp.register_free_fn_typed(
         "VStack",
         vstack_init,
@@ -463,8 +463,24 @@ pub fn install(interp: &mut Interpreter<'_>) {
         scrollview_init,
         vec![BuiltinParam::positional("Axis")],
     );
-    interp.register_free_fn("LazyVStack", lazy_vstack_init);
-    interp.register_free_fn("LazyHStack", lazy_hstack_init);
+    // Lazy stacks share the stacks' typed `alignment:` so their leading-dot
+    // tokens resolve against the right 1-D namespace (issue #189/#203).
+    interp.register_free_fn_typed(
+        "LazyVStack",
+        lazy_vstack_init,
+        vec![
+            BuiltinParam::labeled("alignment", "HorizontalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
+    interp.register_free_fn_typed(
+        "LazyHStack",
+        lazy_hstack_init,
+        vec![
+            BuiltinParam::labeled("alignment", "VerticalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
     interp.register_free_fn("Grid", grid_init);
     interp.register_free_fn("GridRow", grid_row_init);
     interp.register_free_fn("Form", form_init);
@@ -619,25 +635,20 @@ fn zstack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     stack_init("ZStack", ctx, args)
 }
 
-/// Shared `VStack`/`HStack`/`ZStack` builder: capture a `spacing:` arg (a CGFloat
-/// gap between children) as a constructor field, then collect the children from
-/// the trailing `@ViewBuilder` closure. `alignment:` is parsed-and-dropped for
-/// now (its `.leading`/`.center`/`.trailing` tokens need typed resolution to
-/// avoid colliding with `TextAlignment`; deferred — see issue #189).
+/// Shared `VStack`/`HStack`/`ZStack` builder: capture `spacing:` (a CGFloat gap
+/// between children) and `alignment:` (a `HorizontalAlignment`/`VerticalAlignment`/
+/// `Alignment` token, resolved via the typed stack signatures from issue #203)
+/// as constructor fields, then collect the children from the trailing
+/// `@ViewBuilder` closure. The host applies `alignment` on the stack's cross
+/// axis (issue #189).
 fn stack_init(type_name: &str, ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut spacing: Option<SwiftValue> = None;
+    let mut alignment: Option<SwiftValue> = None;
     let mut rest: Vec<Arg> = Vec::new();
     for arg in args {
         match arg.label.as_deref() {
             Some("spacing") => spacing = Some(arg.value),
-            // `alignment:` needs typed token resolution to avoid colliding with
-            // `TextAlignment` / unresolvable `.top`/`.bottom`; deferred. Surface
-            // an explicit error rather than silently mis-render (issue #189).
-            Some("alignment") => {
-                return Err(type_error(format!(
-                    "{type_name}(alignment:) is not yet supported (deferred, issue #189); omit it"
-                )))
-            }
+            Some("alignment") => alignment = Some(arg.value),
             _ => rest.push(arg),
         }
     }
@@ -645,6 +656,9 @@ fn stack_init(type_name: &str, ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdR
     let mut fields: Vec<(String, SwiftValue)> = Vec::new();
     if let Some(spacing) = spacing {
         fields.push(("spacing".into(), spacing));
+    }
+    if let Some(alignment) = alignment {
+        fields.push(("alignment".into(), alignment));
     }
     fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
     Ok(view_value(type_name, fields))
@@ -2314,12 +2328,23 @@ struct V: View {
     }
 
     #[test]
-    fn stack_alignment_is_an_explicit_unsupported_error() {
-        let err = render_err(
+    fn stack_alignment_resolves_and_is_stored_as_a_field() {
+        // `VStack(alignment:)` resolves against `HorizontalAlignment` (issue
+        // #203) and is captured as a constructor field the host honors (#189).
+        let view = render_to_string(
             r#"struct V: View { var body: some View { VStack(alignment: .leading) { Text("x") } } }"#,
             "V",
         );
-        assert!(err.contains("alignment"), "clear deferral error: {err}");
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected a VStack struct, got {view:?}");
+        };
+        match obj.get("alignment") {
+            Some(SwiftValue::Struct(tok)) => {
+                assert_eq!(tok.type_name, "HorizontalAlignment");
+                assert_eq!(tok.get("token"), Some(&SwiftValue::Str("leading".into())));
+            }
+            other => panic!("expected a HorizontalAlignment alignment field, got {other:?}"),
+        }
     }
 
     #[test]
