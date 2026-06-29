@@ -301,6 +301,51 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
         el.style.boxShadow = `${x}px ${y}px ${radius}px ${c}`;
         break;
       }
+      // C7 — control styling + disabled. Accessibility modifiers fall through to
+      // the default (accepted-and-ignored on the web).
+      case "buttonStyle": {
+        if (isToken(value, "style")) {
+          // A prominent/bordered/plain button skin.
+          if (value.name === "borderedProminent") {
+            el.style.background = "var(--swiftui-tint, #007aff)";
+            el.style.color = "#fff";
+            el.style.border = "none";
+            el.style.padding = "7px 14px";
+            el.style.borderRadius = "8px";
+          } else if (value.name === "bordered") {
+            el.style.background = "rgba(0,122,255,0.12)";
+            el.style.color = "var(--swiftui-tint, #007aff)";
+            el.style.border = "none";
+            el.style.padding = "7px 14px";
+            el.style.borderRadius = "8px";
+          } else if (value.name === "plain") {
+            el.style.background = "none";
+            el.style.border = "none";
+            el.style.color = "var(--swiftui-tint, #007aff)";
+            el.style.padding = "0";
+          }
+        }
+        break;
+      }
+      case "listStyle": {
+        if (isToken(value, "style") && value.name === "plain") {
+          // Plain lists drop the grouped card chrome.
+          el.style.border = "none";
+          el.style.borderRadius = "0";
+        }
+        break;
+      }
+      case "disabled": {
+        if (value === true) {
+          el.style.opacity = "0.4";
+          el.style.pointerEvents = "none";
+        }
+        break;
+      }
+      // pickerStyle / textFieldStyle: accepted; the default control skin is kept.
+      case "pickerStyle":
+      case "textFieldStyle":
+        break;
       default:
         // Unknown modifier — ignored (forward-compatible with new tiers).
         break;

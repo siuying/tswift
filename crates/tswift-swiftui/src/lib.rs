@@ -79,6 +79,18 @@ modifier!(modifier_clipped, "clipped");
 modifier!(modifier_clip_shape, "clipShape");
 modifier!(modifier_border, "border");
 modifier!(modifier_shadow, "shadow");
+// C7 — control styling (token-valued) + `disabled` (Bool).
+modifier!(modifier_button_style, "buttonStyle");
+modifier!(modifier_list_style, "listStyle");
+modifier!(modifier_picker_style, "pickerStyle");
+modifier!(modifier_text_field_style, "textFieldStyle");
+modifier!(modifier_disabled, "disabled");
+// C7 — accessibility no-ops: accepted-and-recorded so snippets using them still
+// render; the hosts ignore them (no visual effect).
+modifier!(modifier_accessibility_label, "accessibilityLabel");
+modifier!(modifier_accessibility_hint, "accessibilityHint");
+modifier!(modifier_accessibility_value, "accessibilityValue");
+modifier!(modifier_accessibility_identifier, "accessibilityIdentifier");
 
 /// Field holding the `ObservableObject`s a view provides to its subtree via
 /// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
@@ -154,6 +166,15 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("clipShape", modifier_clip_shape),
     ("border", modifier_border),
     ("shadow", modifier_shadow),
+    ("buttonStyle", modifier_button_style),
+    ("listStyle", modifier_list_style),
+    ("pickerStyle", modifier_picker_style),
+    ("textFieldStyle", modifier_text_field_style),
+    ("disabled", modifier_disabled),
+    ("accessibilityLabel", modifier_accessibility_label),
+    ("accessibilityHint", modifier_accessibility_hint),
+    ("accessibilityValue", modifier_accessibility_value),
+    ("accessibilityIdentifier", modifier_accessibility_identifier),
     ("environmentObject", modifier_environment_object),
 ];
 
@@ -295,6 +316,28 @@ struct Axis {
     static let horizontal = Axis(token: "horizontal")
     static let vertical = Axis(token: "vertical")
 }
+// Control-style tokens for `.buttonStyle`/`.listStyle`/`.pickerStyle`/
+// `.textFieldStyle`. SwiftUI uses several distinct style types that share
+// leading-dot names (`.plain`, `.automatic`); the runtime resolves leading-dot
+// members by uniqueness, so they live in ONE namespace (each name once) and the
+// host disambiguates by the *modifier* name (button vs list vs picker).
+struct _ControlStyle {
+    let token: String
+    static let automatic = _ControlStyle(token: "automatic")
+    static let plain = _ControlStyle(token: "plain")
+    static let bordered = _ControlStyle(token: "bordered")
+    static let borderedProminent = _ControlStyle(token: "borderedProminent")
+    static let borderless = _ControlStyle(token: "borderless")
+    static let grouped = _ControlStyle(token: "grouped")
+    static let insetGrouped = _ControlStyle(token: "insetGrouped")
+    static let inset = _ControlStyle(token: "inset")
+    static let sidebar = _ControlStyle(token: "sidebar")
+    static let menu = _ControlStyle(token: "menu")
+    static let segmented = _ControlStyle(token: "segmented")
+    static let wheel = _ControlStyle(token: "wheel")
+    static let inline = _ControlStyle(token: "inline")
+    static let roundedBorder = _ControlStyle(token: "roundedBorder")
+}
 "#;
 
 /// The token string carried by a prelude token struct (`Color`/`Font`/
@@ -305,7 +348,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
     };
     if !matches!(
         obj.type_name.as_str(),
-        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase" | "Axis"
+        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase" | "Axis" | "_ControlStyle"
     ) {
         return None;
     }
@@ -1464,12 +1507,18 @@ mod tests {
                 "TextField.init",
                 "Toggle.init",
                 "VStack.init",
+                "View.accessibilityHint",
+                "View.accessibilityIdentifier",
+                "View.accessibilityLabel",
+                "View.accessibilityValue",
                 "View.background",
                 "View.bold",
                 "View.border",
+                "View.buttonStyle",
                 "View.clipShape",
                 "View.clipped",
                 "View.cornerRadius",
+                "View.disabled",
                 "View.environmentObject",
                 "View.fill",
                 "View.font",
@@ -1479,14 +1528,17 @@ mod tests {
                 "View.frame",
                 "View.italic",
                 "View.lineLimit",
+                "View.listStyle",
                 "View.multilineTextAlignment",
                 "View.offset",
                 "View.opacity",
                 "View.padding",
+                "View.pickerStyle",
                 "View.shadow",
                 "View.strikethrough",
                 "View.tag",
                 "View.textCase",
+                "View.textFieldStyle",
                 "View.tint",
                 "View.underline",
                 "ZStack.init",

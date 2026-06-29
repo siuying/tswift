@@ -87,4 +87,5 @@ final class SnapshotTests: XCTestCase {
     func testDecoration() throws { try runFixture("decoration") }
     func testContent() throws { try runFixture("content") }
     func testGrids() throws { try runFixture("grids") }
+    func testStyling() throws { try runFixture("styling") }
 }
