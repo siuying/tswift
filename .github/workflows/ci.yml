@@ -59,13 +59,18 @@ jobs:
 
   ios-playground-build:
     name: iOS playground build (demo, non-gating)
-    runs-on: macos-14
+    runs-on: macos-15
     # The app is a product demo, never the regression gate (the signal stays in
     # the TSwiftUI / UiirRenderer tests). A red build here flags drift without
     # blocking the merge.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
+      # xcodegen emits the current project format (objectVersion 77); read it
+      # with a matching Xcode (15.x can't open it).
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
 
       - name: Install xcodegen
         run: brew install xcodegen
