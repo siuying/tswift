@@ -447,15 +447,33 @@ impl<'w> Interpreter<'w> {
 
         // If the callee is a known user function with `@autoclosure` params,
         // defer those argument expressions into thunks (capturing this scope).
-        let autoclosure_params = if callee.kind() == NodeKind::IdentExpr {
+        // A builtin free function (e.g. a SwiftUI view constructor) may instead
+        // carry a declared parameter signature, used to push a contextual type
+        // so a leading-dot member argument resolves against the parameter type.
+        let call_params = if callee.kind() == NodeKind::IdentExpr {
             callee.text().and_then(|name| match self.env.get(&name) {
                 Some(SwiftValue::Function(id)) => Some(clone_params(&self.funcs[id].params)),
-                _ => None,
+                // Any other binding shadows the builtin — do not push its hints.
+                Some(_) => None,
+                // An unbound name resolves to a builtin free fn *only* when no
+                // user type of the same name shadows it (a user `struct VStack`
+                // dispatches to its own initializer, so it must not inherit the
+                // builtin `VStack`'s parameter hints).
+                None => {
+                    let shadowed = self.structs.contains_key(&name)
+                        || self.classes.contains_key(&name)
+                        || self.enums.contains_key(&name);
+                    if shadowed {
+                        None
+                    } else {
+                        self.free_fn_params.get(&name).map(|p| clone_params(p))
+                    }
+                }
             })
         } else {
             None
         };
-        let args = self.eval_args_with(arg_nodes, autoclosure_params.as_deref())?;
+        let args = self.eval_args_with(arg_nodes, call_params.as_deref())?;
 
         if callee.kind() == NodeKind::IdentExpr {
             let name = callee
@@ -1051,7 +1069,12 @@ impl<'w> Interpreter<'w> {
         };
         let method_params = type_name
             .as_ref()
-            .and_then(|tn| self.user_method_params(tn, &method));
+            .and_then(|tn| self.user_method_params(tn, &method))
+            .or_else(|| {
+                self.struct_method_params
+                    .get(&method)
+                    .map(|p| clone_params(p))
+            });
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
         if let Some(type_name) = type_name {
             if self.type_has_method(&type_name, &method) {

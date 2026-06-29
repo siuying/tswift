@@ -20,7 +20,7 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use grapheme::graphemes;
-pub use interp::{EvalError, Interpreter, NativeFn};
+pub use interp::{BuiltinParam, EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
     collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,

@@ -177,6 +177,10 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "TextCase" => "textCase",
             "Axis" => "axis",
             "_ControlStyle" => "style",
+            "Alignment" => "align",
+            "HorizontalAlignment" => "hAlign",
+            "VerticalAlignment" => "vAlign",
+            "Edge" => "edge",
             _ => "token",
         };
         out.push_str("{\"$\":");

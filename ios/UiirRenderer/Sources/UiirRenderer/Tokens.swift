@@ -78,6 +78,56 @@ extension UiirValue {
         return nil
     }
 
+    /// Resolve a frame length, honoring the non-finite `{ "$": "infinity" }`
+    /// sentinel (`.frame(maxWidth: .infinity)`, issue #203). The sentinel has a
+    /// `$` but no `name`, so it decodes as an `.object`, not a `.token`.
+    var asFrameLength: CGFloat? {
+        if case let .number(n) = self { return CGFloat(n) }
+        if case let .object(o) = self, case let .string(s)? = o["$"] {
+            switch s {
+            case "infinity": return .infinity
+            case "-infinity": return -.infinity
+            default: return nil
+            }
+        }
+        return nil
+    }
+
+    /// Resolve a `{ "$": "align", "name": ... }` token to a 2-D `Alignment`.
+    var asAlignment: Alignment? {
+        guard case let .token(tag, name) = self, tag == "align" else { return nil }
+        switch name {
+        case "center": return .center
+        case "leading": return .leading
+        case "trailing": return .trailing
+        case "top": return .top
+        case "bottom": return .bottom
+        case "topLeading": return .topLeading
+        case "topTrailing": return .topTrailing
+        case "bottomLeading": return .bottomLeading
+        case "bottomTrailing": return .bottomTrailing
+        case "leadingFirstTextBaseline": return .leadingFirstTextBaseline
+        case "centerFirstTextBaseline": return .centerFirstTextBaseline
+        case "trailingFirstTextBaseline": return .trailingFirstTextBaseline
+        default: return .center
+        }
+    }
+
+    /// Resolve a `{ "$": "edge", "name": ... }` token to an `Edge.Set`.
+    var asEdgeSet: Edge.Set? {
+        guard case let .token(tag, name) = self, tag == "edge" else { return nil }
+        switch name {
+        case "top": return .top
+        case "bottom": return .bottom
+        case "leading": return .leading
+        case "trailing": return .trailing
+        case "horizontal": return .horizontal
+        case "vertical": return .vertical
+        case "all": return .all
+        default: return .all
+        }
+    }
+
     /// Resolve a `{ "$": "textAlign", "name": ... }` token to a `TextAlignment`.
     var asTextAlignment: TextAlignment? {
         guard case let .token(tag, name) = self, tag == "textAlign" else { return nil }

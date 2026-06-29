@@ -39,25 +39,43 @@ enum ModifierApply {
                 return AnyView(view.cornerRadius(r))
             }
         case "padding":
-            // `.padding` -> null means default padding.
-            if let p = mod.value.asLength {
+            // Directional `.padding(.horizontal, 8)` -> `{ value: <edge token>,
+            // value1: <length?> }`; `.padding(.all)` -> a bare edge token;
+            // `.padding(8)` -> a bare length; `.padding()` -> null (issue #203).
+            if let edge = mod.value.asEdgeSet {
+                return AnyView(view.padding(edge))
+            }
+            if let edge = mod.value.member("value")?.asEdgeSet {
+                return AnyView(view.padding(edge, mod.value.member("value1")?.asLength))
+            }
+            if let p = mod.value.asLength ?? mod.value.member("value")?.asLength {
                 return AnyView(view.padding(p))
             }
             return AnyView(view.padding())
         case "frame":
-            // Fixed width/height, or numeric min/max bounds (C2). `.infinity`
-            // is deferred (issue #189), so all bounds here are finite lengths.
+            // Content alignment (issue #203) threads through both overloads.
+            let alignment = mod.value.member("alignment")?.asAlignment ?? .center
+            // Flexible bounds may be non-finite (`.infinity`); fixed width/height
+            // are always finite lengths.
+            let minW = mod.value.member("minWidth")?.asFrameLength
+            let maxW = mod.value.member("maxWidth")?.asFrameLength
+            let minH = mod.value.member("minHeight")?.asFrameLength
+            let maxH = mod.value.member("maxHeight")?.asFrameLength
+            if minW != nil || maxW != nil || minH != nil || maxH != nil {
+                return AnyView(view.frame(
+                    minWidth: minW,
+                    maxWidth: maxW,
+                    minHeight: minH,
+                    maxHeight: maxH,
+                    alignment: alignment
+                ))
+            }
             let w = mod.value.member("width")?.asLength
             let h = mod.value.member("height")?.asLength
             if w != nil || h != nil {
-                return AnyView(view.frame(width: w, height: h))
+                return AnyView(view.frame(width: w, height: h, alignment: alignment))
             }
-            return AnyView(view.frame(
-                minWidth: mod.value.member("minWidth")?.asLength,
-                maxWidth: mod.value.member("maxWidth")?.asLength,
-                minHeight: mod.value.member("minHeight")?.asLength,
-                maxHeight: mod.value.member("maxHeight")?.asLength
-            ))
+            return view
         case "offset":
             return AnyView(view.offset(
                 x: mod.value.member("x")?.asLength ?? 0,

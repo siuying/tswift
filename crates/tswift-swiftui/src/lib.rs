@@ -22,8 +22,8 @@ pub mod session;
 pub mod uiir;
 
 use tswift_core::{
-    Arg, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn, StructObj,
-    SwiftValue,
+    Arg, BuiltinParam, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn,
+    StructObj, SwiftValue,
 };
 use tswift_frontend::{Analysis, Node, NodeKind};
 
@@ -316,6 +316,54 @@ struct Axis {
     static let horizontal = Axis(token: "horizontal")
     static let vertical = Axis(token: "vertical")
 }
+// `.frame(alignment:)` / `ZStack(alignment:)` — 2-D alignment token namespace.
+// Leading-dot forms (`.center`, `.leading`, `.top`, …) collide with the
+// 1-D alignment and edge namespaces below; they resolve by the modifier's
+// declared parameter type (the typed-token mechanism, issue #203).
+struct Alignment {
+    let token: String
+    static let center = Alignment(token: "center")
+    static let leading = Alignment(token: "leading")
+    static let trailing = Alignment(token: "trailing")
+    static let top = Alignment(token: "top")
+    static let bottom = Alignment(token: "bottom")
+    static let topLeading = Alignment(token: "topLeading")
+    static let topTrailing = Alignment(token: "topTrailing")
+    static let bottomLeading = Alignment(token: "bottomLeading")
+    static let bottomTrailing = Alignment(token: "bottomTrailing")
+    static let leadingFirstTextBaseline = Alignment(token: "leadingFirstTextBaseline")
+    static let centerFirstTextBaseline = Alignment(token: "centerFirstTextBaseline")
+    static let trailingFirstTextBaseline = Alignment(token: "trailingFirstTextBaseline")
+}
+// `VStack(alignment:)` — horizontal-alignment token namespace (1-D).
+struct HorizontalAlignment {
+    let token: String
+    static let leading = HorizontalAlignment(token: "leading")
+    static let center = HorizontalAlignment(token: "center")
+    static let trailing = HorizontalAlignment(token: "trailing")
+}
+// `HStack(alignment:)` — vertical-alignment token namespace (1-D).
+struct VerticalAlignment {
+    let token: String
+    static let top = VerticalAlignment(token: "top")
+    static let center = VerticalAlignment(token: "center")
+    static let bottom = VerticalAlignment(token: "bottom")
+    static let firstTextBaseline = VerticalAlignment(token: "firstTextBaseline")
+    static let lastTextBaseline = VerticalAlignment(token: "lastTextBaseline")
+}
+// `.padding(.horizontal, _)` — edge-set token namespace (Swift's `Edge.Set`).
+// `.horizontal`/`.vertical` collide with `Axis`; `.leading`/`.trailing` collide
+// with the alignment namespaces. Resolved by the modifier's parameter type.
+struct Edge {
+    let token: String
+    static let top = Edge(token: "top")
+    static let leading = Edge(token: "leading")
+    static let bottom = Edge(token: "bottom")
+    static let trailing = Edge(token: "trailing")
+    static let horizontal = Edge(token: "horizontal")
+    static let vertical = Edge(token: "vertical")
+    static let all = Edge(token: "all")
+}
 // Control-style tokens for `.buttonStyle`/`.listStyle`/`.pickerStyle`/
 // `.textFieldStyle`. SwiftUI uses several distinct style types that share
 // leading-dot names (`.plain`, `.automatic`); the runtime resolves leading-dot
@@ -348,7 +396,17 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
     };
     if !matches!(
         obj.type_name.as_str(),
-        "Color" | "Font" | "FontWeight" | "TextAlignment" | "TextCase" | "Axis" | "_ControlStyle"
+        "Color"
+            | "Font"
+            | "FontWeight"
+            | "TextAlignment"
+            | "TextCase"
+            | "Axis"
+            | "_ControlStyle"
+            | "Alignment"
+            | "HorizontalAlignment"
+            | "VerticalAlignment"
+            | "Edge"
     ) {
         return None;
     }
@@ -362,9 +420,33 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
 /// into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Text", text_init);
-    interp.register_free_fn("VStack", vstack_init);
-    interp.register_free_fn("HStack", hstack_init);
-    interp.register_free_fn("ZStack", zstack_init);
+    // Stacks carry a typed `alignment:` so its leading-dot token resolves
+    // against the right 1-D/2-D namespace (`VStack` → `HorizontalAlignment`,
+    // `HStack` → `VerticalAlignment`, `ZStack` → `Alignment`) instead of
+    // colliding with `TextAlignment`/`Edge` (issue #203). Honoring the resolved
+    // alignment is wired in the hosts under issue #189; until then `stack_init`
+    // returns a clear deferral error.
+    interp.register_free_fn_typed(
+        "VStack",
+        vstack_init,
+        vec![
+            BuiltinParam::labeled("alignment", "HorizontalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
+    interp.register_free_fn_typed(
+        "HStack",
+        hstack_init,
+        vec![
+            BuiltinParam::labeled("alignment", "VerticalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
+    interp.register_free_fn_typed(
+        "ZStack",
+        zstack_init,
+        vec![BuiltinParam::labeled("alignment", "Alignment")],
+    );
     interp.register_free_fn("ForEach", foreach_init);
     interp.register_free_fn("List", list_init);
     interp.register_free_fn("Section", section_init);
@@ -373,7 +455,14 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("ProgressView", progress_view_init);
     interp.register_free_fn("Group", group_init);
     interp.register_free_fn("Divider", divider_init);
-    interp.register_free_fn("ScrollView", scrollview_init);
+    // `ScrollView(_ axes: Axis.Set)` — typed so the leading-dot axis
+    // (`.horizontal`/`.vertical`) resolves against `Axis` rather than colliding
+    // with the new `Edge` namespace (issue #203).
+    interp.register_free_fn_typed(
+        "ScrollView",
+        scrollview_init,
+        vec![BuiltinParam::positional("Axis")],
+    );
     interp.register_free_fn("LazyVStack", lazy_vstack_init);
     interp.register_free_fn("LazyHStack", lazy_hstack_init);
     interp.register_free_fn("Grid", grid_init);
@@ -396,6 +485,42 @@ pub fn install(interp: &mut Interpreter<'_>) {
     for (name, func) in MODIFIER_FNS {
         interp.register_struct_method(name, *func);
     }
+
+    // Typed modifier signatures (issue #203). Re-registering with a declared
+    // parameter type lets a leading-dot member argument resolve against that
+    // type instead of failing on cross-namespace collisions. `frame`'s length
+    // params are `CGFloat` so `.infinity` resolves; `alignment` is `Alignment`;
+    // directional `padding` takes an `Edge.Set`; `multilineTextAlignment` keeps
+    // resolving its `.center`/`.leading`/`.trailing` against `TextAlignment`
+    // even though those names now also live in the alignment namespaces.
+    interp.register_struct_method_typed(
+        "frame",
+        modifier_frame,
+        vec![
+            BuiltinParam::labeled("width", "CGFloat"),
+            BuiltinParam::labeled("height", "CGFloat"),
+            BuiltinParam::labeled("minWidth", "CGFloat"),
+            BuiltinParam::labeled("maxWidth", "CGFloat"),
+            BuiltinParam::labeled("minHeight", "CGFloat"),
+            BuiltinParam::labeled("maxHeight", "CGFloat"),
+            BuiltinParam::labeled("idealWidth", "CGFloat"),
+            BuiltinParam::labeled("idealHeight", "CGFloat"),
+            BuiltinParam::labeled("alignment", "Alignment"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "padding",
+        modifier_padding,
+        vec![
+            BuiltinParam::positional("Edge.Set"),
+            BuiltinParam::positional("CGFloat"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "multilineTextAlignment",
+        modifier_multiline_text_alignment,
+        vec![BuiltinParam::positional("TextAlignment")],
+    );
 }
 
 /// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
