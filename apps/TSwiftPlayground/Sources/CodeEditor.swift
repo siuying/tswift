@@ -29,10 +29,11 @@ struct CodeEditor: UIViewRepresentable {
         textView.spellCheckingType = .no
         textView.isLineWrappingEnabled = false
         textView.keyboardType = .asciiCapable
-        textView.theme = MonospaceTheme()
+        textView.theme = SwiftEditorTheme()
         textView.backgroundColor = .secondarySystemBackground
         textView.contentInset = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
-        textView.text = text
+        // Drive syntax highlighting with the tree-sitter Swift grammar.
+        textView.setState(TextViewState(text: text, theme: SwiftEditorTheme(), language: .swift))
         return textView
     }
 
@@ -92,10 +93,9 @@ struct CodeEditor: UIViewRepresentable {
     }
 }
 
-/// A minimal monospaced theme. Runestone requires a `Theme`; this gives system
-/// monospaced text on a neutral background with no language-specific colors
-/// (highlighting is a deferred follow-up).
-private final class MonospaceTheme: Runestone.Theme {
+/// A monospaced theme that colours the tree-sitter Swift capture names
+/// (`keyword`, `string`, `comment`, `type`, …) emitted by `swift-highlights.scm`.
+private final class SwiftEditorTheme: Runestone.Theme {
     let font: UIFont = .monospacedSystemFont(ofSize: 14, weight: .regular)
     let textColor: UIColor = .label
 
@@ -116,5 +116,29 @@ private final class MonospaceTheme: Runestone.Theme {
 
     let markedTextBackgroundColor: UIColor = .systemFill
 
-    func textColor(for highlightName: String) -> UIColor? { nil }
+    /// Map a tree-sitter capture name to a colour. Names are dotted
+    /// (`keyword.return`, `punctuation.bracket`); match on the leading segment so
+    /// every `keyword.*` shares the keyword colour, etc. Unknown names fall back
+    /// to the default text colour (return nil).
+    func textColor(for highlightName: String) -> UIColor? {
+        let root = highlightName.split(separator: ".").first.map(String.init) ?? highlightName
+        switch root {
+        case "keyword": return UIColor(red: 0.78, green: 0.33, blue: 0.55, alpha: 1) // magenta-pink
+        case "string", "character": return UIColor(red: 0.78, green: 0.30, blue: 0.27, alpha: 1) // red
+        case "comment": return UIColor.systemGray
+        case "type", "constructor": return UIColor(red: 0.20, green: 0.49, blue: 0.62, alpha: 1) // teal
+        case "number", "boolean", "constant": return UIColor(red: 0.10, green: 0.40, blue: 0.80, alpha: 1) // blue
+        case "function": return UIColor(red: 0.36, green: 0.36, blue: 0.84, alpha: 1) // indigo
+        case "attribute": return UIColor(red: 0.55, green: 0.36, blue: 0.07, alpha: 1) // brown
+        case "operator", "punctuation": return UIColor.secondaryLabel
+        case "variable":
+            // Only tint the special variable kinds; plain identifiers stay default.
+            if highlightName.hasPrefix("variable.builtin") {
+                return UIColor(red: 0.78, green: 0.33, blue: 0.55, alpha: 1)
+            }
+            return nil
+        case "label": return UIColor.systemTeal
+        default: return nil
+        }
+    }
 }
