@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const wasmDir = new URL('../public/wasm/', import.meta.url);
-const { initSync, swiftUICompile, swiftUIDispatch } = await import(
+const { initSync, swiftUICompile, swiftUIDispatch, swiftDiagnostics } = await import(
   new URL('tswift_wasm.js', wasmDir)
 );
 initSync({ module: readFileSync(new URL('tswift_wasm_bg.wasm', wasmDir)) });
@@ -118,6 +118,27 @@ for (const [label, code] of Object.entries(SWIFTUI_PRESETS)) {
     assert(r.tree && typeof r.tree.kind === 'string', 'expected a UIIR tree with a root kind');
   });
 }
+
+// 5. The editor's live error-feedback channel: `swiftDiagnostics` lints without
+//    running and reports structured positions/severities (CodeMirror's linter
+//    maps these to inline squiggles).
+check('swiftDiagnostics is exported and lints clean source', () => {
+  assert(typeof swiftDiagnostics === 'function', 'swiftDiagnostics missing');
+  const r = JSON.parse(swiftDiagnostics('let x = 1\nprint(x)'));
+  assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r)}`);
+  assert(Array.isArray(r.diagnostics) && r.diagnostics.length === 0,
+    `expected no diagnostics, got ${JSON.stringify(r.diagnostics)}`);
+});
+
+check('swiftDiagnostics reports an error with line/col/severity', () => {
+  const r = JSON.parse(swiftDiagnostics('#error("boom")'));
+  assert(r.ok === false, `expected ok=false, got ${JSON.stringify(r)}`);
+  const d = r.diagnostics[0];
+  assert(d && d.severity === 'error', `expected an error diagnostic: ${JSON.stringify(r)}`);
+  assert(typeof d.line === 'number' && typeof d.col === 'number',
+    `expected numeric line/col: ${JSON.stringify(d)}`);
+  assert(d.message.includes('boom'), `expected message to carry 'boom': ${JSON.stringify(d)}`);
+});
 
 if (failures > 0) {
   console.error(`\n${failures} website swiftui wasm smoke check(s) failed`);
