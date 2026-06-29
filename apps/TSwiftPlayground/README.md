@@ -46,14 +46,18 @@ SwiftPM resolves two things on first build:
 |------|------|
 | `Sources/TSwiftPlaygroundApp.swift` | `@main` app entry. |
 | `Sources/PlaygroundView.swift` | Editor + live preview; debounced recompile; samples menu; inline error banner. |
-| `Sources/CodeEditor.swift` | `UIViewRepresentable` over Runestone's `TextView`. |
+| `Sources/CodeEditor.swift` | `UIViewRepresentable` over Runestone's `TextView` (tree-sitter Swift highlighting + diagnostic underlines). |
+| `Sources/SwiftLanguage.swift` | The Runestone tree-sitter Swift language (`tree_sitter_swift()` + `swift-highlights.scm`). |
 | `Sources/Samples.swift` | Bundled starter snippets (mirrors the website gallery). |
 
 ## Notes / follow-ups
 
-- **Syntax highlighting** is deferred — Runestone runs without a Tree-sitter
-  language (plain monospaced text). Adding `tree-sitter-swift` is a follow-up,
-  not a blocker.
+- **Syntax highlighting** uses the `tree-sitter-swift` grammar (a pinned remote
+  SwiftPM dependency; the generated 20 MB parser stays out of this repo) with its
+  highlights query bundled as `Resources/swift-highlights.scm`.
+- **Live error feedback**: each debounced edit lints via `tswift_diagnostics`
+  (the frontend), underlining error/warning ranges in the editor and listing
+  each `Ln:Col message` below it.
 - **Recompile rebuilds the `RenderModel`** (interaction state within a single
   event is preserved by patch-in-place; a *recompile* currently rebuilds the
   model). Acceptable for v1.
