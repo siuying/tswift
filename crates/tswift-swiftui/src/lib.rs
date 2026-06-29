@@ -57,7 +57,9 @@ modifier!(modifier_corner_radius, "cornerRadius");
 modifier!(modifier_font, "font");
 modifier!(modifier_font_weight, "fontWeight");
 modifier!(modifier_foreground_color, "foregroundColor");
-modifier!(modifier_background, "background");
+// `background`/`overlay` are not plain `modifier!`s: their argument may be an
+// arbitrary nested view (issue #204), so they evaluate a trailing closure and
+// thread an optional `alignment:` — see `compose_modifier`.
 modifier!(modifier_fill, "fill");
 modifier!(modifier_tag, "tag");
 // C1 — text & universal styling modifiers (no new node kinds).
@@ -139,6 +141,75 @@ fn modifier_environment_object(
     })))
 }
 
+/// `.background(_ content, alignment:)` / `.overlay(_ content, alignment:)`.
+/// `content` is either a `ShapeStyle`/`Color` token (the C0 behavior) or an
+/// arbitrary nested view — given directly (`.background(Circle())`) or via a
+/// trailing `@ViewBuilder` closure (`.overlay { Circle() }`). A nested view is
+/// serialized as its own `0`-rooted subtree (`write_value` already lowers a view
+/// value to a node); the host renders it as a detached layer behind
+/// (background) or in front of (overlay) the receiver, honoring `alignment:`
+/// (issue #204).
+fn compose_modifier(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    name: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut alignment: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("alignment") => alignment = Some(arg.value),
+            // The content: a `ShapeStyle`/`Color` token (the C0 color path), a
+            // direct view value (builtin `Circle()` or a custom `Badge()`), or a
+            // trailing `@ViewBuilder` closure. Views — including custom views
+            // collapsed to their `body` — are resolved via `expand_into`;
+            // multiple statements compose as an implicit `ZStack` (SwiftUI groups
+            // them back-to-front). A token stays a token.
+            _ => match arg.value {
+                token if token_of(&token).is_some() => content = Some(token),
+                view_or_closure => {
+                    let mut views = Vec::new();
+                    match view_or_closure {
+                        SwiftValue::Closure(id) => {
+                            let block = ctx.eval_block_values(id)?;
+                            expand_into(ctx, block, &mut views, 0, &[])?;
+                        }
+                        other => expand_into(ctx, other, &mut views, 0, &[])?,
+                    }
+                    content = match views.len() {
+                        0 => None, // an unsupported/empty content value
+                        1 => Some(views.into_iter().next().expect("len checked")),
+                        _ => Some(container_value("ZStack", views)),
+                    };
+                }
+            },
+        }
+    }
+    let mut margs: Vec<Arg> = Vec::new();
+    if let Some(content) = content {
+        margs.push(Arg {
+            label: None,
+            value: content,
+        });
+    }
+    if let Some(alignment) = alignment {
+        margs.push(Arg {
+            label: Some("alignment".into()),
+            value: alignment,
+        });
+    }
+    append_modifier(recv, make_modifier(name, margs))
+}
+
+fn modifier_background(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    compose_modifier(ctx, recv, "background", args)
+}
+
+fn modifier_overlay(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    compose_modifier(ctx, recv, "overlay", args)
+}
+
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
 const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
@@ -149,6 +220,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("fontWeight", modifier_font_weight),
     ("foregroundColor", modifier_foreground_color),
     ("background", modifier_background),
+    ("overlay", modifier_overlay),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
     ("bold", modifier_bold),
@@ -575,6 +647,24 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "multilineTextAlignment",
         modifier_multiline_text_alignment,
         vec![BuiltinParam::positional("TextAlignment")],
+    );
+    // Compositing modifiers: a positional content view + a labeled `alignment:`
+    // (`Alignment`) so `.overlay(_, alignment: .topTrailing)` resolves (#204).
+    interp.register_struct_method_typed(
+        "background",
+        modifier_background,
+        vec![
+            BuiltinParam::positional("View"),
+            BuiltinParam::labeled("alignment", "Alignment"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "overlay",
+        modifier_overlay,
+        vec![
+            BuiltinParam::positional("View"),
+            BuiltinParam::labeled("alignment", "Alignment"),
+        ],
     );
 }
 
@@ -1771,6 +1861,7 @@ mod tests {
                 "View.multilineTextAlignment",
                 "View.offset",
                 "View.opacity",
+                "View.overlay",
                 "View.padding",
                 "View.pickerStyle",
                 "View.shadow",

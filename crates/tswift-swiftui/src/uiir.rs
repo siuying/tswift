@@ -354,6 +354,20 @@ mod tests {
     }
 
     #[test]
+    fn compositing_modifiers_serialize_nested_view_and_alignment() {
+        // `.background(view)` lowers to a `0`-rooted nested node; `.overlay(view,
+        // alignment:)` wraps it with the alignment token; a color background
+        // stays the bare token (C0 backward compatibility) — issue #204.
+        let json = render_json(
+            r#"Text("Hi").background(Circle().fill(.blue)).overlay(Text("X"), alignment: .topTrailing).background(.yellow)"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"Hi"},"modifiers":[{"name":"background","value":{"id":"0","kind":"Circle","args":{},"modifiers":[{"name":"fill","value":{"$":"color","name":"blue"}}],"children":[]}},{"name":"overlay","value":{"value":{"id":"0","kind":"Text","args":{"verbatim":"X"},"modifiers":[],"children":[]},"alignment":{"$":"align","name":"topTrailing"}}},{"name":"background","value":{"$":"color","name":"yellow"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
     fn progress_view_label_serializes_as_arg() {
         // `ProgressView("…")`'s title becomes a `label` arg (issue #206); a
         // value-only ProgressView carries no `label`.

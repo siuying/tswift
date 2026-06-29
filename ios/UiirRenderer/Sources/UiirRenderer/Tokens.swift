@@ -113,6 +113,38 @@ extension UiirValue {
         }
     }
 
+    /// Interpret this value as a nested UIIR view node — a `.background(view)` /
+    /// `.overlay(view)` subtree with its own `0`-rooted id space (#204). Returns
+    /// nil when it is not a node object (e.g. a color token).
+    var asNode: UiirNode? {
+        guard case let .object(o) = self, case let .string(kind)? = o["kind"] else { return nil }
+        let id = o["id"]?.stringValue ?? "0"
+        var args: [String: UiirValue] = [:]
+        if case let .object(a)? = o["args"] { args = a }
+        var modifiers: [UiirModifier] = []
+        if case let .array(ms)? = o["modifiers"] {
+            modifiers = ms.compactMap { m in
+                guard case let .object(mo) = m, case let .string(name)? = mo["name"] else {
+                    return nil
+                }
+                return UiirModifier(name: name, value: mo["value"] ?? .null)
+            }
+        }
+        var children: [UiirNode] = []
+        if case let .array(cs)? = o["children"] { children = cs.compactMap { $0.asNode } }
+        return UiirNode(id: id, kind: kind, args: args, modifiers: modifiers, children: children)
+    }
+
+    /// The composite content of a `background`/`overlay` modifier value: either a
+    /// bare nested node, or `{ value: <node>, alignment: <token> }` (#204).
+    var asComposite: (node: UiirNode, alignment: Alignment)? {
+        if let node = asNode { return (node, .center) }
+        if case let .object(o) = self, let inner = o["value"]?.asNode {
+            return (inner, o["alignment"]?.asAlignment ?? .center)
+        }
+        return nil
+    }
+
     /// Decode a `[GridItem]` arg (a JSON array of `{ kind, value, spacing? }`)
     /// into SwiftUI `GridItem` track sizers (issue #205).
     var asGridItems: [GridItem]? {
