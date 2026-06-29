@@ -16,8 +16,12 @@ struct PlaygroundView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                CodeEditor(text: $source)
+                CodeEditor(text: $source, diagnostics: session.diagnostics)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if !session.diagnostics.isEmpty {
+                    diagnosticsList
+                }
 
                 Divider()
 
@@ -31,8 +35,8 @@ struct PlaygroundView: View {
                     samplesMenu
                 }
             }
-            .onChange(of: source) { _ in scheduleCompile() }
-            .onAppear { compileNow() }
+            .onChange(of: source) { _ in scheduleRecompute() }
+            .onAppear { computeNow() }
         }
     }
 
@@ -58,6 +62,34 @@ struct PlaygroundView: View {
             .background(Color.red.opacity(0.85))
     }
 
+    // MARK: Diagnostics list
+
+    /// The frontend's syntax/sema diagnostics, one tappable row each
+    /// (`⚠︎ Ln:Col message`), capped in height so it never crowds the preview.
+    private var diagnosticsList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(session.diagnostics) { d in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: d.isError
+                            ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(d.isError ? .red : .orange)
+                            .font(.caption2)
+                        Text("\(d.line):\(d.col)")
+                            .foregroundStyle(.secondary)
+                            .font(.caption2.monospaced())
+                        Text(d.message)
+                            .font(.caption2.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .frame(maxHeight: 120)
+        .background(Color(.secondarySystemBackground))
+    }
+
     // MARK: Samples
 
     private var samplesMenu: some View {
@@ -77,18 +109,25 @@ struct PlaygroundView: View {
 
     // MARK: Debounced compile
 
-    private func scheduleCompile() {
+    private func scheduleRecompute() {
         recompileTask?.cancel()
         let current = source
         recompileTask = Task {
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled else { return }
-            session.compile(current)
+            compute(current)
         }
     }
 
-    private func compileNow() {
+    private func computeNow() {
         recompileTask?.cancel()
-        session.compile(source)
+        compute(source)
+    }
+
+    /// Lint (for inline error feedback) and recompile (for the live preview) the
+    /// same source in lockstep — both read the frontend, so they stay consistent.
+    private func compute(_ current: String) {
+        session.diagnose(current)
+        session.compile(current)
     }
 }

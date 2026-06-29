@@ -18,6 +18,10 @@ public final class PreviewSession: ObservableObject {
     @Published public private(set) var root: String?
     /// The error from the last failed compile/dispatch, if any.
     @Published public private(set) var lastError: String?
+    /// Frontend diagnostics for the last linted source (empty when it's clean).
+    /// Updated by `diagnose(_:)` independently of the live preview, so the
+    /// editor can surface syntax/sema errors as the user types.
+    @Published public private(set) var diagnostics: [Diagnostic] = []
 
     private let context: TSwiftContext
 
@@ -67,6 +71,48 @@ public final class PreviewSession: ObservableObject {
         root = envelope.root
         lastError = nil
         model = RenderModel(root: tree)
+    }
+
+    // MARK: Diagnostics
+
+    /// One frontend diagnostic, with its position mapped back to the user's
+    /// source (1-based line/column) and severity.
+    public struct Diagnostic: Decodable, Identifiable, Equatable {
+        public enum Severity: String, Decodable { case error, warning }
+        public let line: Int
+        public let col: Int
+        public let message: String
+        public let severity: Severity
+        public var id: String { "\(line):\(col):\(severity.rawValue):\(message)" }
+        public var isError: Bool { severity == .error }
+    }
+
+    private struct DiagnosticsEnvelope: Decodable {
+        let ok: Bool
+        let diagnostics: [Diagnostic]
+    }
+
+    /// Lint `source` through the frontend and publish its diagnostics, **without**
+    /// rendering — the editor's live error-feedback channel. Decode failures are
+    /// surfaced as a single synthetic error so the UI never silently drops them.
+    public func diagnose(_ source: String) {
+        let raw = source.withCString { cSource -> String in
+            guard let ptr = tswift_diagnostics(cSource) else { return "" }
+            defer { tswift_string_free(ptr) }
+            return String(cString: ptr)
+        }
+        guard let envelope = try? JSONDecoder().decode(
+            DiagnosticsEnvelope.self, from: Data(raw.utf8)
+        ) else {
+            diagnostics = [Diagnostic(
+                line: 1, col: 1,
+                message: raw.isEmpty ? "tswift_diagnostics returned null"
+                                     : "failed to decode diagnostics",
+                severity: .error
+            )]
+            return
+        }
+        diagnostics = envelope.diagnostics
     }
 
     // MARK: Dispatch
