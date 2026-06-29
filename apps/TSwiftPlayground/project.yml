@@ -14,11 +14,17 @@ packages:
   Runestone:
     url: https://github.com/simonbs/Runestone
     exactVersion: "0.5.2"
+  # The tree-sitter Swift grammar (parser.c + scanner.c) that drives Runestone's
+  # syntax highlighting. Pinned to the tag that commits the generated parser so
+  # no tree-sitter CLI is needed at build time.
+  TreeSitterSwift:
+    url: https://github.com/alex-pinkus/tree-sitter-swift
+    revision: 31d17fe7e818a2048c808b5c6fdc2dc792f4f5b5 # 0.7.3-with-generated-files
 targets:
   TSwiftPlayground:
     type: application
     platform: iOS
-    sources: [Sources]
+    sources: [Sources, Resources]
     dependencies:
       - package: TSwift
         product: TSwiftCore
@@ -28,6 +34,8 @@ targets:
         product: UiirRenderer
       - package: Runestone
         product: Runestone
+      - package: TreeSitterSwift
+        product: TreeSitterSwift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

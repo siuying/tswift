@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-use tswift_core::result_json::{self, CompileReport, RunReport};
+use tswift_core::result_json::{self, escape, CompileReport, RunReport};
 use tswift_core::Interpreter;
-use tswift_frontend::Analysis;
+use tswift_frontend::{Analysis, Severity};
 use wasm_bindgen::prelude::*;
 
 mod swiftui;
@@ -17,6 +17,58 @@ const BACKEND: &str = "wasm";
 pub fn run_swift(source: &str) -> String {
     install_panic_hook();
     run_swift_impl(source)
+}
+
+/// Lint `source` through the frontend and return its diagnostics as JSON,
+/// **without** running the program. This is the editor's live error-feedback
+/// channel (debounced on keystrokes) — cheap, side-effect free, and the single
+/// source of truth shared with the `runSwift` compile phase.
+///
+/// Shape: `{"ok":bool,"diagnostics":[{"line":u32,"col":u32,"message":string,
+/// "severity":"error"|"warning"}]}`. `ok` is false iff any diagnostic is an
+/// error (i.e. compilation would fail). A hard analyze failure (interior NUL)
+/// surfaces as a single error diagnostic at 1:1.
+#[wasm_bindgen(js_name = swiftDiagnostics)]
+pub fn swift_diagnostics(source: &str) -> String {
+    install_panic_hook();
+    diagnose_impl(source)
+}
+
+fn diagnose_impl(source: &str) -> String {
+    let analysis = match Analysis::analyze(source, "main.swift") {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())])
+        }
+    };
+
+    let mut items = Vec::new();
+    let mut had_error = false;
+    for diagnostic in analysis.diagnostics() {
+        let severity = match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        had_error |= diagnostic.is_error();
+        items.push(diagnostic_json(
+            diagnostic.line,
+            diagnostic.col,
+            severity,
+            &diagnostic.message,
+        ));
+    }
+    diagnostics_json(!had_error, &items)
+}
+
+fn diagnostic_json(line: u32, col: u32, severity: &str, message: &str) -> String {
+    format!(
+        "{{\"line\":{line},\"col\":{col},\"severity\":\"{severity}\",\"message\":\"{}\"}}",
+        escape(message)
+    )
+}
+
+fn diagnostics_json(ok: bool, items: &[String]) -> String {
+    format!("{{\"ok\":{ok},\"diagnostics\":[{}]}}", items.join(","))
 }
 
 fn run_swift_impl(source: &str) -> String {
@@ -259,5 +311,55 @@ mod tests {
         let json = run_swift_impl("let x = 1");
         assert!(json.contains("astPreview"), "json={json}");
         assert!(json.contains("source_file"), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_clean_source_is_ok_and_empty() {
+        let json = diagnose_impl("let x = 1\nprint(x)");
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(json.contains("\"diagnostics\":[]"), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_error_reports_position_and_severity() {
+        // `#error` is an error-severity diagnostic with a known message.
+        let json = diagnose_impl("#error(\"boom\")");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"severity\":\"error\""), "json={json}");
+        assert!(json.contains("\"message\":\"boom\""), "json={json}");
+        assert!(json.contains("\"line\":1"), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_warning_keeps_ok_true() {
+        // `#warning` is advisory: it appears but `ok` stays true (compiles).
+        let json = diagnose_impl("#warning(\"note\")\nprint(\"ok\")");
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(json.contains("\"severity\":\"warning\""), "json={json}");
+        assert!(json.contains("\"message\":\"note\""), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_does_not_run_the_program() {
+        // A program that would trap at runtime still lints clean (no run phase).
+        let json = diagnose_impl("let a = [1, 2, 3]\nprint(a[9])");
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(json.contains("\"diagnostics\":[]"), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_analyze_error_is_single_diagnostic() {
+        // Interior NUL is the one hard analyze failure: one error at 1:1.
+        let json = diagnose_impl("let x = 1\0");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"line\":1"), "json={json}");
+        assert!(json.contains("\"severity\":\"error\""), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_message_is_json_escaped() {
+        let json = diagnose_impl("#error(\"a\\\"b\")");
+        // The embedded quote must be escaped so the envelope stays valid JSON.
+        assert!(json.contains("a\\\"b"), "json={json}");
     }
 }

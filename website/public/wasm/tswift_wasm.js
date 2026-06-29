@@ -24,6 +24,34 @@ export function runSwift(source) {
 }
 
 /**
+ * Lint `source` through the frontend and return its diagnostics as JSON,
+ * **without** running the program. This is the editor's live error-feedback
+ * channel (debounced on keystrokes) — cheap, side-effect free, and the single
+ * source of truth shared with the `runSwift` compile phase.
+ *
+ * Shape: `{"ok":bool,"diagnostics":[{"line":u32,"col":u32,"message":string,
+ * "severity":"error"|"warning"}]}`. `ok` is false iff any diagnostic is an
+ * error (i.e. compilation would fail). A hard analyze failure (interior NUL)
+ * surfaces as a single error diagnostic at 1:1.
+ * @param {string} source
+ * @returns {string}
+ */
+export function swiftDiagnostics(source) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.swiftDiagnostics(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Compile a SwiftUI program, render its root `View`, and start an interactive
  * session. Returns a JSON envelope:
  * `{"ok":bool,"root":string|null,"tree":<uiir>|null,"error":string|null}`.
