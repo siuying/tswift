@@ -29,8 +29,16 @@
       <div class="pane-head">
         <span class="filename">Output</span>
         <div class="tabs" id="fp-tabs">
+          <button data-tab="preview" class="tab" id="fp-tab-preview" style="display:none">preview</button>
           <button data-tab="stdout" class="tab active">stdout</button>
           <button data-tab="compile" class="tab">compile</button>
+        </div>
+      </div>
+      <div id="fp-preview-wrap" class="preview-stage" style="display:none;min-height:480px">
+        <div class="device">
+          <div class="screen">
+            <swiftui-canvas id="fp-preview" appearance="light" theme="ios"></swiftui-canvas>
+          </div>
         </div>
       </div>
       <pre id="fp-stdout" class="output-area" style="min-height:480px">Ready.</pre>
@@ -49,9 +57,32 @@
     color:var(--muted); cursor:pointer;
   }
   .tab.active { background:var(--accent); color:#fff; border-color:transparent; }
+
+  /* SwiftUI live preview: a simple device frame around the canvas host. */
+  .preview-stage {
+    display:flex; align-items:flex-start; justify-content:center;
+    padding:1.25rem; background:var(--bg, #0d1117);
+    border-radius:8px; overflow:auto;
+  }
+  .preview-stage .device {
+    width:320px; max-width:100%;
+    border:10px solid #1c1c1e; border-radius:38px;
+    background:#000; box-shadow:0 12px 40px rgba(0,0,0,.35);
+    overflow:hidden;
+  }
+  .preview-stage .screen {
+    background:#fff; border-radius:28px; overflow:hidden;
+    min-height:420px; display:flex; flex-direction:column;
+  }
+  .preview-stage swiftui-canvas { display:block; flex:1; }
 </style>
 
 <script type="module">
+  // The shared, dependency-free SwiftUI render host (the single source of DOM
+  // truth) — imported straight from the sibling package source, like its own
+  // example. Registers the <swiftui-canvas> custom element on import.
+  import '../../../web/swiftui-canvas/src/canvas.ts';
+
   const ALL_PRESETS = [
     { group: 'Basics',       label: 'Hello World',      code: `// Hello, tswift!
 let language = "Swift"
@@ -286,6 +317,73 @@ for pwd in inputs {
 let safe = try? validate("abc123")
 print("try? 'abc123' → \\(safe ?? "nil")")` },
 
+    { group: 'SwiftUI',      label: 'Counter',          code: `struct CounterView: View {
+    @State private var count = 0
+    var body: some View {
+        VStack {
+            Text("\\(count)")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            Button("Increment") { count += 1 }
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.blue)
+                .cornerRadius(8)
+        }
+    }
+}` },
+
+    { group: 'SwiftUI',      label: 'Toggle',           code: `struct GreetingView: View {
+    @State private var isOn = true
+    var body: some View {
+        VStack(spacing: 16) {
+            Toggle("Show greeting", isOn: $isOn)
+                .padding()
+            if isOn {
+                Text("Hello, SwiftUI! 👋")
+                    .font(.title)
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding()
+    }
+}` },
+
+    { group: 'SwiftUI',      label: 'List',             code: `struct FruitList: View {
+    let fruits = ["Apple", "Banana", "Cherry", "Date"]
+    var body: some View {
+        List {
+            ForEach(fruits, id: \\.self) { fruit in
+                HStack {
+                    Text(fruit)
+                    Spacer()
+                    Text("🍎")
+                }
+            }
+        }
+    }
+}` },
+
+    { group: 'SwiftUI',      label: 'Profile',          code: `struct ProfileCard: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("🦜")
+                .font(.largeTitle)
+            Text("Unlucky Parrot")
+                .font(.title)
+                .fontWeight(.bold)
+            Text("SwiftUI on tswift")
+                .foregroundColor(.secondary)
+            Button("Follow") { }
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.blue)
+                .cornerRadius(10)
+        }
+        .padding()
+    }
+}` },
+
     { group: 'Stdlib',       label: 'Collections',      code: `// Array operations
 var fruits = ["apple", "banana", "cherry"]
 fruits.append("date")
@@ -317,12 +415,22 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
   const compile   = document.getElementById('fp-compile');
   const metaEl    = document.getElementById('fp-meta');
   const tabs      = document.querySelectorAll('#fp-tabs .tab');
+  const previewTab  = document.getElementById('fp-tab-preview');
+  const previewWrap = document.getElementById('fp-preview-wrap');
+  const preview     = document.getElementById('fp-preview');
 
   // ── Tabs ─────────────────────────────────────────────────────────
   function showTab(name) {
+    previewWrap.style.display = name === 'preview' ? '' : 'none';
     stdout.style.display  = name === 'stdout'  ? '' : 'none';
     compile.style.display = name === 'compile' ? '' : 'none';
     tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  }
+
+  // Hide the Preview tab until a compile produces a SwiftUI root `View`.
+  function setPreviewAvailable(available) {
+    previewTab.style.display = available ? '' : 'none';
+    if (!available && previewTab.classList.contains('active')) showTab('stdout');
   }
   tabs.forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
 
@@ -354,6 +462,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
     stdout.textContent = 'Ready.';
     stdout.className = 'output-area';
     compile.textContent = '';
+    setPreviewAvailable(false);
     showTab('stdout');
   }
 
@@ -385,6 +494,23 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
 
   // ── WASM ─────────────────────────────────────────────────────────
   let runSwift = null;
+  let swiftUICompile = null;
+  let swiftUIDispatch = null;
+
+  // Route a canvas interaction (button tap / control change) back into the
+  // live session and apply the returned patch stream in place.
+  preview.addEventListener('swiftui-event', (e) => {
+    if (!swiftUIDispatch) return;
+    const { id, event, value } = e.detail;
+    const payload = value == null ? '' : JSON.stringify(value);
+    try {
+      const res = JSON.parse(swiftUIDispatch(id, event, payload));
+      if (res.ok) preview.applyPatches(res.patches);
+      else setStatus('error', 'event error');
+    } catch (err) {
+      setStatus('error', 'event crash');
+    }
+  });
 
   async function initWasm() {
     try {
@@ -397,6 +523,8 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
       const mod = await importModule(wasmUrl);
       await mod.default();
       runSwift = mod.runSwift;
+      swiftUICompile = mod.swiftUICompile;
+      swiftUIDispatch = mod.swiftUIDispatch;
       runBtn.disabled = false;
       setStatus('idle', 'idle');
     } catch (err) {
@@ -412,12 +540,32 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
     statusEl.className = `status-badge ${type}`;
   }
 
+  // Try the SwiftUI host first: if the program declares a root `View`, render
+  // it live in the preview pane. Returns true when preview mode was entered.
+  function tryPreview() {
+    if (!swiftUICompile) return false;
+    let res;
+    try {
+      res = JSON.parse(swiftUICompile(source.value));
+    } catch (err) {
+      return false;
+    }
+    if (!res.ok || !res.root) return false;
+    preview.mount(res.tree);
+    setPreviewAvailable(true);
+    showTab('preview');
+    setStatus('ok', `preview · ${res.root}`);
+    return true;
+  }
+
   runBtn.addEventListener('click', async () => {
     if (!runSwift) return;
     setStatus('running', 'running…');
     stdout.textContent = '';
     stdout.className = 'output-area';
     compile.textContent = '';
+    if (tryPreview()) return;
+    setPreviewAvailable(false);
     try {
       const result = JSON.parse(runSwift(source.value));
       // compile tab

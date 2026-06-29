@@ -39,3 +39,20 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  website-wasm-smoke:
+    name: website wasm smoke (SwiftUI host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Asserts the committed production wasm (public/wasm) still exports the
+      # SwiftUI host entry points the playground preview drives. A stale,
+      # runSwift-only wasm would silently break the live preview.
+      - name: SwiftUI wasm smoke
+        run: node test/wasm-smoke.mjs
+        working-directory: website

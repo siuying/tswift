@@ -22,6 +22,58 @@ export function runSwift(source) {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
+
+/**
+ * Compile a SwiftUI program, render its root `View`, and start an interactive
+ * session. Returns a JSON envelope:
+ * `{"ok":bool,"root":string|null,"tree":<uiir>|null,"error":string|null}`.
+ * @param {string} source
+ * @returns {string}
+ */
+export function swiftUICompile(source) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.swiftUICompile(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Route a host event into the live session and return a **patch stream** that
+ * the `<swiftui-canvas>` host applies in place (preserving focus, an in-flight
+ * slider drag, scroll position, &c.): `{"ok":bool,"patches":[…]|null,
+ * "error":string|null}`. `value` is a JSON scalar (a control's new value) or
+ * `""` for events without a payload (a tap).
+ * @param {string} id
+ * @param {string} event
+ * @param {string} value
+ * @returns {string}
+ */
+export function swiftUIDispatch(id, event, value) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(event, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.swiftUIDispatch(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

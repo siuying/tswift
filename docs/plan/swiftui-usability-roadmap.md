@@ -293,11 +293,12 @@ reflects reality.
 ## 7. Deliverables checklist
 
 **Plan A — website**
-- [ ] Rebuild site wasm with `swiftUICompile`/`swiftUIDispatch`; fix README step.
-- [ ] `<swiftui-canvas>` in the site bundle; SwiftUI-mode detection in playground.
-- [ ] Preview pane: mount on compile, route `swiftui-event` → dispatch → patches.
-- [ ] SwiftUI preset gallery from fixtures.
-- [ ] wasm smoke + Playwright gate on production; delete `prototype/swiftui-sandbox`.
+- [x] Rebuild site wasm with `swiftUICompile`/`swiftUIDispatch`; fix README step.
+- [x] `<swiftui-canvas>` in the site bundle; SwiftUI-mode detection in playground.
+- [x] Preview pane: mount on compile, route `swiftui-event` → dispatch → patches.
+- [x] SwiftUI preset gallery (Counter/Toggle/List/Profile).
+- [x] wasm smoke gate on production (CI `website-wasm-smoke`); delete
+      `prototype/swiftui-sandbox`. (Playwright deferred — no browser in CI yet.)
 
 **Plan B — iOS app**
 - [ ] `apps/TSwiftPlayground/project.yml` (xcodegen) + Runestone dependency.
