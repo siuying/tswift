@@ -36,6 +36,37 @@ public enum ViewFactory {
         arg(node, key)?.doubleValue.map { CGFloat($0) }
     }
 
+    /// A `VStack`'s `alignment:` (a `HorizontalAlignment` token); default center.
+    private static func hAlignment(_ node: UiirNode) -> HorizontalAlignment {
+        guard case let .token(tag, name)? = arg(node, "alignment"), tag == "hAlign" else {
+            return .center
+        }
+        switch name {
+        case "leading": return .leading
+        case "trailing": return .trailing
+        default: return .center
+        }
+    }
+
+    /// An `HStack`'s `alignment:` (a `VerticalAlignment` token); default center.
+    private static func vAlignment(_ node: UiirNode) -> VerticalAlignment {
+        guard case let .token(tag, name)? = arg(node, "alignment"), tag == "vAlign" else {
+            return .center
+        }
+        switch name {
+        case "top": return .top
+        case "bottom": return .bottom
+        case "firstTextBaseline": return .firstTextBaseline
+        case "lastTextBaseline": return .lastTextBaseline
+        default: return .center
+        }
+    }
+
+    /// A `ZStack`'s 2-D `alignment:` token; default center.
+    private static func zAlignment(_ node: UiirNode) -> Alignment {
+        arg(node, "alignment")?.asAlignment ?? .center
+    }
+
     /// `ScrollView` scroll axes from its `axes` token arg; default vertical.
     private static func scrollAxes(_ node: UiirNode) -> Axis.Set {
         if case let .token(tag, name)? = arg(node, "axes"), tag == "axis", name == "horizontal" {
@@ -153,11 +184,17 @@ public enum ViewFactory {
             )
 
         case "VStack":
-            return AnyView(VStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+            return AnyView(
+                VStack(alignment: hAlignment(node), spacing: optLength(node, "spacing")) {
+                    renderChildren(node, sink)
+                })
         case "HStack":
-            return AnyView(HStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+            return AnyView(
+                HStack(alignment: vAlignment(node), spacing: optLength(node, "spacing")) {
+                    renderChildren(node, sink)
+                })
         case "ZStack":
-            return AnyView(ZStack { renderChildren(node, sink) })
+            return AnyView(ZStack(alignment: zAlignment(node)) { renderChildren(node, sink) })
         case "Spacer":
             return AnyView(Spacer(minLength: optLength(node, "minLength")))
         case "Group":
@@ -181,9 +218,15 @@ public enum ViewFactory {
             return AnyView(ProgressView())
         // C6 — lazy stacks, grids, Form.
         case "LazyVStack":
-            return AnyView(LazyVStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+            return AnyView(
+                LazyVStack(alignment: hAlignment(node), spacing: optLength(node, "spacing")) {
+                    renderChildren(node, sink)
+                })
         case "LazyHStack":
-            return AnyView(LazyHStack(spacing: optLength(node, "spacing")) { renderChildren(node, sink) })
+            return AnyView(
+                LazyHStack(alignment: vAlignment(node), spacing: optLength(node, "spacing")) {
+                    renderChildren(node, sink)
+                })
         case "Grid":
             return AnyView(Grid { renderChildren(node, sink) })
         case "GridRow":
