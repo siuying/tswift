@@ -3,8 +3,8 @@
 // engine's keyed patch stream. No vdom, no reconciler — the runtime already
 // did the diffing.
 
-import { applyModifiers } from "./modifier-css.js";
-import type { Modifier } from "./modifier-css.js";
+import { applyModifiers, FRAME_ALIGN } from "./modifier-css.js";
+import type { Modifier, UiirValue } from "./modifier-css.js";
 import { sfGlyph } from "./sf-symbols.js";
 
 /** A UIIR node from `tswift swiftui render` / patch payloads. */
@@ -111,7 +111,12 @@ export class PatchApplier {
       }
       case "setText": {
         const el = this.nodes.get(patch.id);
-        if (el) el.textContent = patch.text;
+        if (el) {
+          el.textContent = patch.text;
+          // Setting textContent drops any attached composite layers; rebuild
+          // them from the remembered modifiers (#204).
+          this.applyComposites(el, this.mods.get(patch.id) ?? []);
+        }
         break;
       }
       case "setModifiers": {
@@ -126,6 +131,7 @@ export class PatchApplier {
         } else {
           applyModifiers(el, patch.modifiers);
           this.mods.set(patch.id, patch.modifiers);
+          this.applyComposites(el, patch.modifiers);
         }
         break;
       }
@@ -148,11 +154,74 @@ export class PatchApplier {
           if (el.parentElement?.dataset.zstack === "1") el.style.gridArea = "1 / 1";
           this.applyArgs(el, el.dataset.kind ?? "", patch.args);
           el.dataset.baseStyle = el.style.cssText;
-          applyModifiers(el, this.mods.get(patch.id) ?? []);
+          const mods = this.mods.get(patch.id) ?? [];
+          applyModifiers(el, mods);
+          // The cssText reset drops the composite anchoring (position/isolation);
+          // rebuild the layers from the remembered modifiers (#204).
+          this.applyComposites(el, mods);
         }
         break;
       }
     }
+  }
+
+  /** Render a node's `background`/`overlay` arbitrary-view composites (#204) as
+   * absolutely-positioned layers: a background paints behind the content
+   * (negative z-index so normal-flow content/text sits above), an overlay in
+   * front (and click-through). A color/token background is *not* a composite —
+   * it stays in `modifier-css`. Idempotent: prior layers are cleared first. */
+  private applyComposites(el: HTMLElement, modifiers: Modifier[]): void {
+    el.querySelectorAll(":scope > .composite-layer").forEach((n) => n.remove());
+    let anchored = false;
+    for (const mod of modifiers) {
+      if (mod.name !== "background" && mod.name !== "overlay") continue;
+      const comp = compositeOf(mod.value);
+      if (!comp) continue;
+      const layer = document.createElement("div");
+      layer.className = "composite-layer";
+      const a = comp.alignment ? FRAME_ALIGN[comp.alignment] : undefined;
+      layer.style.cssText =
+        `position:absolute;inset:0;display:flex;pointer-events:none;` +
+        `justify-content:${a?.justify ?? "center"};align-items:${a?.align ?? "center"};`;
+      // Background paints behind the content (negative z, contained by the
+      // `isolation` stacking context below); overlay paints in front. Both are
+      // click-through so the host stays interactive (a composite's own controls
+      // are decorative in v1, and would otherwise emit `0`-rooted event ids).
+      layer.style.zIndex = mod.name === "background" ? "-1" : "1";
+      layer.appendChild(this.buildDetached(comp.node));
+      el.appendChild(layer);
+      anchored = true;
+    }
+    if (anchored) {
+      // A local stacking context so a `z-index:-1` background layer is contained
+      // (paints above the host's own background, never behind its ancestors).
+      el.style.isolation = "isolate";
+      const pos = el.style.position;
+      if (pos !== "absolute" && pos !== "fixed" && pos !== "relative") {
+        el.style.position = "relative";
+      }
+    }
+  }
+
+  /** Build a nested composite subtree (#204) like `build`, but *without*
+   * registering it in the patch-addressed node map — its ids are `0`-rooted and
+   * would collide with the real tree, and it is re-rendered wholesale whenever
+   * the host modifier changes. (An interactive control inside a composite is not
+   * individually addressable in v1.) */
+  private buildDetached(node: UiirNode): HTMLElement {
+    const el = this.element(node);
+    el.dataset.kind = node.kind;
+    el.dataset.intrinsicStyle = el.style.cssText;
+    this.applyArgs(el, node.kind, node.args);
+    el.dataset.baseStyle = el.style.cssText;
+    applyModifiers(el, node.modifiers);
+    this.applyComposites(el, node.modifiers);
+    for (const child of node.children) {
+      const childEl = this.buildDetached(child);
+      if (el.dataset.zstack === "1") childEl.style.gridArea = "1 / 1";
+      el.appendChild(childEl);
+    }
+    return el;
   }
 
   /** A `ProgressView`'s DOM shape depends on whether it has a title label (a
@@ -206,6 +275,7 @@ export class PatchApplier {
     el.dataset.baseStyle = el.style.cssText;
     applyModifiers(el, node.modifiers);
     this.mods.set(node.id, node.modifiers);
+    this.applyComposites(el, node.modifiers);
     this.nodes.set(node.id, el);
     if (node.kind === "Picker" && el instanceof HTMLSelectElement) {
       // A Picker's tagged children become <option>s, not nested views.
@@ -648,6 +718,21 @@ function gridTemplate(tracks: unknown): string | undefined {
   return segments.join(" ");
 }
 
+/** Interpret a `background`/`overlay` modifier value as an arbitrary-view
+ * composite (#204): either a bare nested node, or `{ value: <node>, alignment }`.
+ * A color/token value (no nested `kind`) returns undefined — not a composite. */
+function compositeOf(value: UiirValue): { node: UiirNode; alignment?: string } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.kind === "string") return { node: value as unknown as UiirNode };
+  const inner = v.value as Record<string, unknown> | undefined;
+  if (inner && typeof inner.kind === "string") {
+    const align = v.alignment as { name?: string } | undefined;
+    return { node: inner as unknown as UiirNode, alignment: align?.name };
+  }
+  return undefined;
+}
+
 /** CSS `justify-items`/`align-items` keyword for a lazy-grid `alignment:` token
  * on the grid's cross axis (LazyVGrid → horizontal, LazyHGrid → vertical). */
 const GRID_ITEM_ALIGN: Record<string, string> = {
@@ -720,7 +805,11 @@ function patchRef(
   exclude?: Element,
 ): Node | null {
   const addressable = Array.from(parent.children).filter(
-    (c) => c !== exclude && !c.classList.contains("section-header"),
+    (c) =>
+      c !== exclude &&
+      !c.classList.contains("section-header") &&
+      // Composite background/overlay layers are not patch-addressed children.
+      !c.classList.contains("composite-layer"),
   );
   return addressable[index] ?? null;
 }

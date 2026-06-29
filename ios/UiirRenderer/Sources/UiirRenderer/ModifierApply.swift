@@ -8,15 +8,23 @@ import SwiftUI
 /// fold the list left-to-right, type-erasing each step.
 @MainActor
 enum ModifierApply {
-    static func apply(_ modifiers: [UiirModifier], to view: AnyView) -> AnyView {
+    static func apply(
+        _ modifiers: [UiirModifier],
+        to view: AnyView,
+        sink: any UiirEventSink = NoopEventSink()
+    ) -> AnyView {
         var out = view
         for mod in modifiers {
-            out = applyOne(mod, to: out)
+            out = applyOne(mod, to: out, sink: sink)
         }
         return out
     }
 
-    private static func applyOne(_ mod: UiirModifier, to view: AnyView) -> AnyView {
+    private static func applyOne(
+        _ mod: UiirModifier,
+        to view: AnyView,
+        sink: any UiirEventSink
+    ) -> AnyView {
         switch mod.name {
         case "font":
             if case let .token(tag, name) = mod.value, tag == "textStyle" {
@@ -31,8 +39,23 @@ enum ModifierApply {
                 return AnyView(view.foregroundColor(c))
             }
         case "background":
+            // An arbitrary nested view composites behind the receiver (#204);
+            // a color/token stays the C0 fast path.
+            if let comp = mod.value.asComposite {
+                let content = ViewFactory.render(comp.node, eventSink: sink)
+                return AnyView(view.background(alignment: comp.alignment) { content })
+            }
             if let c = mod.value.asColor {
                 return AnyView(view.background(c))
+            }
+        case "overlay":
+            // An arbitrary nested view composites in front of the receiver (#204).
+            if let comp = mod.value.asComposite {
+                let content = ViewFactory.render(comp.node, eventSink: sink)
+                return AnyView(view.overlay(alignment: comp.alignment) { content })
+            }
+            if let c = mod.value.asColor {
+                return AnyView(view.overlay(c))
             }
         case "cornerRadius":
             if let r = mod.value.asLength {

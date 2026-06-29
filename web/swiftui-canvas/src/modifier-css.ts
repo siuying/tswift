@@ -151,7 +151,7 @@ function cssLength(value: UiirValue): string | undefined {
  * `.frame(_, alignment:)`), not just horizontally. `justifyContent` is the
  * horizontal axis, `alignItems` the vertical (the element is laid out as a
  * single-row flex container). Baselines approximate to centered. */
-const FRAME_ALIGN: Record<string, { justify: string; align: string }> = {
+export const FRAME_ALIGN: Record<string, { justify: string; align: string }> = {
   center: { justify: "center", align: "center" },
   leading: { justify: "flex-start", align: "center" },
   trailing: { justify: "flex-end", align: "center" },

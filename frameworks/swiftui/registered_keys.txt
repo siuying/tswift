@@ -55,6 +55,7 @@ View.listStyle
 View.multilineTextAlignment
 View.offset
 View.opacity
+View.overlay
 View.padding
 View.pickerStyle
 View.shadow

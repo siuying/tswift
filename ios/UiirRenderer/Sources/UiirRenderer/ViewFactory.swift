@@ -13,7 +13,7 @@ public enum ViewFactory {
         eventSink: any UiirEventSink = NoopEventSink()
     ) -> AnyView {
         let base = build(node, eventSink)
-        return ModifierApply.apply(node.modifiers, to: base)
+        return ModifierApply.apply(node.modifiers, to: base, sink: eventSink)
     }
 
     private static func children(_ node: UiirNode) -> [UiirNode] { node.children }
