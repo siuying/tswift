@@ -227,6 +227,20 @@ public enum ViewFactory {
                 LazyHStack(alignment: vAlignment(node), spacing: optLength(node, "spacing")) {
                     renderChildren(node, sink)
                 })
+        case "LazyVGrid":
+            return AnyView(
+                LazyVGrid(
+                    columns: arg(node, "columns")?.asGridItems ?? [GridItem(.flexible())],
+                    alignment: hAlignment(node),
+                    spacing: optLength(node, "spacing")
+                ) { renderChildren(node, sink) })
+        case "LazyHGrid":
+            return AnyView(
+                LazyHGrid(
+                    rows: arg(node, "rows")?.asGridItems ?? [GridItem(.flexible())],
+                    alignment: vAlignment(node),
+                    spacing: optLength(node, "spacing")
+                ) { renderChildren(node, sink) })
         case "Grid":
             return AnyView(Grid { renderChildren(node, sink) })
         case "GridRow":

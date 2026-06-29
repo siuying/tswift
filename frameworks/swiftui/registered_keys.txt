@@ -11,7 +11,9 @@ Group.init
 HStack.init
 Image.init
 Label.init
+LazyHGrid.init
 LazyHStack.init
+LazyVGrid.init
 LazyVStack.init
 List.init
 Picker.init

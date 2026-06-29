@@ -364,6 +364,24 @@ struct Edge {
     static let vertical = Edge(token: "vertical")
     static let all = Edge(token: "all")
 }
+// `LazyVGrid(columns: [.flexible(), .fixed(80)])` — a grid track sizer. Declared
+// as a Swift type so `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)` resolve and
+// carry their parameters; serialized as `{kind,value,spacing?}` (issue #205).
+struct GridItem {
+    let kind: String
+    let value: Double
+    let maximum: Double
+    let spacing: Double?
+    static func flexible(minimum: Double = 10, maximum: Double = Double.infinity, spacing: Double? = nil) -> GridItem {
+        GridItem(kind: "flexible", value: minimum, maximum: maximum, spacing: spacing)
+    }
+    static func fixed(_ size: Double, spacing: Double? = nil) -> GridItem {
+        GridItem(kind: "fixed", value: size, maximum: size, spacing: spacing)
+    }
+    static func adaptive(minimum: Double, maximum: Double = Double.infinity, spacing: Double? = nil) -> GridItem {
+        GridItem(kind: "adaptive", value: minimum, maximum: maximum, spacing: spacing)
+    }
+}
 // Control-style tokens for `.buttonStyle`/`.listStyle`/`.pickerStyle`/
 // `.textFieldStyle`. SwiftUI uses several distinct style types that share
 // leading-dot names (`.plain`, `.automatic`); the runtime resolves leading-dot
@@ -483,6 +501,27 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     interp.register_free_fn("Grid", grid_init);
     interp.register_free_fn("GridRow", grid_row_init);
+    // Lazy grids: `columns:`/`rows:` is `[GridItem]` so leading-dot sizers
+    // (`.flexible()`/`.fixed(_)`/`.adaptive(minimum:)`) resolve against
+    // `GridItem` (issue #205).
+    interp.register_free_fn_typed(
+        "LazyVGrid",
+        lazy_vgrid_init,
+        vec![
+            BuiltinParam::labeled("columns", "[GridItem]"),
+            BuiltinParam::labeled("alignment", "HorizontalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
+    interp.register_free_fn_typed(
+        "LazyHGrid",
+        lazy_hgrid_init,
+        vec![
+            BuiltinParam::labeled("rows", "[GridItem]"),
+            BuiltinParam::labeled("alignment", "VerticalAlignment"),
+            BuiltinParam::labeled("spacing", "CGFloat"),
+        ],
+    );
     interp.register_free_fn("Form", form_init);
     interp.register_free_fn("Spacer", spacer_init);
     interp.register_free_fn("Button", button_init);
@@ -569,9 +608,8 @@ pub fn registered_keys() -> Vec<String> {
             | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
             | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView"
-            | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form" => {
-                Some(format!("{key}.init"))
-            }
+            | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form" | "LazyVGrid"
+            | "LazyHGrid" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -1157,6 +1195,56 @@ fn grid_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     ))
 }
 
+/// `LazyVGrid(columns: [GridItem], alignment:, spacing:) { ... }` — a lazy grid
+/// whose `columns` array sizes the cross-axis tracks. The host turns the
+/// `GridItem` array into a CSS-grid template (web) or a native `LazyVGrid`
+/// (iOS). `LazyHGrid` is the same with `rows:` (issue #205).
+fn lazy_vgrid_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    grid_tracks_init("LazyVGrid", "columns", ctx, args)
+}
+
+/// `LazyHGrid(rows: [GridItem], …) { ... }` — the horizontal counterpart.
+fn lazy_hgrid_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    grid_tracks_init("LazyHGrid", "rows", ctx, args)
+}
+
+/// Shared `LazyVGrid`/`LazyHGrid` builder: capture the track array
+/// (`columns:`/`rows:`), optional `spacing:`/`alignment:`, then collect the
+/// content children from the trailing `@ViewBuilder` closure.
+fn grid_tracks_init(
+    type_name: &str,
+    axis_label: &str,
+    ctx: &mut dyn StdContext,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut tracks: Option<SwiftValue> = None;
+    let mut spacing: Option<SwiftValue> = None;
+    let mut alignment: Option<SwiftValue> = None;
+    let mut rest: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some(label) if label == axis_label => tracks = Some(arg.value),
+            Some("spacing") => spacing = Some(arg.value),
+            Some("alignment") => alignment = Some(arg.value),
+            Some("pinnedViews") => {} // visual-only; ignored for now
+            _ => rest.push(arg),
+        }
+    }
+    let children = collect_children(ctx, rest)?;
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(tracks) = tracks {
+        fields.push((axis_label.into(), tracks));
+    }
+    if let Some(spacing) = spacing {
+        fields.push(("spacing".into(), spacing));
+    }
+    if let Some(alignment) = alignment {
+        fields.push(("alignment".into(), alignment));
+    }
+    fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    Ok(view_value(type_name, fields))
+}
+
 /// `GridRow { ... }` — one row of a `Grid`; its children are the row's cells.
 fn grid_row_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(container_value(
@@ -1629,7 +1717,9 @@ mod tests {
                 "HStack.init",
                 "Image.init",
                 "Label.init",
+                "LazyHGrid.init",
                 "LazyHStack.init",
+                "LazyVGrid.init",
                 "LazyVStack.init",
                 "List.init",
                 "Picker.init",

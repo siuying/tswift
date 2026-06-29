@@ -2207,9 +2207,23 @@ impl<'w> Interpreter<'w> {
 
     /// An array literal `[a, b, …]`.
     fn eval_array_literal(&mut self, node: &Node<'static>) -> Eval {
+        // When the contextual type is an array `[T]`, evaluate each element
+        // under the element type `T` so a leading-dot member resolves against it
+        // (`columns: [.flexible(), .fixed(80)]` → `GridItem`).
+        let elem_hint = self
+            .contextual_type()
+            .and_then(array_element_type)
+            .map(str::to_string);
         let mut items = Vec::new();
         for child in node.children() {
-            items.push(self.eval(&child)?);
+            if let Some(ref ty) = elem_hint {
+                self.type_hint.push(Some(ty.clone()));
+            }
+            let item = self.eval(&child);
+            if elem_hint.is_some() {
+                self.type_hint.pop();
+            }
+            items.push(item?);
         }
         Ok(SwiftValue::Array(Rc::new(items)))
     }
