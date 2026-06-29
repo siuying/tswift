@@ -24,6 +24,9 @@ on:
         required: false
         default: true
         type: boolean
+  # Reusable: auto-release-xcframework.yml calls this when crates/tswift-ffi/**
+  # changes land on main (mints a ffi-v<timestamp> tag and opens the pin PR).
+  workflow_call:
 
 permissions:
   contents: write

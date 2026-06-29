@@ -1,0 +1,27 @@
+name: Auto-release xcframework
+
+# Keep the published TSwiftFFI.xcframework in lock-step with the Rust FFI.
+#
+# When a change to the FFI crate (interface header *or* implementation) lands on
+# main, build + publish a fresh `ffi-v<timestamp>` release and open a PR bumping
+# ios/TSwift/ffi.pin. This closes the drift gap where the Swift side calls a new
+# symbol (e.g. tswift_diagnostics) that the pinned binary doesn't yet export.
+#
+# This is the automatic counterpart to the manual triggers in
+# release-xcframework.yml (tag push / workflow_dispatch); it reuses that same
+# workflow so the build+publish+pin-PR logic lives in one place.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/tswift-ffi/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    uses: ./.github/workflows/release-xcframework.yml
+    secrets: inherit
