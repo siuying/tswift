@@ -104,6 +104,9 @@ export class PatchApplier {
             ? this.buildOption(patch.node)
             : this.build(patch.node);
         old.replaceWith(el);
+        // Restore the ZStack overlay placement the parent applies at build time
+        // (a freshly built replacement has not been through that child loop).
+        if (el.parentElement?.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         break;
       }
       case "setText": {
@@ -127,13 +130,22 @@ export class PatchApplier {
         break;
       }
       case "setArgs": {
-        const el = this.nodes.get(patch.id);
-        if (el) {
+        const existing = this.nodes.get(patch.id);
+        if (existing) {
+          // A few kinds pick their DOM shape from their args (ProgressView's
+          // label wrapper, #206); restructure in place if that shape changed.
+          const el = this.restructureForArgs(existing, patch.id, patch.args);
           // Rebuild from the pristine intrinsic style so arg-owned styling
           // (stack `gap`, Spacer `flex-basis`, …) is total: removed args revert
           // to their defaults instead of leaking. Then recompute the base and
           // re-apply the remembered modifiers — never capturing modifier CSS.
           el.style.cssText = el.dataset.intrinsicStyle ?? "";
+          // The ZStack overlay places each child in the same grid cell at build
+          // time; that placement lives outside the child's intrinsic style, so
+          // the reset above drops it — restore it for any ZStack child (and for
+          // a node just rebuilt by `restructureForArgs`, which is already in the
+          // DOM under its parent).
+          if (el.parentElement?.dataset.zstack === "1") el.style.gridArea = "1 / 1";
           this.applyArgs(el, el.dataset.kind ?? "", patch.args);
           el.dataset.baseStyle = el.style.cssText;
           applyModifiers(el, this.mods.get(patch.id) ?? []);
@@ -141,6 +153,32 @@ export class PatchApplier {
         break;
       }
     }
+  }
+
+  /** A `ProgressView`'s DOM shape depends on whether it has a title label (a
+   * bare `<progress>` vs a labelled wrapper, #206). When a `setArgs` flips that
+   * presence, rebuild the element in place so the structure matches and re-register
+   * it; otherwise the existing element is returned unchanged. ProgressView is a
+   * leaf, so no child subtree needs rebuilding. */
+  private restructureForArgs(
+    el: HTMLElement,
+    id: string,
+    args: Record<string, unknown>,
+  ): HTMLElement {
+    if ((el.dataset.kind ?? "") !== "ProgressView") return el;
+    const hasLabel = !(el instanceof HTMLProgressElement); // a wrapper carries a label
+    const wantsLabel = typeof args.label === "string";
+    if (hasLabel === wantsLabel) return el;
+    const node: UiirNode = {
+      id,
+      kind: "ProgressView",
+      args,
+      modifiers: this.mods.get(id) ?? [],
+      children: [],
+    };
+    const fresh = this.build(node); // re-registers in this.nodes + dataset
+    el.replaceWith(fresh);
+    return fresh;
   }
 
   /** Drop `id` and any descendant ids from the node map. */
@@ -320,8 +358,18 @@ export class PatchApplier {
       }
       case "ProgressView": {
         // Native <progress>: determinate when `value` is set, else indeterminate.
-        const el = document.createElement("progress");
-        el.max = 1;
+        // With a title label (#206), wrap the bar in a labelled column; without
+        // one, stay a bare <progress> so existing goldens are unchanged.
+        const bar = document.createElement("progress");
+        bar.max = 1;
+        if (typeof node.args.label !== "string") return bar;
+        const el = document.createElement("div");
+        el.style.cssText = "display:flex;flex-direction:column;gap:4px;";
+        const label = document.createElement("span");
+        label.className = "progress-label";
+        label.style.cssText = "font-size:13px;";
+        bar.classList.add("progress-bar");
+        el.append(label, bar);
         return el;
       }
       case "Button": {
@@ -464,12 +512,21 @@ export class PatchApplier {
         el.textContent = "";
         el.removeAttribute("title");
       }
-    } else if (kind === "ProgressView" && el instanceof HTMLProgressElement) {
-      if (typeof args.value === "number") {
-        el.max = typeof args.total === "number" ? args.total : 1;
-        el.value = args.value;
-      } else {
-        el.removeAttribute("value"); // indeterminate
+    } else if (kind === "ProgressView") {
+      // The bar is the element itself (no label) or the wrapped `.progress-bar`.
+      const bar =
+        el instanceof HTMLProgressElement
+          ? el
+          : (el.querySelector("progress.progress-bar") as HTMLProgressElement | null);
+      const label = el.querySelector(".progress-label");
+      if (label) label.textContent = typeof args.label === "string" ? args.label : "";
+      if (bar) {
+        if (typeof args.value === "number") {
+          bar.max = typeof args.total === "number" ? args.total : 1;
+          bar.value = args.value;
+        } else {
+          bar.removeAttribute("value"); // indeterminate
+        }
       }
     } else if (kind === "ScrollView") {
       // `axes` switches the scroll direction (C3); default is vertical.

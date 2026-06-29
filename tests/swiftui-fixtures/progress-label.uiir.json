@@ -1,0 +1,1 @@
+{"id":"0","kind":"VStack","args":{"spacing":16},"modifiers":[],"children":[{"id":"0.0","kind":"ProgressView","args":{"label":"Downloading","value":0.45},"modifiers":[],"children":[]},{"id":"0.1","kind":"ProgressView","args":{"label":"Please wait"},"modifiers":[],"children":[]},{"id":"0.2","kind":"ProgressView","args":{"value":0.8},"modifiers":[],"children":[]}]}
