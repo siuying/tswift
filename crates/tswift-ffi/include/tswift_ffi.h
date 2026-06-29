@@ -45,6 +45,11 @@ char *tswift_swiftui_compile(TSwiftContext *ctx, const char *source);
  * returning an owned patch-stream JSON. */
 char *tswift_swiftui_dispatch(TSwiftContext *ctx, const char *event_json);
 
+/* Lint `source` and return owned diagnostics JSON
+ * (`{"ok":bool,"diagnostics":[{"line","col","severity","message"}]}`) without
+ * rendering. Stateless (no context). The editor's live error-feedback channel. */
+char *tswift_diagnostics(const char *source);
+
 /* ---- String release ---------------------------------------------------- */
 
 /* Release a string returned by any function above. NULL is ignored. */

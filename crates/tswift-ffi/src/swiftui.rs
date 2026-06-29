@@ -12,12 +12,75 @@
 
 use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
-use tswift_frontend::Analysis;
+use tswift_frontend::{Analysis, Severity};
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
 use tswift_swiftui::{find_root_view, uiir, PRELUDE};
 
 use tswift_core::result_json::escape as escape_json;
+
+/// The number of program lines the [`PRELUDE`] occupies once `compile`/`diagnose`
+/// splice it ahead of user source as `"{PRELUDE}\n{source}"`. User line *L*
+/// (1-based) lands on program line `PRELUDE_LINE_OFFSET + L`; a diagnostic at
+/// program line *P > PRELUDE_LINE_OFFSET* maps back to user line
+/// `P - PRELUDE_LINE_OFFSET`. Anything at/under the offset is inside the prelude
+/// (an internal issue, never the user's) and is dropped.
+fn prelude_line_offset() -> u32 {
+    // newlines within PRELUDE, plus the one joining `\n` in `"{PRELUDE}\n…"`.
+    PRELUDE.matches('\n').count() as u32 + 1
+}
+
+/// Lint `source` (spliced after the SwiftUI prelude so its symbols resolve) and
+/// return frontend diagnostics as JSON, **without** rendering — the iOS editor's
+/// live error-feedback channel, mirroring `tswift-wasm`'s `swiftDiagnostics`.
+///
+/// Shape: `{"ok":bool,"diagnostics":[{"line":u32,"col":u32,"message":string,
+/// "severity":"error"|"warning"}]}`, with `line` mapped back to the user's source
+/// (prelude-internal diagnostics are dropped). `ok` is false iff a user-region
+/// error is present.
+pub(crate) fn diagnose(source: &str) -> String {
+    let program = format!("{PRELUDE}\n{source}");
+    let offset = prelude_line_offset();
+    let analysis = match Analysis::analyze(&program, "main.swift") {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())]);
+        }
+    };
+
+    let mut items = Vec::new();
+    let mut had_error = false;
+    for diagnostic in analysis.diagnostics() {
+        // Drop diagnostics that fall inside the spliced prelude; only the user's
+        // own region is actionable in the editor.
+        if diagnostic.line <= offset {
+            continue;
+        }
+        let severity = match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        had_error |= diagnostic.is_error();
+        items.push(diagnostic_json(
+            diagnostic.line - offset,
+            diagnostic.col,
+            severity,
+            &diagnostic.message,
+        ));
+    }
+    diagnostics_json(!had_error, &items)
+}
+
+fn diagnostic_json(line: u32, col: u32, severity: &str, message: &str) -> String {
+    format!(
+        "{{\"line\":{line},\"col\":{col},\"severity\":\"{severity}\",\"message\":\"{}\"}}",
+        escape_json(message)
+    )
+}
+
+fn diagnostics_json(ok: bool, items: &[String]) -> String {
+    format!("{{\"ok\":{ok},\"diagnostics\":[{}]}}", items.join(","))
+}
 
 /// A live SwiftUI render session plus the heap allocations it borrows.
 ///

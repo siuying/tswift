@@ -179,6 +179,26 @@ pub unsafe extern "C" fn tswift_swiftui_dispatch(
     into_json_ptr(swiftui::dispatch(&mut ctx.swiftui, event_json))
 }
 
+/// Lint a SwiftUI `source` and return frontend diagnostics as owned JSON
+/// (`{"ok":bool,"diagnostics":[{"line","col","severity","message"}]}`), without
+/// rendering or mutating any session — the editor's live error-feedback channel.
+/// Stateless: takes no context. Release the result with [`tswift_string_free`].
+///
+/// # Safety
+/// `source` must be null or a valid NUL-terminated C string. The returned
+/// pointer is owned by the caller and must be freed once with
+/// [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_diagnostics(source: *const c_char) -> *mut c_char {
+    let Some(source) = borrow_str(source) else {
+        return into_json_ptr(
+            "{\"ok\":false,\"diagnostics\":[{\"line\":1,\"col\":1,\"severity\":\"error\",\"message\":\"source is null or not valid UTF-8\"}]}"
+                .to_string(),
+        );
+    };
+    into_json_ptr(swiftui::diagnose(source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,6 +216,7 @@ mod tests {
             tswift_swiftui_compile;
         let _dispatch: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
             tswift_swiftui_dispatch;
+        let _diagnostics: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_diagnostics;
         let _string_free: unsafe extern "C" fn(*mut c_char) = tswift_string_free;
     }
 
@@ -275,5 +296,48 @@ mod tests {
         let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
         unsafe { tswift_string_free(ptr) };
         assert!(json.contains("null context"), "{json}");
+    }
+
+    // --- diagnostics --------------------------------------------------------
+
+    /// Call `tswift_diagnostics` and return the (owned-then-freed) JSON.
+    fn diagnostics(source: &str) -> String {
+        let csource = CString::new(source).unwrap();
+        let ptr = unsafe { tswift_diagnostics(csource.as_ptr()) };
+        assert!(!ptr.is_null());
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        json
+    }
+
+    #[test]
+    fn diagnostics_clean_swiftui_source_is_ok_and_empty() {
+        // A well-formed View must lint clean (the spliced prelude resolves
+        // View/Text/VStack/Button, and its own lines are filtered out).
+        let json = diagnostics(
+            "struct V: View {\n  var body: some View {\n    Text(\"hi\")\n  }\n}",
+        );
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(json.contains("\"diagnostics\":[]"), "{json}");
+    }
+
+    #[test]
+    fn diagnostics_user_error_maps_line_back_to_source() {
+        // `#error` on the user's first line must report line 1 (not the
+        // prelude-offset program line) with error severity and its message.
+        let json = diagnostics("#error(\"boom\")");
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"line\":1"), "{json}");
+        assert!(json.contains("\"severity\":\"error\""), "{json}");
+        assert!(json.contains("boom"), "{json}");
+    }
+
+    #[test]
+    fn diagnostics_null_source_is_structured_error() {
+        let ptr = unsafe { tswift_diagnostics(std::ptr::null()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"severity\":\"error\""), "{json}");
     }
 }
