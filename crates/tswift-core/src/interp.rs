@@ -135,6 +135,62 @@ fn trap(msg: String) -> Signal {
 type Eval = Result<SwiftValue, Signal>;
 
 /// One declared Swift parameter, precomputed from its `AST_PARAM` node.
+/// A parameter signature for a *builtin* (Rust-implemented) free function or
+/// struct method, supplied at registration so the dispatcher can push a
+/// contextual type while evaluating each argument. This is what lets a
+/// leading-dot member argument (`.center`, `.infinity`, `.horizontal`) resolve
+/// against the builtin's declared parameter type — the same mechanism Swift and
+/// msf use, where a typed API signature drives implicit-member resolution.
+#[derive(Clone)]
+pub struct BuiltinParam {
+    /// The argument label (`alignment:`); `None` for an unlabeled parameter.
+    pub label: Option<String>,
+    /// The declared parameter type name used as the contextual hint
+    /// (`Alignment`, `Edge.Set`, `CGFloat`, …).
+    pub ty: String,
+    /// A variadic parameter absorbs the remaining positional arguments.
+    pub variadic: bool,
+}
+
+impl BuiltinParam {
+    /// A labeled parameter of the given type (`alignment: Alignment`).
+    pub fn labeled(label: &str, ty: &str) -> Self {
+        Self {
+            label: Some(label.to_string()),
+            ty: ty.to_string(),
+            variadic: false,
+        }
+    }
+
+    /// An unlabeled (positional) parameter of the given type (`_ edges: Edge.Set`).
+    pub fn positional(ty: &str) -> Self {
+        Self {
+            label: None,
+            ty: ty.to_string(),
+            variadic: false,
+        }
+    }
+
+    /// Mark this parameter variadic.
+    pub fn variadic(mut self) -> Self {
+        self.variadic = true;
+        self
+    }
+
+    /// Lower to the internal [`Param`] shape (type hint only; no body/default).
+    fn into_param(self) -> Param {
+        Param {
+            label: self.label.clone(),
+            name: self.label.unwrap_or_default(),
+            ty: Some(self.ty),
+            variadic: self.variadic,
+            inout_: false,
+            autoclosure: false,
+            default: None,
+        }
+    }
+}
+
 struct Param {
     label: Option<String>,
     name: String,
@@ -321,6 +377,10 @@ pub struct Interpreter<'w> {
     natives: HashMap<String, NativeFn>,
     /// Free-function intrinsics served through the [`StdContext`] seam.
     free_fns: HashMap<String, FreeFn>,
+    /// Optional declared parameter signatures for builtin free functions,
+    /// consulted before argument evaluation to push contextual type hints so a
+    /// leading-dot member argument resolves against the parameter type.
+    free_fn_params: HashMap<String, Vec<Param>>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
@@ -335,6 +395,10 @@ pub struct Interpreter<'w> {
     /// Generic method intrinsics dispatched on any struct receiver by name, a
     /// fallback after user methods and builtin receivers (SwiftUI modifiers).
     struct_methods: HashMap<String, StructMethodFn>,
+    /// Optional declared parameter signatures for builtin struct methods (the
+    /// SwiftUI modifier seam), used to push contextual type hints when
+    /// evaluating modifier arguments (`.frame(alignment: .center)`).
+    struct_method_params: HashMap<String, Vec<Param>>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -418,12 +482,14 @@ impl<'w> Interpreter<'w> {
             out,
             natives: HashMap::new(),
             free_fns: HashMap::new(),
+            free_fn_params: HashMap::new(),
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
+            struct_method_params: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             builtin_ext_methods: HashMap::new(),
@@ -465,6 +531,18 @@ impl<'w> Interpreter<'w> {
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
         self.free_fns.insert(name.to_string(), f);
+    }
+
+    /// Register a free-function intrinsic together with a declared parameter
+    /// signature. The signature is used only to push a contextual type while
+    /// each argument is evaluated, so a leading-dot member argument resolves
+    /// against the parameter type (`VStack(alignment: .leading)`).
+    pub fn register_free_fn_typed(&mut self, name: &str, f: FreeFn, params: Vec<BuiltinParam>) {
+        self.free_fns.insert(name.to_string(), f);
+        self.free_fn_params.insert(
+            name.to_string(),
+            params.into_iter().map(BuiltinParam::into_param).collect(),
+        );
     }
 
     /// The keys of every registered standard-library entry, for coverage
@@ -515,6 +593,24 @@ impl<'w> Interpreter<'w> {
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
         self.struct_methods.insert(name.to_string(), f);
+    }
+
+    /// Register a generic struct-method intrinsic together with a declared
+    /// parameter signature (the typed SwiftUI modifier seam). The signature
+    /// pushes a contextual type while each modifier argument is evaluated so a
+    /// leading-dot member resolves against the parameter type
+    /// (`.frame(maxWidth: .infinity, alignment: .center)`).
+    pub fn register_struct_method_typed(
+        &mut self,
+        name: &str,
+        f: StructMethodFn,
+        params: Vec<BuiltinParam>,
+    ) {
+        self.struct_methods.insert(name.to_string(), f);
+        self.struct_method_params.insert(
+            name.to_string(),
+            params.into_iter().map(BuiltinParam::into_param).collect(),
+        );
     }
 
     /// Instantiate a user struct `type_name` with `args` (label, value) pairs,
@@ -4418,6 +4514,166 @@ mod tests {
         // `A` has no `tag` method, so the generic fallback fires; `B` defines
         // one, so the user method wins.
         assert_eq!(String::from_utf8(buf).unwrap(), "builtin:A\nuser\n");
+    }
+
+    #[test]
+    fn typed_builtin_free_fn_pushes_contextual_type_for_member_arg() {
+        // Two token namespaces share the leading-dot name `.center`. A builtin
+        // free function declared to take an `Align` resolves the ambiguous
+        // member against its parameter type (uniqueness alone would fail).
+        fn stack(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> crate::StdResult {
+            let token = args
+                .iter()
+                .find(|a| a.label.as_deref() == Some("alignment"))
+                .and_then(|a| match &a.value {
+                    SwiftValue::Struct(o) => o
+                        .fields
+                        .iter()
+                        .find(|(k, _)| k == "token")
+                        .map(|(_, v)| v.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            Ok(SwiftValue::Str(token))
+        }
+        let src = concat!(
+            "struct Align { let token: String\n",
+            "  static let leading = Align(token: \"a-leading\")\n",
+            "  static let center = Align(token: \"a-center\") }\n",
+            "struct TextAlign { let token: String\n",
+            "  static let center = TextAlign(token: \"t-center\") }\n",
+            "print(stack(alignment: .center))\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_free_fn_typed(
+                "stack",
+                stack,
+                vec![BuiltinParam::labeled("alignment", "Align")],
+            );
+            interp.run(analysis).expect("run");
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "a-center\n");
+    }
+
+    #[test]
+    fn typed_builtin_struct_method_pushes_contextual_type_for_member_arg() {
+        // The modifier seam: a builtin struct method declared to take an `Edge`
+        // resolves `.horizontal` against `Edge` even though `Axis` also declares
+        // it (collision that bare uniqueness cannot disambiguate).
+        fn pad(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> crate::StdResult {
+            let _ = recv;
+            let token = args
+                .first()
+                .and_then(|a| match &a.value {
+                    SwiftValue::Struct(o) => o
+                        .fields
+                        .iter()
+                        .find(|(k, _)| k == "token")
+                        .map(|(_, v)| v.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            Ok(SwiftValue::Str(token))
+        }
+        let src = concat!(
+            "struct Edge { let token: String\n",
+            "  static let horizontal = Edge(token: \"e-horizontal\") }\n",
+            "struct Axis { let token: String\n",
+            "  static let horizontal = Axis(token: \"x-horizontal\") }\n",
+            "struct View {}\n",
+            "print(View().pad(.horizontal))\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_struct_method_typed("pad", pad, vec![BuiltinParam::positional("Edge")]);
+            interp.run(analysis).expect("run");
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "e-horizontal\n");
+    }
+
+    #[test]
+    fn contextual_float_constant_beats_unrelated_unique_static() {
+        // A user type declaring `static let infinity` must not steal a
+        // contextually-floating `.infinity` (regression: the float constant is
+        // resolved before the unique-static fallback).
+        fn frame(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> crate::StdResult {
+            let _ = recv;
+            let v = args
+                .first()
+                .map(|a| a.value.clone())
+                .unwrap_or(SwiftValue::Nil);
+            Ok(SwiftValue::Bool(
+                matches!(v, SwiftValue::Double(d) if d.is_infinite()),
+            ))
+        }
+        let src = concat!(
+            "struct Sentinel { let token: String\n",
+            "  static let infinity = Sentinel(token: \"not-a-number\") }\n",
+            "struct View {}\n",
+            "print(View().frame(.infinity))\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_struct_method_typed(
+                "frame",
+                frame,
+                vec![BuiltinParam::positional("CGFloat")],
+            );
+            interp.run(analysis).expect("run");
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "true\n");
+    }
+
+    #[test]
+    fn builtin_free_fn_hints_do_not_leak_to_shadowing_user_type() {
+        // A user `struct` shadowing a typed builtin free fn dispatches to its
+        // own initializer; the builtin's parameter hints must not be pushed
+        // while evaluating that initializer's arguments. Here `.warm` is a
+        // genuinely ambiguous member (both `Tone` and `Mood` declare it), so the
+        // correct outcome is an unresolved-member error — *not* the builtin
+        // `Mood` hint silently resolving it to `mood-warm` (regression).
+        fn builtin(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::StdResult {
+            Ok(SwiftValue::Str("from-builtin".into()))
+        }
+        let src = concat!(
+            "struct Tone { let token: String\n",
+            "  static let warm = Tone(token: \"tone-warm\") }\n",
+            "struct Mood { let token: String\n",
+            "  static let warm = Mood(token: \"mood-warm\") }\n",
+            "struct Card { let label: String\n",
+            "  init(_ t: Tone) { label = t.token } }\n",
+            "print(Card(.warm).label)\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        let result = {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            interp.register_free_fn_typed("Card", builtin, vec![BuiltinParam::positional("Mood")]);
+            interp.run(analysis)
+        };
+        assert!(
+            result.is_err(),
+            "ambiguous `.warm` must not silently resolve"
+        );
+        assert!(
+            !String::from_utf8(buf).unwrap().contains("mood-warm"),
+            "builtin `Mood` hint must not leak into the shadowing user type"
+        );
     }
 
     #[test]

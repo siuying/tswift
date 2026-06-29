@@ -106,6 +106,16 @@ function shapeClipRadius(value: UiirValue): string | undefined {
   }
 }
 
+/** Apply directional padding (`.padding(.horizontal, 8)`). A missing length
+ * uses SwiftUI's default system padding (16px). */
+function applyEdgePadding(el: HTMLElement, edge: string, length: string | undefined): void {
+  const sides = EDGE_SIDES[edge] ?? EDGE_SIDES.all;
+  const len = length ?? "16px";
+  for (const side of sides) {
+    el.style[`padding${side}` as "paddingTop"] = len;
+  }
+}
+
 function isToken(value: UiirValue, tag: string): value is { $: string; name: string } {
   return Boolean(
     value &&
@@ -125,11 +135,47 @@ function cssColor(value: UiirValue): string | undefined {
   return undefined;
 }
 
-/** Length values arrive numeric (px) — coerce to a CSS length. */
+/** Length values arrive numeric (px) — coerce to a CSS length. A non-finite
+ * length (`.frame(maxWidth: .infinity)`) serializes as the `{"$":"infinity"}`
+ * sentinel and maps to `100%` (fill the available cross-axis). */
 function cssLength(value: UiirValue): string | undefined {
   if (typeof value === "number") return `${value}px`;
+  if (value && typeof value === "object" && "$" in value && value.$ === "infinity") {
+    return "100%";
+  }
   return undefined;
 }
+
+/** SwiftUI 2-D `Alignment` → CSS flexbox `{ justify, align }` so a frame
+ * positions its content on *both* axes (parity with iOS's native
+ * `.frame(_, alignment:)`), not just horizontally. `justifyContent` is the
+ * horizontal axis, `alignItems` the vertical (the element is laid out as a
+ * single-row flex container). Baselines approximate to centered. */
+const FRAME_ALIGN: Record<string, { justify: string; align: string }> = {
+  center: { justify: "center", align: "center" },
+  leading: { justify: "flex-start", align: "center" },
+  trailing: { justify: "flex-end", align: "center" },
+  top: { justify: "center", align: "flex-start" },
+  bottom: { justify: "center", align: "flex-end" },
+  topLeading: { justify: "flex-start", align: "flex-start" },
+  topTrailing: { justify: "flex-end", align: "flex-start" },
+  bottomLeading: { justify: "flex-start", align: "flex-end" },
+  bottomTrailing: { justify: "flex-end", align: "flex-end" },
+  leadingFirstTextBaseline: { justify: "flex-start", align: "center" },
+  centerFirstTextBaseline: { justify: "center", align: "center" },
+  trailingFirstTextBaseline: { justify: "flex-end", align: "center" },
+};
+
+/** SwiftUI `Edge.Set` token → the CSS box sides it expands to. */
+const EDGE_SIDES: Record<string, ("Top" | "Right" | "Bottom" | "Left")[]> = {
+  top: ["Top"],
+  bottom: ["Bottom"],
+  leading: ["Left"],
+  trailing: ["Right"],
+  horizontal: ["Left", "Right"],
+  vertical: ["Top", "Bottom"],
+  all: ["Top", "Right", "Bottom", "Left"],
+};
 
 /** Append a `text-decoration-line` keyword without dropping existing ones, so
  * `.underline().strikethrough()` yields both lines (matching SwiftUI). */
@@ -239,8 +285,21 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
         break;
       }
       case "padding": {
-        const p = cssLength(value);
-        el.style.padding = p ?? "16px";
+        // Three shapes: `.padding()` / `.padding(8)` (uniform), and the
+        // directional `.padding(.horizontal, 8)` → `{ value: <edge token>,
+        // value1: <length?> }` (issue #203).
+        if (isToken(value, "edge")) {
+          applyEdgePadding(el, value.name, undefined);
+        } else if (value && typeof value === "object" && !("$" in value) && "value" in value) {
+          const o = value as Record<string, UiirValue>;
+          if (isToken(o.value, "edge")) {
+            applyEdgePadding(el, o.value.name, cssLength(o.value1) ?? "16px");
+          } else {
+            el.style.padding = cssLength(o.value) ?? "16px";
+          }
+        } else {
+          el.style.padding = cssLength(value) ?? "16px";
+        }
         break;
       }
       case "frame": {
@@ -250,15 +309,30 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
           const h = cssLength(f.height);
           if (w) el.style.width = w;
           if (h) el.style.height = h;
-          // Numeric min/max bounds (C2). `.infinity` is deferred (issue #189).
+          // Numeric min/max bounds plus `.infinity` (→ `100%`, issue #203).
           const minW = cssLength(f.minWidth);
           const maxW = cssLength(f.maxWidth);
           const minH = cssLength(f.minHeight);
           const maxH = cssLength(f.maxHeight);
           if (minW) el.style.minWidth = minW;
-          if (maxW) el.style.maxWidth = maxW;
+          if (maxW) {
+            el.style.maxWidth = maxW;
+            // `maxWidth: .infinity` fills the available width (the common
+            // full-width idiom); widen the box so content alignment is visible.
+            if (maxW === "100%") el.style.width = "100%";
+          }
           if (minH) el.style.minHeight = minH;
           if (maxH) el.style.maxHeight = maxH;
+          // Content alignment within the frame, on both axes via flexbox so it
+          // matches iOS's native `frame(_, alignment:)` (issue #203).
+          if (isToken(f.alignment, "align")) {
+            const a = FRAME_ALIGN[f.alignment.name];
+            if (a) {
+              el.style.display = "flex";
+              el.style.justifyContent = a.justify;
+              el.style.alignItems = a.align;
+            }
+          }
         }
         break;
       }

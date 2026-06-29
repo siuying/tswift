@@ -1018,6 +1018,28 @@ impl<'w> Interpreter<'w> {
         Some((size, stride, max_align))
     }
 
+    /// Resolve an implicit-member floating-point constant (`.infinity`, `.pi`,
+    /// `.nan`, …) against the node's inferred or call-site contextual type when
+    /// that type is a floating type (`Double`/`Float`/`CGFloat`). Returns `None`
+    /// if the contextual type is not floating or the member is not a constant.
+    fn resolve_implicit_float_constant(
+        &self,
+        node: &Node<'static>,
+        member: &str,
+    ) -> Option<SwiftValue> {
+        let value = double_type_constant(member)?;
+        let is_float_ty = |ty: &str| {
+            ty.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|t| matches!(t, "Double" | "Float" | "CGFloat"))
+        };
+        let contextual_is_float = node
+            .type_name()
+            .into_iter()
+            .chain(self.contextual_type().map(String::from))
+            .any(|ty| is_float_ty(&ty));
+        contextual_is_float.then(|| SwiftValue::Double(value))
+    }
+
     pub(super) fn eval_member(&mut self, node: &Node<'static>) -> Eval {
         let mut member = node
             .text()
@@ -1034,6 +1056,16 @@ impl<'w> Interpreter<'w> {
             // Implicit member of a static property: `.red` where the contextual
             // type declares `static let red`. Resolve via the node's inferred
             // type, else a unique static whose member name matches.
+            // Implicit floating-point type constant: `.infinity`/`.pi`/`.nan`
+            // where the contextual parameter type is `Double`/`Float`/`CGFloat`
+            // (e.g. `.frame(maxWidth: .infinity)`). These constants are computed,
+            // not registered statics, so `resolve_implicit_static` cannot see
+            // them. Resolve them *before* the unique-static fallback inside
+            // `resolve_implicit_static`, so an unrelated `Type.infinity` static
+            // can never steal a contextually-floating `.infinity`.
+            if let Some(v) = self.resolve_implicit_float_constant(node, &member) {
+                return Ok(v);
+            }
             if let Some(v) = self.resolve_implicit_static(node, &member) {
                 return Ok(v);
             }
