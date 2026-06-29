@@ -56,3 +56,31 @@ jobs:
       - name: SwiftUI wasm smoke
         run: node test/wasm-smoke.mjs
         working-directory: website
+
+  ios-playground-build:
+    name: iOS playground build (demo, non-gating)
+    runs-on: macos-14
+    # The app is a product demo, never the regression gate (the signal stays in
+    # the TSwiftUI / UiirRenderer tests). A red build here flags drift without
+    # blocking the merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+        working-directory: apps/TSwiftPlayground
+
+      # Resolves Runestone + the pinned TSwiftFFI.xcframework (ffi.pin) and
+      # builds for the simulator.
+      - name: Build (iOS Simulator)
+        run: |
+          xcodebuild build \
+            -project TSwiftPlayground.xcodeproj \
+            -scheme TSwiftPlayground \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+        working-directory: apps/TSwiftPlayground
