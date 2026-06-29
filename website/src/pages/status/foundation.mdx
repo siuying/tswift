@@ -21,16 +21,23 @@ registries.
 
 ## Overall coverage
 
-<CoverageBar label="Foundation" done={2} total={12} />
+<CoverageBar label="Foundation" done={56} total={519} />
+
+Member-level coverage from `tools/framework-inventory/coverage.py --framework
+foundation`: **56 / 519** public members implemented across the in-scope types
+(10.8%). The bar tracks members, not whole types — most implemented types are
+still partial.
 
 ---
 
 ## How coverage is measured
 
 Foundation coverage is tracked via the **framework inventory** tool
-(`tools/stdlib-inventory/`). It generates a snapshot of every public type and
+(`tools/framework-inventory/`). It generates a snapshot of every public type and
 member in the real Apple Foundation `.swiftinterface`, then compares it against
-the runtime's native registry. See `docs/swift-runtime/stdlib-inventory.md`.
+the runtime's native registry (`frameworks/foundation/registered_keys.txt`). Run
+`python3 tools/framework-inventory/coverage.py --framework foundation` for the
+live roll-up. See `docs/swift-runtime/stdlib-inventory.md`.
 
 ---
 
@@ -43,18 +50,16 @@ flowchart TD
     partial["🟡 Partial"]
     todo["⬜ Todo"]
 
-    done --> Data["Data\\ncore constructors + properties"]
-    done --> UUID["UUID\\nuuidString, init, random"]
-    partial --> IndexSet["IndexSet / IndexPath\\nF1 – constructors only"]
-    todo --> URL["URL / URLComponents\\nF2 – todo"]
-    todo --> Date["Date / DateFormatter\\ntodo"]
-    todo --> JSON["JSONEncoder / JSONDecoder\\ntodo"]
-    todo --> Notification["NotificationCenter\\ntodo"]
-    todo --> UserDef["UserDefaults\\ntodo"]
-    todo --> FileMan["FileManager\\ntodo"]
-    todo --> Measure["Measurement / Unit\\ntodo"]
-    todo --> Locale["Locale / Calendar\\ntodo"]
-    todo --> CharSet["CharacterSet\\ntodo"]
+    partial --> Data["Data\\nbytes, count, append"]
+    partial --> UUID["UUID\\nuuidString, init, random"]
+    partial --> IndexSet["IndexSet\\nset algebra, queries"]
+    partial --> IndexPath["IndexPath\\nindexes, append, slicing"]
+    partial --> URL["URL / URLComponents\\nparsing + path ops"]
+    partial --> JSON["JSONEncoder / JSONDecoder\\nCodable bridge (in core)"]
+    todo --> Date["Date / Calendar / formatters\\nF3 – issues #214–217"]
+    todo --> Decimal["Decimal / NumberFormatter\\nF4 – issues #218–219"]
+    todo --> Measure["Measurement / Unit\\nF4 – issue #220"]
+    todo --> URLQuery["URLQueryItem\\nmembers todo"]
 
     style done fill:#1e3a2a,stroke:#6ddf9f,color:#eeeef5
     style partial fill:#2a2512,stroke:#f5d06e,color:#eeeef5
@@ -66,60 +71,65 @@ flowchart TD
 
 ## Detailed status
 
-### F0 — Proof slice (done)
-
-| Status | Type | APIs implemented |
-|--------|------|----------------|
-| ✅ | `Data` | `init()`, `init(bytes:)`, `count`, `isEmpty`, subscript, `append` |
-| ✅ | `UUID` | `init()` (random), `init(uuidString:)`, `uuidString`, `==` |
+Member counts below come from `coverage.py --framework foundation <Type>`.
 
 ### F1 — Core value types
 
-| Status | Type | APIs needed |
-|--------|------|------------|
-| ⬜ | `IndexPath` | `init(indexes:)`, subscript, `count`, arithmetic |
-| ⬜ | `IndexSet` | `init()`, `insert`, `remove`, `contains`, set algebra |
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| 🟡 | `Data` | 3 / 35 | `init()`, `init(bytes:)`, `count`, `isEmpty`, `append` |
+| 🟡 | `UUID` | 2 / 11 | `init()` (random), `init(uuidString:)`, `uuidString` |
+| 🟡 | `IndexPath` | 7 / 24 | `init`, `count`, `isEmpty`, `append(ing)`, `dropLast`, `start/endIndex` |
+| 🟡 | `IndexSet` | 20 / 42 | `init`, `insert`, `remove`, `contains`, full set algebra, integer queries |
 
 ### F2 — URLs & networking types
 
-| Status | Type | APIs needed |
-|--------|------|------------|
-| ⬜ | `URL` | `init(string:)`, `absoluteString`, `path`, `host`, `scheme` |
-| ⬜ | `URLComponents` | `init(string:)`, `queryItems`, `url` |
-| ⬜ | `URLQueryItem` | `name`, `value` |
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| 🟡 | `URL` | 20 / 81 | `init(string:)`, `absoluteString`, `path(Components)`, `host`, `scheme`, path ops |
+| 🟡 | `URLComponents` | 4 / 35 | `init`, `queryItems`, `string`, `url` |
+| ⬜ | `URLQueryItem` | 0 / 8 | `name`, `value` — todo ([#221](https://github.com/siuying/tswift/issues/221)) |
 
-### F3 — Date & time
+### F3 — Date & time *(planned — issues filed)*
 
-| Status | Type | APIs needed |
-|--------|------|------------|
-| ⬜ | `Date` | `init()`, `timeIntervalSinceNow`, `addingTimeInterval` |
-| ⬜ | `DateFormatter` | `dateFormat`, `string(from:)`, `date(from:)` |
-| ⬜ | `Calendar` | `component(_:from:)`, `date(byAdding:)` |
-| ⬜ | `Locale` | `current`, `identifier`, `languageCode` |
+| Status | Type | Issue |
+|--------|------|-------|
+| ⬜ | `Date` / `TimeInterval` | [#214](https://github.com/siuying/tswift/issues/214) |
+| ⬜ | `DateComponents` | [#215](https://github.com/siuying/tswift/issues/215) |
+| ⬜ | `Calendar` (Gregorian/UTC) | [#216](https://github.com/siuying/tswift/issues/216) |
+| ⬜ | `DateFormatter` / `ISO8601DateFormatter` | [#217](https://github.com/siuying/tswift/issues/217) |
 
-### F4 — Encoding / decoding
+### F4 — Numbers & measurement *(planned — issues filed)*
+
+| Status | Type | Issue |
+|--------|------|-------|
+| ⬜ | `Decimal` | [#218](https://github.com/siuying/tswift/issues/218) |
+| ⬜ | `NumberFormatter` | [#219](https://github.com/siuying/tswift/issues/219) |
+| ⬜ | `Measurement` / `Unit` | [#220](https://github.com/siuying/tswift/issues/220) |
+
+### F5 — Encoding / decoding
 
 | Status | Type | Notes |
 |--------|------|-------|
-| ⬜ | `JSONEncoder` | `encode(_:)` — Codable synthesis works; encoder not yet bridged |
-| ⬜ | `JSONDecoder` | `decode(_:from:)` — same |
-| ⬜ | `PropertyListEncoder` | |
+| 🟡 | `JSONEncoder` | `encode(_:)` works via the core Codable bridge; not yet a Foundation registry key |
+| 🟡 | `JSONDecoder` | `decode(_:from:)` works via the same bridge |
+| ⬜ | `PropertyListEncoder` | todo |
 
-### F5 — System & I/O
+### Out of scope
 
-| Status | Type | Notes |
-|--------|------|-------|
-| ⬜ | `FileManager` | Path-based APIs; sandboxed WASM would be a stub |
-| ⬜ | `NotificationCenter` | Observer pattern |
-| ⬜ | `UserDefaults` | Key-value store; stub for WASM |
+Platform- and device-specific APIs are intentionally excluded (see
+`frameworks/foundation/scope.toml`): `FileManager`, `FileHandle`, `URLSession`,
+`URLRequest`, `NSObject`, `Bundle`, and friends.
 
 ---
 
 ## Roadmap
 
-Foundation work is planned for **R5+**. Priority order:
+The next coverage push (daily-use weighted) is tracked in issues
+[#214–#221](https://github.com/siuying/tswift/issues?q=is%3Aissue+label%3Aready-for-agent+foundation),
+in this order:
 
-1. `IndexPath` / `IndexSet` (F1) — small, useful for collections
-2. `URL` / `URLComponents` (F2) — high demand for networking code
-3. `JSONEncoder` / `JSONDecoder` (F4) — bridges to existing Codable work
-4. `Date` / `DateFormatter` (F3) — date math, formatting
+1. `Date` / `DateComponents` / `Calendar` / formatters (F3) — date math & ISO strings
+2. `Decimal` / `NumberFormatter` (F4) — exact money math & number formatting
+3. `Measurement` / `Unit` (F4) — typed quantities & conversion
+4. Fill remaining `Data` / `UUID` / `URL` member gaps (F1/F2)
