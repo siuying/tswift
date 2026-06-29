@@ -85,6 +85,7 @@ final class SnapshotTests: XCTestCase {
     func testLayoutTyped() throws { try runFixture("layout-typed") }
     func testStackAlignment() throws { try runFixture("stack-alignment") }
     func testLazyGrids() throws { try runFixture("lazy-grids") }
+    func testProgressLabel() throws { try runFixture("progress-label") }
     func testContainers() throws { try runFixture("containers") }
     func testScrollHorizontal() throws { try runFixture("scroll-horizontal") }
     func testDecoration() throws { try runFixture("decoration") }

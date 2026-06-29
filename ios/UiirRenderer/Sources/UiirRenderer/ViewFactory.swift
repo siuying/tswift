@@ -211,9 +211,17 @@ public enum ViewFactory {
             }
             return AnyView(Image(str(node, "name")))
         case "ProgressView":
+            // The optional title label uses the string-title initializers (#206).
+            let progressLabel = arg(node, "label")?.stringValue
             if case let .number(value)? = arg(node, "value") {
                 let total = arg(node, "total")?.doubleValue ?? 1
+                if let progressLabel {
+                    return AnyView(ProgressView(progressLabel, value: value, total: total))
+                }
                 return AnyView(ProgressView(value: value, total: total))
+            }
+            if let progressLabel {
+                return AnyView(ProgressView(progressLabel))
             }
             return AnyView(ProgressView())
         // C6 — lazy stacks, grids, Form.

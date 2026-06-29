@@ -354,6 +354,22 @@ mod tests {
     }
 
     #[test]
+    fn progress_view_label_serializes_as_arg() {
+        // `ProgressView("…")`'s title becomes a `label` arg (issue #206); a
+        // value-only ProgressView carries no `label`.
+        let titled = render_json(r#"ProgressView("Loading", value: 0.4)"#);
+        assert_eq!(
+            titled,
+            r#"{"id":"0","kind":"ProgressView","args":{"label":"Loading","value":0.4},"modifiers":[],"children":[]}"#
+        );
+        let bare = render_json(r#"ProgressView(value: 0.4)"#);
+        assert_eq!(
+            bare,
+            r#"{"id":"0","kind":"ProgressView","args":{"value":0.4},"modifiers":[],"children":[]}"#
+        );
+    }
+
+    #[test]
     fn c6_lazy_grid_serializes_griditem_array() {
         // `[GridItem]` serializes as a JSON array of `{kind,value,spacing?}`
         // objects (issue #205). `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)`

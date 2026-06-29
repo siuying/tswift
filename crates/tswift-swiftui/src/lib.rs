@@ -1118,20 +1118,30 @@ fn image_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(view_value("Image", fields))
 }
 
-/// `ProgressView()` (indeterminate) or `ProgressView(value:total:)` (determinate).
-/// A leading title label is deferred (kept fully lockstep across hosts: it would
-/// otherwise need a wrapped layout on web); the positional string is ignored.
+/// `ProgressView()` (indeterminate) or `ProgressView(value:total:)` (determinate),
+/// optionally with a leading title label (`ProgressView("Loading", value:)`) that
+/// becomes a `label` arg — the host wraps the bar with a label row (issue #206).
 fn progress_view_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut value: Option<SwiftValue> = None;
     let mut total: Option<SwiftValue> = None;
+    let mut label: Option<SwiftValue> = None;
     for arg in args {
         match arg.label.as_deref() {
             Some("value") => value = Some(arg.value),
             Some("total") => total = Some(arg.value),
+            // The leading unlabeled `ProgressView("Loading", …)` title string
+            // becomes the `label` arg the host renders alongside the bar (#206).
+            // A trailing `@ViewBuilder` label closure is not modelled here.
+            None if matches!(arg.value, SwiftValue::Str(_)) && label.is_none() => {
+                label = Some(arg.value)
+            }
             _ => {}
         }
     }
     let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(label) = label {
+        fields.push(("label".into(), label));
+    }
     if let Some(value) = value {
         fields.push(("value".into(), value));
     }
