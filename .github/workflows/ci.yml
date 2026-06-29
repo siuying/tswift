@@ -59,7 +59,7 @@ jobs:
 
   ios-playground-build:
     name: iOS playground build (demo, non-gating)
-    runs-on: macos-15
+    runs-on: macos-26
     # The app is a product demo, never the regression gate (the signal stays in
     # the TSwiftUI / UiirRenderer tests). A red build here flags drift without
     # blocking the merge.
