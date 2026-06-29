@@ -301,11 +301,12 @@ reflects reality.
       `prototype/swiftui-sandbox`. (Playwright deferred — no browser in CI yet.)
 
 **Plan B — iOS app**
-- [ ] `apps/TSwiftPlayground/project.yml` (xcodegen) + Runestone dependency.
-- [ ] `CodeEditor` Runestone `UIViewRepresentable`.
-- [ ] Playground screen: debounced `PreviewSession.compile` + `RenderHostView` +
+- [x] `apps/TSwiftPlayground/project.yml` (xcodegen) + Runestone dependency (0.5.2).
+- [x] `CodeEditor` Runestone `UIViewRepresentable`.
+- [x] Playground screen: debounced `PreviewSession.compile` + `RenderHostView` +
       event sink + inline errors.
-- [ ] Sample gallery; app chrome; non-gating `xcodebuild` CI.
+- [x] Sample gallery; app chrome; non-gating `xcodebuild` CI
+      (`ios-playground-build`). (Tree-sitter highlighting deferred.)
 
 **Plan C — breadth (each batch: 3 appliers + goldens + registered_keys)**
 - [ ] C1 text/styling modifiers · [ ] C2 layout modifiers/args · [ ] C3 Group/

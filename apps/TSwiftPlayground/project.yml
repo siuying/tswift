@@ -1,0 +1,38 @@
+name: TSwiftPlayground
+options:
+  bundleIdPrefix: dev.tswift
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  # The runtime bridge (PreviewSession over tswift-ffi) + the patch applier.
+  TSwift:
+    path: ../../ios/TSwift
+  UiirRenderer:
+    path: ../../ios/UiirRenderer
+  # Runestone: the code editor. Pinned to a released tag (offline rule is
+  # crates.io-only; SwiftPM UI deps are fetched like the pinned xcframework).
+  Runestone:
+    url: https://github.com/simonbs/Runestone
+    exactVersion: "0.5.2"
+targets:
+  TSwiftPlayground:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    dependencies:
+      - package: TSwift
+        product: TSwiftCore
+      - package: TSwift
+        product: TSwiftUI
+      - package: UiirRenderer
+        product: UiirRenderer
+      - package: Runestone
+        product: Runestone
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tswift.playground
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: TSwift Playground
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"

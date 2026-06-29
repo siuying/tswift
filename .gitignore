@@ -12,3 +12,4 @@ dist/
 
 # xcodegen-generated project
 examples/ios/*.xcodeproj
+apps/TSwiftPlayground/*.xcodeproj
