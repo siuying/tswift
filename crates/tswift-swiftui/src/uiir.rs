@@ -8,7 +8,7 @@
 //! string. Output is deterministic (fields emitted in a fixed order) so it can
 //! be asserted byte-for-byte as a golden.
 
-use tswift_core::SwiftValue;
+use tswift_core::{StructObj, SwiftValue};
 
 use crate::{
     child_id, token_of, view_type_name, ACTION_FIELD, CHILDREN_FIELD, KEY_FIELD, MODIFIERS_FIELD,
@@ -208,11 +208,64 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         SwiftValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         SwiftValue::Str(s) => write_string(s, out),
         SwiftValue::Nil => out.push_str("null"),
+        // An array-valued arg (e.g. `LazyVGrid(columns:)`'s `[GridItem]`)
+        // serializes as a JSON array of its elements (issue #205).
+        SwiftValue::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_value(item, out);
+            }
+            out.push(']');
+        }
+        // A `GridItem` track sizer serializes as `{kind,value,spacing?}`.
+        SwiftValue::Struct(obj) if obj.type_name == "GridItem" => write_grid_item(obj, out),
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),
         other => write_string(&other.to_string(), out),
     }
+}
+
+/// Serialize a `GridItem` as `{"kind":…,"value":…,"spacing":…?}`. `spacing` is
+/// omitted when the GridItem carried no explicit spacing (`nil`).
+fn write_grid_item(obj: &StructObj, out: &mut String) {
+    let field = |name: &str| obj.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    out.push_str("{\"kind\":");
+    match field("kind") {
+        Some(SwiftValue::Str(s)) => write_string(s, out),
+        _ => out.push_str("\"flexible\""),
+    }
+    out.push_str(",\"value\":");
+    match field("value") {
+        Some(SwiftValue::Double(d)) => out.push_str(&tswift_core::format_double(*d)),
+        Some(SwiftValue::Int(i)) => out.push_str(&i.raw.to_string()),
+        _ => out.push('0'),
+    }
+    // `max` is emitted only for the flexible/adaptive sizers and only when the
+    // bound is finite (the `.infinity` default means "unbounded" and is left
+    // off, so the host picks its own fill behavior). `fixed` needs no max.
+    let kind = match field("kind") {
+        Some(SwiftValue::Str(s)) => s.as_str(),
+        _ => "flexible",
+    };
+    if kind != "fixed" {
+        if let Some(SwiftValue::Double(m)) = field("maximum") {
+            if m.is_finite() {
+                out.push_str(",\"max\":");
+                out.push_str(&tswift_core::format_double(*m));
+            }
+        }
+    }
+    if let Some(spacing) = field("spacing") {
+        if !matches!(spacing, SwiftValue::Nil) {
+            out.push_str(",\"spacing\":");
+            write_value(spacing, out);
+        }
+    }
+    out.push('}');
 }
 
 /// Write a JSON string literal with the minimal required escaping.
@@ -297,6 +350,20 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"frame","value":{"maxWidth":{"$":"infinity"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn c6_lazy_grid_serializes_griditem_array() {
+        // `[GridItem]` serializes as a JSON array of `{kind,value,spacing?}`
+        // objects (issue #205). `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)`
+        // resolve against `GridItem` via the typed `columns:` signature.
+        let json = render_json(
+            r#"LazyVGrid(columns: [.flexible(), .fixed(80), .adaptive(minimum: 50)], spacing: 12) { Text("a") }"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"LazyVGrid","args":{"columns":[{"kind":"flexible","value":10.0},{"kind":"fixed","value":80.0},{"kind":"adaptive","value":50.0}],"spacing":12},"modifiers":[],"children":[{"id":"0.0","kind":"Text","args":{"verbatim":"a"},"modifiers":[],"children":[]}]}"#
         );
     }
 

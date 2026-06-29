@@ -232,6 +232,20 @@ export class PatchApplier {
         el.style.cssText = "display:contents;";
         return el;
       }
+      case "LazyVGrid": {
+        // CSS grid whose column tracks come from the `columns: [GridItem]` arg
+        // (set in applyArgs); children flow row by row (#205).
+        const el = document.createElement("div");
+        el.style.cssText = "display:grid;gap:8px;justify-items:center;align-items:start;";
+        return el;
+      }
+      case "LazyHGrid": {
+        // Row tracks from `rows: [GridItem]`; children flow column by column.
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:grid;grid-auto-flow:column;gap:8px;justify-items:center;align-items:center;";
+        return el;
+      }
       case "ZStack": {
         // Depth container: children overlap, centered, back-to-front.
         const el = document.createElement("div");
@@ -411,6 +425,23 @@ export class PatchApplier {
       }
       // `alignment:` positions children on the stack's cross axis (C2, #189).
       applyStackAlignment(el, kind, args.alignment);
+    } else if (kind === "LazyVGrid" || kind === "LazyHGrid") {
+      // Build the CSS grid template from the `columns`/`rows` GridItem array.
+      const tracks = (kind === "LazyVGrid" ? args.columns : args.rows) as unknown;
+      const template = gridTemplate(tracks);
+      if (template) {
+        if (kind === "LazyVGrid") el.style.gridTemplateColumns = template;
+        else el.style.gridTemplateRows = template;
+      }
+      if (typeof args.spacing === "number") el.style.gap = `${args.spacing}px`;
+      // `alignment:` positions items within their track on the grid's cross
+      // axis (LazyVGrid → justify-items, LazyHGrid → align-items) (#205).
+      const gridAlign = (args.alignment as { name?: string } | undefined)?.name;
+      const place = gridAlign ? GRID_ITEM_ALIGN[gridAlign] : undefined;
+      if (place) {
+        if (kind === "LazyVGrid") el.style.justifyItems = place;
+        else el.style.alignItems = place;
+      }
     } else if (kind === "Spacer") {
       // `minLength:` is the spacer's minimum length along the stack axis (C2).
       if (typeof args.minLength === "number") {
@@ -530,6 +561,46 @@ export class PatchApplier {
  * nodes (a `Section`'s `.section-header`) and an optionally excluded element
  * (the node being moved). Returns `null` to append at the end.
  */
+/** Build a CSS grid track template from a `[GridItem]` arg (#205). Each
+ * `{ kind, value, max?, spacing? }` becomes one track: `flexible` →
+ * `minmax(v, max|1fr)`, `fixed` → `v px`, `adaptive` → an auto-filled
+ * `repeat(...)` segment. A finite `max` is honored; its absence means unbounded
+ * (`1fr`). Per-`GridItem` `spacing` is not representable as a CSS grid track
+ * (grid `gap` is uniform), so it is intentionally not applied on web — a
+ * documented host approximation; the stack/grid-level `spacing:` is honored. */
+function gridTemplate(tracks: unknown): string | undefined {
+  if (!Array.isArray(tracks) || tracks.length === 0) return undefined;
+  const segments: string[] = [];
+  for (const t of tracks) {
+    const item = t as { kind?: string; value?: number; max?: number };
+    const v = typeof item.value === "number" ? item.value : 0;
+    const upper = typeof item.max === "number" ? `${item.max}px` : "1fr";
+    switch (item.kind) {
+      case "fixed":
+        segments.push(`${v}px`);
+        break;
+      case "adaptive":
+        segments.push(`repeat(auto-fill, minmax(${v || 1}px, ${upper}))`);
+        break;
+      case "flexible":
+      default:
+        segments.push(v > 0 || typeof item.max === "number" ? `minmax(${v}px, ${upper})` : "1fr");
+        break;
+    }
+  }
+  return segments.join(" ");
+}
+
+/** CSS `justify-items`/`align-items` keyword for a lazy-grid `alignment:` token
+ * on the grid's cross axis (LazyVGrid → horizontal, LazyHGrid → vertical). */
+const GRID_ITEM_ALIGN: Record<string, string> = {
+  leading: "start",
+  trailing: "end",
+  top: "start",
+  bottom: "end",
+  center: "center",
+};
+
 /** Cross-axis flex `align-items` keyword for a 1-D stack alignment token. */
 const STACK_CROSS_ALIGN: Record<string, string> = {
   leading: "flex-start",

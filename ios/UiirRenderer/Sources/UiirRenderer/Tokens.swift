@@ -113,6 +113,26 @@ extension UiirValue {
         }
     }
 
+    /// Decode a `[GridItem]` arg (a JSON array of `{ kind, value, spacing? }`)
+    /// into SwiftUI `GridItem` track sizers (issue #205).
+    var asGridItems: [GridItem]? {
+        guard case let .array(items) = self else { return nil }
+        return items.map { item in
+            let kind = item.member("kind")?.stringValue ?? "flexible"
+            let value = CGFloat(item.member("value")?.doubleValue ?? 0)
+            let spacing = item.member("spacing")?.doubleValue.map { CGFloat($0) }
+            // A finite `max` is honored; its absence means unbounded (.infinity).
+            let upper = item.member("max")?.doubleValue.map { CGFloat($0) } ?? .infinity
+            let size: GridItem.Size
+            switch kind {
+            case "fixed": size = .fixed(value)
+            case "adaptive": size = .adaptive(minimum: max(value, 1), maximum: upper)
+            default: size = .flexible(minimum: value, maximum: upper)
+            }
+            return GridItem(size, spacing: spacing)
+        }
+    }
+
     /// Resolve a `{ "$": "edge", "name": ... }` token to an `Edge.Set`.
     var asEdgeSet: Edge.Set? {
         guard case let .token(tag, name) = self, tag == "edge" else { return nil }
