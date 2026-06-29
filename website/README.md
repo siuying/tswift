@@ -49,19 +49,18 @@ the percentage bar automatically.
 
 ## Updating the WASM runtime
 
-When the tswift runtime is updated:
+When the tswift runtime is updated, rebuild from `crates/tswift-wasm` (which
+exports `runSwift` plus the SwiftUI host entry points `swiftUICompile` /
+`swiftUIDispatch` that drive the live `<swiftui-canvas>` preview):
 
 ```sh
 cd ../crates/tswift-wasm   # build the wasm
 wasm-pack build --target web --out-dir ../../website/public/wasm --out-name tswift_wasm
 ```
 
-Or copy from the prototype:
-
-```sh
-cp ../prototype/web-sandbox/src/wasm/tswift_wasm.js    public/wasm/
-cp ../prototype/web-sandbox/src/wasm/tswift_wasm_bg.wasm public/wasm/
-```
+The SwiftUI preview pane imports the shared render host straight from the
+sibling package source (`web/swiftui-canvas/src/canvas.ts`); `astro.config.mjs`
+widens Vite's `fs.allow` to the repo root so that import resolves.
 
 ## Adding Mermaid diagrams
 

@@ -7,7 +7,8 @@
 - `crates/tswift-swiftui/src/lib.rs` — view/modifier registry + `PRELUDE` tokens
 - `crates/tswift-swiftui/src/uiir.rs` — UIIR JSON wire format (tagged-union tokens)
 - `web/swiftui-canvas/src/canvas.ts` — the host that owns light/dark appearance
-- `prototype/swiftui-sandbox` — the sandbox that currently hardcodes appearance
+- `website/src/components/FullPlayground.astro` — the playground that hosts the
+  `<swiftui-canvas>` preview (currently hardcodes appearance via `appearance=`)
 
 ---
 
