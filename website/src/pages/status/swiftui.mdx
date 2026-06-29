@@ -15,12 +15,18 @@ toolchain, LLVM, or native compilation**: the interpreter instantiates a `View`,
 runs `body`, produces a host-neutral **UIIR** view tree, diffs it into a **patch
 stream**, and a dependency-free host applies those patches to real UI.
 
-**Current status: foundational tiers shipped.** The Counter slice (v1) plus
-Tiers 2–5 — composition, dynamic collections, input controls, and observation —
-are implemented and gated by deterministic goldens. Async (Tier 6), layout /
-geometry (Tier 7), and navigation (Tier 8) are not started.
+**Current status: foundational tiers + breadth shipped.** The Counter slice (v1)
+plus Tiers 2–5 — composition, dynamic collections, input controls, and
+observation — are implemented and gated by deterministic goldens. On top of that,
+the **C1–C7 breadth batches** widened the surface: universal text/styling
+modifiers, layout arguments, structural containers (`Group`/`Divider`/
+`ScrollView`), decoration (`border`/`shadow`/`clipShape`), content views
+(`Label`/`Image`/`ProgressView`), lazy stacks & grids, `Form`, and control
+styling — each landed in all three appliers (runtime, web, iOS) with goldens.
+Async (Tier 6), `GeometryReader` (Tier 7), and navigation (Tier 8) are not
+started.
 
-<CoverageBar label="SwiftUI surface (types & members)" done={29} total={658} href="/status/swiftui" />
+<CoverageBar label="SwiftUI surface (types & members)" done={60} total={658} href="/status/swiftui" />
 
 The surface number counts individual API members across the iOS SDK SwiftUI
 interface; it is low because each shipped view exposes many initializers and
@@ -77,15 +83,30 @@ one deferred item.
 
 | Category | Types |
 |----------|-------|
-| **Layout** | `VStack` ✅ · `HStack` ✅ · `ZStack` ✅ · `Spacer` ✅ |
+| **Layout** | `VStack` ✅ · `HStack` ✅ · `ZStack` ✅ · `Spacer` ✅ · `LazyVStack` ✅ · `LazyHStack` ✅ |
+| **Containers** | `ScrollView` ✅ · `Group` ✅ · `Divider` ✅ · `Form` ✅ · `Grid` ✅ · `GridRow` ✅ |
 | **Collections** | `List` ✅ · `Section` ✅ · `ForEach` ✅ |
 | **Text & actions** | `Text` ✅ · `Button` ✅ · `Toggle` ✅ |
+| **Content** | `Label` ✅ · `Image` ✅ · `ProgressView` ✅ |
 | **Input controls** | `TextField` ✅ · `SecureField` ✅ · `Slider` ✅ · `Stepper` ✅ · `Picker` ✅ |
 | **Shapes** | `Circle` ✅ · `Rectangle` ✅ · `RoundedRectangle` ✅ · `Capsule` ✅ · `Ellipse` ✅ |
-| **Not started** | `ScrollView` ⬜ · `Grid`/`LazyVGrid` ⬜ · `NavigationStack` ⬜ · `TabView` ⬜ · `Form` ⬜ · `GeometryReader` ⬜ · `AsyncImage` ⬜ · `ProgressView` ⬜ |
+| **Not started** | `LazyVGrid`/`LazyHGrid` ⬜ · `NavigationStack` ⬜ · `TabView` ⬜ · `GeometryReader` ⬜ · `AsyncImage` ⬜ |
 
-**Modifiers:** `font`, `fontWeight`, `foregroundColor`, `padding`, `background`,
-`cornerRadius`, `frame`, `fill`, and `tag` are wired through to both hosts.
+**Modifiers (33 wired through to both hosts).** Beyond the original
+`font`, `fontWeight`, `foregroundColor`, `padding`, `background`, `cornerRadius`,
+`frame`, `fill`, and `tag`, the C1–C7 breadth added:
+
+- **Text & universal styling** — `bold`, `italic`, `underline`, `strikethrough`,
+  `opacity`, `foregroundStyle`, `tint`, `lineLimit`, `multilineTextAlignment`,
+  `textCase`.
+- **Layout** — `frame` (min/max/alignment + `.infinity`), edge-aware `padding`,
+  stack `spacing:`/`alignment:`, `offset`.
+- **Decoration** — `border`, `shadow`, `clipShape`, `clipped`, view `background`
+  and `overlay`.
+- **Control styling & a11y** — `buttonStyle`, `listStyle`, `pickerStyle`,
+  `textFieldStyle`, `disabled`, plus accepted-and-dropped `accessibilityLabel`/
+  `accessibilityHint`/`accessibilityValue`/`accessibilityIdentifier`.
+
 Semantic colors (`.primary`/`.secondary`) and the system background adapt to
 light/dark.
 
