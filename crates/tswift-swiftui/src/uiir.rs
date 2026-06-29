@@ -176,6 +176,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "TextAlignment" => "textAlign",
             "TextCase" => "textCase",
             "Axis" => "axis",
+            "_ControlStyle" => "style",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -334,6 +335,17 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Form","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"LazyVStack","args":{"spacing":4},"modifiers":[],"children":[{"id":"0.0.0","kind":"Text","args":{"verbatim":"a"},"modifiers":[],"children":[]}]},{"id":"0.1","kind":"Grid","args":{},"modifiers":[],"children":[{"id":"0.1.0","kind":"GridRow","args":{},"modifiers":[],"children":[{"id":"0.1.0.0","kind":"Text","args":{"verbatim":"x"},"modifiers":[],"children":[]},{"id":"0.1.0.1","kind":"Text","args":{"verbatim":"y"},"modifiers":[],"children":[]}]}]}]}"#
+        );
+    }
+
+    #[test]
+    fn c7_control_styling_and_accessibility_serialize() {
+        let json = render_json(
+            r#"Button("Save") { }.buttonStyle(.borderedProminent).disabled(true).accessibilityLabel("save button")"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Button","args":{"title":"Save"},"modifiers":[{"name":"buttonStyle","value":{"$":"style","name":"borderedProminent"}},{"name":"disabled","value":true},{"name":"accessibilityLabel","value":"save button"}],"children":[]}"#
         );
     }
 

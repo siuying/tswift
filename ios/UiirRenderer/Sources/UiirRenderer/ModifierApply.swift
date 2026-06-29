@@ -94,6 +94,55 @@ enum ModifierApply {
             // Picker option identity — applied via `.tag(...)` in the factory,
             // not as a visual modifier; ignore here.
             break
+        // C7 — control styling + disabled. Accessibility modifiers are accepted
+        // and ignored (no-op) so snippets using them still render.
+        case "buttonStyle":
+            if case let .token(tag, name) = mod.value, tag == "style" {
+                switch name {
+                case "borderedProminent": return AnyView(view.buttonStyle(.borderedProminent))
+                case "bordered": return AnyView(view.buttonStyle(.bordered))
+                case "borderless": return AnyView(view.buttonStyle(.borderless))
+                case "plain": return AnyView(view.buttonStyle(.plain))
+                default: return AnyView(view.buttonStyle(.automatic))
+                }
+            }
+        case "listStyle":
+            if case let .token(tag, name) = mod.value, tag == "style" {
+                switch name {
+                case "plain": return AnyView(view.listStyle(.plain))
+                case "inset": return AnyView(view.listStyle(.inset))
+                case "sidebar": return AnyView(view.listStyle(.sidebar))
+                #if os(iOS)
+                    case "grouped": return AnyView(view.listStyle(.grouped))
+                    case "insetGrouped": return AnyView(view.listStyle(.insetGrouped))
+                #endif
+                default: return AnyView(view.listStyle(.automatic))
+                }
+            }
+        case "pickerStyle":
+            if case let .token(tag, name) = mod.value, tag == "style" {
+                switch name {
+                case "segmented": return AnyView(view.pickerStyle(.segmented))
+                case "menu": return AnyView(view.pickerStyle(.menu))
+                case "inline": return AnyView(view.pickerStyle(.inline))
+                #if os(iOS)
+                    case "wheel": return AnyView(view.pickerStyle(.wheel))
+                #endif
+                default: return AnyView(view.pickerStyle(.automatic))
+                }
+            }
+        case "textFieldStyle":
+            if case let .token(tag, name) = mod.value, tag == "style" {
+                switch name {
+                case "roundedBorder": return AnyView(view.textFieldStyle(.roundedBorder))
+                case "plain": return AnyView(view.textFieldStyle(.plain))
+                default: return AnyView(view.textFieldStyle(.automatic))
+                }
+            }
+        case "disabled":
+            if case let .bool(flag) = mod.value {
+                return AnyView(view.disabled(flag))
+            }
         // C1 — text & universal styling modifiers.
         case "bold":
             return AnyView(view.bold())
