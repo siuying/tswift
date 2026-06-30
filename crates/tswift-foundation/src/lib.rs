@@ -100,9 +100,13 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Data, "description", data_description);
     interp.register_property(BuiltinReceiver::Data, "debugDescription", data_description);
     interp.register_property(BuiltinReceiver::Data, "hashValue", data_hash_value);
+    interp.register_property(BuiltinReceiver::Data, "startIndex", data_start_index);
+    interp.register_property(BuiltinReceiver::Data, "endIndex", data_end_index);
+    interp.register_property(BuiltinReceiver::Data, "indices", data_indices);
     for (name, mutating, func) in [
         ("append", true, data_append as IntrinsicFn),
         ("base64EncodedString", false, data_base64_encoded_string),
+        ("base64EncodedData", false, data_base64_encoded_data),
         ("subdata", false, data_subdata),
         ("removeAll", true, data_remove_all),
     ] {
@@ -866,6 +870,22 @@ fn data_base64_encoded_string(
     })
 }
 
+fn data_base64_encoded_data(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("base64EncodedData() takes no arguments"));
+    }
+    // The base64 text encoded as its ASCII bytes, wrapped back into `Data`.
+    let encoded = base64_encode(&data_bytes(&recv)?);
+    Ok(Outcome {
+        result: data_value(encoded.into_bytes()),
+        receiver: recv,
+    })
+}
+
 fn data_subdata(
     _ctx: &mut dyn StdContext,
     recv: SwiftValue,
@@ -1065,6 +1085,26 @@ fn uuid_hash_value(recv: SwiftValue) -> StdResult {
 fn data_hash_value(recv: SwiftValue) -> StdResult {
     // `Data ==` compares the byte sequence, so hash the bytes.
     Ok(SwiftValue::int(fnv1a_hash(&data_bytes(&recv)?)))
+}
+
+/// `Data.startIndex` — always `0` (a `Data` is a zero-based byte collection).
+fn data_start_index(recv: SwiftValue) -> StdResult {
+    data_bytes(&recv)?;
+    Ok(SwiftValue::int(0))
+}
+
+/// `Data.endIndex` — the past-the-end position, i.e. the byte count.
+fn data_end_index(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(data_bytes(&recv)?.len() as i128))
+}
+
+/// `Data.indices` — the half-open range `0..<count`.
+fn data_indices(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Range {
+        lo: 0,
+        hi: data_bytes(&recv)?.len() as i128,
+        inclusive: false,
+    })
 }
 
 fn normalize_uuid(raw: &str) -> Option<String> {
@@ -1759,6 +1799,38 @@ mod tests {
             SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
             other => panic!("expected ComparisonResult, got {}", other.type_name()),
         }
+    }
+
+    #[test]
+    fn data_collection_surface_reports_bounds_and_indices() {
+        let d = data_value(vec![10, 20, 30]);
+        assert_eq!(data_start_index(d.clone()).unwrap(), SwiftValue::int(0));
+        assert_eq!(data_end_index(d.clone()).unwrap(), SwiftValue::int(3));
+        assert_eq!(
+            data_indices(d).unwrap(),
+            SwiftValue::Range {
+                lo: 0,
+                hi: 3,
+                inclusive: false
+            }
+        );
+    }
+
+    #[test]
+    fn base64_encoded_data_wraps_ascii_bytes() {
+        let mut ctx = MockContext::new(0.0);
+        // "ABC" -> "QUJD".
+        let out = data_base64_encoded_data(&mut ctx, data_value(vec![65, 66, 67]), Vec::new())
+            .unwrap()
+            .result;
+        assert_eq!(data_bytes(&out).unwrap(), b"QUJD");
+        // The no-options surface rejects extra arguments.
+        assert!(data_base64_encoded_data(
+            &mut ctx,
+            data_value(vec![65]),
+            vec![SwiftValue::Bool(true)]
+        )
+        .is_err());
     }
 
     #[test]
