@@ -48,6 +48,11 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Struct(a), SwiftValue::Int(b)) if a.type_name == "Date" => {
             date_time_interval_binary(op, a, b.raw as f64)
         }
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "DateComponents" && b.type_name == "DateComponents" =>
+        {
+            date_components_binary(op, a, b)
+        }
         // Metatype identity: `Int.self == type(of: x)`.
         (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
             "==" => Ok(SwiftValue::Bool(a == b)),
@@ -279,6 +284,47 @@ fn date_time_interval_binary(
         _ => Err(format!(
             "operator `{op}` cannot apply to Date and TimeInterval"
         )),
+    }
+}
+
+const DATE_COMPONENT_FIELDS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "nanosecond",
+    "weekday",
+    "weekdayOrdinal",
+    "quarter",
+    "weekOfMonth",
+    "weekOfYear",
+    "yearForWeekOfYear",
+];
+
+fn date_components_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let equal = DATE_COMPONENT_FIELDS.iter().all(|field| {
+        let lhs = a.get(field).cloned().unwrap_or(SwiftValue::Nil);
+        let rhs = b.get(field).cloned().unwrap_or(SwiftValue::Nil);
+        component_equal(&lhs, &rhs)
+    });
+    match op {
+        "==" => Ok(SwiftValue::Bool(equal)),
+        "!=" => Ok(SwiftValue::Bool(!equal)),
+        _ => Err(format!("operator `{op}` cannot apply to DateComponents")),
+    }
+}
+
+fn component_equal(lhs: &SwiftValue, rhs: &SwiftValue) -> bool {
+    match (lhs, rhs) {
+        (SwiftValue::Nil, SwiftValue::Nil) => true,
+        (SwiftValue::Int(a), SwiftValue::Int(b)) => a.raw == b.raw,
+        _ => false,
     }
 }
 

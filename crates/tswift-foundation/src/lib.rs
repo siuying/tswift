@@ -59,6 +59,26 @@ pub fn install(interp: &mut Interpreter<'_>) {
         interp.register_intrinsic(BuiltinReceiver::Date, name, MethodEntry { mutating, func });
     }
 
+    interp.register_free_fn("DateComponents", date_components_init);
+    for (name, getter) in DATE_COMPONENT_GETTERS {
+        interp.register_property(BuiltinReceiver::DateComponents, name, *getter);
+    }
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "isValidDate",
+        date_components_is_valid_date,
+    );
+    for (name, mutating, func) in [
+        ("value", false, date_components_value as IntrinsicFn),
+        ("setValue", true, date_components_set_value),
+    ] {
+        interp.register_intrinsic(
+            BuiltinReceiver::DateComponents,
+            name,
+            MethodEntry { mutating, func },
+        );
+    }
+
     interp.register_free_fn("Data", data_init);
     interp.register_property(BuiltinReceiver::Data, "count", data_count);
     interp.register_property(BuiltinReceiver::Data, "isEmpty", data_is_empty);
@@ -209,6 +229,7 @@ pub fn registered_keys() -> Vec<String> {
             "URLComponents" => Some("URLComponents.init".to_string()),
             "URLQueryItem" => Some("URLQueryItem.init".to_string()),
             "Date" => Some("Date.init".to_string()),
+            "DateComponents" => Some("DateComponents.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -217,7 +238,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("URL.")
                     || other.starts_with("URLComponents.")
                     || other.starts_with("URLQueryItem.")
-                    || other.starts_with("Date.") =>
+                    || other.starts_with("Date.")
+                    || other.starts_with("DateComponents.") =>
             {
                 Some(other.to_string())
             }
@@ -451,6 +473,190 @@ fn date_compare(
         result: comparison_result(case),
         receiver: recv,
     })
+}
+
+// ---------------------------------------------------------------------------
+// DateComponents
+// ---------------------------------------------------------------------------
+
+/// The component fields stored on a `DateComponents` value, in canonical order.
+const DATE_COMPONENT_FIELDS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "nanosecond",
+    "weekday",
+    "weekdayOrdinal",
+    "quarter",
+    "weekOfMonth",
+    "weekOfYear",
+    "yearForWeekOfYear",
+];
+
+/// Initializer labels that are accepted but not stored as readable components.
+const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone", "era"];
+
+macro_rules! date_component_getters {
+    ($($field:literal => $getter:ident),+ $(,)?) => {
+        $(
+            fn $getter(recv: SwiftValue) -> StdResult {
+                date_components_get(&recv, $field)
+            }
+        )+
+        const DATE_COMPONENT_GETTERS: &[(&str, tswift_core::PropertyFn)] = &[
+            $(($field, $getter)),+
+        ];
+    };
+}
+
+date_component_getters! {
+    "year" => date_components_get_year,
+    "month" => date_components_get_month,
+    "day" => date_components_get_day,
+    "hour" => date_components_get_hour,
+    "minute" => date_components_get_minute,
+    "second" => date_components_get_second,
+    "nanosecond" => date_components_get_nanosecond,
+    "weekday" => date_components_get_weekday,
+    "weekdayOrdinal" => date_components_get_weekday_ordinal,
+    "quarter" => date_components_get_quarter,
+    "weekOfMonth" => date_components_get_week_of_month,
+    "weekOfYear" => date_components_get_week_of_year,
+    "yearForWeekOfYear" => date_components_get_year_for_week_of_year,
+}
+
+fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "DateComponents".into(),
+        fields,
+    }))
+}
+
+fn date_components_obj(value: &SwiftValue) -> Result<&Rc<StructObj>, StdError> {
+    match value {
+        SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => Ok(obj),
+        other => Err(type_error(format!(
+            "expected DateComponents, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Parse an optional Int component argument (`Int?`): `nil` or an integer.
+fn optional_int_component(value: &SwiftValue, context: &str) -> Result<SwiftValue, StdError> {
+    match value {
+        SwiftValue::Nil => Ok(SwiftValue::Nil),
+        SwiftValue::Int(i) => Ok(SwiftValue::int(i.raw)),
+        other => Err(type_error(format!(
+            "{context} expects Int?, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_components_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields: Vec<(String, SwiftValue)> = DATE_COMPONENT_FIELDS
+        .iter()
+        .map(|name| ((*name).to_string(), SwiftValue::Nil))
+        .collect();
+    for arg in &args {
+        let Some(label) = arg.label.as_deref() else {
+            return Err(type_error(
+                "DateComponents initializer requires labeled arguments",
+            ));
+        };
+        if DATE_COMPONENT_IGNORED_LABELS.contains(&label) {
+            continue;
+        }
+        let Some(slot) = fields.iter_mut().find(|(name, _)| name == label) else {
+            return Err(type_error(format!(
+                "DateComponents has no component `{label}`"
+            )));
+        };
+        slot.1 = optional_int_component(&arg.value, &format!("DateComponents(.{label}:)"))?;
+    }
+    Ok(date_components_value_struct(fields))
+}
+
+fn date_components_get(value: &SwiftValue, component: &str) -> StdResult {
+    let obj = date_components_obj(value)?;
+    Ok(obj.get(component).cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// Component name behind a `Calendar.Component` enum value (`.year` → "year").
+fn calendar_component_name(value: &SwiftValue) -> Result<String, StdError> {
+    match value {
+        SwiftValue::Enum(obj) => Ok(obj.case.clone()),
+        SwiftValue::Str(name) => Ok(name.to_string()),
+        other => Err(type_error(format!(
+            "expected Calendar.Component, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_components_value(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [component] = args.as_slice() else {
+        return Err(type_error(
+            "DateComponents.value(for:) expects one argument",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let result = if DATE_COMPONENT_FIELDS.contains(&name.as_str()) {
+        date_components_obj(&recv)?
+            .get(&name)
+            .cloned()
+            .unwrap_or(SwiftValue::Nil)
+    } else {
+        SwiftValue::Nil
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn date_components_set_value(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [value, component] = args.as_slice() else {
+        return Err(type_error(
+            "DateComponents.setValue(_:for:) expects two arguments",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let obj = date_components_obj(&recv)?;
+    let mut fields = obj.fields.clone();
+    if let Some(slot) = fields.iter_mut().find(|(field, _)| field == &name) {
+        slot.1 = optional_int_component(value, "DateComponents.setValue(_:for:)")?;
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: date_components_value_struct(fields),
+    })
+}
+
+/// Minimal range validation; full calendar validation arrives with Calendar.
+fn date_components_is_valid_date(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    let component = |name: &str| match obj.get(name) {
+        Some(SwiftValue::Int(i)) => Some(i.raw),
+        _ => None,
+    };
+    let valid = match (component("year"), component("month"), component("day")) {
+        (Some(_), Some(month), Some(day)) => (1..=12).contains(&month) && (1..=31).contains(&day),
+        _ => false,
+    };
+    Ok(SwiftValue::Bool(valid))
 }
 
 fn data_value(bytes: Vec<u8>) -> SwiftValue {
@@ -1253,6 +1459,104 @@ mod tests {
             SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
             other => panic!("expected ComparisonResult, got {}", other.type_name()),
         }
+    }
+
+    fn labeled(label: &str, value: i128) -> Arg {
+        Arg {
+            label: Some(label.into()),
+            value: SwiftValue::int(value),
+        }
+    }
+
+    #[test]
+    fn date_components_partial_construction_reads_back() {
+        let mut ctx = MockContext::new(0.0);
+        let dc = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 6),
+                labeled("day", 29),
+            ],
+        )
+        .expect("DateComponents");
+
+        assert_eq!(
+            date_components_get(&dc, "year").unwrap(),
+            SwiftValue::int(2024)
+        );
+        assert_eq!(
+            date_components_get(&dc, "month").unwrap(),
+            SwiftValue::int(6)
+        );
+        assert_eq!(
+            date_components_get(&dc, "day").unwrap(),
+            SwiftValue::int(29)
+        );
+        // Unset components read back as nil.
+        assert_eq!(date_components_get(&dc, "hour").unwrap(), SwiftValue::Nil);
+    }
+
+    #[test]
+    fn date_components_is_valid_date_checks_ymd_ranges() {
+        let mut ctx = MockContext::new(0.0);
+        let valid = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 6),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(valid).unwrap(),
+            SwiftValue::Bool(true)
+        );
+
+        let bad_month = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 13),
+                labeled("day", 5),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(bad_month).unwrap(),
+            SwiftValue::Bool(false)
+        );
+
+        let missing_day = date_components_init(&mut ctx, vec![labeled("year", 2024)]).unwrap();
+        assert_eq!(
+            date_components_is_valid_date(missing_day).unwrap(),
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn date_components_set_value_updates_component() {
+        let mut ctx = MockContext::new(0.0);
+        let dc = date_components_init(&mut ctx, vec![labeled("year", 2024)]).unwrap();
+        let component = SwiftValue::Enum(Rc::new(EnumObj {
+            type_name: "Calendar.Component".into(),
+            case: "month".into(),
+            payload: Vec::new(),
+        }));
+        let updated =
+            date_components_set_value(&mut ctx, dc, vec![SwiftValue::int(7), component.clone()])
+                .unwrap()
+                .receiver;
+        assert_eq!(
+            date_components_get(&updated, "month").unwrap(),
+            SwiftValue::int(7)
+        );
+
+        let read = date_components_value(&mut ctx, updated, vec![component])
+            .unwrap()
+            .result;
+        assert_eq!(read, SwiftValue::int(7));
     }
 }
 

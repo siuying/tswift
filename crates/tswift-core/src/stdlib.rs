@@ -164,6 +164,7 @@ pub enum BuiltinReceiver {
     URLComponents,
     URLQueryItem,
     Date,
+    DateComponents,
 }
 
 impl BuiltinReceiver {
@@ -188,6 +189,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::URLComponents => "URLComponents",
             BuiltinReceiver::URLQueryItem => "URLQueryItem",
             BuiltinReceiver::Date => "Date",
+            BuiltinReceiver::DateComponents => "DateComponents",
         }
     }
 
@@ -212,6 +214,7 @@ impl BuiltinReceiver {
             "URLComponents" => BuiltinReceiver::URLComponents,
             "URLQueryItem" => BuiltinReceiver::URLQueryItem,
             "Date" => BuiltinReceiver::Date,
+            "DateComponents" => BuiltinReceiver::DateComponents,
             _ => return None,
         })
     }
@@ -240,6 +243,9 @@ impl BuiltinReceiver {
                 BuiltinReceiver::URLQueryItem
             }
             SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
+            SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {
+                BuiltinReceiver::DateComponents
+            }
             _ => return None,
         })
     }
