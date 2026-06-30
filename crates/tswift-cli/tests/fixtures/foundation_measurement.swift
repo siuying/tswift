@@ -38,3 +38,9 @@ print((a / 4).value)
 print(a > b)
 print(a == Measurement(value: 1000, unit: UnitLength.meters))
 print(a < b)
+
+// Affine arithmetic: 0°C + 32°F converts the rhs into °C (0°C), not base sum.
+let zeroC = Measurement(value: 0, unit: UnitTemperature.celsius)
+let freezF = Measurement(value: 32, unit: UnitTemperature.fahrenheit)
+print((zeroC + freezF).value)
+print((zeroC + freezF).unit.symbol)

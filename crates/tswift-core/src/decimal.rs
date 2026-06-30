@@ -94,26 +94,31 @@ impl Dec {
     }
 }
 
-/// Scale a mantissa up by `10^n`, saturating intent left to callers (daily
-/// range only).
-fn scale_up(mantissa: i128, n: u32) -> i128 {
-    mantissa * 10_i128.pow(n)
+/// Scale a mantissa up by `10^n`, returning `None` on `i128` overflow so callers
+/// can surface NaN rather than panicking (debug) or wrapping (release).
+fn scale_up(mantissa: i128, n: u32) -> Option<i128> {
+    10_i128.checked_pow(n).and_then(|f| mantissa.checked_mul(f))
 }
 
-/// Re-express two decimals at a common (the lower) exponent.
-fn align(a: Dec, b: Dec) -> (i128, i128, i32) {
+/// Re-express two decimals at a common (the lower) exponent. `None` on overflow.
+fn align(a: Dec, b: Dec) -> Option<(i128, i128, i32)> {
     let exponent = a.exponent.min(b.exponent);
-    let am = scale_up(a.mantissa, (a.exponent - exponent) as u32);
-    let bm = scale_up(b.mantissa, (b.exponent - exponent) as u32);
-    (am, bm, exponent)
+    let am = scale_up(a.mantissa, (a.exponent - exponent) as u32)?;
+    let bm = scale_up(b.mantissa, (b.exponent - exponent) as u32)?;
+    Some((am, bm, exponent))
 }
 
 pub fn add(a: Dec, b: Dec) -> Dec {
     if a.nan || b.nan {
         return Dec::NAN;
     }
-    let (am, bm, exponent) = align(a, b);
-    Dec::new(am + bm, exponent)
+    let Some((am, bm, exponent)) = align(a, b) else {
+        return Dec::NAN;
+    };
+    match am.checked_add(bm) {
+        Some(sum) => Dec::new(sum, exponent),
+        None => Dec::NAN,
+    }
 }
 
 pub fn sub(a: Dec, b: Dec) -> Dec {
@@ -124,7 +129,13 @@ pub fn mul(a: Dec, b: Dec) -> Dec {
     if a.nan || b.nan {
         return Dec::NAN;
     }
-    Dec::new(a.mantissa * b.mantissa, a.exponent + b.exponent)
+    match (
+        a.mantissa.checked_mul(b.mantissa),
+        a.exponent.checked_add(b.exponent),
+    ) {
+        (Some(mantissa), Some(exponent)) => Dec::new(mantissa, exponent),
+        _ => Dec::NAN,
+    }
 }
 
 pub fn div(a: Dec, b: Dec) -> Dec {
@@ -143,9 +154,18 @@ pub fn div(a: Dec, b: Dec) -> Dec {
     let mut rem = num % den;
     let mut produced = 0;
     while rem != 0 && produced < DIV_PRECISION {
-        rem *= 10;
+        let Some(scaled) = rem.checked_mul(10) else {
+            break;
+        };
+        rem = scaled;
+        let Some(next) = result
+            .checked_mul(10)
+            .and_then(|r| r.checked_add((rem / den) as i128))
+        else {
+            break;
+        };
         exponent -= 1;
-        result = result * 10 + (rem / den) as i128;
+        result = next;
         rem %= den;
         produced += 1;
     }
@@ -158,11 +178,16 @@ pub fn div(a: Dec, b: Dec) -> Dec {
     Dec::new(signed, exponent)
 }
 
-/// Total ordering for comparison operators (NaN sorts as incomparable: callers
-/// should special-case via [`is_nan`] when needed).
+/// Total ordering for comparison operators (NaN handling is the caller's
+/// responsibility). Falls back to an `f64` comparison if exponent alignment
+/// would overflow `i128`.
 pub fn compare(a: Dec, b: Dec) -> std::cmp::Ordering {
-    let (am, bm, _) = align(a, b);
-    am.cmp(&bm)
+    if let Some((am, bm, _)) = align(a, b) {
+        return am.cmp(&bm);
+    }
+    let af = a.mantissa as f64 * 10_f64.powi(a.exponent);
+    let bf = b.mantissa as f64 * 10_f64.powi(b.exponent);
+    af.partial_cmp(&bf).unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// Rounding modes mirroring `Decimal.RoundingMode`.
@@ -197,7 +222,10 @@ pub fn rounded(value: Dec, scale: i32, mode: RoundingMode) -> Dec {
         return value;
     }
     let drop = (target - value.exponent) as u32;
-    let divisor = 10_i128.pow(drop);
+    let Some(divisor) = 10_i128.checked_pow(drop) else {
+        // Dropping more digits than the value has: it rounds to zero.
+        return Dec::zero();
+    };
     let negative = value.mantissa < 0;
     let abs = value.mantissa.unsigned_abs();
     let divisor_u = divisor as u128;
@@ -378,6 +406,20 @@ mod tests {
             to_string(rounded(dec("1.2345"), 2, RoundingMode::Plain)),
             "1.23"
         );
+    }
+
+    #[test]
+    fn overflow_and_nan_are_contained() {
+        // Aligning exponents beyond i128 yields NaN, not a panic/wrap.
+        let huge = add(
+            dec("1"),
+            parse("0.000000000000000000000000000000000000001").unwrap(),
+        );
+        assert!(huge.nan);
+        // Division by zero is NaN, and NaN compares unequal to itself.
+        let nan = div(dec("1"), dec("0"));
+        assert!(nan.nan);
+        assert_ne!(compare(nan, nan), std::cmp::Ordering::Greater); // no panic
     }
 
     #[test]

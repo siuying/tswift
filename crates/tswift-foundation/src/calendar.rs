@@ -103,11 +103,11 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (y + i64::from(m <= 2), m, d)
 }
 
-fn is_leap_year(y: i64) -> bool {
+pub(crate) fn is_leap_year(y: i64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
-fn days_in_month(y: i64, m: i64) -> i64 {
+pub(crate) fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

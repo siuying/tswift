@@ -113,9 +113,9 @@ fn number_formatter_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
             // -1 sentinels: "unset", so per-style defaults apply.
             ("minimumFractionDigits".into(), SwiftValue::int(-1)),
             ("maximumFractionDigits".into(), SwiftValue::int(-1)),
-            // Nil sentinel: "unset", so the per-style grouping default applies
-            // until the user assigns a Bool.
-            ("usesGroupingSeparator".into(), SwiftValue::Nil),
+            // `usesGroupingSeparator` is intentionally not stored here: leaving
+            // it absent lets the effective getter (and formatting) fall back to
+            // the per-style default until the user assigns a Bool.
             ("groupingSeparator".into(), SwiftValue::Nil),
             ("decimalSeparator".into(), SwiftValue::Nil),
             ("currencySymbol".into(), SwiftValue::Nil),

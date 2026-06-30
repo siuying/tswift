@@ -679,7 +679,11 @@ fn date_components_is_valid_date(recv: SwiftValue) -> StdResult {
         _ => None,
     };
     let valid = match (component("year"), component("month"), component("day")) {
-        (Some(_), Some(month), Some(day)) => (1..=12).contains(&month) && (1..=31).contains(&day),
+        (Some(year), Some(month), Some(day)) => {
+            (1..=12).contains(&month)
+                && day >= 1
+                && day <= i128::from(calendar::days_in_month(year as i64, month as i64))
+        }
         _ => false,
     };
     Ok(SwiftValue::Bool(valid))
@@ -899,21 +903,28 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
         }
     }
     let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    // Empty input decodes to empty Data (matching Foundation); other lengths
+    // must be a whole number of 4-char groups.
     if cleaned.len() % 4 != 0 {
         return None;
     }
-    let mut out = Vec::with_capacity(cleaned.len() / 4 * 3);
-    for chunk in cleaned.chunks(4) {
+    let chunk_count = cleaned.len() / 4;
+    let mut out = Vec::with_capacity(chunk_count * 3);
+    for (chunk_index, chunk) in cleaned.chunks(4).enumerate() {
         let pad = chunk.iter().filter(|&&c| c == b'=').count();
-        let mut acc = 0u32;
-        for (i, &c) in chunk.iter().enumerate() {
-            let v = if c == b'=' { 0 } else { val(c)? };
-            // A padding char before the tail is malformed.
-            if c == b'=' && i < 4 - pad {
-                return None;
-            }
-            acc = (acc << 6) | v;
+        // Padding is only ever valid (1 or 2 chars) in the final chunk, and the
+        // pad must be a trailing run.
+        if pad > 0 && (chunk_index != chunk_count - 1 || pad > 2) {
+            return None;
         }
+        if pad > 0 && chunk[4 - pad..].iter().any(|&c| c != b'=') {
+            return None;
+        }
+        let mut acc = 0u32;
+        for &c in &chunk[..4 - pad] {
+            acc = (acc << 6) | val(c)?;
+        }
+        acc <<= 6 * pad;
         out.push((acc >> 16 & 0xFF) as u8);
         if pad < 2 {
             out.push((acc >> 8 & 0xFF) as u8);
@@ -1752,6 +1763,42 @@ mod tests {
         // Malformed inputs reject.
         assert!(base64_decode("SGk").is_none()); // wrong length
         assert!(base64_decode("@@@@").is_none()); // bad alphabet
+        assert!(base64_decode("====").is_none()); // all padding
+        assert!(base64_decode("AA==AAAA").is_none()); // padding before final chunk
+        assert!(base64_decode("A===").is_none()); // 3 padding chars
+                                                  // Empty decodes to empty Data, matching Foundation.
+        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn is_valid_date_respects_month_lengths() {
+        let mut ctx = MockContext::new(0.0);
+        let leap = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 2),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(leap).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        let non_leap = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2023),
+                labeled("month", 2),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(non_leap).unwrap(),
+            SwiftValue::Bool(false)
+        );
     }
 
     #[test]

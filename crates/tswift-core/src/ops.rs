@@ -430,9 +430,13 @@ fn measurement_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftV
             }
             let l_base = lv * lc + lk;
             let r_base = rv * rc + rk;
+            // Convert the rhs into the lhs unit, then combine *displayed* values
+            // (correct for affine units like °C/°F, where adding base values is
+            // meaningless): `r_in_l = (r_base - lk) / lc`.
+            let r_in_l = (r_base - lk) / lc;
             match op {
-                "+" => Ok(measurement_with_value(l, (l_base + r_base - lk) / lc)),
-                "-" => Ok(measurement_with_value(l, (l_base - r_base - lk) / lc)),
+                "+" => Ok(measurement_with_value(l, lv + r_in_l)),
+                "-" => Ok(measurement_with_value(l, lv - r_in_l)),
                 "==" => Ok(SwiftValue::Bool(l_base == r_base)),
                 "!=" => Ok(SwiftValue::Bool(l_base != r_base)),
                 "<" => Ok(SwiftValue::Bool(l_base < r_base)),

@@ -267,6 +267,16 @@ fn parse_pattern(input: &str, pattern: &str) -> Option<f64> {
     if ii != ichars.len() {
         return None;
     }
+    // Reject out-of-range fields rather than silently normalising (Feb 30 → Mar).
+    if !(1..=12).contains(&month)
+        || day < 1
+        || day > crate::calendar::days_in_month(year, month)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
     Some(ref_seconds_from_ymdhms(
         year, month, day, hour, minute, second,
     ))
