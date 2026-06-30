@@ -1,3 +1,11 @@
+Calendar.component
+Calendar.current
+Calendar.date
+Calendar.dateComponents
+Calendar.identifier
+Calendar.init
+Calendar.isDate
+Calendar.startOfDay
 Data.append
 Data.count
 Data.init

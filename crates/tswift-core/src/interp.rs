@@ -562,6 +562,31 @@ impl<'w> Interpreter<'w> {
         );
     }
 
+    /// Register a simple builtin enum so shorthand `.case` members resolve to it
+    /// (e.g. `Calendar.Component`). Cases carry no raw value and no payload; the
+    /// enum is skipped if a declaration with the same name already exists.
+    pub fn register_builtin_enum(&mut self, name: &str, cases: &[&str]) {
+        if self.enums.contains_key(name) {
+            return;
+        }
+        let cases = cases
+            .iter()
+            .map(|case| EnumCaseDef {
+                name: (*case).to_string(),
+                raw: None,
+                payload_types: Vec::new(),
+            })
+            .collect();
+        self.enums.insert(
+            name.to_string(),
+            EnumDef {
+                cases,
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            },
+        );
+    }
+
     /// The keys of every registered standard-library entry, for coverage
     /// tooling. Free functions are bare names; method/property intrinsics are
     /// `Type.member`; sequence algorithms are `Sequence.member`. Sorted and

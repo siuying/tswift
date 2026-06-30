@@ -4,6 +4,7 @@
 //! interpreter, expose live `registered_keys()` for coverage tooling, and keep
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
+mod calendar;
 mod url;
 
 use std::{collections::BTreeSet, rc::Rc};
@@ -20,6 +21,7 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 /// Register every currently-supported Foundation builtin into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
+    calendar::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -230,6 +232,7 @@ pub fn registered_keys() -> Vec<String> {
             "URLQueryItem" => Some("URLQueryItem.init".to_string()),
             "Date" => Some("Date.init".to_string()),
             "DateComponents" => Some("DateComponents.init".to_string()),
+            "Calendar" => Some("Calendar.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -239,7 +242,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("URLComponents.")
                     || other.starts_with("URLQueryItem.")
                     || other.starts_with("Date.")
-                    || other.starts_with("DateComponents.") =>
+                    || other.starts_with("DateComponents.")
+                    || other.starts_with("Calendar.") =>
             {
                 Some(other.to_string())
             }
@@ -255,7 +259,7 @@ pub(crate) fn type_error(message: impl Into<String>) -> StdError {
     StdError::Error(EvalError::Type(message.into()))
 }
 
-fn date_value(time_interval_since_reference_date: f64) -> SwiftValue {
+pub(crate) fn date_value(time_interval_since_reference_date: f64) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "Date".into(),
         fields: vec![(
@@ -265,7 +269,7 @@ fn date_value(time_interval_since_reference_date: f64) -> SwiftValue {
     }))
 }
 
-fn date_seconds(value: &SwiftValue) -> Result<f64, StdError> {
+pub(crate) fn date_seconds(value: &SwiftValue) -> Result<f64, StdError> {
     let SwiftValue::Struct(obj) = value else {
         return Err(type_error(format!(
             "expected Date, got {}",
@@ -480,7 +484,7 @@ fn date_compare(
 // ---------------------------------------------------------------------------
 
 /// The component fields stored on a `DateComponents` value, in canonical order.
-const DATE_COMPONENT_FIELDS: &[&str] = &[
+pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
     "year",
     "month",
     "day",
@@ -528,7 +532,7 @@ date_component_getters! {
     "yearForWeekOfYear" => date_components_get_year_for_week_of_year,
 }
 
-fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
+pub(crate) fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "DateComponents".into(),
         fields,
@@ -587,7 +591,7 @@ fn date_components_get(value: &SwiftValue, component: &str) -> StdResult {
 }
 
 /// Component name behind a `Calendar.Component` enum value (`.year` → "year").
-fn calendar_component_name(value: &SwiftValue) -> Result<String, StdError> {
+pub(crate) fn calendar_component_name(value: &SwiftValue) -> Result<String, StdError> {
     match value {
         SwiftValue::Enum(obj) => Ok(obj.case.clone()),
         SwiftValue::Str(name) => Ok(name.to_string()),
