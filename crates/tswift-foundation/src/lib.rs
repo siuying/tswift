@@ -140,6 +140,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
         index_path_start_index,
     );
     interp.register_property(BuiltinReceiver::IndexPath, "endIndex", index_path_end_index);
+    interp.register_property(
+        BuiltinReceiver::IndexPath,
+        "hashValue",
+        index_path_hash_value,
+    );
     interp.register_intrinsic(
         BuiltinReceiver::IndexPath,
         "dropLast",
@@ -154,6 +159,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::IndexSet, "isEmpty", index_set_is_empty);
     interp.register_property(BuiltinReceiver::IndexSet, "first", index_set_first);
     interp.register_property(BuiltinReceiver::IndexSet, "last", index_set_last);
+    interp.register_property(BuiltinReceiver::IndexSet, "hashValue", index_set_hash_value);
     interp.register_intrinsic(
         BuiltinReceiver::IndexSet,
         "contains",
@@ -1184,6 +1190,27 @@ fn index_path_end_index(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(index_path_indexes(&recv)?.len() as i128))
 }
 
+/// Hash a sequence of integers (used by `IndexPath`/`IndexSet`), consistent
+/// with their element-wise `==`.
+fn hash_int_sequence(values: impl IntoIterator<Item = i128>) -> i128 {
+    let mut bytes = Vec::new();
+    for value in values {
+        bytes.extend_from_slice(&(value as i64).to_le_bytes());
+    }
+    fnv1a_hash(&bytes)
+}
+
+fn index_path_hash_value(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(hash_int_sequence(index_path_indexes(
+        &recv,
+    )?)))
+}
+
+fn index_set_hash_value(recv: SwiftValue) -> StdResult {
+    // BTreeSet iterates in sorted order, matching set equality.
+    Ok(SwiftValue::int(hash_int_sequence(index_set_values(&recv)?)))
+}
+
 /// `dropLast(_:)` — a new `IndexPath` without its last `k` (default 1) indexes.
 fn index_path_drop_last(
     _ctx: &mut dyn StdContext,
@@ -1732,6 +1759,25 @@ mod tests {
             SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
             other => panic!("expected ComparisonResult, got {}", other.type_name()),
         }
+    }
+
+    #[test]
+    fn index_collections_hash_consistently_with_equality() {
+        assert_eq!(
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap(),
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap()
+        );
+        assert_ne!(
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap(),
+            index_path_hash_value(index_path_value(vec![2, 5])).unwrap()
+        );
+        // IndexSets built in different orders normalize to the same set.
+        let a: BTreeSet<i128> = [9, 3, 1].into_iter().collect();
+        let b: BTreeSet<i128> = [1, 9, 3].into_iter().collect();
+        assert_eq!(
+            index_set_hash_value(index_set_value(a)).unwrap(),
+            index_set_hash_value(index_set_value(b)).unwrap()
+        );
     }
 
     #[test]

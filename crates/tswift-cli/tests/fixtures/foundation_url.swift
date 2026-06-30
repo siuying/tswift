@@ -86,3 +86,11 @@ print(dot.deletingPathExtension().lastPathComponent)
 var qc = URLComponents(string: "https://h/p")!
 qc.query = "z=9"
 print(qc.url?.absoluteString ?? "nil")
+
+// Hashable / debug rendering.
+let h = URL(string: "https://example.com/a")!
+let h2 = URL(string: "https://example.com/a")!
+print(h.hashValue == h2.hashValue)
+print(h.debugDescription)
+print(URLQueryItem(name: "q", value: "1").hashValue == URLQueryItem(name: "q", value: "1").hashValue)
+print(URLComponents(string: "https://h/p")!.hashValue == URLComponents(string: "https://h/p")!.hashValue)

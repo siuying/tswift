@@ -117,6 +117,7 @@ IndexPath.appending
 IndexPath.count
 IndexPath.dropLast
 IndexPath.endIndex
+IndexPath.hashValue
 IndexPath.init
 IndexPath.isEmpty
 IndexPath.startIndex
@@ -126,6 +127,7 @@ IndexSet.first
 IndexSet.formIntersection
 IndexSet.formSymmetricDifference
 IndexSet.formUnion
+IndexSet.hashValue
 IndexSet.init
 IndexSet.insert
 IndexSet.integerGreaterThan
@@ -163,12 +165,14 @@ URL.appendPathComponent
 URL.appendingPathComponent
 URL.appendingPathExtension
 URL.baseURL
+URL.debugDescription
 URL.deleteLastPathComponent
 URL.deletingLastPathComponent
 URL.deletingPathExtension
 URL.description
 URL.fragment
 URL.hasDirectoryPath
+URL.hashValue
 URL.host
 URL.init
 URL.isFileURL
@@ -185,6 +189,7 @@ URL.scheme
 URL.user
 URLComponents.description
 URLComponents.fragment
+URLComponents.hashValue
 URLComponents.host
 URLComponents.init
 URLComponents.password
@@ -197,6 +202,7 @@ URLComponents.string
 URLComponents.url
 URLComponents.user
 URLQueryItem.description
+URLQueryItem.hashValue
 URLQueryItem.init
 URLQueryItem.name
 URLQueryItem.value

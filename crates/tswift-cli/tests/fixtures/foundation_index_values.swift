@@ -68,3 +68,8 @@ print(q.integerGreaterThanOrEqualTo(3) ?? -1)
 print(q.integerLessThanOrEqualTo(3) ?? -1)
 print(q.update(with: 3) ?? -1)
 print(q.update(with: 9) ?? -1)
+
+// Hashable consistency.
+print(IndexPath(indexes: [2, 4]).hashValue == IndexPath(indexes: [2, 4]).hashValue)
+print(IndexPath(indexes: [2, 4]).hashValue == IndexPath(indexes: [2, 5]).hashValue)
+print(IndexSet(integer: 9).hashValue == IndexSet(integer: 9).hashValue)
