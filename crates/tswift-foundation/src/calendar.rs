@@ -126,17 +126,17 @@ fn floor_div_day(unix_seconds: f64) -> (i64, f64) {
 
 /// A decomposed UTC instant.
 #[derive(Clone, Copy)]
-struct Civil {
-    year: i64,
-    month: i64,
-    day: i64,
-    hour: i64,
-    minute: i64,
-    second: i64,
-    weekday: i64,
+pub(crate) struct Civil {
+    pub year: i64,
+    pub month: i64,
+    pub day: i64,
+    pub hour: i64,
+    pub minute: i64,
+    pub second: i64,
+    pub weekday: i64,
 }
 
-fn decompose(ref_seconds: f64) -> Civil {
+pub(crate) fn decompose(ref_seconds: f64) -> Civil {
     let unix = ref_seconds + REFERENCE_DATE_UNIX_OFFSET;
     let (days, secs_in_day) = floor_div_day(unix);
     let (year, month, day) = civil_from_days(days);
@@ -154,7 +154,7 @@ fn decompose(ref_seconds: f64) -> Civil {
     }
 }
 
-fn ref_seconds_from_ymdhms(y: i64, m: i64, d: i64, h: i64, min: i64, s: i64) -> f64 {
+pub(crate) fn ref_seconds_from_ymdhms(y: i64, m: i64, d: i64, h: i64, min: i64, s: i64) -> f64 {
     let days = days_from_civil(y, m, d);
     let unix = days as f64 * SECONDS_PER_DAY + (h * 3600 + min * 60 + s) as f64;
     unix - REFERENCE_DATE_UNIX_OFFSET

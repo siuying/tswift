@@ -31,6 +31,17 @@ types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 
+# Darwin gaps (documented, intentional for now):
+# - Calendar/DateComponents/DateFormatter/ISO8601DateFormatter operate in the
+#   proleptic Gregorian calendar in UTC and ignore Locale/TimeZone. Formatter
+#   names are hard-coded en_US. Date arithmetic and parsing are exact; locale-
+#   and zone-sensitive behaviour is not modelled.
+# - DateFormatter/ISO8601DateFormatter are ObjC classes absent from the
+#   generated `.swiftinterface` inventory, so they do not appear in coverage
+#   roll-ups even though they are implemented and golden-tested.
+[notes]
+calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
+
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]
 networking = ["URLSession", "URLRequest", "Host"]

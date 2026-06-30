@@ -166,6 +166,8 @@ pub enum BuiltinReceiver {
     Date,
     DateComponents,
     Calendar,
+    DateFormatter,
+    ISO8601DateFormatter,
 }
 
 impl BuiltinReceiver {
@@ -192,6 +194,8 @@ impl BuiltinReceiver {
             BuiltinReceiver::Date => "Date",
             BuiltinReceiver::DateComponents => "DateComponents",
             BuiltinReceiver::Calendar => "Calendar",
+            BuiltinReceiver::DateFormatter => "DateFormatter",
+            BuiltinReceiver::ISO8601DateFormatter => "ISO8601DateFormatter",
         }
     }
 
@@ -218,6 +222,8 @@ impl BuiltinReceiver {
             "Date" => BuiltinReceiver::Date,
             "DateComponents" => BuiltinReceiver::DateComponents,
             "Calendar" => BuiltinReceiver::Calendar,
+            "DateFormatter" => BuiltinReceiver::DateFormatter,
+            "ISO8601DateFormatter" => BuiltinReceiver::ISO8601DateFormatter,
             _ => return None,
         })
     }
@@ -250,6 +256,12 @@ impl BuiltinReceiver {
                 BuiltinReceiver::DateComponents
             }
             SwiftValue::Struct(obj) if obj.type_name == "Calendar" => BuiltinReceiver::Calendar,
+            SwiftValue::Struct(obj) if obj.type_name == "DateFormatter" => {
+                BuiltinReceiver::DateFormatter
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "ISO8601DateFormatter" => {
+                BuiltinReceiver::ISO8601DateFormatter
+            }
             _ => return None,
         })
     }

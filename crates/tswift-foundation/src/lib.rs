@@ -5,6 +5,7 @@
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
 mod calendar;
+mod formatter;
 mod url;
 
 use std::{collections::BTreeSet, rc::Rc};
@@ -22,6 +23,7 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
     calendar::install(interp);
+    formatter::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -233,6 +235,8 @@ pub fn registered_keys() -> Vec<String> {
             "Date" => Some("Date.init".to_string()),
             "DateComponents" => Some("DateComponents.init".to_string()),
             "Calendar" => Some("Calendar.init".to_string()),
+            "DateFormatter" => Some("DateFormatter.init".to_string()),
+            "ISO8601DateFormatter" => Some("ISO8601DateFormatter.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -243,7 +247,9 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("URLQueryItem.")
                     || other.starts_with("Date.")
                     || other.starts_with("DateComponents.")
-                    || other.starts_with("Calendar.") =>
+                    || other.starts_with("Calendar.")
+                    || other.starts_with("DateFormatter.")
+                    || other.starts_with("ISO8601DateFormatter.") =>
             {
                 Some(other.to_string())
             }

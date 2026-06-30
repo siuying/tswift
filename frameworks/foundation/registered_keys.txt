@@ -41,6 +41,16 @@ DateComponents.weekday
 DateComponents.weekdayOrdinal
 DateComponents.year
 DateComponents.yearForWeekOfYear
+DateFormatter.date
+DateFormatter.dateFormat
+DateFormatter.dateStyle
+DateFormatter.init
+DateFormatter.string
+DateFormatter.timeStyle
+ISO8601DateFormatter.date
+ISO8601DateFormatter.formatOptions
+ISO8601DateFormatter.init
+ISO8601DateFormatter.string
 IndexPath.append
 IndexPath.appending
 IndexPath.count
