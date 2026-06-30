@@ -116,6 +116,13 @@ pub trait StdContext {
     fn random_u64(&mut self) -> u64 {
         0
     }
+
+    /// Seconds since the Unix epoch (1970-01-01 UTC). The default is fixed so
+    /// direct builtin tests stay deterministic; the interpreter overrides it
+    /// with wall-clock time on native targets.
+    fn now_unix_seconds(&mut self) -> f64 {
+        0.0
+    }
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).
@@ -156,6 +163,7 @@ pub enum BuiltinReceiver {
     URL,
     URLComponents,
     URLQueryItem,
+    Date,
 }
 
 impl BuiltinReceiver {
@@ -179,6 +187,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::URL => "URL",
             BuiltinReceiver::URLComponents => "URLComponents",
             BuiltinReceiver::URLQueryItem => "URLQueryItem",
+            BuiltinReceiver::Date => "Date",
         }
     }
 
@@ -202,6 +211,7 @@ impl BuiltinReceiver {
             "URL" => BuiltinReceiver::URL,
             "URLComponents" => BuiltinReceiver::URLComponents,
             "URLQueryItem" => BuiltinReceiver::URLQueryItem,
+            "Date" => BuiltinReceiver::Date,
             _ => return None,
         })
     }
@@ -229,6 +239,7 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "URLQueryItem" => {
                 BuiltinReceiver::URLQueryItem
             }
+            SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
             _ => return None,
         })
     }
@@ -299,6 +310,10 @@ pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// A computed-property intrinsic on a builtin receiver (`Double.isNaN`,
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
+
+/// A computed-property intrinsic that needs the standard-library context
+/// (`Date.timeIntervalSinceNow`, for example, needs the current clock).
+pub type ContextualPropertyFn = fn(&mut dyn StdContext, SwiftValue) -> StdResult;
 
 /// A `Sequence`/`Collection` algorithm written once against the materialized
 /// elements of any builtin sequence receiver (`map`, `filter`, `sorted`, …).

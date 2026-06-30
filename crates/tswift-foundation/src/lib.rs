@@ -9,13 +9,56 @@ mod url;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext,
-    StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome,
+    StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
+
+const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
+const DISTANT_PAST_REFERENCE_SECONDS: f64 = -63_113_904_000.0;
+const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 
 /// Register every currently-supported Foundation builtin into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
+    interp.register_free_fn("Date", date_init);
+    interp.register_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSinceReferenceDate",
+        date_time_interval_since_reference_date,
+    );
+    interp.register_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSince1970",
+        date_time_interval_since_1970,
+    );
+    interp.register_contextual_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSinceNow",
+        date_time_interval_since_now,
+    );
+    interp.register_static(BuiltinReceiver::Date, "now", date_now_static);
+    interp.register_static(BuiltinReceiver::Date, "distantPast", date_distant_past);
+    interp.register_static(BuiltinReceiver::Date, "distantFuture", date_distant_future);
+    interp.register_static(
+        BuiltinReceiver::Date,
+        "timeIntervalBetween1970AndReferenceDate",
+        date_time_interval_between_1970_and_reference_date,
+    );
+    for (name, mutating, func) in [
+        (
+            "timeIntervalSince",
+            false,
+            date_time_interval_since as IntrinsicFn,
+        ),
+        ("addingTimeInterval", false, date_adding_time_interval),
+        ("addTimeInterval", true, date_add_time_interval),
+        ("distance", false, date_distance),
+        ("advanced", false, date_advanced),
+        ("compare", false, date_compare),
+    ] {
+        interp.register_intrinsic(BuiltinReceiver::Date, name, MethodEntry { mutating, func });
+    }
+
     interp.register_free_fn("Data", data_init);
     interp.register_property(BuiltinReceiver::Data, "count", data_count);
     interp.register_property(BuiltinReceiver::Data, "isEmpty", data_is_empty);
@@ -165,6 +208,7 @@ pub fn registered_keys() -> Vec<String> {
             "URL" => Some("URL.init".to_string()),
             "URLComponents" => Some("URLComponents.init".to_string()),
             "URLQueryItem" => Some("URLQueryItem.init".to_string()),
+            "Date" => Some("Date.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -172,7 +216,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("IndexSet.")
                     || other.starts_with("URL.")
                     || other.starts_with("URLComponents.")
-                    || other.starts_with("URLQueryItem.") =>
+                    || other.starts_with("URLQueryItem.")
+                    || other.starts_with("Date.") =>
             {
                 Some(other.to_string())
             }
@@ -186,6 +231,226 @@ pub fn registered_keys() -> Vec<String> {
 
 pub(crate) fn type_error(message: impl Into<String>) -> StdError {
     StdError::Error(EvalError::Type(message.into()))
+}
+
+fn date_value(time_interval_since_reference_date: f64) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "Date".into(),
+        fields: vec![(
+            "_timeIntervalSinceReferenceDate".into(),
+            SwiftValue::Double(time_interval_since_reference_date),
+        )],
+    }))
+}
+
+fn date_seconds(value: &SwiftValue) -> Result<f64, StdError> {
+    let SwiftValue::Struct(obj) = value else {
+        return Err(type_error(format!(
+            "expected Date, got {}",
+            value.type_name()
+        )));
+    };
+    if obj.type_name != "Date" {
+        return Err(type_error(format!("expected Date, got {}", obj.type_name)));
+    }
+    match obj.get("_timeIntervalSinceReferenceDate") {
+        Some(SwiftValue::Double(seconds)) => Ok(*seconds),
+        Some(SwiftValue::Int(seconds)) => Ok(seconds.raw as f64),
+        _ => Err(type_error("malformed Date value")),
+    }
+}
+
+fn time_interval(value: &SwiftValue, context: &str) -> Result<f64, StdError> {
+    match value {
+        SwiftValue::Double(seconds) => Ok(*seconds),
+        SwiftValue::Int(seconds) => Ok(seconds.raw as f64),
+        other => Err(type_error(format!(
+            "{context} expects TimeInterval, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    match args.as_slice() {
+        [] => Ok(date_value(
+            ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSinceReferenceDate") => Ok(date_value(
+            time_interval(&arg.value, "Date(timeIntervalSinceReferenceDate:)")?,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSince1970") => Ok(date_value(
+            time_interval(&arg.value, "Date(timeIntervalSince1970:)")? - REFERENCE_DATE_UNIX_OFFSET,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSinceNow") => Ok(date_value(
+            ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET
+                + time_interval(&arg.value, "Date(timeIntervalSinceNow:)")?,
+        )),
+        [interval, since]
+            if interval.label.as_deref() == Some("timeInterval")
+                && since.label.as_deref() == Some("since") =>
+        {
+            Ok(date_value(
+                date_seconds(&since.value)?
+                    + time_interval(&interval.value, "Date(timeInterval:since:)")?,
+            ))
+        }
+        _ => Err(type_error("unsupported Date initializer arguments")),
+    }
+}
+
+fn date_time_interval_since_reference_date(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(date_seconds(&recv)?))
+}
+
+fn date_time_interval_since_1970(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(
+        date_seconds(&recv)? + REFERENCE_DATE_UNIX_OFFSET,
+    ))
+}
+
+fn date_time_interval_since_now(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(
+        date_seconds(&recv)? + REFERENCE_DATE_UNIX_OFFSET - ctx.now_unix_seconds(),
+    ))
+}
+
+fn date_now_static(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.now takes no arguments"));
+    }
+    Ok(date_value(
+        ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET,
+    ))
+}
+
+fn date_distant_past(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.distantPast takes no arguments"));
+    }
+    Ok(date_value(DISTANT_PAST_REFERENCE_SECONDS))
+}
+
+fn date_distant_future(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.distantFuture takes no arguments"));
+    }
+    Ok(date_value(DISTANT_FUTURE_REFERENCE_SECONDS))
+}
+
+fn date_time_interval_between_1970_and_reference_date(
+    _ctx: &mut dyn StdContext,
+    args: Vec<Arg>,
+) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error(
+            "Date.timeIntervalBetween1970AndReferenceDate takes no arguments",
+        ));
+    }
+    Ok(SwiftValue::Double(REFERENCE_DATE_UNIX_OFFSET))
+}
+
+fn date_single_time_interval_arg(args: &[SwiftValue], context: &str) -> Result<f64, StdError> {
+    match args {
+        [value] => time_interval(value, context),
+        _ => Err(type_error(format!("{context} expects one argument"))),
+    }
+}
+
+fn date_single_date_arg(args: &[SwiftValue], context: &str) -> Result<f64, StdError> {
+    match args {
+        [value] => date_seconds(value),
+        _ => Err(type_error(format!("{context} expects one Date argument"))),
+    }
+}
+
+fn date_time_interval_since(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.timeIntervalSince")?;
+    Ok(Outcome {
+        result: SwiftValue::Double(date_seconds(&recv)? - other),
+        receiver: recv,
+    })
+}
+
+fn date_adding_time_interval(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.addingTimeInterval")?;
+    Ok(Outcome {
+        result: date_value(date_seconds(&recv)? + interval),
+        receiver: recv,
+    })
+}
+
+fn date_add_time_interval(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.addTimeInterval")?;
+    let receiver = date_value(date_seconds(&recv)? + interval);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver,
+    })
+}
+
+fn date_distance(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.distance")?;
+    Ok(Outcome {
+        result: SwiftValue::Double(other - date_seconds(&recv)?),
+        receiver: recv,
+    })
+}
+
+fn date_advanced(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.advanced")?;
+    Ok(Outcome {
+        result: date_value(date_seconds(&recv)? + interval),
+        receiver: recv,
+    })
+}
+
+fn comparison_result(case: &str) -> SwiftValue {
+    SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: "ComparisonResult".into(),
+        case: case.into(),
+        payload: Vec::new(),
+    }))
+}
+
+fn date_compare(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.compare")?;
+    let this = date_seconds(&recv)?;
+    let case = if this < other {
+        "orderedAscending"
+    } else if this > other {
+        "orderedDescending"
+    } else {
+        "orderedSame"
+    };
+    Ok(Outcome {
+        result: comparison_result(case),
+        receiver: recv,
+    })
 }
 
 fn data_value(bytes: Vec<u8>) -> SwiftValue {
@@ -888,6 +1153,107 @@ fn index_set_integer_le(
         result,
         receiver: recv,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockContext {
+        out: Vec<u8>,
+        now: f64,
+    }
+
+    impl MockContext {
+        fn new(now: f64) -> Self {
+            Self {
+                out: Vec::new(),
+                now,
+            }
+        }
+    }
+
+    impl StdContext for MockContext {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
+            Err(type_error("closures are unsupported in MockContext"))
+        }
+
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            &mut self.out
+        }
+
+        fn now_unix_seconds(&mut self) -> f64 {
+            self.now
+        }
+    }
+
+    fn date_ref_seconds(value: &SwiftValue) -> f64 {
+        date_seconds(value).expect("Date value")
+    }
+
+    #[test]
+    fn date_initializers_store_reference_seconds() {
+        let mut ctx = MockContext::new(REFERENCE_DATE_UNIX_OFFSET + 10.0);
+
+        let now = date_init(&mut ctx, Vec::new()).expect("Date()");
+        assert_eq!(date_ref_seconds(&now), 10.0);
+
+        let unix = date_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("timeIntervalSince1970".into()),
+                value: SwiftValue::Double(REFERENCE_DATE_UNIX_OFFSET + 25.0),
+            }],
+        )
+        .expect("Date(timeIntervalSince1970:)");
+        assert_eq!(date_ref_seconds(&unix), 25.0);
+
+        let since = date_init(
+            &mut ctx,
+            vec![
+                Arg {
+                    label: Some("timeInterval".into()),
+                    value: SwiftValue::Double(5.0),
+                },
+                Arg {
+                    label: Some("since".into()),
+                    value: unix.clone(),
+                },
+            ],
+        )
+        .expect("Date(timeInterval:since:)");
+        assert_eq!(date_ref_seconds(&since), 30.0);
+    }
+
+    #[test]
+    fn date_methods_support_arithmetic_and_compare() {
+        let mut ctx = MockContext::new(REFERENCE_DATE_UNIX_OFFSET);
+        let base = date_value(100.0);
+        let later = date_value(125.0);
+
+        let diff = date_time_interval_since(&mut ctx, later.clone(), vec![base.clone()])
+            .expect("timeIntervalSince")
+            .result;
+        assert_eq!(diff, SwiftValue::Double(25.0));
+
+        let advanced = date_advanced(&mut ctx, base.clone(), vec![SwiftValue::Double(5.0)])
+            .expect("advanced")
+            .result;
+        assert_eq!(date_ref_seconds(&advanced), 105.0);
+
+        let mutated = date_add_time_interval(&mut ctx, base.clone(), vec![SwiftValue::Double(7.0)])
+            .expect("addTimeInterval")
+            .receiver;
+        assert_eq!(date_ref_seconds(&mutated), 107.0);
+
+        let compared = date_compare(&mut ctx, base.clone(), vec![later])
+            .expect("compare")
+            .result;
+        match compared {
+            SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
+            other => panic!("expected ComparisonResult, got {}", other.type_name()),
+        }
+    }
 }
 
 #[cfg(test)]

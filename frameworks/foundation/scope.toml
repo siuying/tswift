@@ -28,6 +28,9 @@ id = "F5"
 title = "Coding"
 types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
+[core_members]
+Date = ["+", "+=", "-", "-=", "<", "==", ">"]
+
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]
 networking = ["URLSession", "URLRequest", "Host"]

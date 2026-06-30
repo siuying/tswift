@@ -15,8 +15,8 @@ use crate::env::{Env, Scope};
 use crate::fragment_cache::{FragmentCache, FragmentError};
 use crate::ops;
 use crate::stdlib::{
-    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, FreeFn, LabeledMethodEntry, MethodEntry,
-    PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
+    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, ContextualPropertyFn, FreeFn,
+    LabeledMethodEntry, MethodEntry, PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -387,6 +387,8 @@ pub struct Interpreter<'w> {
     labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    /// Context-aware computed-property intrinsics keyed by builtin receiver.
+    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
     /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
     static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
@@ -475,6 +477,20 @@ fn initial_rng_seed() -> u64 {
     }
 }
 
+fn now_unix_seconds() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0.0
+    }
+}
+
 impl<'w> Interpreter<'w> {
     /// Create an interpreter that writes program output to `out`.
     pub fn new(out: &'w mut dyn Write) -> Self {
@@ -486,6 +502,7 @@ impl<'w> Interpreter<'w> {
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
+            contextual_properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
@@ -561,6 +578,9 @@ impl<'w> Interpreter<'w> {
         for (recv, name) in self.properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
+        for (recv, name) in self.contextual_properties.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
         for (recv, name) in self.static_methods.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
@@ -575,6 +595,17 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a context-aware computed-property intrinsic on a builtin type.
+    pub fn register_contextual_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: ContextualPropertyFn,
+    ) {
+        self.contextual_properties
+            .insert((recv, name.to_string()), f);
     }
 
     /// Register a static (type-level) method intrinsic on a builtin type.
@@ -1328,6 +1359,15 @@ impl<'w> Interpreter<'w> {
             // then any user extension computed property on that type.
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&this) {
+                    if let Some(func) = self
+                        .contextual_properties
+                        .get(&(kind, name.to_string()))
+                        .copied()
+                    {
+                        return func(self, this)
+                            .map(Some)
+                            .map_err(Self::std_error_to_signal);
+                    }
                     if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
                         return func(this).map(Some).map_err(Self::std_error_to_signal);
                     }
@@ -3816,6 +3856,10 @@ impl StdContext for Interpreter<'_> {
 
     fn random_u64(&mut self) -> u64 {
         self.next_random()
+    }
+
+    fn now_unix_seconds(&mut self) -> f64 {
+        now_unix_seconds()
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {

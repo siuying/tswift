@@ -1104,6 +1104,13 @@ impl<'w> Interpreter<'w> {
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
                     }
+                    if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
+                        if let Some(func) =
+                            self.static_methods.get(&(recv, member.clone())).copied()
+                        {
+                            return func(self, Vec::new()).map_err(Self::std_error_to_signal);
+                        }
+                    }
                     if let Some(w) = IntWidth::from_type_name(&type_name) {
                         return match member.as_str() {
                             "max" => Ok(SwiftValue::Int(IntValue::new(w.max(), w))),
@@ -1203,6 +1210,13 @@ impl<'w> Interpreter<'w> {
                 return self.read_struct_member(&value, &member);
             }
             if let Some(kind) = BuiltinReceiver::of(&value) {
+                if let Some(func) = self
+                    .contextual_properties
+                    .get(&(kind, member.clone()))
+                    .copied()
+                {
+                    return func(self, value).map_err(Self::std_error_to_signal);
+                }
                 if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
                     return func(value).map_err(Self::std_error_to_signal);
                 }
@@ -1212,6 +1226,13 @@ impl<'w> Interpreter<'w> {
         // Standard-library computed-property intrinsics (`Double.isNaN`,
         // `Int.magnitude`, …) on builtin receivers.
         if let Some(kind) = BuiltinReceiver::of(&value) {
+            if let Some(func) = self
+                .contextual_properties
+                .get(&(kind, member.clone()))
+                .copied()
+            {
+                return func(self, value).map_err(Self::std_error_to_signal);
+            }
             if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
                 return func(value).map_err(Self::std_error_to_signal);
             }

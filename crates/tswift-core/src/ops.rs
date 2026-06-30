@@ -37,6 +37,17 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         {
             index_path_binary(op, a, b)
         }
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "Date" && b.type_name == "Date" =>
+        {
+            date_binary(op, a, b)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Double(b)) if a.type_name == "Date" => {
+            date_time_interval_binary(op, a, *b)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Int(b)) if a.type_name == "Date" => {
+            date_time_interval_binary(op, a, b.raw as f64)
+        }
         // Metatype identity: `Int.self == type(of: x)`.
         (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
             "==" => Ok(SwiftValue::Bool(a == b)),
@@ -222,6 +233,55 @@ fn index_path_binary(
     Ok(SwiftValue::Bool(res))
 }
 
+fn date_seconds(o: &crate::value::StructObj) -> Result<f64, String> {
+    match o.get("_timeIntervalSinceReferenceDate") {
+        Some(SwiftValue::Double(seconds)) => Ok(*seconds),
+        Some(SwiftValue::Int(seconds)) => Ok(seconds.raw as f64),
+        _ => Err("malformed Date value".into()),
+    }
+}
+
+fn date_value(seconds: f64) -> SwiftValue {
+    SwiftValue::Struct(std::rc::Rc::new(crate::value::StructObj {
+        type_name: "Date".into(),
+        fields: vec![(
+            "_timeIntervalSinceReferenceDate".into(),
+            SwiftValue::Double(seconds),
+        )],
+    }))
+}
+
+fn date_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let lhs = date_seconds(a)?;
+    let rhs = date_seconds(b)?;
+    if let Some(res) = compare_op_f(op, lhs, rhs) {
+        return Ok(SwiftValue::Bool(res));
+    }
+    match op {
+        "-" => Ok(SwiftValue::Double(lhs - rhs)),
+        _ => Err(format!("operator `{op}` cannot apply to Date")),
+    }
+}
+
+fn date_time_interval_binary(
+    op: &str,
+    date: &std::rc::Rc<crate::value::StructObj>,
+    seconds: f64,
+) -> Result<SwiftValue, String> {
+    let base = date_seconds(date)?;
+    match op {
+        "+" => Ok(date_value(base + seconds)),
+        "-" => Ok(date_value(base - seconds)),
+        _ => Err(format!(
+            "operator `{op}` cannot apply to Date and TimeInterval"
+        )),
+    }
+}
+
 fn array_binary(
     op: &str,
     a: &std::rc::Rc<Vec<SwiftValue>>,
@@ -374,6 +434,34 @@ mod tests {
             binary("<", &path(&[1]), &path(&[1, 0])).unwrap(),
             SwiftValue::Bool(true)
         );
+    }
+
+    #[test]
+    fn date_arithmetic_and_ordering_use_reference_seconds() {
+        use crate::value::StructObj;
+        use std::rc::Rc;
+        let date = |seconds: f64| {
+            SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "Date".into(),
+                fields: vec![(
+                    "_timeIntervalSinceReferenceDate".into(),
+                    SwiftValue::Double(seconds),
+                )],
+            }))
+        };
+        let early = date(10.0);
+        let late = date(25.0);
+
+        assert_eq!(binary("<", &early, &late).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(
+            binary("-", &late, &early).unwrap(),
+            SwiftValue::Double(15.0)
+        );
+        assert_eq!(
+            binary("+", &early, &SwiftValue::Double(5.0)).unwrap(),
+            date(15.0)
+        );
+        assert_eq!(binary("-", &late, &int(5)).unwrap(), date(20.0));
     }
 
     #[test]
