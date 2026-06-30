@@ -36,6 +36,7 @@ pub(crate) const CALENDAR_COMPONENTS: &[&str] = &[
     "weekOfMonth",
     "weekOfYear",
     "yearForWeekOfYear",
+    "dayOfYear",
 ];
 
 pub fn install(interp: &mut Interpreter<'_>) {
@@ -536,6 +537,10 @@ fn component_value(civil: &Civil, name: &str) -> Option<i64> {
                 + 1;
             Some((day_of_year - 1) / 7 + 1)
         }
+        "dayOfYear" => Some(
+            days_from_civil(civil.year, civil.month, civil.day) - days_from_civil(civil.year, 1, 1)
+                + 1,
+        ),
         _ => None,
     }
 }
@@ -832,6 +837,15 @@ mod tests {
             SwiftValue::Bool(b) => b,
             other => panic!("expected Bool, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn day_of_year_counts_from_january_first() {
+        // 2024-06-29 in a leap year: 31+29+31+30+31+29 = 181.
+        let civil = decompose(ref_seconds_from_ymdhms(2024, 6, 29, 0, 0, 0));
+        assert_eq!(component_value(&civil, "dayOfYear"), Some(181));
+        let jan1 = decompose(ref_seconds_from_ymdhms(2024, 1, 1, 0, 0, 0));
+        assert_eq!(component_value(&jan1, "dayOfYear"), Some(1));
     }
 
     #[test]

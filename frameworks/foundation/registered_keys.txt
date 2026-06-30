@@ -60,6 +60,8 @@ Date.timeIntervalSince1970
 Date.timeIntervalSinceNow
 Date.timeIntervalSinceReferenceDate
 DateComponents.day
+DateComponents.dayOfYear
+DateComponents.era
 DateComponents.hour
 DateComponents.init
 DateComponents.isValidDate

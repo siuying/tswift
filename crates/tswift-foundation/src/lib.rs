@@ -545,10 +545,12 @@ pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
     "weekOfMonth",
     "weekOfYear",
     "yearForWeekOfYear",
+    "era",
+    "dayOfYear",
 ];
 
 /// Initializer labels that are accepted but not stored as readable components.
-const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone", "era"];
+const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone"];
 
 macro_rules! date_component_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
@@ -577,6 +579,8 @@ date_component_getters! {
     "weekOfMonth" => date_components_get_week_of_month,
     "weekOfYear" => date_components_get_week_of_year,
     "yearForWeekOfYear" => date_components_get_year_for_week_of_year,
+    "era" => date_components_get_era,
+    "dayOfYear" => date_components_get_day_of_year,
 }
 
 pub(crate) fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
@@ -1897,6 +1901,20 @@ mod tests {
             .unwrap()
             .result;
         assert_eq!(read, SwiftValue::int(7));
+    }
+
+    #[test]
+    fn date_components_stores_era_and_day_of_year() {
+        let mut ctx = MockContext::new(0.0);
+        let dc =
+            date_components_init(&mut ctx, vec![labeled("era", 1), labeled("year", 2024)]).unwrap();
+        // `era` is now a readable component rather than an ignored label.
+        assert_eq!(date_components_get(&dc, "era").unwrap(), SwiftValue::int(1));
+        // `dayOfYear` defaults to nil when unset.
+        assert_eq!(
+            date_components_get(&dc, "dayOfYear").unwrap(),
+            SwiftValue::Nil
+        );
     }
 }
 
