@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use tswift_core::{
     Arg, BuiltinReceiver, Interpreter, IntrinsicFn, LabeledMethodEntry, MethodEntry, Outcome,
-    StdContext, StdError, StdResult, StructObj, SwiftValue,
+    PropertyFn, StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
 
 use crate::{
@@ -45,6 +45,40 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Calendar", calendar_init);
     interp.register_static(BuiltinReceiver::Calendar, "current", calendar_current);
     interp.register_property(BuiltinReceiver::Calendar, "identifier", calendar_identifier);
+
+    // en_US Gregorian symbol tables (locale-independent in this runtime; see
+    // `frameworks/foundation/scope.toml`). Standalone variants match the
+    // formatting variants in English.
+    for (name, func) in [
+        ("monthSymbols", months_long as PropertyFn),
+        ("standaloneMonthSymbols", months_long),
+        ("shortMonthSymbols", months_short),
+        ("shortStandaloneMonthSymbols", months_short),
+        ("veryShortMonthSymbols", months_very_short),
+        ("veryShortStandaloneMonthSymbols", months_very_short),
+        ("weekdaySymbols", weekdays_long),
+        ("standaloneWeekdaySymbols", weekdays_long),
+        ("shortWeekdaySymbols", weekdays_short),
+        ("shortStandaloneWeekdaySymbols", weekdays_short),
+        ("veryShortWeekdaySymbols", weekdays_very_short),
+        ("veryShortStandaloneWeekdaySymbols", weekdays_very_short),
+        ("quarterSymbols", quarters_long),
+        ("standaloneQuarterSymbols", quarters_long),
+        ("shortQuarterSymbols", quarters_short),
+        ("shortStandaloneQuarterSymbols", quarters_short),
+        ("eraSymbols", eras_short),
+        ("longEraSymbols", eras_long),
+    ] {
+        interp.register_property(BuiltinReceiver::Calendar, name, func);
+    }
+    interp.register_property(BuiltinReceiver::Calendar, "amSymbol", am_symbol);
+    interp.register_property(BuiltinReceiver::Calendar, "pmSymbol", pm_symbol);
+    interp.register_property(BuiltinReceiver::Calendar, "firstWeekday", first_weekday);
+    interp.register_property(
+        BuiltinReceiver::Calendar,
+        "minimumDaysInFirstWeek",
+        minimum_days_in_first_week,
+    );
 
     for (name, mutating, func) in [
         (
@@ -224,6 +258,101 @@ fn calendar_identifier(recv: SwiftValue) -> StdResult {
         case: id,
         payload: Vec::new(),
     })))
+}
+
+const MONTHS_LONG: &[&str] = &[
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+const MONTHS_SHORT: &[&str] = &[
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const MONTHS_VERY_SHORT: &[&str] = &["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+const WEEKDAYS_LONG: &[&str] = &[
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const WEEKDAYS_SHORT: &[&str] = &["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_VERY_SHORT: &[&str] = &["S", "M", "T", "W", "T", "F", "S"];
+const QUARTERS_LONG: &[&str] = &["1st quarter", "2nd quarter", "3rd quarter", "4th quarter"];
+const QUARTERS_SHORT: &[&str] = &["Q1", "Q2", "Q3", "Q4"];
+const ERAS_SHORT: &[&str] = &["BC", "AD"];
+const ERAS_LONG: &[&str] = &["Before Christ", "Anno Domini"];
+
+/// Build a `[String]` from a symbol table after validating the receiver is a
+/// Gregorian `Calendar`.
+fn calendar_symbol_list(recv: &SwiftValue, symbols: &[&str]) -> StdResult {
+    calendar_identifier_value(recv)?;
+    let values = symbols
+        .iter()
+        .map(|s| SwiftValue::Str((*s).into()))
+        .collect();
+    Ok(SwiftValue::Array(Rc::new(values)))
+}
+
+fn calendar_scalar_symbol(recv: &SwiftValue, symbol: &str) -> StdResult {
+    calendar_identifier_value(recv)?;
+    Ok(SwiftValue::Str(symbol.into()))
+}
+
+fn months_long(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, MONTHS_LONG)
+}
+fn months_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, MONTHS_SHORT)
+}
+fn months_very_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, MONTHS_VERY_SHORT)
+}
+fn weekdays_long(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, WEEKDAYS_LONG)
+}
+fn weekdays_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, WEEKDAYS_SHORT)
+}
+fn weekdays_very_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, WEEKDAYS_VERY_SHORT)
+}
+fn quarters_long(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, QUARTERS_LONG)
+}
+fn quarters_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, QUARTERS_SHORT)
+}
+fn eras_short(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, ERAS_SHORT)
+}
+fn eras_long(recv: SwiftValue) -> StdResult {
+    calendar_symbol_list(&recv, ERAS_LONG)
+}
+fn am_symbol(recv: SwiftValue) -> StdResult {
+    calendar_scalar_symbol(&recv, "AM")
+}
+fn pm_symbol(recv: SwiftValue) -> StdResult {
+    calendar_scalar_symbol(&recv, "PM")
+}
+fn first_weekday(recv: SwiftValue) -> StdResult {
+    calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::int(1))
+}
+fn minimum_days_in_first_week(recv: SwiftValue) -> StdResult {
+    calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::int(1))
 }
 
 /// Read an optional Int component out of a DateComponents struct.
@@ -529,5 +658,75 @@ mod tests {
         assert_eq!((civil.hour, civil.minute, civil.second), (9, 41, 0));
         // 2024-06-29 is a Saturday → Swift weekday 7.
         assert_eq!(civil.weekday, 7);
+    }
+
+    fn gregorian() -> SwiftValue {
+        calendar_value("gregorian")
+    }
+
+    fn as_strings(value: SwiftValue) -> Vec<String> {
+        match value {
+            SwiftValue::Array(items) => items
+                .iter()
+                .map(|v| match v {
+                    SwiftValue::Str(s) => s.to_string(),
+                    other => panic!("expected String symbol, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected [String], got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn month_symbols_are_twelve_english_names() {
+        let long = as_strings(months_long(gregorian()).unwrap());
+        assert_eq!(long.len(), 12);
+        assert_eq!(long[0], "January");
+        assert_eq!(long[11], "December");
+        assert_eq!(as_strings(months_short(gregorian()).unwrap())[2], "Mar");
+        assert_eq!(as_strings(months_very_short(gregorian()).unwrap())[4], "M");
+    }
+
+    #[test]
+    fn weekday_symbols_start_on_sunday() {
+        let long = as_strings(weekdays_long(gregorian()).unwrap());
+        assert_eq!(long.first().map(String::as_str), Some("Sunday"));
+        assert_eq!(long.last().map(String::as_str), Some("Saturday"));
+        assert_eq!(as_strings(weekdays_short(gregorian()).unwrap())[6], "Sat");
+    }
+
+    #[test]
+    fn quarter_and_era_symbols() {
+        assert_eq!(
+            as_strings(quarters_short(gregorian()).unwrap()),
+            ["Q1", "Q2", "Q3", "Q4"]
+        );
+        assert_eq!(as_strings(eras_short(gregorian()).unwrap()), ["BC", "AD"]);
+        assert_eq!(
+            as_strings(eras_long(gregorian()).unwrap()),
+            ["Before Christ", "Anno Domini"]
+        );
+    }
+
+    #[test]
+    fn scalar_symbols_and_week_settings() {
+        assert_eq!(
+            am_symbol(gregorian()).unwrap(),
+            SwiftValue::Str("AM".into())
+        );
+        assert_eq!(
+            pm_symbol(gregorian()).unwrap(),
+            SwiftValue::Str("PM".into())
+        );
+        assert_eq!(first_weekday(gregorian()).unwrap(), SwiftValue::int(1));
+        assert_eq!(
+            minimum_days_in_first_week(gregorian()).unwrap(),
+            SwiftValue::int(1)
+        );
+    }
+
+    #[test]
+    fn symbol_access_rejects_non_calendar_receiver() {
+        assert!(months_long(SwiftValue::int(0)).is_err());
     }
 }
