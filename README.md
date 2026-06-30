@@ -19,9 +19,11 @@ cargo run -p tswift-cli -- run hello.swift   # => hello, swift
 A tree-walking interpreter for Swift. The split of responsibilities is deliberate:
 
 - **frontend** owns lexing, parsing, and semantic analysis: `tswift-lexer`
-  → `tswift-ast` → `tswift-parser` → `tswift-sema`. Results are lowered through
-  `tswift-frontend::compat` into the stable runtime-facing AST (`Analysis` /
-  `Node` / `NodeKind`). No C, no LLVM, no `unsafe`.
+  → `tswift-ast` → `tswift-parser` → `tswift-sema`. `tswift-frontend` drives
+  this pipeline and exposes the runtime-facing AST (`Analysis` / `Node` /
+  `NodeKind`), where `Node` is a thin cursor straight over the parse AST —
+  one shared `NodeKind` vocabulary, no separate lowered tree. No C, no LLVM,
+  no `unsafe`.
 - **tswift** owns the *runtime*:
   - **(a) Language features** — the evaluator/semantics: values, control flow, types,
     generics, ARC, closures, errors, concurrency, …
@@ -69,7 +71,7 @@ in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 │    → tswift-parser              │
 │    → tswift-sema                │
 │    → tswift-frontend      │
-│      (compat lowerer → AST)    │
+│      (thin cursor over AST)    │
 └────────────────┬───────────────┘
                  │ Analysis / Node / NodeKind
                  ▼
@@ -97,7 +99,7 @@ in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 | [`crates/tswift-ast`](crates/tswift-ast) | AST node definitions |
 | [`crates/tswift-parser`](crates/tswift-parser) | Recursive-descent parser |
 | [`crates/tswift-sema`](crates/tswift-sema) | Semantic analysis / type resolution |
-| [`crates/tswift-frontend`](crates/tswift-frontend) | Compat lowerer: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` to the runtime |
+| [`crates/tswift-frontend`](crates/tswift-frontend) | Runtime AST facade: drives the pipeline, exposes `Analysis`/`Node`/`NodeKind` as a thin cursor over the parse AST |
 | [`crates/tswift-core`](crates/tswift-core) | Evaluator spine: `SwiftValue`, `env`, `interp`, operators, native seam |
 | [`crates/tswift-std`](crates/tswift-std) | Native standard library builtins (e.g. `print`) |
 | [`crates/tswift-cli`](crates/tswift-cli) | The `tswift` binary |
