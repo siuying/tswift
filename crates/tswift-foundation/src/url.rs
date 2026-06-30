@@ -38,6 +38,12 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("pathExtension", url_path_extension),
         ("pathComponents", url_path_components),
         ("isFileURL", url_is_file),
+        ("description", url_absolute_string),
+        // No base URL is modelled, so relative views equal the absolute ones.
+        ("relativeString", url_absolute_string),
+        ("relativePath", url_path),
+        ("baseURL", url_base_url),
+        ("hasDirectoryPath", url_has_directory_path),
     ] {
         interp.register_property(BuiltinReceiver::URL, name, f);
     }
@@ -74,6 +80,17 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
 
     // ---- URLQueryItem ----
     interp.register_free_fn("URLQueryItem", url_query_item_init);
+    interp.register_property(BuiltinReceiver::URLQueryItem, "name", url_query_item_name);
+    interp.register_property(
+        BuiltinReceiver::URLQueryItem,
+        "value",
+        url_query_item_value_prop,
+    );
+    interp.register_property(
+        BuiltinReceiver::URLQueryItem,
+        "description",
+        url_query_item_description,
+    );
 
     // ---- URLComponents ----
     interp.register_free_fn("URLComponents", url_components_init);
@@ -88,6 +105,81 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         "queryItems",
         url_components_query_items,
     );
+    // Component getters reading the stored fields (so coverage credits them and
+    // they read uniformly even where the stored field already shadows).
+    for (name, getter) in URL_COMPONENT_GETTERS {
+        interp.register_property(BuiltinReceiver::URLComponents, name, *getter);
+    }
+    interp.register_property(
+        BuiltinReceiver::URLComponents,
+        "description",
+        url_components_description,
+    );
+}
+
+macro_rules! url_component_getters {
+    ($($field:literal => $getter:ident),+ $(,)?) => {
+        $(
+            fn $getter(recv: SwiftValue) -> StdResult {
+                Ok(comp_field(&recv, $field).cloned().unwrap_or(SwiftValue::Nil))
+            }
+        )+
+        const URL_COMPONENT_GETTERS: &[(&str, tswift_core::PropertyFn)] = &[
+            $(($field, $getter)),+
+        ];
+    };
+}
+
+url_component_getters! {
+    "scheme" => url_components_scheme,
+    "host" => url_components_host,
+    "port" => url_components_port,
+    "path" => url_components_path,
+    "user" => url_components_user,
+    "password" => url_components_password,
+    "query" => url_components_query,
+    "fragment" => url_components_fragment,
+}
+
+fn url_query_item_name(recv: SwiftValue) -> StdResult {
+    match &recv {
+        SwiftValue::Struct(o) if o.type_name == "URLQueryItem" => {
+            Ok(o.get("name").cloned().unwrap_or(SwiftValue::Nil))
+        }
+        _ => Err(type_error("name expects URLQueryItem")),
+    }
+}
+
+fn url_query_item_value_prop(recv: SwiftValue) -> StdResult {
+    match &recv {
+        SwiftValue::Struct(o) if o.type_name == "URLQueryItem" => {
+            Ok(o.get("value").cloned().unwrap_or(SwiftValue::Nil))
+        }
+        _ => Err(type_error("value expects URLQueryItem")),
+    }
+}
+
+fn url_query_item_description(recv: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(o) = &recv else {
+        return Err(type_error("description expects URLQueryItem"));
+    };
+    let name = match o.get("name") {
+        Some(SwiftValue::Str(s)) => s.to_string(),
+        _ => String::new(),
+    };
+    let value = match o.get("value") {
+        Some(SwiftValue::Str(s)) => s.to_string(),
+        _ => String::new(),
+    };
+    Ok(SwiftValue::Str(format!("{name}={value}").into()))
+}
+
+fn url_components_description(recv: SwiftValue) -> StdResult {
+    // The reconstructed URL string, or empty when components are insufficient.
+    match url_components_string(recv)? {
+        SwiftValue::Str(s) => Ok(SwiftValue::Str(s)),
+        _ => Ok(SwiftValue::Str(String::new().into())),
+    }
 }
 
 // ===========================================================================
@@ -280,6 +372,14 @@ fn url_path(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Str(percent_decode(
         &parse_url(&url_string(&recv)?).path,
     )))
+}
+fn url_base_url(_recv: SwiftValue) -> StdResult {
+    // No base URL is modelled; URLs are always absolute here.
+    Ok(SwiftValue::Nil)
+}
+fn url_has_directory_path(recv: SwiftValue) -> StdResult {
+    let path = parse_url(&url_string(&recv)?).path;
+    Ok(SwiftValue::Bool(path.ends_with('/')))
 }
 fn url_query(recv: SwiftValue) -> StdResult {
     Ok(opt_str(parse_url(&url_string(&recv)?).query))

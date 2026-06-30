@@ -92,17 +92,21 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Data", data_init);
     interp.register_property(BuiltinReceiver::Data, "count", data_count);
     interp.register_property(BuiltinReceiver::Data, "isEmpty", data_is_empty);
-    interp.register_intrinsic(
-        BuiltinReceiver::Data,
-        "append",
-        MethodEntry {
-            mutating: true,
-            func: data_append,
-        },
-    );
+    interp.register_property(BuiltinReceiver::Data, "first", data_first);
+    interp.register_property(BuiltinReceiver::Data, "last", data_last);
+    interp.register_property(BuiltinReceiver::Data, "description", data_description);
+    for (name, mutating, func) in [
+        ("append", true, data_append as IntrinsicFn),
+        ("base64EncodedString", false, data_base64_encoded_string),
+        ("subdata", false, data_subdata),
+        ("removeAll", true, data_remove_all),
+    ] {
+        interp.register_intrinsic(BuiltinReceiver::Data, name, MethodEntry { mutating, func });
+    }
 
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
+    interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -726,10 +730,44 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if args.is_empty() {
         return Ok(data_value(Vec::new()));
     }
+    // `Data(repeating: UInt8, count: Int)`.
+    if args.len() == 2
+        && args[0].label.as_deref() == Some("repeating")
+        && args[1].label.as_deref() == Some("count")
+    {
+        let byte = byte_from_value(&args[0].value)?;
+        let count = match &args[1].value {
+            SwiftValue::Int(i) if i.raw >= 0 => i.raw as usize,
+            _ => {
+                return Err(type_error(
+                    "Data(repeating:count:) count must be a non-negative Int",
+                ))
+            }
+        };
+        return Ok(data_value(vec![byte; count]));
+    }
     if args.len() != 1 {
         return Err(type_error(
             "Data expects zero arguments or one byte sequence",
         ));
+    }
+    if args.len() == 1 && args[0].label.as_deref() == Some("base64Encoded") {
+        let SwiftValue::Str(s) = &args[0].value else {
+            return Err(type_error("Data(base64Encoded:) expects a String"));
+        };
+        // Failable: nil on malformed input.
+        return Ok(match base64_decode(s) {
+            Some(bytes) => data_value(bytes),
+            None => SwiftValue::Nil,
+        });
+    }
+    match args[0].label.as_deref() {
+        Some("bytes") | None => {}
+        Some(other) => {
+            return Err(type_error(format!(
+                "unsupported Data initializer `{other}:`"
+            )))
+        }
     }
     match &args[0].value {
         SwiftValue::Array(items) => {
@@ -745,6 +783,146 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             other.type_name()
         ))),
     }
+}
+
+fn data_first(recv: SwiftValue) -> StdResult {
+    let bytes = data_bytes(&recv)?;
+    Ok(bytes
+        .first()
+        .map(|b| SwiftValue::int(i128::from(*b)))
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn data_last(recv: SwiftValue) -> StdResult {
+    let bytes = data_bytes(&recv)?;
+    Ok(bytes
+        .last()
+        .map(|b| SwiftValue::int(i128::from(*b)))
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn data_description(recv: SwiftValue) -> StdResult {
+    let len = data_bytes(&recv)?.len();
+    // Foundation renders e.g. "5 bytes".
+    let unit = if len == 1 { "byte" } else { "bytes" };
+    Ok(SwiftValue::Str(format!("{len} {unit}").into()))
+}
+
+fn data_base64_encoded_string(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("base64EncodedString() takes no arguments"));
+    }
+    let encoded = base64_encode(&data_bytes(&recv)?);
+    Ok(Outcome {
+        result: SwiftValue::Str(encoded.into()),
+        receiver: recv,
+    })
+}
+
+fn data_subdata(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let bytes = data_bytes(&recv)?;
+    let range = match args.as_slice() {
+        [SwiftValue::Range { lo, hi, inclusive }] => {
+            let end = if *inclusive { hi + 1 } else { *hi };
+            (*lo, end)
+        }
+        _ => return Err(type_error("subdata(in:) expects a Range<Int>")),
+    };
+    let (lo, hi) = range;
+    if lo < 0 || hi < lo || hi as usize > bytes.len() {
+        return Err(type_error("subdata(in:) range out of bounds"));
+    }
+    let slice = bytes[lo as usize..hi as usize].to_vec();
+    Ok(Outcome {
+        result: data_value(slice),
+        receiver: recv,
+    })
+}
+
+fn data_remove_all(
+    _ctx: &mut dyn StdContext,
+    _recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("removeAll() takes no arguments"));
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: data_value(Vec::new()),
+    })
+}
+
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(BASE64_ALPHABET[(triple >> 18 & 0x3F) as usize] as char);
+        out.push(BASE64_ALPHABET[(triple >> 12 & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_ALPHABET[(triple >> 6 & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_ALPHABET[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    if cleaned.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(cleaned.len() / 4 * 3);
+    for chunk in cleaned.chunks(4) {
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        let mut acc = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            let v = if c == b'=' { 0 } else { val(c)? };
+            // A padding char before the tail is malformed.
+            if c == b'=' && i < 4 - pad {
+                return None;
+            }
+            acc = (acc << 6) | v;
+        }
+        out.push((acc >> 16 & 0xFF) as u8);
+        if pad < 2 {
+            out.push((acc >> 8 & 0xFF) as u8);
+        }
+        if pad < 1 {
+            out.push((acc & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 fn data_count(recv: SwiftValue) -> StdResult {
@@ -808,6 +986,11 @@ fn uuid_string(recv: SwiftValue) -> StdResult {
         Some(SwiftValue::Str(s)) => Ok(SwiftValue::Str(s.clone())),
         _ => Err(type_error("malformed UUID value")),
     }
+}
+
+fn uuid_description(recv: SwiftValue) -> StdResult {
+    // `UUID.description` is its canonical uppercase string.
+    uuid_string(recv)
 }
 
 fn normalize_uuid(raw: &str) -> Option<String> {
@@ -1555,6 +1738,20 @@ mod tests {
             date_components_is_valid_date(missing_day).unwrap(),
             SwiftValue::Bool(false)
         );
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        for case in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
+            let encoded = base64_encode(case.as_bytes());
+            let decoded = base64_decode(&encoded).expect("decodes");
+            assert_eq!(decoded, case.as_bytes(), "round-trip for {case:?}");
+        }
+        assert_eq!(base64_encode(b"Hi"), "SGk=");
+        assert_eq!(base64_decode("SGk=").unwrap(), b"Hi");
+        // Malformed inputs reject.
+        assert!(base64_decode("SGk").is_none()); // wrong length
+        assert!(base64_decode("@@@@").is_none()); // bad alphabet
     }
 
     #[test]
