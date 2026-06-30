@@ -12,10 +12,10 @@ use std::rc::Rc;
 use tswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{Env, Scope};
-use crate::fragment_cache::{FragmentCache, FragmentError};
+use crate::fragment_cache::FragmentCache;
 use crate::ops;
 use crate::stdlib::{
-    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, ContextualPropertyFn, FreeFn,
+    materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn,
     LabeledMethodEntry, MethodEntry, PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
 };
 use std::cell::RefCell;
@@ -23,11 +23,16 @@ use std::rc::Rc as StdRc;
 
 use crate::value::{ClassObj, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 
+mod coding;
 mod concurrency;
 mod dispatch;
 mod nominal;
 mod pattern;
+mod sequence;
 mod storage;
+mod strings;
+
+use strings::max_shorthand_in_interpolations;
 
 use self::concurrency::Scheduler;
 
@@ -378,16 +383,56 @@ struct CallArg {
 /// not mine" — the caller falls through the rest of the dispatch ladder.
 type BuiltinCtor = fn(&mut Interpreter, &str, &[CallArg]) -> Result<Option<SwiftValue>, Signal>;
 
+/// Drop the write-back [`Place`], keeping just the label and value — the shape
+/// the stdlib seam ([`Arg`]) consumes.
+impl From<CallArg> for Arg {
+    fn from(arg: CallArg) -> Arg {
+        Arg {
+            label: arg.label,
+            value: arg.value,
+        }
+    }
+}
+
+impl From<&CallArg> for Arg {
+    fn from(arg: &CallArg) -> Arg {
+        Arg {
+            label: arg.label.clone(),
+            value: arg.value.clone(),
+        }
+    }
+}
+
+/// A registered free-function intrinsic and its optional declared parameter
+/// signature. Pairing the two keeps registration atomic: the function and the
+/// contextual-type hints it implies can never drift apart.
+struct FreeFnEntry {
+    f: FreeFn,
+    params: Option<Vec<Param>>,
+}
+
+/// A registered generic struct-method intrinsic (SwiftUI modifier seam) and its
+/// optional declared parameter signature.
+struct StructMethodEntry {
+    f: StructMethodFn,
+    params: Option<Vec<Param>>,
+}
+
+/// A resolved `Type.member` type reference: the concrete type name (after
+/// `Self`/generic-alias substitution) and whether it names a user struct, class,
+/// or enum (vs. a builtin type).
+struct TypeReference {
+    name: String,
+    user_defined: bool,
+}
+
 /// The tree-walking interpreter.
 pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
-    /// Free-function intrinsics served through the [`StdContext`] seam.
-    free_fns: HashMap<String, FreeFn>,
-    /// Optional declared parameter signatures for builtin free functions,
-    /// consulted before argument evaluation to push contextual type hints so a
-    /// leading-dot member argument resolves against the parameter type.
-    free_fn_params: HashMap<String, Vec<Param>>,
+    /// Free-function intrinsics served through the [`StdContext`] seam, each
+    /// paired with its optional declared parameter signature.
+    free_fns: HashMap<String, FreeFnEntry>,
     /// Core-internal value-only builtin constructors (collection ctors, scalar
     /// conversions, JSON coder markers), keyed by global name. Consulted once
     /// in `eval_call`, gated by [`Interpreter::is_unshadowed`], after user-type
@@ -408,11 +453,8 @@ pub struct Interpreter<'w> {
     algorithms: HashMap<String, AlgoFn>,
     /// Generic method intrinsics dispatched on any struct receiver by name, a
     /// fallback after user methods and builtin receivers (SwiftUI modifiers).
-    struct_methods: HashMap<String, StructMethodFn>,
-    /// Optional declared parameter signatures for builtin struct methods (the
-    /// SwiftUI modifier seam), used to push contextual type hints when
-    /// evaluating modifier arguments (`.frame(alignment: .center)`).
-    struct_method_params: HashMap<String, Vec<Param>>,
+    /// Each is paired with its optional declared parameter signature.
+    struct_methods: HashMap<String, StructMethodEntry>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -515,7 +557,6 @@ impl<'w> Interpreter<'w> {
             out,
             natives: HashMap::new(),
             free_fns: HashMap::new(),
-            free_fn_params: HashMap::new(),
             builtin_ctors: Self::builtin_ctor_table(),
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
@@ -524,7 +565,6 @@ impl<'w> Interpreter<'w> {
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
-            struct_method_params: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             builtin_ext_methods: HashMap::new(),
@@ -566,7 +606,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
-        self.free_fns.insert(name.to_string(), f);
+        self.free_fns
+            .insert(name.to_string(), FreeFnEntry { f, params: None });
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -574,10 +615,13 @@ impl<'w> Interpreter<'w> {
     /// each argument is evaluated, so a leading-dot member argument resolves
     /// against the parameter type (`VStack(alignment: .leading)`).
     pub fn register_free_fn_typed(&mut self, name: &str, f: FreeFn, params: Vec<BuiltinParam>) {
-        self.free_fns.insert(name.to_string(), f);
-        self.free_fn_params.insert(
+        let params = params.into_iter().map(BuiltinParam::into_param).collect();
+        self.free_fns.insert(
             name.to_string(),
-            params.into_iter().map(BuiltinParam::into_param).collect(),
+            FreeFnEntry {
+                f,
+                params: Some(params),
+            },
         );
     }
 
@@ -674,7 +718,8 @@ impl<'w> Interpreter<'w> {
     /// methods and builtin-receiver intrinsics fail to match, so a user method
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
-        self.struct_methods.insert(name.to_string(), f);
+        self.struct_methods
+            .insert(name.to_string(), StructMethodEntry { f, params: None });
     }
 
     /// Register a generic struct-method intrinsic together with a declared
@@ -688,10 +733,13 @@ impl<'w> Interpreter<'w> {
         f: StructMethodFn,
         params: Vec<BuiltinParam>,
     ) {
-        self.struct_methods.insert(name.to_string(), f);
-        self.struct_method_params.insert(
+        let params = params.into_iter().map(BuiltinParam::into_param).collect();
+        self.struct_methods.insert(
             name.to_string(),
-            params.into_iter().map(BuiltinParam::into_param).collect(),
+            StructMethodEntry {
+                f,
+                params: Some(params),
+            },
         );
     }
 
@@ -1439,6 +1487,44 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Whether `name` is free to resolve to a builtin function: no local value
+    /// binding shadows it. A user binding of the same name always wins, so this
+    /// guards every hardcoded builtin (`swap`, `type(of:)`, collection
+    /// constructors, …) against being mistaken for a user value.
+    fn is_unshadowed(&self, name: &str) -> bool {
+        self.env.get(name).is_none()
+    }
+
+    /// Whether `name` is a user-declared nominal type (struct, class, or enum).
+    /// Such a name dispatches to its own initializer, so it must not inherit a
+    /// builtin of the same spelling.
+    fn is_user_nominal_type(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+            || self.classes.contains_key(name)
+            || self.enums.contains_key(name)
+    }
+
+    /// Resolve an identifier used as a type in `Type.member` / `Type.method(...)`
+    /// position. Applies `Self`-keyword and generic-placeholder substitution,
+    /// then gates on shadowing: a name bound to a local value (other than the
+    /// `Self` keyword, which is never a value) is not a usable type reference
+    /// and yields `None`. On success the resolved concrete name is returned with
+    /// a flag for whether it names a user struct/class/enum.
+    ///
+    /// Shared by [`Self::eval_member`] and `eval_method_call` so both dispatch
+    /// paths derive the type reference identically.
+    fn resolve_type_reference(&self, text: &str) -> Option<TypeReference> {
+        let is_self_kw = text == "Self";
+        let name = self.resolve_self_keyword(text.to_string());
+        let name = self.resolve_type_alias(&name).unwrap_or(name);
+        if is_self_kw || self.is_unshadowed(&name) {
+            let user_defined = self.is_user_nominal_type(&name);
+            Some(TypeReference { name, user_defined })
+        } else {
+            None
+        }
+    }
+
     /// Whether `name` spells a known type — a user struct/class/enum/protocol
     /// or a builtin value type — so `Type.self` resolves to a metatype.
     fn is_type_name(&self, name: &str) -> bool {
@@ -2159,146 +2245,6 @@ impl<'w> Interpreter<'w> {
             "unavailable" => Ok(SwiftValue::Bool(false)),
             // `#warning`/`#error` are diagnosed by the frontend; no-op at runtime.
             _ => Ok(SwiftValue::Void),
-        }
-    }
-
-    /// Serialize a `Codable` value to its `JSONEncoder` representation.
-    fn json_encode(&self, value: &SwiftValue) -> Result<crate::json::Json, Signal> {
-        use crate::json::Json;
-        Ok(match value {
-            SwiftValue::Nil => Json::Null,
-            SwiftValue::Bool(b) => Json::Bool(*b),
-            SwiftValue::Int(i) => Json::Int(i.raw as i64),
-            SwiftValue::Double(d) => Json::Double(*d),
-            SwiftValue::Str(s) => Json::Str(s.clone()),
-            SwiftValue::Array(items) => Json::Array(
-                items
-                    .iter()
-                    .map(|v| self.json_encode(v))
-                    .collect::<Result<_, _>>()?,
-            ),
-            SwiftValue::Struct(o) => Json::Object(
-                o.fields
-                    .iter()
-                    .map(|(k, v)| Ok((k.clone(), self.json_encode(v)?)))
-                    .collect::<Result<_, Signal>>()?,
-            ),
-            // A `Codable` enum: a `RawRepresentable` enum encodes its raw value;
-            // a payload-free enum encodes its bare case name.
-            SwiftValue::Enum(e) => {
-                let raw = self
-                    .enums
-                    .get(&e.type_name)
-                    .and_then(|d| d.cases.iter().find(|c| c.name == e.case))
-                    .and_then(|c| c.raw.clone());
-                match raw {
-                    Some(r) => self.json_encode(&r)?,
-                    None if e.payload.is_empty() => Json::Str(e.case.clone()),
-                    None => {
-                        return Err(EvalError::Type(format!(
-                            "cannot encode enum '{}' with associated values",
-                            e.type_name
-                        ))
-                        .into())
-                    }
-                }
-            }
-            other => {
-                return Err(EvalError::Type(format!("cannot encode {}", other.type_name())).into())
-            }
-        })
-    }
-
-    /// Build a runtime value from JSON for the given target type (a registered
-    /// struct, else inferred from the JSON shape).
-    fn json_decode(&self, type_name: &str, json: &crate::json::Json) -> SwiftValue {
-        use crate::json::Json;
-        // A `Codable` enum decodes from its raw value, or — for a payload-free
-        // case — its bare case name. A case with associated values never matches
-        // here (we would have to synthesize a payload), so it is skipped.
-        if let Some(def) = self.enums.get(type_name) {
-            let decoded = self.json_value(json);
-            if let Some(case) = def.cases.iter().find(|c| {
-                let raw_matches = c.raw.as_ref().is_some_and(|r| r == &decoded);
-                let name_matches = c.payload_types.is_empty()
-                    && matches!(&decoded, SwiftValue::Str(s) if s == &c.name);
-                raw_matches || name_matches
-            }) {
-                return SwiftValue::Enum(Rc::new(EnumObj {
-                    type_name: type_name.to_string(),
-                    case: case.name.clone(),
-                    payload: Vec::new(),
-                }));
-            }
-        }
-        if let (Json::Object(_), Some(def)) = (json, self.structs.get(type_name)) {
-            let fields: Vec<(String, SwiftValue)> = def
-                .stored
-                .iter()
-                .map(|p| {
-                    let v = json
-                        .get(&p.name)
-                        .map(|j| {
-                            // Decode typed nested fields (structs/enums) by their
-                            // declared element type so they round-trip; fall back
-                            // to a shape-inferred value otherwise.
-                            match p.ty.as_deref() {
-                                Some(full)
-                                    if self.structs.contains_key(decode_element_type(full))
-                                        || self.enums.contains_key(decode_element_type(full)) =>
-                                {
-                                    self.json_decode_field(decode_element_type(full), full, j)
-                                }
-                                _ => self.json_value(j),
-                            }
-                        })
-                        .unwrap_or(SwiftValue::Nil);
-                    (p.name.clone(), v)
-                })
-                .collect();
-            return SwiftValue::Struct(Rc::new(StructObj {
-                type_name: type_name.to_string(),
-                fields,
-            }));
-        }
-        self.json_value(json)
-    }
-
-    /// Decode a struct field whose declared type is `inner` (the element type)
-    /// and full spelling `full` (e.g. `[User]`, `User?`). Handles arrays and
-    /// optionals of a registered struct/enum element.
-    fn json_decode_field(&self, inner: &str, full: &str, json: &crate::json::Json) -> SwiftValue {
-        use crate::json::Json;
-        match json {
-            // `nil` for an absent optional.
-            Json::Null => SwiftValue::Nil,
-            // `[Element]` decodes each item by the element type.
-            Json::Array(items) if full.trim_start().starts_with('[') => SwiftValue::Array(Rc::new(
-                items.iter().map(|j| self.json_decode(inner, j)).collect(),
-            )),
-            _ => self.json_decode(inner, json),
-        }
-    }
-
-    /// Map a JSON value to a runtime value without target-type context.
-    fn json_value(&self, json: &crate::json::Json) -> SwiftValue {
-        use crate::json::Json;
-        match json {
-            Json::Null => SwiftValue::Nil,
-            Json::Bool(b) => SwiftValue::Bool(*b),
-            Json::Int(i) => SwiftValue::int(*i as i128),
-            Json::Double(d) => SwiftValue::Double(*d),
-            Json::Str(s) => SwiftValue::Str(s.clone()),
-            Json::Array(items) => {
-                SwiftValue::Array(Rc::new(items.iter().map(|j| self.json_value(j)).collect()))
-            }
-            Json::Object(entries) => SwiftValue::Struct(Rc::new(StructObj {
-                type_name: "JSON".into(),
-                fields: entries
-                    .iter()
-                    .map(|(k, v)| (k.clone(), self.json_value(v)))
-                    .collect(),
-            })),
         }
     }
 
@@ -3101,191 +3047,6 @@ impl<'w> Interpreter<'w> {
         outcome
     }
 
-    /// Whether `value` declares `Sequence`/`IteratorProtocol` conformance and
-    /// exposes the corresponding iteration method.
-    fn is_custom_sequence(&self, value: &SwiftValue) -> bool {
-        self.value_type_name(value).is_some_and(|t| {
-            (self.is_sequence_conformer(&t) && self.seq_type_has_method(&t, "makeIterator"))
-                || (self.is_iterator_conformer(&t) && self.seq_type_has_method(&t, "next"))
-        })
-    }
-
-    fn is_sequence_conformer(&self, type_name: &str) -> bool {
-        self.all_protocols(type_name)
-            .iter()
-            .any(|p| p == "Sequence")
-    }
-
-    fn is_iterator_conformer(&self, type_name: &str) -> bool {
-        self.all_protocols(type_name)
-            .iter()
-            .any(|p| p == "IteratorProtocol")
-    }
-
-    /// `type_has_method` extended to class declarations (walking the chain), for
-    /// custom-sequence detection over struct/enum/class conformers.
-    fn seq_type_has_method(&self, type_name: &str, method: &str) -> bool {
-        self.type_has_method(type_name, method)
-            || (self.classes.contains_key(type_name)
-                && self.lookup_method(type_name, method).is_some())
-    }
-
-    /// Dispatch `next()`/`makeIterator()` on a sequence/iterator value, routing
-    /// a class receiver through dynamic dispatch and a struct/enum receiver
-    /// through the value-method path (writing the mutated iterator back to
-    /// `place`).
-    fn call_sequence_method(
-        &mut self,
-        receiver: SwiftValue,
-        type_name: &str,
-        method: &str,
-        place: Option<Place>,
-    ) -> Eval {
-        if self.classes.contains_key(type_name) {
-            // A class iterator mutates through its reference; no write-back.
-            self.dispatch_class_method(receiver, type_name, method, Vec::new())
-        } else {
-            self.call_struct_method(receiver, type_name, method, Vec::new(), place)
-        }
-    }
-
-    /// `for x in seq` over a custom `Sequence`/`IteratorProtocol`: obtain the
-    /// iterator (the value itself if it has `next()`, else `makeIterator()`),
-    /// then drive the mutating `next()` until it yields `nil`, running the loop
-    /// body for each element. Supports a binding name or a `for case` pattern.
-    fn run_sync_sequence(
-        &mut self,
-        seq: &SwiftValue,
-        var_name: Option<&str>,
-        pattern: Option<Node<'static>>,
-        where_clause: Option<Node<'static>>,
-        body: &Node<'static>,
-        label: &Option<String>,
-    ) -> Eval {
-        const ITER: &str = "$synciter";
-        let seq_ty = self
-            .value_type_name(seq)
-            .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
-        // A Sequence with a makeIterator() method is driven through that method
-        // even if it also happens to expose a helper named next(). A type that
-        // only conforms as an IteratorProtocol is its own iterator.
-        let iter = if self.is_sequence_conformer(&seq_ty)
-            && self.seq_type_has_method(&seq_ty, "makeIterator")
-        {
-            self.call_sequence_method(seq.clone(), &seq_ty, "makeIterator", None)?
-        } else {
-            seq.clone()
-        };
-        let iter_ty = self
-            .value_type_name(&iter)
-            .ok_or_else(|| EvalError::Type("iterator has no type".into()))?;
-
-        self.env.push();
-        self.env.declare(ITER, iter, true);
-        let outcome = loop {
-            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
-            let place = Place {
-                root: ITER.into(),
-                path: Vec::new(),
-            };
-            let next = match self.call_sequence_method(current, &iter_ty, "next", Some(place)) {
-                Ok(v) => v,
-                Err(e) => break Err(e),
-            };
-            // `next()` returns `Element?`: `nil` ends the sequence.
-            if matches!(next, SwiftValue::Nil) {
-                break Ok(SwiftValue::Void);
-            }
-            self.env.push();
-            // A `for case` pattern that fails to match skips the element.
-            if let Some(pat) = pattern {
-                match self.match_pattern(&pat, &next) {
-                    Ok(Some(binds)) => {
-                        for (name, value) in binds {
-                            self.env.declare(&name, value, false);
-                        }
-                    }
-                    Ok(None) => {
-                        self.env.pop();
-                        continue;
-                    }
-                    Err(s) => {
-                        self.env.pop();
-                        break Err(s);
-                    }
-                }
-            } else if let Some(name) = var_name {
-                self.env.declare(name, next, false);
-            }
-            if let Some(w) = where_clause {
-                match self.eval_condition(&w) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        self.env.pop();
-                        continue;
-                    }
-                    Err(s) => {
-                        self.env.pop();
-                        break Err(s);
-                    }
-                }
-            }
-            let flow = self.run_loop_body(body, label);
-            self.env.pop();
-            match flow {
-                Ok(LoopFlow::Continue) => {}
-                Ok(LoopFlow::Break) => break Ok(SwiftValue::Void),
-                Err(s) => break Err(s),
-            }
-        };
-        self.env.pop();
-        outcome
-    }
-
-    /// Eagerly drive a custom `Sequence`/`IteratorProtocol` into an array of
-    /// elements for standard-library sequence algorithms.
-    fn materialize_custom_sequence(&mut self, seq: SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
-        const ITER: &str = "$algoiter";
-        let seq_ty = self
-            .value_type_name(&seq)
-            .ok_or_else(|| EvalError::Type("sequence has no type".into()))?;
-        let iter = if self.is_sequence_conformer(&seq_ty)
-            && self.seq_type_has_method(&seq_ty, "makeIterator")
-        {
-            self.call_sequence_method(seq, &seq_ty, "makeIterator", None)?
-        } else {
-            seq
-        };
-        let iter_ty = self
-            .value_type_name(&iter)
-            .ok_or_else(|| EvalError::Type("iterator has no type".into()))?;
-        self.env.push();
-        self.env.declare(ITER, iter, true);
-        let mut items = Vec::new();
-        let result = loop {
-            if items.len() >= MAX_SEQUENCE_MATERIALIZE {
-                break Err(trap(format!(
-                    "custom sequence algorithm exceeded {MAX_SEQUENCE_MATERIALIZE} elements"
-                )));
-            }
-            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
-            let place = Place {
-                root: ITER.into(),
-                path: Vec::new(),
-            };
-            let next = match self.call_sequence_method(current, &iter_ty, "next", Some(place)) {
-                Ok(next) => next,
-                Err(err) => break Err(err),
-            };
-            if matches!(next, SwiftValue::Nil) {
-                break Ok(items);
-            }
-            items.push(next);
-        };
-        self.env.pop();
-        result
-    }
-
     /// The nominal type name backing a value, for protocol/method lookup.
     fn value_type_name(&self, value: &SwiftValue) -> Option<String> {
         match value {
@@ -3382,96 +3143,6 @@ impl<'w> Interpreter<'w> {
             Ok(re) => Ok(SwiftValue::Regex(std::rc::Rc::new(re))),
             Err(msg) => Err(trap(format!("invalid regular expression: {msg}"))),
         }
-    }
-
-    fn eval_string_literal(&mut self, node: &Node<'static>) -> Eval {
-        let raw = node.text().unwrap_or_default();
-        // Raw strings do not interpolate; decode handles delimiters/escapes.
-        if raw.starts_with('#') {
-            return Ok(SwiftValue::Str(decode_string_literal(&raw)));
-        }
-        let (body, multiline) = if let Some(b) = raw
-            .strip_prefix("\"\"\"")
-            .and_then(|s| s.strip_suffix("\"\"\""))
-        {
-            (strip_multiline_indent(b).to_string(), true)
-        } else {
-            let b = raw
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(&raw)
-                .to_string();
-            (b, false)
-        };
-        let _ = multiline;
-
-        let mut out = String::new();
-        let mut chars = body.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' && chars.peek() == Some(&'(') {
-                chars.next(); // consume '('
-                let mut depth = 1;
-                let mut fragment = String::new();
-                for fc in chars.by_ref() {
-                    match fc {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                    fragment.push(fc);
-                }
-                let value = self.eval_interpolation(&fragment)?;
-                out.push_str(&self.render_description(&value));
-            } else if c == '\\' {
-                // Re-use the escape decoder for the next escape sequence.
-                let mut esc = String::from("\\");
-                if let Some(&n) = chars.peek() {
-                    esc.push(n);
-                    chars.next();
-                    if n == 'u' && chars.peek() == Some(&'{') {
-                        for h in chars.by_ref() {
-                            esc.push(h);
-                            if h == '}' {
-                                break;
-                            }
-                        }
-                    }
-                }
-                out.push_str(&decode_escapes(&esc));
-            } else {
-                out.push(c);
-            }
-        }
-        Ok(SwiftValue::Str(out))
-    }
-
-    /// Evaluate an interpolated expression fragment against the current scope,
-    /// reusing this interpreter (and thus its type/function tables).
-    ///
-    /// The fragment's analysis is owned by the interpreter's [`FragmentCache`]
-    /// (ADR-0007): a repeated fragment is analyzed once, and every cached
-    /// analysis is reclaimed when the interpreter drops, so a long-running host
-    /// runs in bounded memory.
-    fn eval_interpolation(&mut self, fragment: &str) -> Result<SwiftValue, Signal> {
-        let analysis = self
-            .fragment_cache
-            .get_or_analyze(fragment)
-            .map_err(|e| match e {
-                FragmentError::Parse(msg) => {
-                    EvalError::Type(format!("interpolation parse error: {msg}"))
-                }
-                FragmentError::Invalid => {
-                    EvalError::Type(format!("invalid interpolation `{fragment}`"))
-                }
-            })?;
-        let root = analysis.root();
-        // Evaluate the wrapped expression statement directly.
-        self.eval(&root)
     }
 
     /// Infer generic type-parameter substitutions from the concrete runtime
@@ -3653,17 +3324,6 @@ impl<'w> Interpreter<'w> {
             t.insert(name, Self::ctor_conversion);
         }
         t
-    }
-
-    /// Whether `name` resolves to a global builtin rather than a user binding or
-    /// type. Encapsulates the "is this name shadowed?" check that was formerly
-    /// re-implemented inline at each builtin dispatch site: a same-named local
-    /// binding, `struct`, `class`, or `enum` shadows the builtin.
-    fn is_unshadowed(&self, name: &str) -> bool {
-        self.env.get(name).is_none()
-            && !self.structs.contains_key(name)
-            && !self.classes.contains_key(name)
-            && !self.enums.contains_key(name)
     }
 
     /// `JSONEncoder()` / `JSONDecoder()` — opaque value markers carrying only
@@ -4567,50 +4227,6 @@ fn push_active_branch(node: Node<'static>, out: &mut Vec<Node<'static>>) {
 /// argument references (`$0`, `$1`, …) and return the greatest index found.
 /// Only text inside `\(…)` is considered, so a literal `"$1"` outside an
 /// interpolation is ignored.
-fn max_shorthand_in_interpolations(raw: &str) -> Option<usize> {
-    let bytes: Vec<char> = raw.chars().collect();
-    let mut i = 0;
-    let mut max: Option<usize> = None;
-    while i < bytes.len() {
-        if bytes[i] == '\\' && i + 1 < bytes.len() && bytes[i + 1] == '(' {
-            // Capture the balanced interpolation body.
-            let mut depth = 1;
-            let mut j = i + 2;
-            while j < bytes.len() && depth > 0 {
-                match bytes[j] {
-                    '(' => depth += 1,
-                    ')' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            // Scan the fragment `bytes[i+2..j]` for `$<digits>`.
-            let mut k = i + 2;
-            while k < j {
-                if bytes[k] == '$' {
-                    let mut d = String::new();
-                    let mut m = k + 1;
-                    while m < j && bytes[m].is_ascii_digit() {
-                        d.push(bytes[m]);
-                        m += 1;
-                    }
-                    if let Ok(n) = d.parse::<usize>() {
-                        max = Some(max.map_or(n, |c| c.max(n)));
-                    }
-                }
-                k += 1;
-            }
-            i = j + 1;
-        } else {
-            i += 1;
-        }
-    }
-    max
-}
-
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     match indices.first() {
         Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),
@@ -4619,8 +4235,6 @@ fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     }
 }
 
-/// Decode a Swift string literal's *source text* (including its delimiters) into
-/// the runtime string it denotes: strips quotes and processes escapes.
 /// Strip the delimiters off a regex literal lexeme, leaving the bare pattern.
 /// Handles the bare `/.../` form and the extended `#/.../#` form (any number of
 /// `#`). Extended literals additionally trim surrounding whitespace on a
@@ -4642,78 +4256,6 @@ fn strip_regex_delimiters(raw: &str) -> &str {
     raw.strip_prefix('/')
         .and_then(|s| s.strip_suffix('/'))
         .unwrap_or(raw)
-}
-
-fn decode_string_literal(raw: &str) -> String {
-    if raw.starts_with('#') {
-        let hashes = raw.chars().take_while(|&c| c == '#').count();
-        let inner = &raw[hashes..raw.len().saturating_sub(hashes)];
-        let inner = inner
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .unwrap_or(inner);
-        return inner.to_string();
-    }
-    if let Some(body) = raw
-        .strip_prefix("\"\"\"")
-        .and_then(|s| s.strip_suffix("\"\"\""))
-    {
-        return decode_escapes(strip_multiline_indent(body));
-    }
-    let body = raw
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or(raw);
-    decode_escapes(body)
-}
-
-fn strip_multiline_indent(body: &str) -> &str {
-    body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
-}
-
-fn decode_escapes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('0') => out.push('\0'),
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('u') => {
-                if chars.peek() == Some(&'{') {
-                    chars.next();
-                    let mut hex = String::new();
-                    for h in chars.by_ref() {
-                        if h == '}' {
-                            break;
-                        }
-                        hex.push(h);
-                    }
-                    if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) {
-                            out.push(ch);
-                        }
-                    }
-                } else {
-                    out.push('u');
-                }
-            }
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
