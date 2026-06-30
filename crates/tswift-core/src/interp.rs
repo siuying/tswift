@@ -15,7 +15,7 @@ use crate::env::{Env, Scope};
 use crate::fragment_cache::{FragmentCache, FragmentError};
 use crate::ops;
 use crate::stdlib::{
-    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, ContextualPropertyFn, FreeFn,
+    materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn,
     LabeledMethodEntry, MethodEntry, PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
 };
 use std::cell::RefCell;
@@ -369,6 +369,26 @@ struct CallArg {
     label: Option<String>,
     value: SwiftValue,
     place: Option<Place>,
+}
+
+/// Drop the write-back [`Place`], keeping just the label and value — the shape
+/// the stdlib seam ([`Arg`]) consumes.
+impl From<CallArg> for Arg {
+    fn from(arg: CallArg) -> Arg {
+        Arg {
+            label: arg.label,
+            value: arg.value,
+        }
+    }
+}
+
+impl From<&CallArg> for Arg {
+    fn from(arg: &CallArg) -> Arg {
+        Arg {
+            label: arg.label.clone(),
+            value: arg.value.clone(),
+        }
+    }
 }
 
 /// The tree-walking interpreter.

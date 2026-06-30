@@ -610,13 +610,7 @@ impl<'w> Interpreter<'w> {
             }
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.free_fns.get(&name).copied() {
-                let labeled: Vec<Arg> = args
-                    .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
-                    .collect();
+                let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
             if let Some(native) = self.natives.get(&name).copied() {
@@ -831,10 +825,7 @@ impl<'w> Interpreter<'w> {
                                 let labeled: Vec<Arg> = self
                                     .eval_args(arg_nodes)?
                                     .into_iter()
-                                    .map(|a| Arg {
-                                        label: a.label,
-                                        value: a.value,
-                                    })
+                                    .map(Arg::from)
                                     .collect();
                                 return func(self, labeled).map_err(Self::std_error_to_signal);
                             }
@@ -973,13 +964,7 @@ impl<'w> Interpreter<'w> {
                 .contains_key(&(kind, method.clone()))
             {
                 let args = self.eval_args(arg_nodes)?;
-                let labeled: Vec<Arg> = args
-                    .iter()
-                    .map(|a| Arg {
-                        label: a.label.clone(),
-                        value: a.value.clone(),
-                    })
-                    .collect();
+                let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
                 let place = self.resolve_place(&base);
                 if let Some(result) =
                     self.dispatch_labeled_intrinsic(base_value.clone(), &method, labeled, place)
@@ -1041,10 +1026,7 @@ impl<'w> Interpreter<'w> {
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
                     .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
+                    .map(Arg::from)
                     .collect();
                 return func(self, items, labeled).map_err(Self::std_error_to_signal);
             }
@@ -1087,13 +1069,7 @@ impl<'w> Interpreter<'w> {
         // any struct receiver by name, after user methods and builtin receivers.
         if matches!(base_value, SwiftValue::Struct(_)) {
             if let Some(func) = self.struct_methods.get(&method).copied() {
-                let labeled: Vec<Arg> = args
-                    .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
-                    .collect();
+                let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
             }
         }
