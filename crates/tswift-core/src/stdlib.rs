@@ -169,6 +169,7 @@ pub enum BuiltinReceiver {
     DateFormatter,
     ISO8601DateFormatter,
     Decimal,
+    NumberFormatter,
 }
 
 impl BuiltinReceiver {
@@ -198,6 +199,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::DateFormatter => "DateFormatter",
             BuiltinReceiver::ISO8601DateFormatter => "ISO8601DateFormatter",
             BuiltinReceiver::Decimal => "Decimal",
+            BuiltinReceiver::NumberFormatter => "NumberFormatter",
         }
     }
 
@@ -227,6 +229,7 @@ impl BuiltinReceiver {
             "DateFormatter" => BuiltinReceiver::DateFormatter,
             "ISO8601DateFormatter" => BuiltinReceiver::ISO8601DateFormatter,
             "Decimal" => BuiltinReceiver::Decimal,
+            "NumberFormatter" => BuiltinReceiver::NumberFormatter,
             _ => return None,
         })
     }
@@ -266,6 +269,9 @@ impl BuiltinReceiver {
                 BuiltinReceiver::ISO8601DateFormatter
             }
             SwiftValue::Struct(obj) if obj.type_name == "Decimal" => BuiltinReceiver::Decimal,
+            SwiftValue::Struct(obj) if obj.type_name == "NumberFormatter" => {
+                BuiltinReceiver::NumberFormatter
+            }
             _ => return None,
         })
     }

@@ -7,6 +7,7 @@
 mod calendar;
 mod decimal;
 mod formatter;
+mod numberformatter;
 mod url;
 
 use std::{collections::BTreeSet, rc::Rc};
@@ -26,6 +27,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     calendar::install(interp);
     formatter::install(interp);
     decimal::install(interp);
+    numberformatter::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -240,6 +242,7 @@ pub fn registered_keys() -> Vec<String> {
             "DateFormatter" => Some("DateFormatter.init".to_string()),
             "ISO8601DateFormatter" => Some("ISO8601DateFormatter.init".to_string()),
             "Decimal" => Some("Decimal.init".to_string()),
+            "NumberFormatter" => Some("NumberFormatter.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -253,7 +256,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("Calendar.")
                     || other.starts_with("DateFormatter.")
                     || other.starts_with("ISO8601DateFormatter.")
-                    || other.starts_with("Decimal.") =>
+                    || other.starts_with("Decimal.")
+                    || other.starts_with("NumberFormatter.") =>
             {
                 Some(other.to_string())
             }

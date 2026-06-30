@@ -1538,19 +1538,19 @@ impl<'w> Interpreter<'w> {
 
     /// Last-resort shorthand resolution over builtin enums only (`.year`,
     /// `.gregorian`, `.plain` for `Decimal.RoundingMode`). Runs after implicit
-    /// statics so SwiftUI styles keep priority. Returns the unique builtin enum
-    /// declaring `case`, or `None` if absent or ambiguous.
+    /// statics so SwiftUI styles keep priority.
+    ///
+    /// When several builtin enums share a case name (e.g. `.none` on both
+    /// `DateFormatter.Style` and `NumberFormatter.Style`), the lexicographically
+    /// smallest type name is chosen deterministically. Builtin consumers match
+    /// on the case string, not the enum type, so this stays correct for the
+    /// shared style/`none` cases while keeping `==` results stable.
     fn resolve_builtin_member_enum(&self, case: &str) -> Option<String> {
-        let mut found = None;
-        for name in &self.builtin_enums {
-            if self.enum_has_case(name, case) {
-                if found.is_some() {
-                    return None; // ambiguous
-                }
-                found = Some(name.clone());
-            }
-        }
-        found
+        self.builtin_enums
+            .iter()
+            .filter(|name| self.enum_has_case(name, case))
+            .min()
+            .cloned()
     }
 
     /// Resolve an implicit-member `.name` to a static property. Prefers the

@@ -86,6 +86,16 @@ IndexSet.removeAll
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update
+NumberFormatter.currencySymbol
+NumberFormatter.decimalSeparator
+NumberFormatter.groupingSeparator
+NumberFormatter.init
+NumberFormatter.maximumFractionDigits
+NumberFormatter.minimumFractionDigits
+NumberFormatter.number
+NumberFormatter.numberStyle
+NumberFormatter.string
+NumberFormatter.usesGroupingSeparator
 URL.absoluteString
 URL.appendPathComponent
 URL.appendingPathComponent
