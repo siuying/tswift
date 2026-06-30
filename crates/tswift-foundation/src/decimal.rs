@@ -102,8 +102,9 @@ fn decimal_hash_value(recv: SwiftValue) -> StdResult {
     if value.nan {
         return Ok(SwiftValue::int(0));
     }
-    let magnitude = value.mantissa as f64 * 10_f64.powi(value.exponent);
-    Ok(SwiftValue::int(magnitude.to_bits() as i128))
+    let magnitude = value.mantissa as f64 * 10_f64.powi(value.exponent) + 0.0;
+    // Narrow through i64 to stay within the platform `Int` width.
+    Ok(SwiftValue::int((magnitude.to_bits() as i64) as i128))
 }
 
 fn decimal_pi(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {

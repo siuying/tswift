@@ -46,9 +46,12 @@ Date.addTimeInterval
 Date.addingTimeInterval
 Date.advanced
 Date.compare
+Date.debugDescription
+Date.description
 Date.distance
 Date.distantFuture
 Date.distantPast
+Date.hashValue
 Date.init
 Date.now
 Date.timeIntervalBetween1970AndReferenceDate

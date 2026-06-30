@@ -68,6 +68,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     ] {
         interp.register_intrinsic(BuiltinReceiver::Date, name, MethodEntry { mutating, func });
     }
+    interp.register_property(BuiltinReceiver::Date, "description", date_description);
+    interp.register_property(BuiltinReceiver::Date, "debugDescription", date_description);
+    interp.register_property(BuiltinReceiver::Date, "hashValue", date_hash_value);
 
     interp.register_free_fn("DateComponents", date_components_init);
     for (name, getter) in DATE_COMPONENT_GETTERS {
@@ -345,6 +348,28 @@ fn date_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         }
         _ => Err(type_error("unsupported Date initializer arguments")),
     }
+}
+
+/// `Date.description`: ISO-like UTC instant `"yyyy-MM-dd HH:mm:ss +0000"`, the
+/// Darwin default. `debugDescription` is identical.
+fn date_description(recv: SwiftValue) -> StdResult {
+    let civil = crate::calendar::decompose(date_seconds(&recv)?);
+    Ok(SwiftValue::Str(
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} +0000",
+            civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second
+        )
+        .into(),
+    ))
+}
+
+/// `Date.hashValue`: hash of the reference-date offset. Equal dates compare
+/// equal on that Double, so this stays consistent with `==`. `+ 0.0`
+/// canonicalizes `-0.0` to `0.0` (which `==` treats as equal), and the bit
+/// pattern is narrowed through `i64` to stay within the platform `Int`.
+fn date_hash_value(recv: SwiftValue) -> StdResult {
+    let seconds = date_seconds(&recv)? + 0.0;
+    Ok(SwiftValue::int((seconds.to_bits() as i64) as i128))
 }
 
 fn date_time_interval_since_reference_date(recv: SwiftValue) -> StdResult {
@@ -1675,6 +1700,55 @@ mod tests {
             SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
             other => panic!("expected ComparisonResult, got {}", other.type_name()),
         }
+    }
+
+    #[test]
+    fn date_description_renders_utc_instant() {
+        // 2001-01-01 00:00:10 UTC == reference offset 10.0.
+        let date = date_value(10.0);
+        assert_eq!(
+            date_description(date.clone()).unwrap(),
+            SwiftValue::Str("2001-01-01 00:00:10 +0000".into())
+        );
+        // 2024-06-29 09:41:00 UTC.
+        let later = date_value(crate::calendar::ref_seconds_from_ymdhms(
+            2024, 6, 29, 9, 41, 0,
+        ));
+        assert_eq!(
+            date_description(later).unwrap(),
+            SwiftValue::Str("2024-06-29 09:41:00 +0000".into())
+        );
+    }
+
+    #[test]
+    fn date_hash_value_is_consistent_with_equality() {
+        assert_eq!(
+            date_hash_value(date_value(10.0)).unwrap(),
+            date_hash_value(date_value(10.0)).unwrap()
+        );
+        assert_ne!(
+            date_hash_value(date_value(10.0)).unwrap(),
+            date_hash_value(date_value(11.0)).unwrap()
+        );
+        // `0.0 == -0.0` under `Date ==`, so they must hash equally.
+        assert_eq!(
+            date_hash_value(date_value(0.0)).unwrap(),
+            date_hash_value(date_value(-0.0)).unwrap()
+        );
+    }
+
+    #[test]
+    fn date_description_truncates_and_handles_pre_reference() {
+        // Fractional seconds truncate to whole seconds.
+        assert_eq!(
+            date_description(date_value(10.9)).unwrap(),
+            SwiftValue::Str("2001-01-01 00:00:10 +0000".into())
+        );
+        // Just before the reference epoch wraps the civil date back a day.
+        assert_eq!(
+            date_description(date_value(-0.1)).unwrap(),
+            SwiftValue::Str("2000-12-31 23:59:59 +0000".into())
+        );
     }
 
     fn labeled(label: &str, value: i128) -> Arg {
