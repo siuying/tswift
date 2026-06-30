@@ -15,8 +15,8 @@ use crate::env::{Env, Scope};
 use crate::fragment_cache::{FragmentCache, FragmentError};
 use crate::ops;
 use crate::stdlib::{
-    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, FreeFn, LabeledMethodEntry, MethodEntry,
-    PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
+    materialize_builtin_sequence, AlgoFn, BuiltinReceiver, ContextualPropertyFn, FreeFn,
+    LabeledMethodEntry, MethodEntry, PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -387,6 +387,8 @@ pub struct Interpreter<'w> {
     labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
     /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    /// Context-aware computed-property intrinsics keyed by builtin receiver.
+    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
     /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
     static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
@@ -403,6 +405,11 @@ pub struct Interpreter<'w> {
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
     enums: HashMap<String, EnumDef>,
+    /// Names of enums installed via [`Interpreter::register_builtin_enum`].
+    /// These are excluded from the global unique-case shorthand fallback so
+    /// they cannot shadow SwiftUI implicit statics (`.plain`, …); they still
+    /// resolve when a contextual type names them or as a last-resort fallback.
+    builtin_enums: std::collections::HashSet<String>,
     classes: HashMap<String, ClassDef>,
     protocols: HashMap<String, ProtoDef>,
     /// type name → protocols it conforms to (directly).
@@ -475,6 +482,20 @@ fn initial_rng_seed() -> u64 {
     }
 }
 
+fn now_unix_seconds() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        0.0
+    }
+}
+
 impl<'w> Interpreter<'w> {
     /// Create an interpreter that writes program output to `out`.
     pub fn new(out: &'w mut dyn Write) -> Self {
@@ -486,6 +507,7 @@ impl<'w> Interpreter<'w> {
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
+            contextual_properties: HashMap::new(),
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
@@ -497,6 +519,7 @@ impl<'w> Interpreter<'w> {
             funcs: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            builtin_enums: std::collections::HashSet::new(),
             classes: HashMap::new(),
             protocols: HashMap::new(),
             conformances: HashMap::new(),
@@ -545,6 +568,32 @@ impl<'w> Interpreter<'w> {
         );
     }
 
+    /// Register a simple builtin enum so shorthand `.case` members resolve to it
+    /// (e.g. `Calendar.Component`). Cases carry no raw value and no payload; the
+    /// enum is skipped if a declaration with the same name already exists.
+    pub fn register_builtin_enum(&mut self, name: &str, cases: &[&str]) {
+        if self.enums.contains_key(name) {
+            return;
+        }
+        let cases = cases
+            .iter()
+            .map(|case| EnumCaseDef {
+                name: (*case).to_string(),
+                raw: None,
+                payload_types: Vec::new(),
+            })
+            .collect();
+        self.enums.insert(
+            name.to_string(),
+            EnumDef {
+                cases,
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            },
+        );
+        self.builtin_enums.insert(name.to_string());
+    }
+
     /// The keys of every registered standard-library entry, for coverage
     /// tooling. Free functions are bare names; method/property intrinsics are
     /// `Type.member`; sequence algorithms are `Sequence.member`. Sorted and
@@ -561,6 +610,9 @@ impl<'w> Interpreter<'w> {
         for (recv, name) in self.properties.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
+        for (recv, name) in self.contextual_properties.keys() {
+            keys.push(format!("{}.{}", recv.type_name(), name));
+        }
         for (recv, name) in self.static_methods.keys() {
             keys.push(format!("{}.{}", recv.type_name(), name));
         }
@@ -575,6 +627,23 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+
+    /// Register a context-aware computed-property intrinsic on a builtin type.
+    pub fn register_contextual_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: ContextualPropertyFn,
+    ) {
+        self.contextual_properties
+            .insert((recv, name.to_string()), f);
+    }
+
+    /// Register a static *property value* on a (possibly non-builtin) type, so
+    /// `Type.name` and implicit `.name` resolve to it (e.g. `UnitLength.meters`).
+    pub fn register_static_value(&mut self, type_name: &str, name: &str, value: SwiftValue) {
+        self.statics.insert(format!("{type_name}.{name}"), value);
     }
 
     /// Register a static (type-level) method intrinsic on a builtin type.
@@ -1328,6 +1397,15 @@ impl<'w> Interpreter<'w> {
             // then any user extension computed property on that type.
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&this) {
+                    if let Some(func) = self
+                        .contextual_properties
+                        .get(&(kind, name.to_string()))
+                        .copied()
+                    {
+                        return func(self, this)
+                            .map(Some)
+                            .map_err(Self::std_error_to_signal);
+                    }
                     if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
                         return func(this).map(Some).map_err(Self::std_error_to_signal);
                     }
@@ -1446,9 +1524,14 @@ impl<'w> Interpreter<'w> {
                 }
             }
         }
-        // Fall back: a single enum declaring this case name.
+        // Fall back: a single *user-declared* enum declaring this case name.
+        // Builtin enums are excluded here so they cannot shadow SwiftUI
+        // implicit statics; they get a later, lower-priority fallback.
         let mut found = None;
         for (name, def) in &self.enums {
+            if self.builtin_enums.contains(name) {
+                continue;
+            }
             if def.cases.iter().any(|c| c.name == case) {
                 if found.is_some() {
                     return None; // ambiguous
@@ -1457,6 +1540,23 @@ impl<'w> Interpreter<'w> {
             }
         }
         found
+    }
+
+    /// Last-resort shorthand resolution over builtin enums only (`.year`,
+    /// `.gregorian`, `.plain` for `Decimal.RoundingMode`). Runs after implicit
+    /// statics so SwiftUI styles keep priority.
+    ///
+    /// When several builtin enums share a case name (e.g. `.none` on both
+    /// `DateFormatter.Style` and `NumberFormatter.Style`), the lexicographically
+    /// smallest type name is chosen deterministically. Builtin consumers match
+    /// on the case string, not the enum type, so this stays correct for the
+    /// shared style/`none` cases while keeping `==` results stable.
+    fn resolve_builtin_member_enum(&self, case: &str) -> Option<String> {
+        self.builtin_enums
+            .iter()
+            .filter(|name| self.enum_has_case(name, case))
+            .min()
+            .cloned()
     }
 
     /// Resolve an implicit-member `.name` to a static property. Prefers the
@@ -2468,6 +2568,13 @@ impl<'w> Interpreter<'w> {
 
     /// A binary operation, with short-circuiting `&&`/`||`.
     fn eval_binary(&mut self, node: &Node<'static>) -> Eval {
+        // Structs whose `==`/`!=` are defined by the operator table rather than
+        // field-wise comparison (`Measurement`: base-unit value; `Decimal`:
+        // numeric value incl. NaN ≠ NaN).
+        fn uses_operator_equality(value: &SwiftValue) -> bool {
+            matches!(value, SwiftValue::Struct(o)
+                if o.type_name == "Measurement" || o.type_name == "Decimal")
+        }
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("binary without operator".into()))?;
@@ -2519,7 +2626,11 @@ impl<'w> Interpreter<'w> {
         let r = self.eval(&rhs)?;
         // Equality against nil / reference / compound values goes through the
         // structural comparison rather than the scalar operator table.
+        // `Measurement`/`Decimal` define `==` via the operator table (1 km ==
+        // 1000 m; NaN ≠ NaN), not field-wise comparison.
+        let operator_eq = uses_operator_equality(&l) || uses_operator_equality(&r);
         if (op == "==" || op == "!=")
+            && !operator_eq
             && matches!(
                 (&l, &r),
                 (SwiftValue::Nil, _)
@@ -3816,6 +3927,10 @@ impl StdContext for Interpreter<'_> {
 
     fn random_u64(&mut self) -> u64 {
         self.next_random()
+    }
+
+    fn now_unix_seconds(&mut self) -> f64 {
+        now_unix_seconds()
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {

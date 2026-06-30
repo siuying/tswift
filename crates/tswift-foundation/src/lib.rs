@@ -4,32 +4,109 @@
 //! interpreter, expose live `registered_keys()` for coverage tooling, and keep
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
+mod calendar;
+mod decimal;
+mod formatter;
+mod measurement;
+mod numberformatter;
 mod url;
 
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext,
-    StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome,
+    StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
+
+const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
+const DISTANT_PAST_REFERENCE_SECONDS: f64 = -63_113_904_000.0;
+const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 
 /// Register every currently-supported Foundation builtin into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
+    calendar::install(interp);
+    formatter::install(interp);
+    decimal::install(interp);
+    numberformatter::install(interp);
+    measurement::install(interp);
+    interp.register_free_fn("Date", date_init);
+    interp.register_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSinceReferenceDate",
+        date_time_interval_since_reference_date,
+    );
+    interp.register_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSince1970",
+        date_time_interval_since_1970,
+    );
+    interp.register_contextual_property(
+        BuiltinReceiver::Date,
+        "timeIntervalSinceNow",
+        date_time_interval_since_now,
+    );
+    interp.register_static(BuiltinReceiver::Date, "now", date_now_static);
+    interp.register_static(BuiltinReceiver::Date, "distantPast", date_distant_past);
+    interp.register_static(BuiltinReceiver::Date, "distantFuture", date_distant_future);
+    interp.register_static(
+        BuiltinReceiver::Date,
+        "timeIntervalBetween1970AndReferenceDate",
+        date_time_interval_between_1970_and_reference_date,
+    );
+    for (name, mutating, func) in [
+        (
+            "timeIntervalSince",
+            false,
+            date_time_interval_since as IntrinsicFn,
+        ),
+        ("addingTimeInterval", false, date_adding_time_interval),
+        ("addTimeInterval", true, date_add_time_interval),
+        ("distance", false, date_distance),
+        ("advanced", false, date_advanced),
+        ("compare", false, date_compare),
+    ] {
+        interp.register_intrinsic(BuiltinReceiver::Date, name, MethodEntry { mutating, func });
+    }
+
+    interp.register_free_fn("DateComponents", date_components_init);
+    for (name, getter) in DATE_COMPONENT_GETTERS {
+        interp.register_property(BuiltinReceiver::DateComponents, name, *getter);
+    }
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "isValidDate",
+        date_components_is_valid_date,
+    );
+    for (name, mutating, func) in [
+        ("value", false, date_components_value as IntrinsicFn),
+        ("setValue", true, date_components_set_value),
+    ] {
+        interp.register_intrinsic(
+            BuiltinReceiver::DateComponents,
+            name,
+            MethodEntry { mutating, func },
+        );
+    }
+
     interp.register_free_fn("Data", data_init);
     interp.register_property(BuiltinReceiver::Data, "count", data_count);
     interp.register_property(BuiltinReceiver::Data, "isEmpty", data_is_empty);
-    interp.register_intrinsic(
-        BuiltinReceiver::Data,
-        "append",
-        MethodEntry {
-            mutating: true,
-            func: data_append,
-        },
-    );
+    interp.register_property(BuiltinReceiver::Data, "first", data_first);
+    interp.register_property(BuiltinReceiver::Data, "last", data_last);
+    interp.register_property(BuiltinReceiver::Data, "description", data_description);
+    for (name, mutating, func) in [
+        ("append", true, data_append as IntrinsicFn),
+        ("base64EncodedString", false, data_base64_encoded_string),
+        ("subdata", false, data_subdata),
+        ("removeAll", true, data_remove_all),
+    ] {
+        interp.register_intrinsic(BuiltinReceiver::Data, name, MethodEntry { mutating, func });
+    }
 
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
+    interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -165,6 +242,14 @@ pub fn registered_keys() -> Vec<String> {
             "URL" => Some("URL.init".to_string()),
             "URLComponents" => Some("URLComponents.init".to_string()),
             "URLQueryItem" => Some("URLQueryItem.init".to_string()),
+            "Date" => Some("Date.init".to_string()),
+            "DateComponents" => Some("DateComponents.init".to_string()),
+            "Calendar" => Some("Calendar.init".to_string()),
+            "DateFormatter" => Some("DateFormatter.init".to_string()),
+            "ISO8601DateFormatter" => Some("ISO8601DateFormatter.init".to_string()),
+            "Decimal" => Some("Decimal.init".to_string()),
+            "NumberFormatter" => Some("NumberFormatter.init".to_string()),
+            "Measurement" => Some("Measurement.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -172,7 +257,15 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("IndexSet.")
                     || other.starts_with("URL.")
                     || other.starts_with("URLComponents.")
-                    || other.starts_with("URLQueryItem.") =>
+                    || other.starts_with("URLQueryItem.")
+                    || other.starts_with("Date.")
+                    || other.starts_with("DateComponents.")
+                    || other.starts_with("Calendar.")
+                    || other.starts_with("DateFormatter.")
+                    || other.starts_with("ISO8601DateFormatter.")
+                    || other.starts_with("Decimal.")
+                    || other.starts_with("NumberFormatter.")
+                    || other.starts_with("Measurement.") =>
             {
                 Some(other.to_string())
             }
@@ -186,6 +279,414 @@ pub fn registered_keys() -> Vec<String> {
 
 pub(crate) fn type_error(message: impl Into<String>) -> StdError {
     StdError::Error(EvalError::Type(message.into()))
+}
+
+pub(crate) fn date_value(time_interval_since_reference_date: f64) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "Date".into(),
+        fields: vec![(
+            "_timeIntervalSinceReferenceDate".into(),
+            SwiftValue::Double(time_interval_since_reference_date),
+        )],
+    }))
+}
+
+pub(crate) fn date_seconds(value: &SwiftValue) -> Result<f64, StdError> {
+    let SwiftValue::Struct(obj) = value else {
+        return Err(type_error(format!(
+            "expected Date, got {}",
+            value.type_name()
+        )));
+    };
+    if obj.type_name != "Date" {
+        return Err(type_error(format!("expected Date, got {}", obj.type_name)));
+    }
+    match obj.get("_timeIntervalSinceReferenceDate") {
+        Some(SwiftValue::Double(seconds)) => Ok(*seconds),
+        Some(SwiftValue::Int(seconds)) => Ok(seconds.raw as f64),
+        _ => Err(type_error("malformed Date value")),
+    }
+}
+
+fn time_interval(value: &SwiftValue, context: &str) -> Result<f64, StdError> {
+    match value {
+        SwiftValue::Double(seconds) => Ok(*seconds),
+        SwiftValue::Int(seconds) => Ok(seconds.raw as f64),
+        other => Err(type_error(format!(
+            "{context} expects TimeInterval, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    match args.as_slice() {
+        [] => Ok(date_value(
+            ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSinceReferenceDate") => Ok(date_value(
+            time_interval(&arg.value, "Date(timeIntervalSinceReferenceDate:)")?,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSince1970") => Ok(date_value(
+            time_interval(&arg.value, "Date(timeIntervalSince1970:)")? - REFERENCE_DATE_UNIX_OFFSET,
+        )),
+        [arg] if arg.label.as_deref() == Some("timeIntervalSinceNow") => Ok(date_value(
+            ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET
+                + time_interval(&arg.value, "Date(timeIntervalSinceNow:)")?,
+        )),
+        [interval, since]
+            if interval.label.as_deref() == Some("timeInterval")
+                && since.label.as_deref() == Some("since") =>
+        {
+            Ok(date_value(
+                date_seconds(&since.value)?
+                    + time_interval(&interval.value, "Date(timeInterval:since:)")?,
+            ))
+        }
+        _ => Err(type_error("unsupported Date initializer arguments")),
+    }
+}
+
+fn date_time_interval_since_reference_date(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(date_seconds(&recv)?))
+}
+
+fn date_time_interval_since_1970(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(
+        date_seconds(&recv)? + REFERENCE_DATE_UNIX_OFFSET,
+    ))
+}
+
+fn date_time_interval_since_now(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Double(
+        date_seconds(&recv)? + REFERENCE_DATE_UNIX_OFFSET - ctx.now_unix_seconds(),
+    ))
+}
+
+fn date_now_static(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.now takes no arguments"));
+    }
+    Ok(date_value(
+        ctx.now_unix_seconds() - REFERENCE_DATE_UNIX_OFFSET,
+    ))
+}
+
+fn date_distant_past(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.distantPast takes no arguments"));
+    }
+    Ok(date_value(DISTANT_PAST_REFERENCE_SECONDS))
+}
+
+fn date_distant_future(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("Date.distantFuture takes no arguments"));
+    }
+    Ok(date_value(DISTANT_FUTURE_REFERENCE_SECONDS))
+}
+
+fn date_time_interval_between_1970_and_reference_date(
+    _ctx: &mut dyn StdContext,
+    args: Vec<Arg>,
+) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error(
+            "Date.timeIntervalBetween1970AndReferenceDate takes no arguments",
+        ));
+    }
+    Ok(SwiftValue::Double(REFERENCE_DATE_UNIX_OFFSET))
+}
+
+fn date_single_time_interval_arg(args: &[SwiftValue], context: &str) -> Result<f64, StdError> {
+    match args {
+        [value] => time_interval(value, context),
+        _ => Err(type_error(format!("{context} expects one argument"))),
+    }
+}
+
+fn date_single_date_arg(args: &[SwiftValue], context: &str) -> Result<f64, StdError> {
+    match args {
+        [value] => date_seconds(value),
+        _ => Err(type_error(format!("{context} expects one Date argument"))),
+    }
+}
+
+fn date_time_interval_since(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.timeIntervalSince")?;
+    Ok(Outcome {
+        result: SwiftValue::Double(date_seconds(&recv)? - other),
+        receiver: recv,
+    })
+}
+
+fn date_adding_time_interval(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.addingTimeInterval")?;
+    Ok(Outcome {
+        result: date_value(date_seconds(&recv)? + interval),
+        receiver: recv,
+    })
+}
+
+fn date_add_time_interval(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.addTimeInterval")?;
+    let receiver = date_value(date_seconds(&recv)? + interval);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver,
+    })
+}
+
+fn date_distance(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.distance")?;
+    Ok(Outcome {
+        result: SwiftValue::Double(other - date_seconds(&recv)?),
+        receiver: recv,
+    })
+}
+
+fn date_advanced(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let interval = date_single_time_interval_arg(&args, "Date.advanced")?;
+    Ok(Outcome {
+        result: date_value(date_seconds(&recv)? + interval),
+        receiver: recv,
+    })
+}
+
+fn comparison_result(case: &str) -> SwiftValue {
+    SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: "ComparisonResult".into(),
+        case: case.into(),
+        payload: Vec::new(),
+    }))
+}
+
+fn date_compare(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = date_single_date_arg(&args, "Date.compare")?;
+    let this = date_seconds(&recv)?;
+    let case = if this < other {
+        "orderedAscending"
+    } else if this > other {
+        "orderedDescending"
+    } else {
+        "orderedSame"
+    };
+    Ok(Outcome {
+        result: comparison_result(case),
+        receiver: recv,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// DateComponents
+// ---------------------------------------------------------------------------
+
+/// The component fields stored on a `DateComponents` value, in canonical order.
+pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "nanosecond",
+    "weekday",
+    "weekdayOrdinal",
+    "quarter",
+    "weekOfMonth",
+    "weekOfYear",
+    "yearForWeekOfYear",
+];
+
+/// Initializer labels that are accepted but not stored as readable components.
+const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone", "era"];
+
+macro_rules! date_component_getters {
+    ($($field:literal => $getter:ident),+ $(,)?) => {
+        $(
+            fn $getter(recv: SwiftValue) -> StdResult {
+                date_components_get(&recv, $field)
+            }
+        )+
+        const DATE_COMPONENT_GETTERS: &[(&str, tswift_core::PropertyFn)] = &[
+            $(($field, $getter)),+
+        ];
+    };
+}
+
+date_component_getters! {
+    "year" => date_components_get_year,
+    "month" => date_components_get_month,
+    "day" => date_components_get_day,
+    "hour" => date_components_get_hour,
+    "minute" => date_components_get_minute,
+    "second" => date_components_get_second,
+    "nanosecond" => date_components_get_nanosecond,
+    "weekday" => date_components_get_weekday,
+    "weekdayOrdinal" => date_components_get_weekday_ordinal,
+    "quarter" => date_components_get_quarter,
+    "weekOfMonth" => date_components_get_week_of_month,
+    "weekOfYear" => date_components_get_week_of_year,
+    "yearForWeekOfYear" => date_components_get_year_for_week_of_year,
+}
+
+pub(crate) fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "DateComponents".into(),
+        fields,
+    }))
+}
+
+fn date_components_obj(value: &SwiftValue) -> Result<&Rc<StructObj>, StdError> {
+    match value {
+        SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => Ok(obj),
+        other => Err(type_error(format!(
+            "expected DateComponents, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Parse an optional Int component argument (`Int?`): `nil` or an integer.
+fn optional_int_component(value: &SwiftValue, context: &str) -> Result<SwiftValue, StdError> {
+    match value {
+        SwiftValue::Nil => Ok(SwiftValue::Nil),
+        SwiftValue::Int(i) => Ok(SwiftValue::int(i.raw)),
+        other => Err(type_error(format!(
+            "{context} expects Int?, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_components_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields: Vec<(String, SwiftValue)> = DATE_COMPONENT_FIELDS
+        .iter()
+        .map(|name| ((*name).to_string(), SwiftValue::Nil))
+        .collect();
+    for arg in &args {
+        let Some(label) = arg.label.as_deref() else {
+            return Err(type_error(
+                "DateComponents initializer requires labeled arguments",
+            ));
+        };
+        if DATE_COMPONENT_IGNORED_LABELS.contains(&label) {
+            continue;
+        }
+        let Some(slot) = fields.iter_mut().find(|(name, _)| name == label) else {
+            return Err(type_error(format!(
+                "DateComponents has no component `{label}`"
+            )));
+        };
+        slot.1 = optional_int_component(&arg.value, &format!("DateComponents(.{label}:)"))?;
+    }
+    Ok(date_components_value_struct(fields))
+}
+
+fn date_components_get(value: &SwiftValue, component: &str) -> StdResult {
+    let obj = date_components_obj(value)?;
+    Ok(obj.get(component).cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// Component name behind a `Calendar.Component` enum value (`.year` → "year").
+pub(crate) fn calendar_component_name(value: &SwiftValue) -> Result<String, StdError> {
+    match value {
+        SwiftValue::Enum(obj) => Ok(obj.case.clone()),
+        SwiftValue::Str(name) => Ok(name.to_string()),
+        other => Err(type_error(format!(
+            "expected Calendar.Component, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn date_components_value(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [component] = args.as_slice() else {
+        return Err(type_error(
+            "DateComponents.value(for:) expects one argument",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let result = if DATE_COMPONENT_FIELDS.contains(&name.as_str()) {
+        date_components_obj(&recv)?
+            .get(&name)
+            .cloned()
+            .unwrap_or(SwiftValue::Nil)
+    } else {
+        SwiftValue::Nil
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn date_components_set_value(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [value, component] = args.as_slice() else {
+        return Err(type_error(
+            "DateComponents.setValue(_:for:) expects two arguments",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let obj = date_components_obj(&recv)?;
+    let mut fields = obj.fields.clone();
+    if let Some(slot) = fields.iter_mut().find(|(field, _)| field == &name) {
+        slot.1 = optional_int_component(value, "DateComponents.setValue(_:for:)")?;
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: date_components_value_struct(fields),
+    })
+}
+
+/// Minimal range validation; full calendar validation arrives with Calendar.
+fn date_components_is_valid_date(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    let component = |name: &str| match obj.get(name) {
+        Some(SwiftValue::Int(i)) => Some(i.raw),
+        _ => None,
+    };
+    let valid = match (component("year"), component("month"), component("day")) {
+        (Some(year), Some(month), Some(day)) => {
+            (1..=12).contains(&month)
+                && day >= 1
+                && day <= i128::from(calendar::days_in_month(year as i64, month as i64))
+        }
+        _ => false,
+    };
+    Ok(SwiftValue::Bool(valid))
 }
 
 fn data_value(bytes: Vec<u8>) -> SwiftValue {
@@ -233,10 +734,44 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if args.is_empty() {
         return Ok(data_value(Vec::new()));
     }
+    // `Data(repeating: UInt8, count: Int)`.
+    if args.len() == 2
+        && args[0].label.as_deref() == Some("repeating")
+        && args[1].label.as_deref() == Some("count")
+    {
+        let byte = byte_from_value(&args[0].value)?;
+        let count = match &args[1].value {
+            SwiftValue::Int(i) if i.raw >= 0 => i.raw as usize,
+            _ => {
+                return Err(type_error(
+                    "Data(repeating:count:) count must be a non-negative Int",
+                ))
+            }
+        };
+        return Ok(data_value(vec![byte; count]));
+    }
     if args.len() != 1 {
         return Err(type_error(
             "Data expects zero arguments or one byte sequence",
         ));
+    }
+    if args.len() == 1 && args[0].label.as_deref() == Some("base64Encoded") {
+        let SwiftValue::Str(s) = &args[0].value else {
+            return Err(type_error("Data(base64Encoded:) expects a String"));
+        };
+        // Failable: nil on malformed input.
+        return Ok(match base64_decode(s) {
+            Some(bytes) => data_value(bytes),
+            None => SwiftValue::Nil,
+        });
+    }
+    match args[0].label.as_deref() {
+        Some("bytes") | None => {}
+        Some(other) => {
+            return Err(type_error(format!(
+                "unsupported Data initializer `{other}:`"
+            )))
+        }
     }
     match &args[0].value {
         SwiftValue::Array(items) => {
@@ -252,6 +787,153 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             other.type_name()
         ))),
     }
+}
+
+fn data_first(recv: SwiftValue) -> StdResult {
+    let bytes = data_bytes(&recv)?;
+    Ok(bytes
+        .first()
+        .map(|b| SwiftValue::int(i128::from(*b)))
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn data_last(recv: SwiftValue) -> StdResult {
+    let bytes = data_bytes(&recv)?;
+    Ok(bytes
+        .last()
+        .map(|b| SwiftValue::int(i128::from(*b)))
+        .unwrap_or(SwiftValue::Nil))
+}
+
+fn data_description(recv: SwiftValue) -> StdResult {
+    let len = data_bytes(&recv)?.len();
+    // Foundation renders e.g. "5 bytes".
+    let unit = if len == 1 { "byte" } else { "bytes" };
+    Ok(SwiftValue::Str(format!("{len} {unit}").into()))
+}
+
+fn data_base64_encoded_string(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("base64EncodedString() takes no arguments"));
+    }
+    let encoded = base64_encode(&data_bytes(&recv)?);
+    Ok(Outcome {
+        result: SwiftValue::Str(encoded.into()),
+        receiver: recv,
+    })
+}
+
+fn data_subdata(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let bytes = data_bytes(&recv)?;
+    let range = match args.as_slice() {
+        [SwiftValue::Range { lo, hi, inclusive }] => {
+            let end = if *inclusive { hi + 1 } else { *hi };
+            (*lo, end)
+        }
+        _ => return Err(type_error("subdata(in:) expects a Range<Int>")),
+    };
+    let (lo, hi) = range;
+    if lo < 0 || hi < lo || hi as usize > bytes.len() {
+        return Err(type_error("subdata(in:) range out of bounds"));
+    }
+    let slice = bytes[lo as usize..hi as usize].to_vec();
+    Ok(Outcome {
+        result: data_value(slice),
+        receiver: recv,
+    })
+}
+
+fn data_remove_all(
+    _ctx: &mut dyn StdContext,
+    _recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("removeAll() takes no arguments"));
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: data_value(Vec::new()),
+    })
+}
+
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(BASE64_ALPHABET[(triple >> 18 & 0x3F) as usize] as char);
+        out.push(BASE64_ALPHABET[(triple >> 12 & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64_ALPHABET[(triple >> 6 & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64_ALPHABET[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    // Empty input decodes to empty Data (matching Foundation); other lengths
+    // must be a whole number of 4-char groups.
+    if cleaned.len() % 4 != 0 {
+        return None;
+    }
+    let chunk_count = cleaned.len() / 4;
+    let mut out = Vec::with_capacity(chunk_count * 3);
+    for (chunk_index, chunk) in cleaned.chunks(4).enumerate() {
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        // Padding is only ever valid (1 or 2 chars) in the final chunk, and the
+        // pad must be a trailing run.
+        if pad > 0 && (chunk_index != chunk_count - 1 || pad > 2) {
+            return None;
+        }
+        if pad > 0 && chunk[4 - pad..].iter().any(|&c| c != b'=') {
+            return None;
+        }
+        let mut acc = 0u32;
+        for &c in &chunk[..4 - pad] {
+            acc = (acc << 6) | val(c)?;
+        }
+        acc <<= 6 * pad;
+        out.push((acc >> 16 & 0xFF) as u8);
+        if pad < 2 {
+            out.push((acc >> 8 & 0xFF) as u8);
+        }
+        if pad < 1 {
+            out.push((acc & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 fn data_count(recv: SwiftValue) -> StdResult {
@@ -315,6 +997,11 @@ fn uuid_string(recv: SwiftValue) -> StdResult {
         Some(SwiftValue::Str(s)) => Ok(SwiftValue::Str(s.clone())),
         _ => Err(type_error("malformed UUID value")),
     }
+}
+
+fn uuid_description(recv: SwiftValue) -> StdResult {
+    // `UUID.description` is its canonical uppercase string.
+    uuid_string(recv)
 }
 
 fn normalize_uuid(raw: &str) -> Option<String> {
@@ -888,6 +1575,255 @@ fn index_set_integer_le(
         result,
         receiver: recv,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MockContext {
+        out: Vec<u8>,
+        now: f64,
+    }
+
+    impl MockContext {
+        fn new(now: f64) -> Self {
+            Self {
+                out: Vec::new(),
+                now,
+            }
+        }
+    }
+
+    impl StdContext for MockContext {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
+            Err(type_error("closures are unsupported in MockContext"))
+        }
+
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            &mut self.out
+        }
+
+        fn now_unix_seconds(&mut self) -> f64 {
+            self.now
+        }
+    }
+
+    fn date_ref_seconds(value: &SwiftValue) -> f64 {
+        date_seconds(value).expect("Date value")
+    }
+
+    #[test]
+    fn date_initializers_store_reference_seconds() {
+        let mut ctx = MockContext::new(REFERENCE_DATE_UNIX_OFFSET + 10.0);
+
+        let now = date_init(&mut ctx, Vec::new()).expect("Date()");
+        assert_eq!(date_ref_seconds(&now), 10.0);
+
+        let unix = date_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("timeIntervalSince1970".into()),
+                value: SwiftValue::Double(REFERENCE_DATE_UNIX_OFFSET + 25.0),
+            }],
+        )
+        .expect("Date(timeIntervalSince1970:)");
+        assert_eq!(date_ref_seconds(&unix), 25.0);
+
+        let since = date_init(
+            &mut ctx,
+            vec![
+                Arg {
+                    label: Some("timeInterval".into()),
+                    value: SwiftValue::Double(5.0),
+                },
+                Arg {
+                    label: Some("since".into()),
+                    value: unix.clone(),
+                },
+            ],
+        )
+        .expect("Date(timeInterval:since:)");
+        assert_eq!(date_ref_seconds(&since), 30.0);
+    }
+
+    #[test]
+    fn date_methods_support_arithmetic_and_compare() {
+        let mut ctx = MockContext::new(REFERENCE_DATE_UNIX_OFFSET);
+        let base = date_value(100.0);
+        let later = date_value(125.0);
+
+        let diff = date_time_interval_since(&mut ctx, later.clone(), vec![base.clone()])
+            .expect("timeIntervalSince")
+            .result;
+        assert_eq!(diff, SwiftValue::Double(25.0));
+
+        let advanced = date_advanced(&mut ctx, base.clone(), vec![SwiftValue::Double(5.0)])
+            .expect("advanced")
+            .result;
+        assert_eq!(date_ref_seconds(&advanced), 105.0);
+
+        let mutated = date_add_time_interval(&mut ctx, base.clone(), vec![SwiftValue::Double(7.0)])
+            .expect("addTimeInterval")
+            .receiver;
+        assert_eq!(date_ref_seconds(&mutated), 107.0);
+
+        let compared = date_compare(&mut ctx, base.clone(), vec![later])
+            .expect("compare")
+            .result;
+        match compared {
+            SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
+            other => panic!("expected ComparisonResult, got {}", other.type_name()),
+        }
+    }
+
+    fn labeled(label: &str, value: i128) -> Arg {
+        Arg {
+            label: Some(label.into()),
+            value: SwiftValue::int(value),
+        }
+    }
+
+    #[test]
+    fn date_components_partial_construction_reads_back() {
+        let mut ctx = MockContext::new(0.0);
+        let dc = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 6),
+                labeled("day", 29),
+            ],
+        )
+        .expect("DateComponents");
+
+        assert_eq!(
+            date_components_get(&dc, "year").unwrap(),
+            SwiftValue::int(2024)
+        );
+        assert_eq!(
+            date_components_get(&dc, "month").unwrap(),
+            SwiftValue::int(6)
+        );
+        assert_eq!(
+            date_components_get(&dc, "day").unwrap(),
+            SwiftValue::int(29)
+        );
+        // Unset components read back as nil.
+        assert_eq!(date_components_get(&dc, "hour").unwrap(), SwiftValue::Nil);
+    }
+
+    #[test]
+    fn date_components_is_valid_date_checks_ymd_ranges() {
+        let mut ctx = MockContext::new(0.0);
+        let valid = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 6),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(valid).unwrap(),
+            SwiftValue::Bool(true)
+        );
+
+        let bad_month = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 13),
+                labeled("day", 5),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(bad_month).unwrap(),
+            SwiftValue::Bool(false)
+        );
+
+        let missing_day = date_components_init(&mut ctx, vec![labeled("year", 2024)]).unwrap();
+        assert_eq!(
+            date_components_is_valid_date(missing_day).unwrap(),
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        for case in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
+            let encoded = base64_encode(case.as_bytes());
+            let decoded = base64_decode(&encoded).expect("decodes");
+            assert_eq!(decoded, case.as_bytes(), "round-trip for {case:?}");
+        }
+        assert_eq!(base64_encode(b"Hi"), "SGk=");
+        assert_eq!(base64_decode("SGk=").unwrap(), b"Hi");
+        // Malformed inputs reject.
+        assert!(base64_decode("SGk").is_none()); // wrong length
+        assert!(base64_decode("@@@@").is_none()); // bad alphabet
+        assert!(base64_decode("====").is_none()); // all padding
+        assert!(base64_decode("AA==AAAA").is_none()); // padding before final chunk
+        assert!(base64_decode("A===").is_none()); // 3 padding chars
+                                                  // Empty decodes to empty Data, matching Foundation.
+        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn is_valid_date_respects_month_lengths() {
+        let mut ctx = MockContext::new(0.0);
+        let leap = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2024),
+                labeled("month", 2),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(leap).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        let non_leap = date_components_init(
+            &mut ctx,
+            vec![
+                labeled("year", 2023),
+                labeled("month", 2),
+                labeled("day", 29),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            date_components_is_valid_date(non_leap).unwrap(),
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn date_components_set_value_updates_component() {
+        let mut ctx = MockContext::new(0.0);
+        let dc = date_components_init(&mut ctx, vec![labeled("year", 2024)]).unwrap();
+        let component = SwiftValue::Enum(Rc::new(EnumObj {
+            type_name: "Calendar.Component".into(),
+            case: "month".into(),
+            payload: Vec::new(),
+        }));
+        let updated =
+            date_components_set_value(&mut ctx, dc, vec![SwiftValue::int(7), component.clone()])
+                .unwrap()
+                .receiver;
+        assert_eq!(
+            date_components_get(&updated, "month").unwrap(),
+            SwiftValue::int(7)
+        );
+
+        let read = date_components_value(&mut ctx, updated, vec![component])
+            .unwrap()
+            .result;
+        assert_eq!(read, SwiftValue::int(7));
+    }
 }
 
 #[cfg(test)]

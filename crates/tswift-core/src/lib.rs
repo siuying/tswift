@@ -5,6 +5,7 @@
 //! milestone covers literals, arithmetic, and `let`/`var` bindings with faithful
 //! integer-width overflow/wrap semantics.
 
+pub mod decimal;
 mod env;
 mod fragment_cache;
 pub mod grapheme;
@@ -24,8 +25,9 @@ pub use interp::{BuiltinParam, EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
     collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,
-    BuiltinReceiver, FreeFn, IntrinsicFn, LabeledIntrinsicFn, LabeledMethodEntry, MethodEntry,
-    Outcome, PropertyFn, StaticFn, StdContext, StdError, StdResult, StructMethodFn,
+    BuiltinReceiver, ContextualPropertyFn, FreeFn, IntrinsicFn, LabeledIntrinsicFn,
+    LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, StaticFn, StdContext, StdError,
+    StdResult, StructMethodFn,
 };
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
 

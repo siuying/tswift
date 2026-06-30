@@ -28,6 +28,28 @@ id = "F5"
 title = "Coding"
 types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
+[core_members]
+Date = ["+", "+=", "-", "-=", "<", "==", ">"]
+Measurement = ["+", "-", "*", "/", "==", "<"]
+Data = ["=="]
+UUID = ["=="]
+URL = ["=="]
+URLQueryItem = ["=="]
+URLComponents = ["=="]
+
+# Darwin gaps (documented, intentional for now):
+# - Calendar/DateComponents/DateFormatter/ISO8601DateFormatter operate in the
+#   proleptic Gregorian calendar in UTC and ignore Locale/TimeZone. Formatter
+#   names are hard-coded en_US. Date arithmetic and parsing are exact; locale-
+#   and zone-sensitive behaviour is not modelled.
+# - DateFormatter/ISO8601DateFormatter are ObjC classes absent from the
+#   generated `.swiftinterface` inventory, so they do not appear in coverage
+#   roll-ups even though they are implemented and golden-tested.
+[notes]
+calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
+decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
+numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
+
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]
 networking = ["URLSession", "URLRequest", "Host"]

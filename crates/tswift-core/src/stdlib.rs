@@ -116,6 +116,13 @@ pub trait StdContext {
     fn random_u64(&mut self) -> u64 {
         0
     }
+
+    /// Seconds since the Unix epoch (1970-01-01 UTC). The default is fixed so
+    /// direct builtin tests stay deterministic; the interpreter overrides it
+    /// with wall-clock time on native targets.
+    fn now_unix_seconds(&mut self) -> f64 {
+        0.0
+    }
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).
@@ -156,6 +163,14 @@ pub enum BuiltinReceiver {
     URL,
     URLComponents,
     URLQueryItem,
+    Date,
+    DateComponents,
+    Calendar,
+    DateFormatter,
+    ISO8601DateFormatter,
+    Decimal,
+    NumberFormatter,
+    Measurement,
 }
 
 impl BuiltinReceiver {
@@ -179,6 +194,14 @@ impl BuiltinReceiver {
             BuiltinReceiver::URL => "URL",
             BuiltinReceiver::URLComponents => "URLComponents",
             BuiltinReceiver::URLQueryItem => "URLQueryItem",
+            BuiltinReceiver::Date => "Date",
+            BuiltinReceiver::DateComponents => "DateComponents",
+            BuiltinReceiver::Calendar => "Calendar",
+            BuiltinReceiver::DateFormatter => "DateFormatter",
+            BuiltinReceiver::ISO8601DateFormatter => "ISO8601DateFormatter",
+            BuiltinReceiver::Decimal => "Decimal",
+            BuiltinReceiver::NumberFormatter => "NumberFormatter",
+            BuiltinReceiver::Measurement => "Measurement",
         }
     }
 
@@ -202,6 +225,14 @@ impl BuiltinReceiver {
             "URL" => BuiltinReceiver::URL,
             "URLComponents" => BuiltinReceiver::URLComponents,
             "URLQueryItem" => BuiltinReceiver::URLQueryItem,
+            "Date" => BuiltinReceiver::Date,
+            "DateComponents" => BuiltinReceiver::DateComponents,
+            "Calendar" => BuiltinReceiver::Calendar,
+            "DateFormatter" => BuiltinReceiver::DateFormatter,
+            "ISO8601DateFormatter" => BuiltinReceiver::ISO8601DateFormatter,
+            "Decimal" => BuiltinReceiver::Decimal,
+            "NumberFormatter" => BuiltinReceiver::NumberFormatter,
+            "Measurement" => BuiltinReceiver::Measurement,
             _ => return None,
         })
     }
@@ -228,6 +259,24 @@ impl BuiltinReceiver {
             }
             SwiftValue::Struct(obj) if obj.type_name == "URLQueryItem" => {
                 BuiltinReceiver::URLQueryItem
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
+            SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {
+                BuiltinReceiver::DateComponents
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "Calendar" => BuiltinReceiver::Calendar,
+            SwiftValue::Struct(obj) if obj.type_name == "DateFormatter" => {
+                BuiltinReceiver::DateFormatter
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "ISO8601DateFormatter" => {
+                BuiltinReceiver::ISO8601DateFormatter
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "Decimal" => BuiltinReceiver::Decimal,
+            SwiftValue::Struct(obj) if obj.type_name == "NumberFormatter" => {
+                BuiltinReceiver::NumberFormatter
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "Measurement" => {
+                BuiltinReceiver::Measurement
             }
             _ => return None,
         })
@@ -299,6 +348,10 @@ pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// A computed-property intrinsic on a builtin receiver (`Double.isNaN`,
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
+
+/// A computed-property intrinsic that needs the standard-library context
+/// (`Date.timeIntervalSinceNow`, for example, needs the current clock).
+pub type ContextualPropertyFn = fn(&mut dyn StdContext, SwiftValue) -> StdResult;
 
 /// A `Sequence`/`Collection` algorithm written once against the materialized
 /// elements of any builtin sequence receiver (`map`, `filter`, `sorted`, …).

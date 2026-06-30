@@ -37,6 +37,28 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         {
             index_path_binary(op, a, b)
         }
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "Date" && b.type_name == "Date" =>
+        {
+            date_binary(op, a, b)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Double(b)) if a.type_name == "Date" => {
+            date_time_interval_binary(op, a, *b)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Int(b)) if a.type_name == "Date" => {
+            date_time_interval_binary(op, a, b.raw as f64)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "DateComponents" && b.type_name == "DateComponents" =>
+        {
+            date_components_binary(op, a, b)
+        }
+        // `Measurement` arithmetic: `+`/`-` (same dimension), `*`/`/` by a
+        // scalar, and base-unit comparisons.
+        _ if is_measurement(l) || is_measurement(r) => measurement_binary(op, l, r),
+        // `Decimal` arithmetic/comparison, including mixed operands
+        // (`d + 1`, `2 * d`) via `ExpressibleBy*Literal` coercion.
+        _ if is_decimal_operand(l) || is_decimal_operand(r) => decimal_binary(op, l, r),
         // Metatype identity: `Int.self == type(of: x)`.
         (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
             "==" => Ok(SwiftValue::Bool(a == b)),
@@ -63,6 +85,11 @@ pub fn unary(op: &str, v: &SwiftValue) -> Result<SwiftValue, String> {
             }
         }
         ("-", SwiftValue::Double(a)) => Ok(SwiftValue::Double(-a)),
+        ("-", SwiftValue::Struct(_)) if is_decimal_operand(v) => {
+            let dec = crate::decimal::from_value(v).expect("decimal operand");
+            Ok(crate::decimal::to_value(dec.negated()))
+        }
+        ("+", SwiftValue::Struct(_)) if is_decimal_operand(v) => Ok(v.clone()),
         ("+", SwiftValue::Int(_)) | ("+", SwiftValue::Double(_)) => Ok(v.clone()),
         ("!", SwiftValue::Bool(b)) => Ok(SwiftValue::Bool(!b)),
         ("~", SwiftValue::Int(a)) => Ok(SwiftValue::Int(IntValue::wrapped(a.width, !a.raw))),
@@ -222,6 +249,239 @@ fn index_path_binary(
     Ok(SwiftValue::Bool(res))
 }
 
+fn date_seconds(o: &crate::value::StructObj) -> Result<f64, String> {
+    match o.get("_timeIntervalSinceReferenceDate") {
+        Some(SwiftValue::Double(seconds)) => Ok(*seconds),
+        Some(SwiftValue::Int(seconds)) => Ok(seconds.raw as f64),
+        _ => Err("malformed Date value".into()),
+    }
+}
+
+fn date_value(seconds: f64) -> SwiftValue {
+    SwiftValue::Struct(std::rc::Rc::new(crate::value::StructObj {
+        type_name: "Date".into(),
+        fields: vec![(
+            "_timeIntervalSinceReferenceDate".into(),
+            SwiftValue::Double(seconds),
+        )],
+    }))
+}
+
+fn date_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let lhs = date_seconds(a)?;
+    let rhs = date_seconds(b)?;
+    if let Some(res) = compare_op_f(op, lhs, rhs) {
+        return Ok(SwiftValue::Bool(res));
+    }
+    match op {
+        "-" => Ok(SwiftValue::Double(lhs - rhs)),
+        _ => Err(format!("operator `{op}` cannot apply to Date")),
+    }
+}
+
+fn date_time_interval_binary(
+    op: &str,
+    date: &std::rc::Rc<crate::value::StructObj>,
+    seconds: f64,
+) -> Result<SwiftValue, String> {
+    let base = date_seconds(date)?;
+    match op {
+        "+" => Ok(date_value(base + seconds)),
+        "-" => Ok(date_value(base - seconds)),
+        _ => Err(format!(
+            "operator `{op}` cannot apply to Date and TimeInterval"
+        )),
+    }
+}
+
+const DATE_COMPONENT_FIELDS: &[&str] = &[
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "nanosecond",
+    "weekday",
+    "weekdayOrdinal",
+    "quarter",
+    "weekOfMonth",
+    "weekOfYear",
+    "yearForWeekOfYear",
+];
+
+fn date_components_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let equal = DATE_COMPONENT_FIELDS.iter().all(|field| {
+        let lhs = a.get(field).cloned().unwrap_or(SwiftValue::Nil);
+        let rhs = b.get(field).cloned().unwrap_or(SwiftValue::Nil);
+        component_equal(&lhs, &rhs)
+    });
+    match op {
+        "==" => Ok(SwiftValue::Bool(equal)),
+        "!=" => Ok(SwiftValue::Bool(!equal)),
+        _ => Err(format!("operator `{op}` cannot apply to DateComponents")),
+    }
+}
+
+fn component_equal(lhs: &SwiftValue, rhs: &SwiftValue) -> bool {
+    match (lhs, rhs) {
+        (SwiftValue::Nil, SwiftValue::Nil) => true,
+        (SwiftValue::Int(a), SwiftValue::Int(b)) => a.raw == b.raw,
+        _ => false,
+    }
+}
+
+/// Whether a value is a `Decimal` struct (the trigger for decimal dispatch).
+fn is_decimal_operand(value: &SwiftValue) -> bool {
+    crate::decimal::from_value(value).is_some()
+}
+
+fn is_measurement(value: &SwiftValue) -> bool {
+    matches!(value, SwiftValue::Struct(o) if o.type_name == "Measurement")
+}
+
+/// `(value, coefficient, constant, unit_type_name)` for a measurement.
+fn measurement_parts(value: &SwiftValue) -> Option<(f64, f64, f64, String)> {
+    let SwiftValue::Struct(m) = value else {
+        return None;
+    };
+    if m.type_name != "Measurement" {
+        return None;
+    }
+    let v = number_f64(m.get("value")?)?;
+    let SwiftValue::Struct(unit) = m.get("unit")? else {
+        return None;
+    };
+    let coeff = number_f64(unit.get("_coefficient")?)?;
+    let constant = number_f64(unit.get("_constant")?)?;
+    Some((v, coeff, constant, unit.type_name.to_string()))
+}
+
+fn number_f64(value: &SwiftValue) -> Option<f64> {
+    match value {
+        SwiftValue::Double(d) => Some(*d),
+        SwiftValue::Int(i) => Some(i.raw as f64),
+        _ => None,
+    }
+}
+
+/// Build a `Measurement` re-using `template`'s unit but with a new value.
+fn measurement_with_value(template: &SwiftValue, new_value: f64) -> SwiftValue {
+    let SwiftValue::Struct(m) = template else {
+        unreachable!("measurement_with_value on non-measurement");
+    };
+    let unit = m.get("unit").cloned().unwrap_or(SwiftValue::Nil);
+    SwiftValue::Struct(std::rc::Rc::new(crate::value::StructObj {
+        type_name: "Measurement".into(),
+        fields: vec![
+            ("value".into(), SwiftValue::Double(new_value)),
+            ("unit".into(), unit),
+        ],
+    }))
+}
+
+fn measurement_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, String> {
+    // Scalar scaling: `m * 2`, `2 * m`, `m / 2`.
+    match (measurement_parts(l), measurement_parts(r)) {
+        (Some(_), None) => {
+            if let Some(scalar) = number_f64(r) {
+                let (v, ..) = measurement_parts(l).unwrap();
+                return match op {
+                    "*" => Ok(measurement_with_value(l, v * scalar)),
+                    "/" => Ok(measurement_with_value(l, v / scalar)),
+                    _ => Err(format!(
+                        "operator `{op}` cannot apply to Measurement and scalar"
+                    )),
+                };
+            }
+            Err(format!(
+                "operator `{op}` cannot apply to Measurement and {}",
+                r.type_name()
+            ))
+        }
+        (None, Some(_)) => {
+            if let Some(scalar) = number_f64(l) {
+                let (v, ..) = measurement_parts(r).unwrap();
+                return match op {
+                    "*" => Ok(measurement_with_value(r, scalar * v)),
+                    _ => Err(format!(
+                        "operator `{op}` cannot apply to scalar and Measurement"
+                    )),
+                };
+            }
+            Err(format!(
+                "operator `{op}` cannot apply to {} and Measurement",
+                l.type_name()
+            ))
+        }
+        (Some((lv, lc, lk, lt)), Some((rv, rc, rk, rt))) => {
+            if lt != rt {
+                return Err(format!(
+                    "operator `{op}` cannot apply to {lt} and {rt} measurements"
+                ));
+            }
+            let l_base = lv * lc + lk;
+            let r_base = rv * rc + rk;
+            // Convert the rhs into the lhs unit, then combine *displayed* values
+            // (correct for affine units like °C/°F, where adding base values is
+            // meaningless): `r_in_l = (r_base - lk) / lc`.
+            let r_in_l = (r_base - lk) / lc;
+            match op {
+                "+" => Ok(measurement_with_value(l, lv + r_in_l)),
+                "-" => Ok(measurement_with_value(l, lv - r_in_l)),
+                "==" => Ok(SwiftValue::Bool(l_base == r_base)),
+                "!=" => Ok(SwiftValue::Bool(l_base != r_base)),
+                "<" => Ok(SwiftValue::Bool(l_base < r_base)),
+                "<=" => Ok(SwiftValue::Bool(l_base <= r_base)),
+                ">" => Ok(SwiftValue::Bool(l_base > r_base)),
+                ">=" => Ok(SwiftValue::Bool(l_base >= r_base)),
+                _ => Err(format!("operator `{op}` cannot apply to measurements")),
+            }
+        }
+        (None, None) => unreachable!("measurement_binary requires a measurement operand"),
+    }
+}
+
+fn decimal_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, String> {
+    use crate::decimal;
+    let a = decimal::coerce(l).ok_or_else(|| {
+        format!(
+            "operator `{op}` cannot apply to Decimal and {}",
+            r.type_name()
+        )
+    })?;
+    let b = decimal::coerce(r).ok_or_else(|| {
+        format!(
+            "operator `{op}` cannot apply to Decimal and {}",
+            l.type_name()
+        )
+    })?;
+    let ordering = decimal::compare(a, b);
+    let either_nan = a.nan || b.nan;
+    let result = match op {
+        "+" => decimal::to_value(decimal::add(a, b)),
+        "-" => decimal::to_value(decimal::sub(a, b)),
+        "*" => decimal::to_value(decimal::mul(a, b)),
+        "/" => decimal::to_value(decimal::div(a, b)),
+        "==" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Equal),
+        "!=" => SwiftValue::Bool(either_nan || ordering != std::cmp::Ordering::Equal),
+        "<" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Less),
+        "<=" => SwiftValue::Bool(!either_nan && ordering != std::cmp::Ordering::Greater),
+        ">" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Greater),
+        ">=" => SwiftValue::Bool(!either_nan && ordering != std::cmp::Ordering::Less),
+        _ => return Err(format!("operator `{op}` cannot apply to Decimal")),
+    };
+    Ok(result)
+}
+
 fn array_binary(
     op: &str,
     a: &std::rc::Rc<Vec<SwiftValue>>,
@@ -374,6 +634,34 @@ mod tests {
             binary("<", &path(&[1]), &path(&[1, 0])).unwrap(),
             SwiftValue::Bool(true)
         );
+    }
+
+    #[test]
+    fn date_arithmetic_and_ordering_use_reference_seconds() {
+        use crate::value::StructObj;
+        use std::rc::Rc;
+        let date = |seconds: f64| {
+            SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "Date".into(),
+                fields: vec![(
+                    "_timeIntervalSinceReferenceDate".into(),
+                    SwiftValue::Double(seconds),
+                )],
+            }))
+        };
+        let early = date(10.0);
+        let late = date(25.0);
+
+        assert_eq!(binary("<", &early, &late).unwrap(), SwiftValue::Bool(true));
+        assert_eq!(
+            binary("-", &late, &early).unwrap(),
+            SwiftValue::Double(15.0)
+        );
+        assert_eq!(
+            binary("+", &early, &SwiftValue::Double(5.0)).unwrap(),
+            date(15.0)
+        );
+        assert_eq!(binary("-", &late, &int(5)).unwrap(), date(20.0));
     }
 
     #[test]

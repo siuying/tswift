@@ -1069,6 +1069,11 @@ impl<'w> Interpreter<'w> {
             if let Some(v) = self.resolve_implicit_static(node, &member) {
                 return Ok(v);
             }
+            // Builtin-enum shorthand (`.year`, `.gregorian`) resolves last so it
+            // never shadows a SwiftUI implicit static like `.plain`.
+            if let Some(tn) = self.resolve_builtin_member_enum(&member) {
+                return Ok(self.make_enum_case(&tn, &member, Vec::new())?.unwrap());
+            }
             return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
         };
 
@@ -1104,6 +1109,13 @@ impl<'w> Interpreter<'w> {
                     if member == "self" && self.is_type_name(&type_name) {
                         return Ok(SwiftValue::Metatype(type_name));
                     }
+                    if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
+                        if let Some(func) =
+                            self.static_methods.get(&(recv, member.clone())).copied()
+                        {
+                            return func(self, Vec::new()).map_err(Self::std_error_to_signal);
+                        }
+                    }
                     if let Some(w) = IntWidth::from_type_name(&type_name) {
                         return match member.as_str() {
                             "max" => Ok(SwiftValue::Int(IntValue::new(w.max(), w))),
@@ -1133,13 +1145,11 @@ impl<'w> Interpreter<'w> {
                             _ => {}
                         }
                     }
-                    // Static property of a struct or class type: `Type.prop`.
-                    if self.structs.contains_key(&type_name)
-                        || self.classes.contains_key(&type_name)
-                    {
-                        if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
-                            return Ok(v.clone());
-                        }
+                    // Static property of a struct or class type, or a
+                    // natively-registered static value (`UnitLength.meters`):
+                    // `Type.prop`.
+                    if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
+                        return Ok(v.clone());
                     }
                     // Static computed property: `static var prop { … }`.
                     if let Some(v) = self.read_static_computed(&type_name, &member)? {
@@ -1203,6 +1213,13 @@ impl<'w> Interpreter<'w> {
                 return self.read_struct_member(&value, &member);
             }
             if let Some(kind) = BuiltinReceiver::of(&value) {
+                if let Some(func) = self
+                    .contextual_properties
+                    .get(&(kind, member.clone()))
+                    .copied()
+                {
+                    return func(self, value).map_err(Self::std_error_to_signal);
+                }
                 if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
                     return func(value).map_err(Self::std_error_to_signal);
                 }
@@ -1212,6 +1229,13 @@ impl<'w> Interpreter<'w> {
         // Standard-library computed-property intrinsics (`Double.isNaN`,
         // `Int.magnitude`, …) on builtin receivers.
         if let Some(kind) = BuiltinReceiver::of(&value) {
+            if let Some(func) = self
+                .contextual_properties
+                .get(&(kind, member.clone()))
+                .copied()
+            {
+                return func(self, value).map_err(Self::std_error_to_signal);
+            }
             if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
                 return func(value).map_err(Self::std_error_to_signal);
             }
