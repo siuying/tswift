@@ -391,16 +391,28 @@ impl From<&CallArg> for Arg {
     }
 }
 
+/// A registered free-function intrinsic and its optional declared parameter
+/// signature. Pairing the two keeps registration atomic: the function and the
+/// contextual-type hints it implies can never drift apart.
+struct FreeFnEntry {
+    f: FreeFn,
+    params: Option<Vec<Param>>,
+}
+
+/// A registered generic struct-method intrinsic (SwiftUI modifier seam) and its
+/// optional declared parameter signature.
+struct StructMethodEntry {
+    f: StructMethodFn,
+    params: Option<Vec<Param>>,
+}
+
 /// The tree-walking interpreter.
 pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
     natives: HashMap<String, NativeFn>,
-    /// Free-function intrinsics served through the [`StdContext`] seam.
-    free_fns: HashMap<String, FreeFn>,
-    /// Optional declared parameter signatures for builtin free functions,
-    /// consulted before argument evaluation to push contextual type hints so a
-    /// leading-dot member argument resolves against the parameter type.
-    free_fn_params: HashMap<String, Vec<Param>>,
+    /// Free-function intrinsics served through the [`StdContext`] seam, each
+    /// paired with its optional declared parameter signature.
+    free_fns: HashMap<String, FreeFnEntry>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
@@ -416,11 +428,8 @@ pub struct Interpreter<'w> {
     algorithms: HashMap<String, AlgoFn>,
     /// Generic method intrinsics dispatched on any struct receiver by name, a
     /// fallback after user methods and builtin receivers (SwiftUI modifiers).
-    struct_methods: HashMap<String, StructMethodFn>,
-    /// Optional declared parameter signatures for builtin struct methods (the
-    /// SwiftUI modifier seam), used to push contextual type hints when
-    /// evaluating modifier arguments (`.frame(alignment: .center)`).
-    struct_method_params: HashMap<String, Vec<Param>>,
+    /// Each is paired with its optional declared parameter signature.
+    struct_methods: HashMap<String, StructMethodEntry>,
     env: Env,
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
@@ -523,7 +532,6 @@ impl<'w> Interpreter<'w> {
             out,
             natives: HashMap::new(),
             free_fns: HashMap::new(),
-            free_fn_params: HashMap::new(),
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
@@ -531,7 +539,6 @@ impl<'w> Interpreter<'w> {
             static_methods: HashMap::new(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
-            struct_method_params: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             builtin_ext_methods: HashMap::new(),
@@ -573,7 +580,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
-        self.free_fns.insert(name.to_string(), f);
+        self.free_fns
+            .insert(name.to_string(), FreeFnEntry { f, params: None });
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -581,10 +589,13 @@ impl<'w> Interpreter<'w> {
     /// each argument is evaluated, so a leading-dot member argument resolves
     /// against the parameter type (`VStack(alignment: .leading)`).
     pub fn register_free_fn_typed(&mut self, name: &str, f: FreeFn, params: Vec<BuiltinParam>) {
-        self.free_fns.insert(name.to_string(), f);
-        self.free_fn_params.insert(
+        let params = params.into_iter().map(BuiltinParam::into_param).collect();
+        self.free_fns.insert(
             name.to_string(),
-            params.into_iter().map(BuiltinParam::into_param).collect(),
+            FreeFnEntry {
+                f,
+                params: Some(params),
+            },
         );
     }
 
@@ -681,7 +692,8 @@ impl<'w> Interpreter<'w> {
     /// methods and builtin-receiver intrinsics fail to match, so a user method
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
-        self.struct_methods.insert(name.to_string(), f);
+        self.struct_methods
+            .insert(name.to_string(), StructMethodEntry { f, params: None });
     }
 
     /// Register a generic struct-method intrinsic together with a declared
@@ -695,10 +707,13 @@ impl<'w> Interpreter<'w> {
         f: StructMethodFn,
         params: Vec<BuiltinParam>,
     ) {
-        self.struct_methods.insert(name.to_string(), f);
-        self.struct_method_params.insert(
+        let params = params.into_iter().map(BuiltinParam::into_param).collect();
+        self.struct_methods.insert(
             name.to_string(),
-            params.into_iter().map(BuiltinParam::into_param).collect(),
+            StructMethodEntry {
+                f,
+                params: Some(params),
+            },
         );
     }
 

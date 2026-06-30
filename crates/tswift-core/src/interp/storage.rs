@@ -1022,6 +1022,10 @@ impl<'w> Interpreter<'w> {
     /// `.nan`, …) against the node's inferred or call-site contextual type when
     /// that type is a floating type (`Double`/`Float`/`CGFloat`). Returns `None`
     /// if the contextual type is not floating or the member is not a constant.
+    /// Resolve a leading-dot floating-point constant (`.infinity`, `.pi`, ...)
+    /// against a contextual `Double`/`Float`/`CGFloat` parameter type. The set
+    /// of constants is owned by [`double_type_constant`], the single source the
+    /// explicit `Double.pi` path in [`Self::eval_member`] also consults.
     fn resolve_implicit_float_constant(
         &self,
         node: &Node<'static>,

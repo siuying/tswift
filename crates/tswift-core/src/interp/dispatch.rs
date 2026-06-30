@@ -32,22 +32,6 @@ impl<'w> Interpreter<'w> {
     /// Dispatch a method call on a builtin receiver through the intrinsic
     /// registry, if one is registered. Returns `None` when no intrinsic matches
     /// so the caller can fall through to the existing ad-hoc paths.
-    fn dispatch_intrinsic(
-        &mut self,
-        recv_value: SwiftValue,
-        method: &str,
-        args: Vec<SwiftValue>,
-        base_place: Option<Place>,
-    ) -> Option<Eval> {
-        let kind = BuiltinReceiver::of(&recv_value)?;
-        let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
-        let outcome = (entry.func)(self, recv_value, args);
-        Some(match outcome {
-            Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, base_place),
-            Err(err) => Err(Self::std_error_to_signal(err)),
-        })
-    }
-
     /// Dispatch a label-aware method call. `Ok(None)` from the stdlib handler
     /// means this label shape is not one of its overloads, so normal positional
     /// dispatch should continue.
@@ -466,7 +450,10 @@ impl<'w> Interpreter<'w> {
                     if shadowed {
                         None
                     } else {
-                        self.free_fn_params.get(&name).map(|p| clone_params(p))
+                        self.free_fns
+                            .get(&name)
+                            .and_then(|e| e.params.as_ref())
+                            .map(|p| clone_params(p))
                     }
                 }
             })
@@ -609,7 +596,7 @@ impl<'w> Interpreter<'w> {
                 }
             }
             // Free-function intrinsic served through the StdContext seam.
-            if let Some(free) = self.free_fns.get(&name).copied() {
+            if let Some(free) = self.free_fns.get(&name).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
@@ -978,7 +965,7 @@ impl<'w> Interpreter<'w> {
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if self.intrinsics.contains_key(&(kind, method.clone())) {
+            if let Some(entry) = self.intrinsics.get(&(kind, method.clone())).copied() {
                 let args = match evaluated_args.take() {
                     Some(args) => args,
                     None => self.eval_args(arg_nodes)?,
@@ -1004,10 +991,10 @@ impl<'w> Interpreter<'w> {
                 }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
-                if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
-                    return result;
-                }
-                unreachable!("intrinsic presence checked above");
+                return match (entry.func)(self, base_value, plain) {
+                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                    Err(err) => Err(Self::std_error_to_signal(err)),
+                };
             }
         }
 
@@ -1053,8 +1040,9 @@ impl<'w> Interpreter<'w> {
             .as_ref()
             .and_then(|tn| self.user_method_params(tn, &method))
             .or_else(|| {
-                self.struct_method_params
+                self.struct_methods
                     .get(&method)
+                    .and_then(|e| e.params.as_ref())
                     .map(|p| clone_params(p))
             });
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
@@ -1068,7 +1056,7 @@ impl<'w> Interpreter<'w> {
         // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
         // any struct receiver by name, after user methods and builtin receivers.
         if matches!(base_value, SwiftValue::Struct(_)) {
-            if let Some(func) = self.struct_methods.get(&method).copied() {
+            if let Some(func) = self.struct_methods.get(&method).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
             }
