@@ -98,6 +98,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Data, "first", data_first);
     interp.register_property(BuiltinReceiver::Data, "last", data_last);
     interp.register_property(BuiltinReceiver::Data, "description", data_description);
+    interp.register_property(BuiltinReceiver::Data, "debugDescription", data_description);
+    interp.register_property(BuiltinReceiver::Data, "hashValue", data_hash_value);
     for (name, mutating, func) in [
         ("append", true, data_append as IntrinsicFn),
         ("base64EncodedString", false, data_base64_encoded_string),
@@ -110,6 +112,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
     interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
+    interp.register_property(BuiltinReceiver::UUID, "debugDescription", uuid_description);
+    interp.register_property(BuiltinReceiver::UUID, "hashValue", uuid_hash_value);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -1033,6 +1037,30 @@ fn uuid_description(recv: SwiftValue) -> StdResult {
     uuid_string(recv)
 }
 
+/// FNV-1a 64-bit hash, narrowed to the platform `Int`. Used to give builtin
+/// value types a `hashValue` consistent with their `==`.
+pub(crate) fn fnv1a_hash(bytes: &[u8]) -> i128 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash as i64) as i128
+}
+
+fn uuid_hash_value(recv: SwiftValue) -> StdResult {
+    // Equal UUIDs share the canonical string, so hashing it matches `==`.
+    let SwiftValue::Str(s) = uuid_string(recv)? else {
+        return Err(type_error("malformed UUID value"));
+    };
+    Ok(SwiftValue::int(fnv1a_hash(s.as_bytes())))
+}
+
+fn data_hash_value(recv: SwiftValue) -> StdResult {
+    // `Data ==` compares the byte sequence, so hash the bytes.
+    Ok(SwiftValue::int(fnv1a_hash(&data_bytes(&recv)?)))
+}
+
 fn normalize_uuid(raw: &str) -> Option<String> {
     let upper = raw.to_ascii_uppercase();
     let bytes = upper.as_bytes();
@@ -1704,6 +1732,40 @@ mod tests {
             SwiftValue::Enum(result) => assert_eq!(result.case, "orderedAscending"),
             other => panic!("expected ComparisonResult, got {}", other.type_name()),
         }
+    }
+
+    #[test]
+    fn equal_data_and_uuid_values_hash_equally() {
+        let a = data_value(vec![1, 2, 3]);
+        let b = data_value(vec![1, 2, 3]);
+        assert_eq!(data_hash_value(a).unwrap(), data_hash_value(b).unwrap());
+        let c = data_value(vec![1, 2, 4]);
+        assert_ne!(
+            data_hash_value(data_value(vec![1, 2, 3])).unwrap(),
+            data_hash_value(c).unwrap()
+        );
+        // Case-insensitive UUID strings normalize to the same value and hash.
+        let mut ctx = MockContext::new(0.0);
+        let lower = uuid_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("uuidString".into()),
+                value: SwiftValue::Str("e2b8be3f-4c7d-41f3-8d5f-b8d43c343111".into()),
+            }],
+        )
+        .unwrap();
+        let upper = uuid_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("uuidString".into()),
+                value: SwiftValue::Str("E2B8BE3F-4C7D-41F3-8D5F-B8D43C343111".into()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            uuid_hash_value(lower).unwrap(),
+            uuid_hash_value(upper).unwrap()
+        );
     }
 
     #[test]

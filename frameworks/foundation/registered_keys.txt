@@ -35,8 +35,10 @@ Calendar.weekdaySymbols
 Data.append
 Data.base64EncodedString
 Data.count
+Data.debugDescription
 Data.description
 Data.first
+Data.hashValue
 Data.init
 Data.isEmpty
 Data.last
@@ -140,7 +142,9 @@ IndexSet.union
 IndexSet.update
 Measurement.convert
 Measurement.converted
+Measurement.debugDescription
 Measurement.description
+Measurement.hashValue
 Measurement.init
 Measurement.unit
 Measurement.value
@@ -196,6 +200,8 @@ URLQueryItem.description
 URLQueryItem.init
 URLQueryItem.name
 URLQueryItem.value
+UUID.debugDescription
 UUID.description
+UUID.hashValue
 UUID.init
 UUID.uuidString
