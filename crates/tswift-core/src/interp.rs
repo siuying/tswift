@@ -1466,6 +1466,23 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Whether `name` is free to resolve to a builtin function: no local value
+    /// binding shadows it. A user binding of the same name always wins, so this
+    /// guards every hardcoded builtin (`swap`, `type(of:)`, collection
+    /// constructors, …) against being mistaken for a user value.
+    fn is_unshadowed(&self, name: &str) -> bool {
+        self.env.get(name).is_none()
+    }
+
+    /// Whether `name` is a user-declared nominal type (struct, class, or enum).
+    /// Such a name dispatches to its own initializer, so it must not inherit a
+    /// builtin of the same spelling.
+    fn is_user_nominal_type(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+            || self.classes.contains_key(name)
+            || self.enums.contains_key(name)
+    }
+
     /// Whether `name` spells a known type — a user struct/class/enum/protocol
     /// or a builtin value type — so `Type.self` resolves to a metatype.
     fn is_type_name(&self, name: &str) -> bool {

@@ -444,10 +444,7 @@ impl<'w> Interpreter<'w> {
                 // dispatches to its own initializer, so it must not inherit the
                 // builtin `VStack`'s parameter hints).
                 None => {
-                    let shadowed = self.structs.contains_key(&name)
-                        || self.classes.contains_key(&name)
-                        || self.enums.contains_key(&name);
-                    if shadowed {
+                    if self.is_user_nominal_type(&name) {
                         None
                     } else {
                         self.free_fns
@@ -470,7 +467,7 @@ impl<'w> Interpreter<'w> {
             let name = self.resolve_self_keyword(name);
 
             // `type(of: x)` — the dynamic type of `x` as a metatype value.
-            if name == "type" && self.env.get("type").is_none() {
+            if name == "type" && self.is_unshadowed("type") {
                 if let Some(arg) = args
                     .iter()
                     .find(|a| a.label.as_deref() == Some("of"))
@@ -538,7 +535,7 @@ impl<'w> Interpreter<'w> {
             }
             // `swap(&a, &b)` — exchange two inout locations. Needs the caller
             // write-back `Place`s, so it cannot ride the value-only free-fn seam.
-            if name == "swap" && self.env.get("swap").is_none() && args.len() == 2 {
+            if name == "swap" && self.is_unshadowed("swap") && args.len() == 2 {
                 if let (Some(pa), Some(pb)) = (args[0].place.clone(), args[1].place.clone()) {
                     let va = args[0].value.clone();
                     let vb = args[1].value.clone();
@@ -551,7 +548,7 @@ impl<'w> Interpreter<'w> {
             // not shared. The env binding plus this evaluated clone account for
             // two strong references, so a unique object reads as exactly two.
             if name == "isKnownUniquelyReferenced"
-                && self.env.get("isKnownUniquelyReferenced").is_none()
+                && self.is_unshadowed("isKnownUniquelyReferenced")
                 && args.len() == 1
             {
                 return Ok(match &args[0].value {
@@ -563,7 +560,7 @@ impl<'w> Interpreter<'w> {
             // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
             // `Dictionary<K,V>()`. The parser erases the generic arguments, so
             // the callee is the bare type name with no arguments.
-            if args.is_empty() && self.env.get(&name).is_none() {
+            if args.is_empty() && self.is_unshadowed(&name) {
                 match name.as_str() {
                     "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
                     "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
@@ -574,7 +571,7 @@ impl<'w> Interpreter<'w> {
 
             // `Array(repeating:count:)` — build an array of repeated elements.
             if name == "Array"
-                && self.env.get("Array").is_none()
+                && self.is_unshadowed("Array")
                 && args.iter().any(|a| a.label.as_deref() == Some("repeating"))
             {
                 if let Some(v) = self.array_repeating_count(&args)? {
@@ -583,7 +580,7 @@ impl<'w> Interpreter<'w> {
             }
 
             // `Dictionary(uniqueKeysWithValues:)` and `Dictionary(grouping:by:)`.
-            if name == "Dictionary" && self.env.get("Dictionary").is_none() {
+            if name == "Dictionary" && self.is_unshadowed("Dictionary") {
                 if let Some(v) = self.build_dictionary(&args)? {
                     return Ok(v);
                 }
