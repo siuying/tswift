@@ -75,6 +75,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Calendar, "amSymbol", am_symbol);
     interp.register_property(BuiltinReceiver::Calendar, "pmSymbol", pm_symbol);
     interp.register_property(BuiltinReceiver::Calendar, "firstWeekday", first_weekday);
+    interp.register_property(BuiltinReceiver::Calendar, "hashValue", calendar_hash_value);
     interp.register_property(
         BuiltinReceiver::Calendar,
         "minimumDaysInFirstWeek",
@@ -353,6 +354,12 @@ fn pm_symbol(recv: SwiftValue) -> StdResult {
 fn first_weekday(recv: SwiftValue) -> StdResult {
     calendar_identifier_value(&recv)?;
     Ok(SwiftValue::int(1))
+}
+fn calendar_hash_value(recv: SwiftValue) -> StdResult {
+    // The runtime models a single calendar, so equal (Gregorian) calendars all
+    // hash to the same value derived from their identifier.
+    let id = calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::int(crate::fnv1a_hash(id.as_bytes())))
 }
 fn minimum_days_in_first_week(recv: SwiftValue) -> StdResult {
     calendar_identifier_value(&recv)?;
@@ -789,6 +796,14 @@ mod tests {
         assert_eq!(
             as_strings(eras_long(gregorian()).unwrap()),
             ["Before Christ", "Anno Domini"]
+        );
+    }
+
+    #[test]
+    fn calendar_hash_is_stable_for_gregorian() {
+        assert_eq!(
+            calendar_hash_value(gregorian()).unwrap(),
+            calendar_hash_value(gregorian()).unwrap()
         );
     }
 

@@ -73,3 +73,13 @@ print(q.update(with: 9) ?? -1)
 print(IndexPath(indexes: [2, 4]).hashValue == IndexPath(indexes: [2, 4]).hashValue)
 print(IndexPath(indexes: [2, 4]).hashValue == IndexPath(indexes: [2, 5]).hashValue)
 print(IndexSet(integer: 9).hashValue == IndexSet(integer: 9).hashValue)
+
+// IndexPath is Comparable.
+let lo = IndexPath(indexes: [1, 2])
+let hi = IndexPath(indexes: [1, 3])
+print(lo < hi)
+print(lo <= hi)
+print(lo > hi)
+print(lo >= hi)
+print(lo == lo)
+print(lo != hi)

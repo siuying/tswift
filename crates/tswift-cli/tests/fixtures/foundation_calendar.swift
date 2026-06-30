@@ -67,3 +67,8 @@ let sunday = cal.date(from: DateComponents(year: 2024, month: 6, day: 30))!
 print(cal.isDateInWeekend(saturday))
 print(cal.isDateInWeekend(sunday))
 print(cal.isDateInWeekend(made))
+
+// Equatable / Hashable (single Gregorian calendar).
+print(cal == Calendar.current)
+print(cal != Calendar.current)
+print(cal.hashValue == Calendar.current.hashValue)

@@ -5,6 +5,7 @@ Calendar.date
 Calendar.dateComponents
 Calendar.eraSymbols
 Calendar.firstWeekday
+Calendar.hashValue
 Calendar.identifier
 Calendar.init
 Calendar.isDate
