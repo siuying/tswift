@@ -4,8 +4,8 @@ use tswift_frontend::{Node, NodeKind};
 
 use super::{
     autoclosure_flags, clone_params, literal_syntax_kind, materialize_sequence,
-    max_shorthand_in_interpolations, metatype_name, param_type_hints, select_labeled_overload,
-    trap, CallArg, ClosureDef, Eval, EvalError, Interpreter, Param, Place, Signal, MAX_CALL_DEPTH,
+    max_shorthand_in_interpolations, param_type_hints, select_labeled_overload, trap, CallArg,
+    ClosureDef, Eval, EvalError, Interpreter, Param, Place, Signal, MAX_CALL_DEPTH,
 };
 use crate::env::Env;
 use crate::ops;
@@ -32,22 +32,6 @@ impl<'w> Interpreter<'w> {
     /// Dispatch a method call on a builtin receiver through the intrinsic
     /// registry, if one is registered. Returns `None` when no intrinsic matches
     /// so the caller can fall through to the existing ad-hoc paths.
-    fn dispatch_intrinsic(
-        &mut self,
-        recv_value: SwiftValue,
-        method: &str,
-        args: Vec<SwiftValue>,
-        base_place: Option<Place>,
-    ) -> Option<Eval> {
-        let kind = BuiltinReceiver::of(&recv_value)?;
-        let entry = *self.intrinsics.get(&(kind, method.to_string()))?;
-        let outcome = (entry.func)(self, recv_value, args);
-        Some(match outcome {
-            Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, base_place),
-            Err(err) => Err(Self::std_error_to_signal(err)),
-        })
-    }
-
     /// Dispatch a label-aware method call. `Ok(None)` from the stdlib handler
     /// means this label shape is not one of its overloads, so normal positional
     /// dispatch should continue.
@@ -460,13 +444,13 @@ impl<'w> Interpreter<'w> {
                 // dispatches to its own initializer, so it must not inherit the
                 // builtin `VStack`'s parameter hints).
                 None => {
-                    let shadowed = self.structs.contains_key(&name)
-                        || self.classes.contains_key(&name)
-                        || self.enums.contains_key(&name);
-                    if shadowed {
+                    if self.is_user_nominal_type(&name) {
                         None
                     } else {
-                        self.free_fn_params.get(&name).map(|p| clone_params(p))
+                        self.free_fns
+                            .get(&name)
+                            .and_then(|e| e.params.as_ref())
+                            .map(|p| clone_params(p))
                     }
                 }
             })
@@ -483,7 +467,7 @@ impl<'w> Interpreter<'w> {
             let name = self.resolve_self_keyword(name);
 
             // `type(of: x)` — the dynamic type of `x` as a metatype value.
-            if name == "type" && self.env.get("type").is_none() {
+            if name == "type" && self.is_unshadowed("type") {
                 if let Some(arg) = args
                     .iter()
                     .find(|a| a.label.as_deref() == Some("of"))
@@ -551,7 +535,7 @@ impl<'w> Interpreter<'w> {
             }
             // `swap(&a, &b)` — exchange two inout locations. Needs the caller
             // write-back `Place`s, so it cannot ride the value-only free-fn seam.
-            if name == "swap" && self.env.get("swap").is_none() && args.len() == 2 {
+            if name == "swap" && self.is_unshadowed("swap") && args.len() == 2 {
                 if let (Some(pa), Some(pb)) = (args[0].place.clone(), args[1].place.clone()) {
                     let va = args[0].value.clone();
                     let vb = args[1].value.clone();
@@ -564,7 +548,7 @@ impl<'w> Interpreter<'w> {
             // not shared. The env binding plus this evaluated clone account for
             // two strong references, so a unique object reads as exactly two.
             if name == "isKnownUniquelyReferenced"
-                && self.env.get("isKnownUniquelyReferenced").is_none()
+                && self.is_unshadowed("isKnownUniquelyReferenced")
                 && args.len() == 1
             {
                 return Ok(match &args[0].value {
@@ -576,7 +560,7 @@ impl<'w> Interpreter<'w> {
             // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
             // `Dictionary<K,V>()`. The parser erases the generic arguments, so
             // the callee is the bare type name with no arguments.
-            if args.is_empty() && self.env.get(&name).is_none() {
+            if args.is_empty() && self.is_unshadowed(&name) {
                 match name.as_str() {
                     "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
                     "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
@@ -587,7 +571,7 @@ impl<'w> Interpreter<'w> {
 
             // `Array(repeating:count:)` — build an array of repeated elements.
             if name == "Array"
-                && self.env.get("Array").is_none()
+                && self.is_unshadowed("Array")
                 && args.iter().any(|a| a.label.as_deref() == Some("repeating"))
             {
                 if let Some(v) = self.array_repeating_count(&args)? {
@@ -596,7 +580,7 @@ impl<'w> Interpreter<'w> {
             }
 
             // `Dictionary(uniqueKeysWithValues:)` and `Dictionary(grouping:by:)`.
-            if name == "Dictionary" && self.env.get("Dictionary").is_none() {
+            if name == "Dictionary" && self.is_unshadowed("Dictionary") {
                 if let Some(v) = self.build_dictionary(&args)? {
                     return Ok(v);
                 }
@@ -609,14 +593,8 @@ impl<'w> Interpreter<'w> {
                 }
             }
             // Free-function intrinsic served through the StdContext seam.
-            if let Some(free) = self.free_fns.get(&name).copied() {
-                let labeled: Vec<Arg> = args
-                    .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
-                    .collect();
+            if let Some(free) = self.free_fns.get(&name).map(|e| e.f) {
+                let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
             if let Some(native) = self.natives.get(&name).copied() {
@@ -809,20 +787,15 @@ impl<'w> Interpreter<'w> {
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
-                // `Self.method(...)` calls a static method of the enclosing type.
-                // The keyword is never a value binding, so it bypasses the env
-                // shadow check below.
-                let is_self_kw = tn == "Self";
-                let tn = self.resolve_self_keyword(tn);
-                // A generic placeholder (`T.zero()`) resolves to its bound type.
-                let tn = self.resolve_type_alias(&tn).unwrap_or(tn);
-                if is_self_kw || self.env.get(&tn).is_none() {
+                // `Self.method(...)` calls a static method of the enclosing type
+                // (the keyword is never a value binding); any other name is a
+                // type reference only when no local value shadows it.
+                if let Some(reference) = self.resolve_type_reference(&tn) {
+                    let tn = reference.name;
                     // Builtin static methods, e.g. `Bool.random()`. A user type
                     // shadowing a builtin name (`struct Bool { … }`) wins, so
                     // only fall back to the builtin when no user type matches.
-                    let user_defined = self.structs.contains_key(&tn)
-                        || self.enums.contains_key(&tn)
-                        || self.classes.contains_key(&tn);
+                    let user_defined = reference.user_defined;
                     if !user_defined {
                         if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
                             if let Some(func) =
@@ -831,10 +804,7 @@ impl<'w> Interpreter<'w> {
                                 let labeled: Vec<Arg> = self
                                     .eval_args(arg_nodes)?
                                     .into_iter()
-                                    .map(|a| Arg {
-                                        label: a.label,
-                                        value: a.value,
-                                    })
+                                    .map(Arg::from)
                                     .collect();
                                 return func(self, labeled).map_err(Self::std_error_to_signal);
                             }
@@ -844,10 +814,7 @@ impl<'w> Interpreter<'w> {
                     // through its enclosing type. Nested types are registered by
                     // their simple name, so resolve `method` against the type
                     // tables when `tn` is itself a user type.
-                    let tn_is_type = self.structs.contains_key(&tn)
-                        || self.classes.contains_key(&tn)
-                        || self.enums.contains_key(&tn);
-                    if tn_is_type {
+                    if user_defined {
                         if self.classes.contains_key(&method) {
                             let args = self.eval_args(arg_nodes)?;
                             return self.instantiate_class(&method, args);
@@ -889,42 +856,9 @@ impl<'w> Interpreter<'w> {
             return Ok(result);
         }
 
-        // `JSONEncoder().encode(value)` → a JSON `Data` (modeled as a String).
-        if let SwiftValue::Struct(o) = &base_value {
-            if o.type_name == "JSONEncoder" && method == "encode" {
-                let args = self.eval_args(arg_nodes)?;
-                let value = args
-                    .first()
-                    .map(|a| a.value.clone())
-                    .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
-                let json = self.json_encode(&value)?;
-                return Ok(SwiftValue::Str(crate::json::to_string(&json)));
-            }
-            // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
-            if o.type_name == "JSONDecoder" && method == "decode" {
-                let type_name = arg_nodes
-                    .first()
-                    .and_then(metatype_name)
-                    .ok_or_else(|| EvalError::Type("decode expects a metatype".into()))?;
-                let data = arg_nodes
-                    .get(1)
-                    .map(|n| self.eval(n))
-                    .transpose()?
-                    .ok_or_else(|| EvalError::Type("decode expects data".into()))?;
-                let text = match data {
-                    SwiftValue::Str(s) => s,
-                    other => {
-                        return Err(EvalError::Type(format!(
-                            "decode expects String/Data, got {}",
-                            other.type_name()
-                        ))
-                        .into())
-                    }
-                };
-                let json = crate::json::parse(&text)
-                    .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
-                return Ok(self.json_decode(&type_name, &json));
-            }
+        // `JSONEncoder().encode(...)` / `JSONDecoder().decode(...)` (Codable).
+        if let Some(v) = self.try_json_coder_method(&base_value, &method, arg_nodes)? {
+            return Ok(v);
         }
 
         // Class instance: dynamic dispatch from the runtime class.
@@ -973,13 +907,7 @@ impl<'w> Interpreter<'w> {
                 .contains_key(&(kind, method.clone()))
             {
                 let args = self.eval_args(arg_nodes)?;
-                let labeled: Vec<Arg> = args
-                    .iter()
-                    .map(|a| Arg {
-                        label: a.label.clone(),
-                        value: a.value.clone(),
-                    })
-                    .collect();
+                let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
                 let place = self.resolve_place(&base);
                 if let Some(result) =
                     self.dispatch_labeled_intrinsic(base_value.clone(), &method, labeled, place)
@@ -993,7 +921,7 @@ impl<'w> Interpreter<'w> {
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if self.intrinsics.contains_key(&(kind, method.clone())) {
+            if let Some(entry) = self.intrinsics.get(&(kind, method.clone())).copied() {
                 let args = match evaluated_args.take() {
                     Some(args) => args,
                     None => self.eval_args(arg_nodes)?,
@@ -1019,10 +947,10 @@ impl<'w> Interpreter<'w> {
                 }
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 let place = self.resolve_place(&base);
-                if let Some(result) = self.dispatch_intrinsic(base_value, &method, plain, place) {
-                    return result;
-                }
-                unreachable!("intrinsic presence checked above");
+                return match (entry.func)(self, base_value, plain) {
+                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                    Err(err) => Err(Self::std_error_to_signal(err)),
+                };
             }
         }
 
@@ -1041,10 +969,7 @@ impl<'w> Interpreter<'w> {
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
                     .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
+                    .map(Arg::from)
                     .collect();
                 return func(self, items, labeled).map_err(Self::std_error_to_signal);
             }
@@ -1071,8 +996,9 @@ impl<'w> Interpreter<'w> {
             .as_ref()
             .and_then(|tn| self.user_method_params(tn, &method))
             .or_else(|| {
-                self.struct_method_params
+                self.struct_methods
                     .get(&method)
+                    .and_then(|e| e.params.as_ref())
                     .map(|p| clone_params(p))
             });
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
@@ -1086,14 +1012,8 @@ impl<'w> Interpreter<'w> {
         // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
         // any struct receiver by name, after user methods and builtin receivers.
         if matches!(base_value, SwiftValue::Struct(_)) {
-            if let Some(func) = self.struct_methods.get(&method).copied() {
-                let labeled: Vec<Arg> = args
-                    .into_iter()
-                    .map(|a| Arg {
-                        label: a.label,
-                        value: a.value,
-                    })
-                    .collect();
+            if let Some(func) = self.struct_methods.get(&method).map(|e| e.f) {
+                let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
             }
         }

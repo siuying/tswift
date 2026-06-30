@@ -1022,6 +1022,10 @@ impl<'w> Interpreter<'w> {
     /// `.nan`, …) against the node's inferred or call-site contextual type when
     /// that type is a floating type (`Double`/`Float`/`CGFloat`). Returns `None`
     /// if the contextual type is not floating or the member is not a constant.
+    /// Resolve a leading-dot floating-point constant (`.infinity`, `.pi`, ...)
+    /// against a contextual `Double`/`Float`/`CGFloat` parameter type. The set
+    /// of constants is owned by [`double_type_constant`], the single source the
+    /// explicit `Double.pi` path in [`Self::eval_member`] also consults.
     fn resolve_implicit_float_constant(
         &self,
         node: &Node<'static>,
@@ -1079,15 +1083,11 @@ impl<'w> Interpreter<'w> {
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
-                // `Self.member` resolves through the enclosing type. The keyword
-                // is never a value binding, so it bypasses the env shadow check
-                // below even if a local happens to share the resolved type name.
-                let is_self_kw = type_name == "Self";
-                let type_name = self.resolve_self_keyword(type_name);
-                // A generic placeholder (`T.defaultValue`) resolves to its bound
-                // concrete type for the current call.
-                let type_name = self.resolve_type_alias(&type_name).unwrap_or(type_name);
-                if is_self_kw || self.env.get(&type_name).is_none() {
+                // `Self.member` resolves through the enclosing type (the keyword
+                // is never a value binding); any other name is a type reference
+                // only when no local value shadows it.
+                if let Some(reference) = self.resolve_type_reference(&type_name) {
+                    let type_name = reference.name;
                     // `MemoryLayout<T>.size` / `.stride` / `.alignment`. The
                     // written type `T` is recorded as a `TypeIdent` child of the
                     // `MemoryLayout` identifier by the parser.
