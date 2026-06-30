@@ -41,6 +41,7 @@ Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 #   roll-ups even though they are implemented and golden-tested.
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
+decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]

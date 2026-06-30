@@ -5,6 +5,7 @@
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
 mod calendar;
+mod decimal;
 mod formatter;
 mod url;
 
@@ -24,6 +25,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
     calendar::install(interp);
     formatter::install(interp);
+    decimal::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -237,6 +239,7 @@ pub fn registered_keys() -> Vec<String> {
             "Calendar" => Some("Calendar.init".to_string()),
             "DateFormatter" => Some("DateFormatter.init".to_string()),
             "ISO8601DateFormatter" => Some("ISO8601DateFormatter.init".to_string()),
+            "Decimal" => Some("Decimal.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -249,7 +252,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("DateComponents.")
                     || other.starts_with("Calendar.")
                     || other.starts_with("DateFormatter.")
-                    || other.starts_with("ISO8601DateFormatter.") =>
+                    || other.starts_with("ISO8601DateFormatter.")
+                    || other.starts_with("Decimal.") =>
             {
                 Some(other.to_string())
             }

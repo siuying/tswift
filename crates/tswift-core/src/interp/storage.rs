@@ -1069,6 +1069,11 @@ impl<'w> Interpreter<'w> {
             if let Some(v) = self.resolve_implicit_static(node, &member) {
                 return Ok(v);
             }
+            // Builtin-enum shorthand (`.year`, `.gregorian`) resolves last so it
+            // never shadows a SwiftUI implicit static like `.plain`.
+            if let Some(tn) = self.resolve_builtin_member_enum(&member) {
+                return Ok(self.make_enum_case(&tn, &member, Vec::new())?.unwrap());
+            }
             return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
         };
 

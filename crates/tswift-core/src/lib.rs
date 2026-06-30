@@ -5,6 +5,7 @@
 //! milestone covers literals, arithmetic, and `let`/`var` bindings with faithful
 //! integer-width overflow/wrap semantics.
 
+pub mod decimal;
 mod env;
 mod fragment_cache;
 pub mod grapheme;

@@ -405,6 +405,11 @@ pub struct Interpreter<'w> {
     funcs: Vec<FuncDef>,
     structs: HashMap<String, StructDef>,
     enums: HashMap<String, EnumDef>,
+    /// Names of enums installed via [`Interpreter::register_builtin_enum`].
+    /// These are excluded from the global unique-case shorthand fallback so
+    /// they cannot shadow SwiftUI implicit statics (`.plain`, …); they still
+    /// resolve when a contextual type names them or as a last-resort fallback.
+    builtin_enums: std::collections::HashSet<String>,
     classes: HashMap<String, ClassDef>,
     protocols: HashMap<String, ProtoDef>,
     /// type name → protocols it conforms to (directly).
@@ -514,6 +519,7 @@ impl<'w> Interpreter<'w> {
             funcs: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            builtin_enums: std::collections::HashSet::new(),
             classes: HashMap::new(),
             protocols: HashMap::new(),
             conformances: HashMap::new(),
@@ -585,6 +591,7 @@ impl<'w> Interpreter<'w> {
                 computed: std::collections::HashMap::new(),
             },
         );
+        self.builtin_enums.insert(name.to_string());
     }
 
     /// The keys of every registered standard-library entry, for coverage
@@ -1511,10 +1518,32 @@ impl<'w> Interpreter<'w> {
                 }
             }
         }
-        // Fall back: a single enum declaring this case name.
+        // Fall back: a single *user-declared* enum declaring this case name.
+        // Builtin enums are excluded here so they cannot shadow SwiftUI
+        // implicit statics; they get a later, lower-priority fallback.
         let mut found = None;
         for (name, def) in &self.enums {
+            if self.builtin_enums.contains(name) {
+                continue;
+            }
             if def.cases.iter().any(|c| c.name == case) {
+                if found.is_some() {
+                    return None; // ambiguous
+                }
+                found = Some(name.clone());
+            }
+        }
+        found
+    }
+
+    /// Last-resort shorthand resolution over builtin enums only (`.year`,
+    /// `.gregorian`, `.plain` for `Decimal.RoundingMode`). Runs after implicit
+    /// statics so SwiftUI styles keep priority. Returns the unique builtin enum
+    /// declaring `case`, or `None` if absent or ambiguous.
+    fn resolve_builtin_member_enum(&self, case: &str) -> Option<String> {
+        let mut found = None;
+        for name in &self.builtin_enums {
+            if self.enum_has_case(name, case) {
                 if found.is_some() {
                     return None; // ambiguous
                 }

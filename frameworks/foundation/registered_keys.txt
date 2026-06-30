@@ -47,6 +47,13 @@ DateFormatter.dateStyle
 DateFormatter.init
 DateFormatter.string
 DateFormatter.timeStyle
+Decimal.description
+Decimal.init
+Decimal.isNaN
+Decimal.isZero
+Decimal.magnitude
+Decimal.round
+Decimal.rounded
 ISO8601DateFormatter.date
 ISO8601DateFormatter.formatOptions
 ISO8601DateFormatter.init

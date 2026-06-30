@@ -53,6 +53,9 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         {
             date_components_binary(op, a, b)
         }
+        // `Decimal` arithmetic/comparison, including mixed operands
+        // (`d + 1`, `2 * d`) via `ExpressibleBy*Literal` coercion.
+        _ if is_decimal_operand(l) || is_decimal_operand(r) => decimal_binary(op, l, r),
         // Metatype identity: `Int.self == type(of: x)`.
         (SwiftValue::Metatype(a), SwiftValue::Metatype(b)) => match op {
             "==" => Ok(SwiftValue::Bool(a == b)),
@@ -79,6 +82,11 @@ pub fn unary(op: &str, v: &SwiftValue) -> Result<SwiftValue, String> {
             }
         }
         ("-", SwiftValue::Double(a)) => Ok(SwiftValue::Double(-a)),
+        ("-", SwiftValue::Struct(_)) if is_decimal_operand(v) => {
+            let dec = crate::decimal::from_value(v).expect("decimal operand");
+            Ok(crate::decimal::to_value(dec.negated()))
+        }
+        ("+", SwiftValue::Struct(_)) if is_decimal_operand(v) => Ok(v.clone()),
         ("+", SwiftValue::Int(_)) | ("+", SwiftValue::Double(_)) => Ok(v.clone()),
         ("!", SwiftValue::Bool(b)) => Ok(SwiftValue::Bool(!b)),
         ("~", SwiftValue::Int(a)) => Ok(SwiftValue::Int(IntValue::wrapped(a.width, !a.raw))),
@@ -326,6 +334,43 @@ fn component_equal(lhs: &SwiftValue, rhs: &SwiftValue) -> bool {
         (SwiftValue::Int(a), SwiftValue::Int(b)) => a.raw == b.raw,
         _ => false,
     }
+}
+
+/// Whether a value is a `Decimal` struct (the trigger for decimal dispatch).
+fn is_decimal_operand(value: &SwiftValue) -> bool {
+    crate::decimal::from_value(value).is_some()
+}
+
+fn decimal_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, String> {
+    use crate::decimal;
+    let a = decimal::coerce(l).ok_or_else(|| {
+        format!(
+            "operator `{op}` cannot apply to Decimal and {}",
+            r.type_name()
+        )
+    })?;
+    let b = decimal::coerce(r).ok_or_else(|| {
+        format!(
+            "operator `{op}` cannot apply to Decimal and {}",
+            l.type_name()
+        )
+    })?;
+    let ordering = decimal::compare(a, b);
+    let either_nan = a.nan || b.nan;
+    let result = match op {
+        "+" => decimal::to_value(decimal::add(a, b)),
+        "-" => decimal::to_value(decimal::sub(a, b)),
+        "*" => decimal::to_value(decimal::mul(a, b)),
+        "/" => decimal::to_value(decimal::div(a, b)),
+        "==" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Equal),
+        "!=" => SwiftValue::Bool(either_nan || ordering != std::cmp::Ordering::Equal),
+        "<" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Less),
+        "<=" => SwiftValue::Bool(!either_nan && ordering != std::cmp::Ordering::Greater),
+        ">" => SwiftValue::Bool(!either_nan && ordering == std::cmp::Ordering::Greater),
+        ">=" => SwiftValue::Bool(!either_nan && ordering != std::cmp::Ordering::Less),
+        _ => return Err(format!("operator `{op}` cannot apply to Decimal")),
+    };
+    Ok(result)
 }
 
 fn array_binary(
