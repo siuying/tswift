@@ -376,6 +376,13 @@ struct CallArg {
     place: Option<Place>,
 }
 
+/// A core-internal constructor for a value-only global builtin (collection
+/// ctors, scalar conversions, JSON coder markers). It keeps full `&mut
+/// Interpreter` access (unlike the external `StdContext` seam) and internally
+/// dispatches on the evaluated arguments. `Ok(None)` means "these arguments are
+/// not mine" — the caller falls through the rest of the dispatch ladder.
+type BuiltinCtor = fn(&mut Interpreter, &str, &[CallArg]) -> Result<Option<SwiftValue>, Signal>;
+
 /// Drop the write-back [`Place`], keeping just the label and value — the shape
 /// the stdlib seam ([`Arg`]) consumes.
 impl From<CallArg> for Arg {
@@ -426,6 +433,11 @@ pub struct Interpreter<'w> {
     /// Free-function intrinsics served through the [`StdContext`] seam, each
     /// paired with its optional declared parameter signature.
     free_fns: HashMap<String, FreeFnEntry>,
+    /// Core-internal value-only builtin constructors (collection ctors, scalar
+    /// conversions, JSON coder markers), keyed by global name. Consulted once
+    /// in `eval_call`, gated by [`Interpreter::is_unshadowed`], after user-type
+    /// and binding dispatch so a same-named user type or binding wins.
+    builtin_ctors: HashMap<&'static str, BuiltinCtor>,
     /// Method intrinsics keyed by `(builtin receiver, method name)`.
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
@@ -545,6 +557,7 @@ impl<'w> Interpreter<'w> {
             out,
             natives: HashMap::new(),
             free_fns: HashMap::new(),
+            builtin_ctors: Self::builtin_ctor_table(),
             intrinsics: HashMap::new(),
             labeled_intrinsics: HashMap::new(),
             properties: HashMap::new(),
@@ -3288,6 +3301,103 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Build the core-internal value-only builtin constructor table, consulted
+    /// once per call in `eval_call`. Each entry arg-dispatches internally and
+    /// returns `Ok(None)` when the arguments do not match its initializer, so
+    /// the call falls through the rest of the dispatch ladder.
+    fn builtin_ctor_table() -> HashMap<&'static str, BuiltinCtor> {
+        let mut t: HashMap<&'static str, BuiltinCtor> = HashMap::new();
+        // JSON coder markers (value-only opaque structs).
+        t.insert("JSONEncoder", Self::ctor_json_coder);
+        t.insert("JSONDecoder", Self::ctor_json_coder);
+        // Generic collection constructors.
+        t.insert("Array", Self::ctor_array);
+        t.insert("Set", Self::ctor_set);
+        t.insert("Dictionary", Self::ctor_dictionary);
+        t.insert("ContiguousArray", Self::ctor_conversion);
+        t.insert("CollectionOfOne", Self::ctor_conversion);
+        // Scalar conversion initializers (one argument each).
+        for name in [
+            "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32",
+            "UInt64", "Double", "Float", "String", "Bool",
+        ] {
+            t.insert(name, Self::ctor_conversion);
+        }
+        t
+    }
+
+    /// `JSONEncoder()` / `JSONDecoder()` — opaque value markers carrying only
+    /// their type name (coding is driven entirely by method intrinsics).
+    fn ctor_json_coder(
+        _interp: &mut Interpreter,
+        name: &str,
+        _args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        Ok(Some(SwiftValue::Struct(Rc::new(StructObj {
+            type_name: name.to_string(),
+            fields: vec![],
+        }))))
+    }
+
+    /// `Array<T>()` / `Array(repeating:count:)` / `Array(sequence)`.
+    fn ctor_array(
+        interp: &mut Interpreter,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if args.is_empty() {
+            return Ok(Some(SwiftValue::Array(Rc::new(Vec::new()))));
+        }
+        if let Some(v) = interp.array_repeating_count(args)? {
+            return Ok(Some(v));
+        }
+        if args.len() == 1 {
+            return interp.try_conversion(name, &args[0].value);
+        }
+        Ok(None)
+    }
+
+    /// `Set<T>()` / `Set(sequence)`.
+    fn ctor_set(
+        interp: &mut Interpreter,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if args.is_empty() {
+            return Ok(Some(SwiftValue::Set(Rc::new(Vec::new()))));
+        }
+        if args.len() == 1 {
+            return interp.try_conversion(name, &args[0].value);
+        }
+        Ok(None)
+    }
+
+    /// `Dictionary<K,V>()` / `Dictionary(uniqueKeysWithValues:)` /
+    /// `Dictionary(grouping:by:)`.
+    fn ctor_dictionary(
+        interp: &mut Interpreter,
+        _name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if args.is_empty() {
+            return Ok(Some(SwiftValue::Dict(Rc::new(Vec::new()))));
+        }
+        interp.build_dictionary(args)
+    }
+
+    /// Single-argument scalar/sequence conversion initializers (integer widths,
+    /// `Double`/`Float`/`String`/`Bool`, `ContiguousArray`, `CollectionOfOne`).
+    fn ctor_conversion(
+        interp: &mut Interpreter,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if args.len() == 1 {
+            return interp.try_conversion(name, &args[0].value);
+        }
+        Ok(None)
+    }
+
     /// `[T](...)` array constructor: empty for no arguments, otherwise it must be
     /// the `repeating:count:` form (any other shape is an error).
     fn construct_array_literal_ctor(&self, args: &[CallArg]) -> Eval {
@@ -4163,6 +4273,78 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn builtin_collection_and_conversion_ctors_still_resolve() {
+        // The table-ized value-only builtins keep working through the single
+        // consult point in `eval_call`.
+        let src = concat!(
+            "let a: [Int] = Array(repeating: 7, count: 3)\n",
+            "print(a)\n",
+            "print(Int(\"42\")!)\n",
+            "let d = Dictionary(uniqueKeysWithValues: [(\"x\", 1)])\n",
+            "print(d[\"x\"]!)\n",
+        );
+        assert_eq!(run(src).unwrap(), "[7, 7, 7]\n42\n1\n");
+    }
+
+    #[test]
+    fn table_entries_cover_sequence_and_grouping_initializers() {
+        // Every table entry reachable through the old conversion ladder still
+        // resolves: sequence-conversion ctors, CollectionOfOne, and the
+        // `Dictionary(grouping:by:)` form.
+        let src = concat!(
+            "print(Array(1...3))\n",
+            "print(Array(Set([1, 1, 2])))\n",
+            "print(ContiguousArray([4, 5]))\n",
+            "print(Array(CollectionOfOne(42)))\n",
+            "let g = Dictionary(grouping: [1, 2, 3, 4], by: { $0 % 2 })\n",
+            "print(g[0]!, g[1]!)\n",
+            "print(Double(\"2.5\")!, Bool(\"true\")!)\n",
+        );
+        assert_eq!(
+            run(src).unwrap(),
+            "[1, 2, 3]\n[1, 2]\n[4, 5]\n[42]\n[2, 4] [1, 3]\n2.5 true\n",
+        );
+    }
+
+    #[test]
+    fn user_types_shadow_collection_and_scalar_builtins() {
+        // A user type named after a table builtin must win over the builtin
+        // constructor — collection names (`Array`, `Dictionary`) and scalar
+        // conversion names (`Int`) alike.
+        let src = concat!(
+            "struct Array { let tag = \"S\" }\n",
+            "class Dictionary { let tag = \"C\" }\n",
+            "struct Int { let tag = \"I\" }\n",
+            "print(Array().tag)\n",
+            "print(Dictionary().tag)\n",
+            "print(Int().tag)\n",
+        );
+        assert_eq!(run(src).unwrap(), "S\nC\nI\n");
+    }
+
+    #[test]
+    fn user_struct_shadows_builtin_json_encoder() {
+        // A user `struct JSONEncoder` must win over the builtin marker. Before
+        // table-ization the marker was matched before user-type dispatch with no
+        // shadow guard; now it is consulted after, gated by `is_unshadowed`.
+        let src = concat!(
+            "struct JSONEncoder { let tag = \"user\" }\n",
+            "print(JSONEncoder().tag)\n",
+        );
+        assert_eq!(run(src).unwrap(), "user\n");
+    }
+
+    #[test]
+    fn user_function_shadows_builtin_int_conversion() {
+        // A user `func Int(_:)` must win over the builtin conversion initializer.
+        let src = concat!(
+            "func Int(_ s: String) -> String { \"user:\\(s)\" }\n",
+            "print(Int(\"42\"))\n",
+        );
+        assert_eq!(run(src).unwrap(), "user:42\n");
     }
 
     #[test]

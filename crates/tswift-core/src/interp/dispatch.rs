@@ -10,7 +10,7 @@ use super::{
 use crate::env::Env;
 use crate::ops;
 use crate::stdlib::{Arg, BuiltinReceiver, Outcome};
-use crate::value::{EnumObj, StructObj, SwiftValue};
+use crate::value::{EnumObj, SwiftValue};
 
 impl<'w> Interpreter<'w> {
     /// Apply a stdlib method outcome, including mutating receiver write-back.
@@ -476,13 +476,6 @@ impl<'w> Interpreter<'w> {
                     return Ok(SwiftValue::Metatype(arg.value.type_name()));
                 }
             }
-            // Built-in JSON coder markers.
-            if name == "JSONEncoder" || name == "JSONDecoder" {
-                return Ok(SwiftValue::Struct(Rc::new(StructObj {
-                    type_name: name,
-                    fields: vec![],
-                })));
-            }
             // `EnumType(rawValue:)` — failable lookup of the case with that raw
             // value, returning the case or `nil` (RawRepresentable synthesis).
             if self.enums.contains_key(&name) {
@@ -557,41 +550,23 @@ impl<'w> Interpreter<'w> {
                 });
             }
 
-            // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
-            // `Dictionary<K,V>()`. The parser erases the generic arguments, so
-            // the callee is the bare type name with no arguments.
-            if args.is_empty() && self.is_unshadowed(&name) {
-                match name.as_str() {
-                    "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
-                    "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
-                    "Dictionary" => return Ok(SwiftValue::Dict(Rc::new(Vec::new()))),
-                    _ => {}
+            // Core-internal value-only builtin constructors: generic collection
+            // ctors (`Array`/`Set`/`Dictionary`/…), scalar conversion
+            // initializers, and the `JSONEncoder`/`JSONDecoder` markers. The
+            // table is consulted once, *after* user-type and binding dispatch
+            // and gated by the shadow check, so a same-named user `struct`,
+            // `enum`, `class`, or binding wins (correct Swift shadowing — and a
+            // fix for the JSON markers, which were formerly matched before user
+            // types with no shadow guard). Each entry returns `None` to fall
+            // through to the rest of the ladder.
+            if self.is_unshadowed(&name) {
+                if let Some(ctor) = self.builtin_ctors.get(name.as_str()).copied() {
+                    if let Some(v) = ctor(self, &name, &args)? {
+                        return Ok(v);
+                    }
                 }
             }
 
-            // `Array(repeating:count:)` — build an array of repeated elements.
-            if name == "Array"
-                && self.is_unshadowed("Array")
-                && args.iter().any(|a| a.label.as_deref() == Some("repeating"))
-            {
-                if let Some(v) = self.array_repeating_count(&args)? {
-                    return Ok(v);
-                }
-            }
-
-            // `Dictionary(uniqueKeysWithValues:)` and `Dictionary(grouping:by:)`.
-            if name == "Dictionary" && self.is_unshadowed("Dictionary") {
-                if let Some(v) = self.build_dictionary(&args)? {
-                    return Ok(v);
-                }
-            }
-
-            // Conversion initializers take exactly one argument.
-            if args.len() == 1 {
-                if let Some(v) = self.try_conversion(&name, &args[0].value)? {
-                    return Ok(v);
-                }
-            }
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.free_fns.get(&name).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
