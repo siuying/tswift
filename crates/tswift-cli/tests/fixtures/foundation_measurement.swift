@@ -44,3 +44,10 @@ let zeroC = Measurement(value: 0, unit: UnitTemperature.celsius)
 let freezF = Measurement(value: 32, unit: UnitTemperature.fahrenheit)
 print((zeroC + freezF).value)
 print((zeroC + freezF).unit.symbol)
+
+// Hashable: equal magnitudes hash equally across display units.
+let oneKm = Measurement(value: 1, unit: UnitLength.kilometers)
+let thousandM = Measurement(value: 1000, unit: UnitLength.meters)
+print(oneKm == thousandM)
+print(oneKm.hashValue == thousandM.hashValue)
+print(oneKm.debugDescription)

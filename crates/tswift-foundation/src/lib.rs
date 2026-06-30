@@ -68,6 +68,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     ] {
         interp.register_intrinsic(BuiltinReceiver::Date, name, MethodEntry { mutating, func });
     }
+    interp.register_property(BuiltinReceiver::Date, "description", date_description);
+    interp.register_property(BuiltinReceiver::Date, "debugDescription", date_description);
+    interp.register_property(BuiltinReceiver::Date, "hashValue", date_hash_value);
 
     interp.register_free_fn("DateComponents", date_components_init);
     for (name, getter) in DATE_COMPONENT_GETTERS {
@@ -95,9 +98,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::Data, "first", data_first);
     interp.register_property(BuiltinReceiver::Data, "last", data_last);
     interp.register_property(BuiltinReceiver::Data, "description", data_description);
+    interp.register_property(BuiltinReceiver::Data, "debugDescription", data_description);
+    interp.register_property(BuiltinReceiver::Data, "hashValue", data_hash_value);
+    interp.register_property(BuiltinReceiver::Data, "startIndex", data_start_index);
+    interp.register_property(BuiltinReceiver::Data, "endIndex", data_end_index);
+    interp.register_property(BuiltinReceiver::Data, "indices", data_indices);
     for (name, mutating, func) in [
         ("append", true, data_append as IntrinsicFn),
         ("base64EncodedString", false, data_base64_encoded_string),
+        ("base64EncodedData", false, data_base64_encoded_data),
         ("subdata", false, data_subdata),
         ("removeAll", true, data_remove_all),
     ] {
@@ -107,6 +116,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
     interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
+    interp.register_property(BuiltinReceiver::UUID, "debugDescription", uuid_description);
+    interp.register_property(BuiltinReceiver::UUID, "hashValue", uuid_hash_value);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -133,6 +144,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
         index_path_start_index,
     );
     interp.register_property(BuiltinReceiver::IndexPath, "endIndex", index_path_end_index);
+    interp.register_property(
+        BuiltinReceiver::IndexPath,
+        "hashValue",
+        index_path_hash_value,
+    );
     interp.register_intrinsic(
         BuiltinReceiver::IndexPath,
         "dropLast",
@@ -147,6 +163,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::IndexSet, "isEmpty", index_set_is_empty);
     interp.register_property(BuiltinReceiver::IndexSet, "first", index_set_first);
     interp.register_property(BuiltinReceiver::IndexSet, "last", index_set_last);
+    interp.register_property(BuiltinReceiver::IndexSet, "hashValue", index_set_hash_value);
     interp.register_intrinsic(
         BuiltinReceiver::IndexSet,
         "contains",
@@ -347,6 +364,28 @@ fn date_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     }
 }
 
+/// `Date.description`: ISO-like UTC instant `"yyyy-MM-dd HH:mm:ss +0000"`, the
+/// Darwin default. `debugDescription` is identical.
+fn date_description(recv: SwiftValue) -> StdResult {
+    let civil = crate::calendar::decompose(date_seconds(&recv)?);
+    Ok(SwiftValue::Str(
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} +0000",
+            civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second
+        )
+        .into(),
+    ))
+}
+
+/// `Date.hashValue`: hash of the reference-date offset. Equal dates compare
+/// equal on that Double, so this stays consistent with `==`. `+ 0.0`
+/// canonicalizes `-0.0` to `0.0` (which `==` treats as equal), and the bit
+/// pattern is narrowed through `i64` to stay within the platform `Int`.
+fn date_hash_value(recv: SwiftValue) -> StdResult {
+    let seconds = date_seconds(&recv)? + 0.0;
+    Ok(SwiftValue::int((seconds.to_bits() as i64) as i128))
+}
+
 fn date_time_interval_since_reference_date(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::Double(date_seconds(&recv)?))
 }
@@ -520,10 +559,12 @@ pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
     "weekOfMonth",
     "weekOfYear",
     "yearForWeekOfYear",
+    "era",
+    "dayOfYear",
 ];
 
 /// Initializer labels that are accepted but not stored as readable components.
-const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone", "era"];
+const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone"];
 
 macro_rules! date_component_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
@@ -552,6 +593,8 @@ date_component_getters! {
     "weekOfMonth" => date_components_get_week_of_month,
     "weekOfYear" => date_components_get_week_of_year,
     "yearForWeekOfYear" => date_components_get_year_for_week_of_year,
+    "era" => date_components_get_era,
+    "dayOfYear" => date_components_get_day_of_year,
 }
 
 pub(crate) fn date_components_value_struct(fields: Vec<(String, SwiftValue)>) -> SwiftValue {
@@ -827,6 +870,22 @@ fn data_base64_encoded_string(
     })
 }
 
+fn data_base64_encoded_data(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("base64EncodedData() takes no arguments"));
+    }
+    // The base64 text encoded as its ASCII bytes, wrapped back into `Data`.
+    let encoded = base64_encode(&data_bytes(&recv)?);
+    Ok(Outcome {
+        result: data_value(encoded.into_bytes()),
+        receiver: recv,
+    })
+}
+
 fn data_subdata(
     _ctx: &mut dyn StdContext,
     recv: SwiftValue,
@@ -1004,6 +1063,50 @@ fn uuid_description(recv: SwiftValue) -> StdResult {
     uuid_string(recv)
 }
 
+/// FNV-1a 64-bit hash, narrowed to the platform `Int`. Used to give builtin
+/// value types a `hashValue` consistent with their `==`.
+pub(crate) fn fnv1a_hash(bytes: &[u8]) -> i128 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash as i64) as i128
+}
+
+fn uuid_hash_value(recv: SwiftValue) -> StdResult {
+    // Equal UUIDs share the canonical string, so hashing it matches `==`.
+    let SwiftValue::Str(s) = uuid_string(recv)? else {
+        return Err(type_error("malformed UUID value"));
+    };
+    Ok(SwiftValue::int(fnv1a_hash(s.as_bytes())))
+}
+
+fn data_hash_value(recv: SwiftValue) -> StdResult {
+    // `Data ==` compares the byte sequence, so hash the bytes.
+    Ok(SwiftValue::int(fnv1a_hash(&data_bytes(&recv)?)))
+}
+
+/// `Data.startIndex` — always `0` (a `Data` is a zero-based byte collection).
+fn data_start_index(recv: SwiftValue) -> StdResult {
+    data_bytes(&recv)?;
+    Ok(SwiftValue::int(0))
+}
+
+/// `Data.endIndex` — the past-the-end position, i.e. the byte count.
+fn data_end_index(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(data_bytes(&recv)?.len() as i128))
+}
+
+/// `Data.indices` — the half-open range `0..<count`.
+fn data_indices(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Range {
+        lo: 0,
+        hi: data_bytes(&recv)?.len() as i128,
+        inclusive: false,
+    })
+}
+
 fn normalize_uuid(raw: &str) -> Option<String> {
     let upper = raw.to_ascii_uppercase();
     let bytes = upper.as_bytes();
@@ -1125,6 +1228,27 @@ fn index_path_start_index(_recv: SwiftValue) -> StdResult {
 /// `endIndex` — the past-the-end position, i.e. the element count.
 fn index_path_end_index(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(index_path_indexes(&recv)?.len() as i128))
+}
+
+/// Hash a sequence of integers (used by `IndexPath`/`IndexSet`), consistent
+/// with their element-wise `==`.
+fn hash_int_sequence(values: impl IntoIterator<Item = i128>) -> i128 {
+    let mut bytes = Vec::new();
+    for value in values {
+        bytes.extend_from_slice(&(value as i64).to_le_bytes());
+    }
+    fnv1a_hash(&bytes)
+}
+
+fn index_path_hash_value(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(hash_int_sequence(index_path_indexes(
+        &recv,
+    )?)))
+}
+
+fn index_set_hash_value(recv: SwiftValue) -> StdResult {
+    // BTreeSet iterates in sorted order, matching set equality.
+    Ok(SwiftValue::int(hash_int_sequence(index_set_values(&recv)?)))
 }
 
 /// `dropLast(_:)` — a new `IndexPath` without its last `k` (default 1) indexes.
@@ -1677,6 +1801,140 @@ mod tests {
         }
     }
 
+    #[test]
+    fn data_collection_surface_reports_bounds_and_indices() {
+        let d = data_value(vec![10, 20, 30]);
+        assert_eq!(data_start_index(d.clone()).unwrap(), SwiftValue::int(0));
+        assert_eq!(data_end_index(d.clone()).unwrap(), SwiftValue::int(3));
+        assert_eq!(
+            data_indices(d).unwrap(),
+            SwiftValue::Range {
+                lo: 0,
+                hi: 3,
+                inclusive: false
+            }
+        );
+    }
+
+    #[test]
+    fn base64_encoded_data_wraps_ascii_bytes() {
+        let mut ctx = MockContext::new(0.0);
+        // "ABC" -> "QUJD".
+        let out = data_base64_encoded_data(&mut ctx, data_value(vec![65, 66, 67]), Vec::new())
+            .unwrap()
+            .result;
+        assert_eq!(data_bytes(&out).unwrap(), b"QUJD");
+        // The no-options surface rejects extra arguments.
+        assert!(data_base64_encoded_data(
+            &mut ctx,
+            data_value(vec![65]),
+            vec![SwiftValue::Bool(true)]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn index_collections_hash_consistently_with_equality() {
+        assert_eq!(
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap(),
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap()
+        );
+        assert_ne!(
+            index_path_hash_value(index_path_value(vec![2, 4])).unwrap(),
+            index_path_hash_value(index_path_value(vec![2, 5])).unwrap()
+        );
+        // IndexSets built in different orders normalize to the same set.
+        let a: BTreeSet<i128> = [9, 3, 1].into_iter().collect();
+        let b: BTreeSet<i128> = [1, 9, 3].into_iter().collect();
+        assert_eq!(
+            index_set_hash_value(index_set_value(a)).unwrap(),
+            index_set_hash_value(index_set_value(b)).unwrap()
+        );
+    }
+
+    #[test]
+    fn equal_data_and_uuid_values_hash_equally() {
+        let a = data_value(vec![1, 2, 3]);
+        let b = data_value(vec![1, 2, 3]);
+        assert_eq!(data_hash_value(a).unwrap(), data_hash_value(b).unwrap());
+        let c = data_value(vec![1, 2, 4]);
+        assert_ne!(
+            data_hash_value(data_value(vec![1, 2, 3])).unwrap(),
+            data_hash_value(c).unwrap()
+        );
+        // Case-insensitive UUID strings normalize to the same value and hash.
+        let mut ctx = MockContext::new(0.0);
+        let lower = uuid_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("uuidString".into()),
+                value: SwiftValue::Str("e2b8be3f-4c7d-41f3-8d5f-b8d43c343111".into()),
+            }],
+        )
+        .unwrap();
+        let upper = uuid_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("uuidString".into()),
+                value: SwiftValue::Str("E2B8BE3F-4C7D-41F3-8D5F-B8D43C343111".into()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            uuid_hash_value(lower).unwrap(),
+            uuid_hash_value(upper).unwrap()
+        );
+    }
+
+    #[test]
+    fn date_description_renders_utc_instant() {
+        // 2001-01-01 00:00:10 UTC == reference offset 10.0.
+        let date = date_value(10.0);
+        assert_eq!(
+            date_description(date.clone()).unwrap(),
+            SwiftValue::Str("2001-01-01 00:00:10 +0000".into())
+        );
+        // 2024-06-29 09:41:00 UTC.
+        let later = date_value(crate::calendar::ref_seconds_from_ymdhms(
+            2024, 6, 29, 9, 41, 0,
+        ));
+        assert_eq!(
+            date_description(later).unwrap(),
+            SwiftValue::Str("2024-06-29 09:41:00 +0000".into())
+        );
+    }
+
+    #[test]
+    fn date_hash_value_is_consistent_with_equality() {
+        assert_eq!(
+            date_hash_value(date_value(10.0)).unwrap(),
+            date_hash_value(date_value(10.0)).unwrap()
+        );
+        assert_ne!(
+            date_hash_value(date_value(10.0)).unwrap(),
+            date_hash_value(date_value(11.0)).unwrap()
+        );
+        // `0.0 == -0.0` under `Date ==`, so they must hash equally.
+        assert_eq!(
+            date_hash_value(date_value(0.0)).unwrap(),
+            date_hash_value(date_value(-0.0)).unwrap()
+        );
+    }
+
+    #[test]
+    fn date_description_truncates_and_handles_pre_reference() {
+        // Fractional seconds truncate to whole seconds.
+        assert_eq!(
+            date_description(date_value(10.9)).unwrap(),
+            SwiftValue::Str("2001-01-01 00:00:10 +0000".into())
+        );
+        // Just before the reference epoch wraps the civil date back a day.
+        assert_eq!(
+            date_description(date_value(-0.1)).unwrap(),
+            SwiftValue::Str("2000-12-31 23:59:59 +0000".into())
+        );
+    }
+
     fn labeled(label: &str, value: i128) -> Arg {
         Arg {
             label: Some(label.into()),
@@ -1823,6 +2081,20 @@ mod tests {
             .unwrap()
             .result;
         assert_eq!(read, SwiftValue::int(7));
+    }
+
+    #[test]
+    fn date_components_stores_era_and_day_of_year() {
+        let mut ctx = MockContext::new(0.0);
+        let dc =
+            date_components_init(&mut ctx, vec![labeled("era", 1), labeled("year", 2024)]).unwrap();
+        // `era` is now a readable component rather than an ignored label.
+        assert_eq!(date_components_get(&dc, "era").unwrap(), SwiftValue::int(1));
+        // `dayOfYear` defaults to nil when unset.
+        assert_eq!(
+            date_components_get(&dc, "dayOfYear").unwrap(),
+            SwiftValue::Nil
+        );
     }
 }
 

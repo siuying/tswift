@@ -312,6 +312,8 @@ const DATE_COMPONENT_FIELDS: &[&str] = &[
     "weekOfMonth",
     "weekOfYear",
     "yearForWeekOfYear",
+    "era",
+    "dayOfYear",
 ];
 
 fn date_components_binary(

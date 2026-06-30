@@ -39,6 +39,8 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("pathComponents", url_path_components),
         ("isFileURL", url_is_file),
         ("description", url_absolute_string),
+        ("debugDescription", url_absolute_string),
+        ("hashValue", url_hash_value),
         // No base URL is modelled, so relative views equal the absolute ones.
         ("relativeString", url_absolute_string),
         ("relativePath", url_path),
@@ -91,6 +93,11 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         "description",
         url_query_item_description,
     );
+    interp.register_property(
+        BuiltinReceiver::URLQueryItem,
+        "hashValue",
+        url_query_item_hash_value,
+    );
 
     // ---- URLComponents ----
     interp.register_free_fn("URLComponents", url_components_init);
@@ -115,6 +122,47 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         "description",
         url_components_description,
     );
+    interp.register_property(
+        BuiltinReceiver::URLComponents,
+        "hashValue",
+        url_components_hash_value,
+    );
+}
+
+fn url_hash_value(recv: SwiftValue) -> StdResult {
+    // `URL` stores only its absolute string, so structural `==` reduces to that
+    // string; hashing it keeps `hashValue` consistent with equality.
+    Ok(SwiftValue::int(crate::fnv1a_hash(
+        url_string(&recv)?.as_bytes(),
+    )))
+}
+
+fn url_query_item_hash_value(recv: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(o) = &recv else {
+        return Err(type_error("hashValue expects URLQueryItem"));
+    };
+    let name = match o.get("name") {
+        Some(SwiftValue::Str(s)) => s.to_string(),
+        _ => String::new(),
+    };
+    // `value` is optional; distinguish nil from empty with a marker byte.
+    let mut bytes = name.into_bytes();
+    bytes.push(0);
+    match o.get("value") {
+        Some(SwiftValue::Str(s)) => bytes.extend_from_slice(s.as_bytes()),
+        _ => bytes.push(1),
+    }
+    Ok(SwiftValue::int(crate::fnv1a_hash(&bytes)))
+}
+
+fn url_components_hash_value(recv: SwiftValue) -> StdResult {
+    // Hash the reconstructed URL string, consistent with structural equality of
+    // equal components.
+    let string = match url_components_string(recv)? {
+        SwiftValue::Str(s) => s.to_string(),
+        _ => String::new(),
+    };
+    Ok(SwiftValue::int(crate::fnv1a_hash(string.as_bytes())))
 }
 
 macro_rules! url_component_getters {

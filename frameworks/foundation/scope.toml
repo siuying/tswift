@@ -30,6 +30,10 @@ types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
+Decimal = ["+", "+=", "-", "-=", "*", "*=", "/", "/=", "==", "<"]
+DateComponents = ["==", "!="]
+Calendar = ["==", "!="]
+IndexPath = ["<", "<=", ">", ">=", "==", "!="]
 Measurement = ["+", "-", "*", "/", "==", "<"]
 Data = ["=="]
 UUID = ["=="]
@@ -48,6 +52,7 @@ URLComponents = ["=="]
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
+decimal_special_values = "Decimal has no infinity or negative zero: isInfinite is always false, isFinite is !isNaN. nan.significand/exponent propagate NaN. greatestFiniteMagnitude and ulp are not modelled."
 numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
 
 [out_of_scope]

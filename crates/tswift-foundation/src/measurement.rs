@@ -73,6 +73,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "description",
         measurement_description,
     );
+    interp.register_property(
+        BuiltinReceiver::Measurement,
+        "debugDescription",
+        measurement_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::Measurement,
+        "hashValue",
+        measurement_hash_value,
+    );
     for (name, mutating, func) in [
         ("converted", false, measurement_converted as IntrinsicFn),
         ("convert", true, measurement_convert),
@@ -188,6 +198,18 @@ fn measurement_value(recv: SwiftValue) -> StdResult {
 fn measurement_unit(recv: SwiftValue) -> StdResult {
     let obj = measurement_obj(&recv)?;
     Ok(obj.get("unit").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// `Measurement.hashValue`: `==` compares the dimension and the base-unit value
+/// (`value * coeff + constant`), so hash exactly those. Equal measurements that
+/// differ only in display unit (1 km == 1000 m) therefore hash equally.
+fn measurement_hash_value(recv: SwiftValue) -> StdResult {
+    let obj = measurement_obj(&recv)?;
+    let (value, coeff, constant, unit_type) = measurement_parts(obj)?;
+    let base = value * coeff + constant + 0.0;
+    let mut bytes = unit_type.into_bytes();
+    bytes.extend_from_slice(&base.to_bits().to_le_bytes());
+    Ok(SwiftValue::int(crate::fnv1a_hash(&bytes)))
 }
 
 fn measurement_description(recv: SwiftValue) -> StdResult {
@@ -306,5 +328,25 @@ mod tests {
         let (v, _, _, t) = parts(&m2);
         assert_eq!(v, 2.5);
         assert_eq!(t, "UnitMass");
+    }
+
+    #[test]
+    fn equal_magnitudes_hash_equally_across_units() {
+        let km = measurement_struct(1.0, unit("UnitLength", "kilometers"));
+        let m = measurement_struct(1000.0, unit("UnitLength", "meters"));
+        assert_eq!(
+            measurement_hash_value(km).unwrap(),
+            measurement_hash_value(m).unwrap()
+        );
+    }
+
+    #[test]
+    fn different_dimensions_hash_differently() {
+        let length = measurement_struct(1.0, unit("UnitLength", "meters"));
+        let mass = measurement_struct(1.0, unit("UnitMass", "kilograms"));
+        assert_ne!(
+            measurement_hash_value(length).unwrap(),
+            measurement_hash_value(mass).unwrap()
+        );
     }
 }
