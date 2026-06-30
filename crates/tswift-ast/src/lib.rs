@@ -10,6 +10,9 @@
 
 #![forbid(unsafe_code)]
 
+mod type_repr;
+pub use type_repr::{TypeRepr, TypeReprKind};
+
 /// The syntactic category of a [`Node`]. Names mirror the frontend's existing
 /// `NodeKind` vocabulary so AST dumps line up across backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

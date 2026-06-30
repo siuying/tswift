@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use tswift_frontend::{Node, NodeKind};
+use tswift_frontend::{Node, NodeKind, TypeRepr};
 
 use super::{
     autoclosure_flags, clone_params, literal_syntax_kind, materialize_sequence,
@@ -684,13 +684,11 @@ impl<'w> Interpreter<'w> {
                 self.type_hint.pop();
                 let mut value = value?;
                 if let (Some(ty), Some(kind)) = (hint.as_deref(), literal_syntax_kind(arg)) {
-                    let optional = ty.trim().ends_with('?');
+                    let repr = TypeRepr::parse(ty);
+                    let optional = repr.is_optional();
                     if !(optional && kind == NodeKind::NilLiteral) {
-                        value = self.coerce_literal_value(
-                            ty.trim().trim_end_matches('?').trim(),
-                            kind,
-                            value,
-                        )?;
+                        value =
+                            self.coerce_literal_value(repr.strip_optionals().text(), kind, value)?;
                     }
                 }
                 args.push(CallArg {

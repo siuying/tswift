@@ -18,6 +18,11 @@ mod decode;
 /// frontend and the parse AST now share one node vocabulary.
 pub use tswift_ast::NodeKind;
 
+/// A structured view over a written type spelling. Re-exported from
+/// `tswift_ast` so the runtime can query a `TypeRef`'s shape (optional, array
+/// element, dictionary key/value) instead of re-parsing the flat string.
+pub use tswift_ast::{TypeRepr, TypeReprKind};
+
 /// An owned Swift analysis result: the parse AST (parsed and type-resolved)
 /// plus diagnostics for one Swift source file.
 pub struct Analysis {

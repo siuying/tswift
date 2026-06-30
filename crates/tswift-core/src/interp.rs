@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::rc::Rc;
 
-use tswift_frontend::{Analysis, Node, NodeKind};
+use tswift_frontend::{Analysis, Node, NodeKind, TypeRepr};
 
 use crate::env::{Env, Scope};
 use crate::fragment_cache::FragmentCache;
@@ -1198,14 +1198,14 @@ impl<'w> Interpreter<'w> {
         else {
             return Ok(value);
         };
-        let ty = ty.trim();
+        let repr = TypeRepr::parse(&ty);
         // An optional annotation (`T?`): a `nil` literal stays the absent
         // optional rather than constructing `T(nilLiteral:)`.
-        let optional = ty.ends_with('?');
+        let optional = repr.is_optional();
         if optional && init_kind == NodeKind::NilLiteral {
             return Ok(value);
         }
-        let ty = ty.trim_end_matches('?').trim();
+        let ty = repr.strip_optionals().text();
         let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
         if !is_user_type {
             return Ok(value);
@@ -3163,10 +3163,10 @@ impl<'w> Interpreter<'w> {
         for (i, p) in params.iter().enumerate() {
             let Some(ty) = p.ty.as_deref() else { continue };
             let Some(arg) = args.get(i) else { continue };
-            let ty = ty.trim();
+            let repr = TypeRepr::parse(ty);
+            let ty = repr.text();
             // `[T]` — bind T to the element type of an array argument.
-            if let Some(inner) = ty.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                let inner = inner.trim();
+            if let Some(inner) = repr.array_element().map(TypeRepr::text) {
                 if is_placeholder(inner) {
                     if let SwiftValue::Array(items) = &arg.value {
                         if let Some(first) = items.first() {
@@ -3797,24 +3797,17 @@ fn metatype_name(node: &Node<'static>) -> Option<String> {
 /// and/or a trailing `?` optional so `[User]`/`Role?`/`User` all yield the
 /// nominal element type to decode against.
 fn decode_element_type(spelling: &str) -> &str {
-    let t = spelling.trim();
-    let t = t.strip_suffix('?').unwrap_or(t).trim();
-    let t = t
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .unwrap_or(t)
-        .trim();
-    // A second optional layer (`[User]?` already handled; `User??` rare).
-    t.strip_suffix('?').unwrap_or(t).trim()
+    let repr = TypeRepr::parse(spelling);
+    // Peel one optional, one array layer, then a second optional — so
+    // `[User]`/`Role?`/`User`/`[User]?` all yield the nominal element type.
+    let repr = repr.unwrap_optional();
+    let repr = repr.array_element().unwrap_or(repr);
+    repr.unwrap_optional().text()
 }
 
 fn array_element_type(name: &str) -> Option<&str> {
-    let inner = name.strip_prefix('[')?.strip_suffix(']')?;
-    // Reject dictionary types `[K: V]`; only homogeneous element arrays here.
-    if inner.contains(':') {
-        return None;
-    }
-    Some(inner.trim())
+    // Only homogeneous element arrays `[T]`; a dictionary `[K: V]` is not one.
+    TypeRepr::parse(name).array_element().map(TypeRepr::text)
 }
 
 /// The written type annotation of a stored-property declaration (`var x: Double`

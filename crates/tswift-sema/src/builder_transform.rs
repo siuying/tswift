@@ -18,7 +18,7 @@
 //! **left untouched** (attribute intact) so the legacy runtime transform still
 //! handles it — keeping every fixture green while later slices grow the set.
 
-use tswift_ast::{Ast, NodeId, NodeKind};
+use tswift_ast::{Ast, NodeId, NodeKind, TypeRepr};
 
 use crate::astbuild;
 use crate::passes::Pass;
@@ -275,7 +275,9 @@ fn check_overload_ambiguity(
         // Resolvable iff every overload has a distinct modelled scalar type.
         let mut seen: Vec<tswift_ast::Type> = Vec::new();
         let resolvable = param_types.iter().all(|t| {
-            match t.and_then(|t| crate::parse_type_name(t.trim().trim_end_matches('?'))) {
+            match t
+                .and_then(|t| crate::parse_type_name(TypeRepr::parse(t).strip_optionals().text()))
+            {
                 Some(scalar) if !seen.contains(&scalar) => {
                     seen.push(scalar);
                     true
