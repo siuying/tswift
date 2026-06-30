@@ -787,20 +787,15 @@ impl<'w> Interpreter<'w> {
         // `Type.<...>(args)`: enum case construction or a static struct method.
         if base.kind() == NodeKind::IdentExpr {
             if let Some(tn) = base.text() {
-                // `Self.method(...)` calls a static method of the enclosing type.
-                // The keyword is never a value binding, so it bypasses the env
-                // shadow check below.
-                let is_self_kw = tn == "Self";
-                let tn = self.resolve_self_keyword(tn);
-                // A generic placeholder (`T.zero()`) resolves to its bound type.
-                let tn = self.resolve_type_alias(&tn).unwrap_or(tn);
-                if is_self_kw || self.env.get(&tn).is_none() {
+                // `Self.method(...)` calls a static method of the enclosing type
+                // (the keyword is never a value binding); any other name is a
+                // type reference only when no local value shadows it.
+                if let Some(reference) = self.resolve_type_reference(&tn) {
+                    let tn = reference.name;
                     // Builtin static methods, e.g. `Bool.random()`. A user type
                     // shadowing a builtin name (`struct Bool { … }`) wins, so
                     // only fall back to the builtin when no user type matches.
-                    let user_defined = self.structs.contains_key(&tn)
-                        || self.enums.contains_key(&tn)
-                        || self.classes.contains_key(&tn);
+                    let user_defined = reference.user_defined;
                     if !user_defined {
                         if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
                             if let Some(func) =
@@ -819,10 +814,7 @@ impl<'w> Interpreter<'w> {
                     // through its enclosing type. Nested types are registered by
                     // their simple name, so resolve `method` against the type
                     // tables when `tn` is itself a user type.
-                    let tn_is_type = self.structs.contains_key(&tn)
-                        || self.classes.contains_key(&tn)
-                        || self.enums.contains_key(&tn);
-                    if tn_is_type {
+                    if user_defined {
                         if self.classes.contains_key(&method) {
                             let args = self.eval_args(arg_nodes)?;
                             return self.instantiate_class(&method, args);

@@ -1083,15 +1083,11 @@ impl<'w> Interpreter<'w> {
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
-                // `Self.member` resolves through the enclosing type. The keyword
-                // is never a value binding, so it bypasses the env shadow check
-                // below even if a local happens to share the resolved type name.
-                let is_self_kw = type_name == "Self";
-                let type_name = self.resolve_self_keyword(type_name);
-                // A generic placeholder (`T.defaultValue`) resolves to its bound
-                // concrete type for the current call.
-                let type_name = self.resolve_type_alias(&type_name).unwrap_or(type_name);
-                if is_self_kw || self.env.get(&type_name).is_none() {
+                // `Self.member` resolves through the enclosing type (the keyword
+                // is never a value binding); any other name is a type reference
+                // only when no local value shadows it.
+                if let Some(reference) = self.resolve_type_reference(&type_name) {
+                    let type_name = reference.name;
                     // `MemoryLayout<T>.size` / `.stride` / `.alignment`. The
                     // written type `T` is recorded as a `TypeIdent` child of the
                     // `MemoryLayout` identifier by the parser.

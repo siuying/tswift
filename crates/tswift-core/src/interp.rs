@@ -411,6 +411,14 @@ struct StructMethodEntry {
     params: Option<Vec<Param>>,
 }
 
+/// A resolved `Type.member` type reference: the concrete type name (after
+/// `Self`/generic-alias substitution) and whether it names a user struct, class,
+/// or enum (vs. a builtin type).
+struct TypeReference {
+    name: String,
+    user_defined: bool,
+}
+
 /// The tree-walking interpreter.
 pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
@@ -1481,6 +1489,27 @@ impl<'w> Interpreter<'w> {
         self.structs.contains_key(name)
             || self.classes.contains_key(name)
             || self.enums.contains_key(name)
+    }
+
+    /// Resolve an identifier used as a type in `Type.member` / `Type.method(...)`
+    /// position. Applies `Self`-keyword and generic-placeholder substitution,
+    /// then gates on shadowing: a name bound to a local value (other than the
+    /// `Self` keyword, which is never a value) is not a usable type reference
+    /// and yields `None`. On success the resolved concrete name is returned with
+    /// a flag for whether it names a user struct/class/enum.
+    ///
+    /// Shared by [`Self::eval_member`] and `eval_method_call` so both dispatch
+    /// paths derive the type reference identically.
+    fn resolve_type_reference(&self, text: &str) -> Option<TypeReference> {
+        let is_self_kw = text == "Self";
+        let name = self.resolve_self_keyword(text.to_string());
+        let name = self.resolve_type_alias(&name).unwrap_or(name);
+        if is_self_kw || self.is_unshadowed(&name) {
+            let user_defined = self.is_user_nominal_type(&name);
+            Some(TypeReference { name, user_defined })
+        } else {
+            None
+        }
     }
 
     /// Whether `name` spells a known type — a user struct/class/enum/protocol
