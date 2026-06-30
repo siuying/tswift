@@ -30,6 +30,7 @@ types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
+Measurement = ["+", "-", "*", "/", "==", "<"]
 
 # Darwin gaps (documented, intentional for now):
 # - Calendar/DateComponents/DateFormatter/ISO8601DateFormatter operate in the

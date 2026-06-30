@@ -53,6 +53,9 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         {
             date_components_binary(op, a, b)
         }
+        // `Measurement` arithmetic: `+`/`-` (same dimension), `*`/`/` by a
+        // scalar, and base-unit comparisons.
+        _ if is_measurement(l) || is_measurement(r) => measurement_binary(op, l, r),
         // `Decimal` arithmetic/comparison, including mixed operands
         // (`d + 1`, `2 * d`) via `ExpressibleBy*Literal` coercion.
         _ if is_decimal_operand(l) || is_decimal_operand(r) => decimal_binary(op, l, r),
@@ -339,6 +342,108 @@ fn component_equal(lhs: &SwiftValue, rhs: &SwiftValue) -> bool {
 /// Whether a value is a `Decimal` struct (the trigger for decimal dispatch).
 fn is_decimal_operand(value: &SwiftValue) -> bool {
     crate::decimal::from_value(value).is_some()
+}
+
+fn is_measurement(value: &SwiftValue) -> bool {
+    matches!(value, SwiftValue::Struct(o) if o.type_name == "Measurement")
+}
+
+/// `(value, coefficient, constant, unit_type_name)` for a measurement.
+fn measurement_parts(value: &SwiftValue) -> Option<(f64, f64, f64, String)> {
+    let SwiftValue::Struct(m) = value else {
+        return None;
+    };
+    if m.type_name != "Measurement" {
+        return None;
+    }
+    let v = number_f64(m.get("value")?)?;
+    let SwiftValue::Struct(unit) = m.get("unit")? else {
+        return None;
+    };
+    let coeff = number_f64(unit.get("_coefficient")?)?;
+    let constant = number_f64(unit.get("_constant")?)?;
+    Some((v, coeff, constant, unit.type_name.to_string()))
+}
+
+fn number_f64(value: &SwiftValue) -> Option<f64> {
+    match value {
+        SwiftValue::Double(d) => Some(*d),
+        SwiftValue::Int(i) => Some(i.raw as f64),
+        _ => None,
+    }
+}
+
+/// Build a `Measurement` re-using `template`'s unit but with a new value.
+fn measurement_with_value(template: &SwiftValue, new_value: f64) -> SwiftValue {
+    let SwiftValue::Struct(m) = template else {
+        unreachable!("measurement_with_value on non-measurement");
+    };
+    let unit = m.get("unit").cloned().unwrap_or(SwiftValue::Nil);
+    SwiftValue::Struct(std::rc::Rc::new(crate::value::StructObj {
+        type_name: "Measurement".into(),
+        fields: vec![
+            ("value".into(), SwiftValue::Double(new_value)),
+            ("unit".into(), unit),
+        ],
+    }))
+}
+
+fn measurement_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, String> {
+    // Scalar scaling: `m * 2`, `2 * m`, `m / 2`.
+    match (measurement_parts(l), measurement_parts(r)) {
+        (Some(_), None) => {
+            if let Some(scalar) = number_f64(r) {
+                let (v, ..) = measurement_parts(l).unwrap();
+                return match op {
+                    "*" => Ok(measurement_with_value(l, v * scalar)),
+                    "/" => Ok(measurement_with_value(l, v / scalar)),
+                    _ => Err(format!(
+                        "operator `{op}` cannot apply to Measurement and scalar"
+                    )),
+                };
+            }
+            Err(format!(
+                "operator `{op}` cannot apply to Measurement and {}",
+                r.type_name()
+            ))
+        }
+        (None, Some(_)) => {
+            if let Some(scalar) = number_f64(l) {
+                let (v, ..) = measurement_parts(r).unwrap();
+                return match op {
+                    "*" => Ok(measurement_with_value(r, scalar * v)),
+                    _ => Err(format!(
+                        "operator `{op}` cannot apply to scalar and Measurement"
+                    )),
+                };
+            }
+            Err(format!(
+                "operator `{op}` cannot apply to {} and Measurement",
+                l.type_name()
+            ))
+        }
+        (Some((lv, lc, lk, lt)), Some((rv, rc, rk, rt))) => {
+            if lt != rt {
+                return Err(format!(
+                    "operator `{op}` cannot apply to {lt} and {rt} measurements"
+                ));
+            }
+            let l_base = lv * lc + lk;
+            let r_base = rv * rc + rk;
+            match op {
+                "+" => Ok(measurement_with_value(l, (l_base + r_base - lk) / lc)),
+                "-" => Ok(measurement_with_value(l, (l_base - r_base - lk) / lc)),
+                "==" => Ok(SwiftValue::Bool(l_base == r_base)),
+                "!=" => Ok(SwiftValue::Bool(l_base != r_base)),
+                "<" => Ok(SwiftValue::Bool(l_base < r_base)),
+                "<=" => Ok(SwiftValue::Bool(l_base <= r_base)),
+                ">" => Ok(SwiftValue::Bool(l_base > r_base)),
+                ">=" => Ok(SwiftValue::Bool(l_base >= r_base)),
+                _ => Err(format!("operator `{op}` cannot apply to measurements")),
+            }
+        }
+        (None, None) => unreachable!("measurement_binary requires a measurement operand"),
+    }
 }
 
 fn decimal_binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, String> {

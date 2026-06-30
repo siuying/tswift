@@ -641,6 +641,12 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Register a static (type-level) method intrinsic on a builtin type.
+    /// Register a static *property value* on a (possibly non-builtin) type, so
+    /// `Type.name` and implicit `.name` resolve to it (e.g. `UnitLength.meters`).
+    pub fn register_static_value(&mut self, type_name: &str, name: &str, value: SwiftValue) {
+        self.statics.insert(format!("{type_name}.{name}"), value);
+    }
+
     pub fn register_static(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
         self.static_methods.insert((recv, name.to_string()), f);
     }
@@ -2562,6 +2568,10 @@ impl<'w> Interpreter<'w> {
 
     /// A binary operation, with short-circuiting `&&`/`||`.
     fn eval_binary(&mut self, node: &Node<'static>) -> Eval {
+        // (helper used below; see `measurement_eq`)
+        fn is_measurement_struct(value: &SwiftValue) -> bool {
+            matches!(value, SwiftValue::Struct(o) if o.type_name == "Measurement")
+        }
         let op = node
             .op_text()
             .ok_or_else(|| EvalError::Unsupported("binary without operator".into()))?;
@@ -2613,7 +2623,11 @@ impl<'w> Interpreter<'w> {
         let r = self.eval(&rhs)?;
         // Equality against nil / reference / compound values goes through the
         // structural comparison rather than the scalar operator table.
+        // `Measurement` defines `==` in terms of its base-unit value, so it must
+        // use the operator table (1 km == 1000 m), not field-wise comparison.
+        let measurement_eq = is_measurement_struct(&l) || is_measurement_struct(&r);
         if (op == "==" || op == "!=")
+            && !measurement_eq
             && matches!(
                 (&l, &r),
                 (SwiftValue::Nil, _)

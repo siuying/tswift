@@ -1145,13 +1145,11 @@ impl<'w> Interpreter<'w> {
                             _ => {}
                         }
                     }
-                    // Static property of a struct or class type: `Type.prop`.
-                    if self.structs.contains_key(&type_name)
-                        || self.classes.contains_key(&type_name)
-                    {
-                        if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
-                            return Ok(v.clone());
-                        }
+                    // Static property of a struct or class type, or a
+                    // natively-registered static value (`UnitLength.meters`):
+                    // `Type.prop`.
+                    if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
+                        return Ok(v.clone());
                     }
                     // Static computed property: `static var prop { … }`.
                     if let Some(v) = self.read_static_computed(&type_name, &member)? {

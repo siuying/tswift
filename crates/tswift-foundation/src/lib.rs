@@ -7,6 +7,7 @@
 mod calendar;
 mod decimal;
 mod formatter;
+mod measurement;
 mod numberformatter;
 mod url;
 
@@ -28,6 +29,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     formatter::install(interp);
     decimal::install(interp);
     numberformatter::install(interp);
+    measurement::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -243,6 +245,7 @@ pub fn registered_keys() -> Vec<String> {
             "ISO8601DateFormatter" => Some("ISO8601DateFormatter.init".to_string()),
             "Decimal" => Some("Decimal.init".to_string()),
             "NumberFormatter" => Some("NumberFormatter.init".to_string()),
+            "Measurement" => Some("Measurement.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -257,7 +260,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("DateFormatter.")
                     || other.starts_with("ISO8601DateFormatter.")
                     || other.starts_with("Decimal.")
-                    || other.starts_with("NumberFormatter.") =>
+                    || other.starts_with("NumberFormatter.")
+                    || other.starts_with("Measurement.") =>
             {
                 Some(other.to_string())
             }
