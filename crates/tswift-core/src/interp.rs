@@ -12,7 +12,7 @@ use std::rc::Rc;
 use tswift_frontend::{Analysis, Node, NodeKind};
 
 use crate::env::{Env, Scope};
-use crate::fragment_cache::{FragmentCache, FragmentError};
+use crate::fragment_cache::FragmentCache;
 use crate::ops;
 use crate::stdlib::{
     materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn,
@@ -28,6 +28,9 @@ mod dispatch;
 mod nominal;
 mod pattern;
 mod storage;
+mod strings;
+
+use strings::max_shorthand_in_interpolations;
 
 use self::concurrency::Scheduler;
 
@@ -3406,96 +3409,6 @@ impl<'w> Interpreter<'w> {
         }
     }
 
-    fn eval_string_literal(&mut self, node: &Node<'static>) -> Eval {
-        let raw = node.text().unwrap_or_default();
-        // Raw strings do not interpolate; decode handles delimiters/escapes.
-        if raw.starts_with('#') {
-            return Ok(SwiftValue::Str(decode_string_literal(&raw)));
-        }
-        let (body, multiline) = if let Some(b) = raw
-            .strip_prefix("\"\"\"")
-            .and_then(|s| s.strip_suffix("\"\"\""))
-        {
-            (strip_multiline_indent(b).to_string(), true)
-        } else {
-            let b = raw
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .unwrap_or(&raw)
-                .to_string();
-            (b, false)
-        };
-        let _ = multiline;
-
-        let mut out = String::new();
-        let mut chars = body.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' && chars.peek() == Some(&'(') {
-                chars.next(); // consume '('
-                let mut depth = 1;
-                let mut fragment = String::new();
-                for fc in chars.by_ref() {
-                    match fc {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                    fragment.push(fc);
-                }
-                let value = self.eval_interpolation(&fragment)?;
-                out.push_str(&self.render_description(&value));
-            } else if c == '\\' {
-                // Re-use the escape decoder for the next escape sequence.
-                let mut esc = String::from("\\");
-                if let Some(&n) = chars.peek() {
-                    esc.push(n);
-                    chars.next();
-                    if n == 'u' && chars.peek() == Some(&'{') {
-                        for h in chars.by_ref() {
-                            esc.push(h);
-                            if h == '}' {
-                                break;
-                            }
-                        }
-                    }
-                }
-                out.push_str(&decode_escapes(&esc));
-            } else {
-                out.push(c);
-            }
-        }
-        Ok(SwiftValue::Str(out))
-    }
-
-    /// Evaluate an interpolated expression fragment against the current scope,
-    /// reusing this interpreter (and thus its type/function tables).
-    ///
-    /// The fragment's analysis is owned by the interpreter's [`FragmentCache`]
-    /// (ADR-0007): a repeated fragment is analyzed once, and every cached
-    /// analysis is reclaimed when the interpreter drops, so a long-running host
-    /// runs in bounded memory.
-    fn eval_interpolation(&mut self, fragment: &str) -> Result<SwiftValue, Signal> {
-        let analysis = self
-            .fragment_cache
-            .get_or_analyze(fragment)
-            .map_err(|e| match e {
-                FragmentError::Parse(msg) => {
-                    EvalError::Type(format!("interpolation parse error: {msg}"))
-                }
-                FragmentError::Invalid => {
-                    EvalError::Type(format!("invalid interpolation `{fragment}`"))
-                }
-            })?;
-        let root = analysis.root();
-        // Evaluate the wrapped expression statement directly.
-        self.eval(&root)
-    }
-
     /// Infer generic type-parameter substitutions from the concrete runtime
     /// types of a call's arguments. A declared parameter type that is a single
     /// placeholder (`T`) or an array of one (`[T]`) and is not a registered or
@@ -4481,50 +4394,6 @@ fn push_active_branch(node: Node<'static>, out: &mut Vec<Node<'static>>) {
 /// argument references (`$0`, `$1`, …) and return the greatest index found.
 /// Only text inside `\(…)` is considered, so a literal `"$1"` outside an
 /// interpolation is ignored.
-fn max_shorthand_in_interpolations(raw: &str) -> Option<usize> {
-    let bytes: Vec<char> = raw.chars().collect();
-    let mut i = 0;
-    let mut max: Option<usize> = None;
-    while i < bytes.len() {
-        if bytes[i] == '\\' && i + 1 < bytes.len() && bytes[i + 1] == '(' {
-            // Capture the balanced interpolation body.
-            let mut depth = 1;
-            let mut j = i + 2;
-            while j < bytes.len() && depth > 0 {
-                match bytes[j] {
-                    '(' => depth += 1,
-                    ')' => depth -= 1,
-                    _ => {}
-                }
-                if depth == 0 {
-                    break;
-                }
-                j += 1;
-            }
-            // Scan the fragment `bytes[i+2..j]` for `$<digits>`.
-            let mut k = i + 2;
-            while k < j {
-                if bytes[k] == '$' {
-                    let mut d = String::new();
-                    let mut m = k + 1;
-                    while m < j && bytes[m].is_ascii_digit() {
-                        d.push(bytes[m]);
-                        m += 1;
-                    }
-                    if let Ok(n) = d.parse::<usize>() {
-                        max = Some(max.map_or(n, |c| c.max(n)));
-                    }
-                }
-                k += 1;
-            }
-            i = j + 1;
-        } else {
-            i += 1;
-        }
-    }
-    max
-}
-
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     match indices.first() {
         Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),
@@ -4533,8 +4402,6 @@ fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     }
 }
 
-/// Decode a Swift string literal's *source text* (including its delimiters) into
-/// the runtime string it denotes: strips quotes and processes escapes.
 /// Strip the delimiters off a regex literal lexeme, leaving the bare pattern.
 /// Handles the bare `/.../` form and the extended `#/.../#` form (any number of
 /// `#`). Extended literals additionally trim surrounding whitespace on a
@@ -4556,78 +4423,6 @@ fn strip_regex_delimiters(raw: &str) -> &str {
     raw.strip_prefix('/')
         .and_then(|s| s.strip_suffix('/'))
         .unwrap_or(raw)
-}
-
-fn decode_string_literal(raw: &str) -> String {
-    if raw.starts_with('#') {
-        let hashes = raw.chars().take_while(|&c| c == '#').count();
-        let inner = &raw[hashes..raw.len().saturating_sub(hashes)];
-        let inner = inner
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .unwrap_or(inner);
-        return inner.to_string();
-    }
-    if let Some(body) = raw
-        .strip_prefix("\"\"\"")
-        .and_then(|s| s.strip_suffix("\"\"\""))
-    {
-        return decode_escapes(strip_multiline_indent(body));
-    }
-    let body = raw
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or(raw);
-    decode_escapes(body)
-}
-
-fn strip_multiline_indent(body: &str) -> &str {
-    body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
-}
-
-fn decode_escapes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('0') => out.push('\0'),
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('\'') => out.push('\''),
-            Some('u') => {
-                if chars.peek() == Some(&'{') {
-                    chars.next();
-                    let mut hex = String::new();
-                    for h in chars.by_ref() {
-                        if h == '}' {
-                            break;
-                        }
-                        hex.push(h);
-                    }
-                    if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                        if let Some(ch) = char::from_u32(cp) {
-                            out.push(ch);
-                        }
-                    }
-                } else {
-                    out.push('u');
-                }
-            }
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
