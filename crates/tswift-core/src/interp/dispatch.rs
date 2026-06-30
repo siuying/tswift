@@ -4,8 +4,8 @@ use tswift_frontend::{Node, NodeKind};
 
 use super::{
     autoclosure_flags, clone_params, literal_syntax_kind, materialize_sequence,
-    max_shorthand_in_interpolations, metatype_name, param_type_hints, select_labeled_overload,
-    trap, CallArg, ClosureDef, Eval, EvalError, Interpreter, Param, Place, Signal, MAX_CALL_DEPTH,
+    max_shorthand_in_interpolations, param_type_hints, select_labeled_overload, trap, CallArg,
+    ClosureDef, Eval, EvalError, Interpreter, Param, Place, Signal, MAX_CALL_DEPTH,
 };
 use crate::env::Env;
 use crate::ops;
@@ -867,42 +867,9 @@ impl<'w> Interpreter<'w> {
             return Ok(result);
         }
 
-        // `JSONEncoder().encode(value)` → a JSON `Data` (modeled as a String).
-        if let SwiftValue::Struct(o) = &base_value {
-            if o.type_name == "JSONEncoder" && method == "encode" {
-                let args = self.eval_args(arg_nodes)?;
-                let value = args
-                    .first()
-                    .map(|a| a.value.clone())
-                    .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
-                let json = self.json_encode(&value)?;
-                return Ok(SwiftValue::Str(crate::json::to_string(&json)));
-            }
-            // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
-            if o.type_name == "JSONDecoder" && method == "decode" {
-                let type_name = arg_nodes
-                    .first()
-                    .and_then(metatype_name)
-                    .ok_or_else(|| EvalError::Type("decode expects a metatype".into()))?;
-                let data = arg_nodes
-                    .get(1)
-                    .map(|n| self.eval(n))
-                    .transpose()?
-                    .ok_or_else(|| EvalError::Type("decode expects data".into()))?;
-                let text = match data {
-                    SwiftValue::Str(s) => s,
-                    other => {
-                        return Err(EvalError::Type(format!(
-                            "decode expects String/Data, got {}",
-                            other.type_name()
-                        ))
-                        .into())
-                    }
-                };
-                let json = crate::json::parse(&text)
-                    .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
-                return Ok(self.json_decode(&type_name, &json));
-            }
+        // `JSONEncoder().encode(...)` / `JSONDecoder().decode(...)` (Codable).
+        if let Some(v) = self.try_json_coder_method(&base_value, &method, arg_nodes)? {
+            return Ok(v);
         }
 
         // Class instance: dynamic dispatch from the runtime class.
