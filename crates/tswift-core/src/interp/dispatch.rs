@@ -10,7 +10,7 @@ use super::{
 use crate::env::Env;
 use crate::ops;
 use crate::stdlib::{Arg, BuiltinReceiver, Outcome};
-use crate::value::{EnumObj, StructObj, SwiftValue};
+use crate::value::{EnumObj, SwiftValue};
 
 impl<'w> Interpreter<'w> {
     /// Apply a stdlib method outcome, including mutating receiver write-back.
@@ -459,16 +459,10 @@ impl<'w> Interpreter<'w> {
                 // user type of the same name shadows it (a user `struct VStack`
                 // dispatches to its own initializer, so it must not inherit the
                 // builtin `VStack`'s parameter hints).
-                None => {
-                    let shadowed = self.structs.contains_key(&name)
-                        || self.classes.contains_key(&name)
-                        || self.enums.contains_key(&name);
-                    if shadowed {
-                        None
-                    } else {
-                        self.free_fn_params.get(&name).map(|p| clone_params(p))
-                    }
+                None if self.is_unshadowed(&name) => {
+                    self.free_fn_params.get(&name).map(|p| clone_params(p))
                 }
+                None => None,
             })
         } else {
             None
@@ -483,7 +477,7 @@ impl<'w> Interpreter<'w> {
             let name = self.resolve_self_keyword(name);
 
             // `type(of: x)` — the dynamic type of `x` as a metatype value.
-            if name == "type" && self.env.get("type").is_none() {
+            if name == "type" && self.is_unshadowed("type") {
                 if let Some(arg) = args
                     .iter()
                     .find(|a| a.label.as_deref() == Some("of"))
@@ -491,13 +485,6 @@ impl<'w> Interpreter<'w> {
                 {
                     return Ok(SwiftValue::Metatype(arg.value.type_name()));
                 }
-            }
-            // Built-in JSON coder markers.
-            if name == "JSONEncoder" || name == "JSONDecoder" {
-                return Ok(SwiftValue::Struct(Rc::new(StructObj {
-                    type_name: name,
-                    fields: vec![],
-                })));
             }
             // `EnumType(rawValue:)` — failable lookup of the case with that raw
             // value, returning the case or `nil` (RawRepresentable synthesis).
@@ -551,7 +538,7 @@ impl<'w> Interpreter<'w> {
             }
             // `swap(&a, &b)` — exchange two inout locations. Needs the caller
             // write-back `Place`s, so it cannot ride the value-only free-fn seam.
-            if name == "swap" && self.env.get("swap").is_none() && args.len() == 2 {
+            if name == "swap" && self.is_unshadowed("swap") && args.len() == 2 {
                 if let (Some(pa), Some(pb)) = (args[0].place.clone(), args[1].place.clone()) {
                     let va = args[0].value.clone();
                     let vb = args[1].value.clone();
@@ -564,7 +551,7 @@ impl<'w> Interpreter<'w> {
             // not shared. The env binding plus this evaluated clone account for
             // two strong references, so a unique object reads as exactly two.
             if name == "isKnownUniquelyReferenced"
-                && self.env.get("isKnownUniquelyReferenced").is_none()
+                && self.is_unshadowed("isKnownUniquelyReferenced")
                 && args.len() == 1
             {
                 return Ok(match &args[0].value {
@@ -573,41 +560,23 @@ impl<'w> Interpreter<'w> {
                 });
             }
 
-            // Empty generic collection constructors: `Array<T>()`, `Set<T>()`,
-            // `Dictionary<K,V>()`. The parser erases the generic arguments, so
-            // the callee is the bare type name with no arguments.
-            if args.is_empty() && self.env.get(&name).is_none() {
-                match name.as_str() {
-                    "Array" => return Ok(SwiftValue::Array(Rc::new(Vec::new()))),
-                    "Set" => return Ok(SwiftValue::Set(Rc::new(Vec::new()))),
-                    "Dictionary" => return Ok(SwiftValue::Dict(Rc::new(Vec::new()))),
-                    _ => {}
+            // Core-internal value-only builtin constructors: generic collection
+            // ctors (`Array`/`Set`/`Dictionary`/…), scalar conversion
+            // initializers, and the `JSONEncoder`/`JSONDecoder` markers. The
+            // table is consulted once, *after* user-type and binding dispatch
+            // and gated by the shadow check, so a same-named user `struct`,
+            // `enum`, `class`, or binding wins (correct Swift shadowing — and a
+            // fix for the JSON markers, which were formerly matched before user
+            // types with no shadow guard). Each entry returns `None` to fall
+            // through to the rest of the ladder.
+            if self.is_unshadowed(&name) {
+                if let Some(ctor) = self.builtin_ctors.get(name.as_str()).copied() {
+                    if let Some(v) = ctor(self, &name, &args)? {
+                        return Ok(v);
+                    }
                 }
             }
 
-            // `Array(repeating:count:)` — build an array of repeated elements.
-            if name == "Array"
-                && self.env.get("Array").is_none()
-                && args.iter().any(|a| a.label.as_deref() == Some("repeating"))
-            {
-                if let Some(v) = self.array_repeating_count(&args)? {
-                    return Ok(v);
-                }
-            }
-
-            // `Dictionary(uniqueKeysWithValues:)` and `Dictionary(grouping:by:)`.
-            if name == "Dictionary" && self.env.get("Dictionary").is_none() {
-                if let Some(v) = self.build_dictionary(&args)? {
-                    return Ok(v);
-                }
-            }
-
-            // Conversion initializers take exactly one argument.
-            if args.len() == 1 {
-                if let Some(v) = self.try_conversion(&name, &args[0].value)? {
-                    return Ok(v);
-                }
-            }
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.free_fns.get(&name).copied() {
                 let labeled: Vec<Arg> = args
