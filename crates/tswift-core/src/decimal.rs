@@ -146,9 +146,11 @@ pub fn div(a: Dec, b: Dec) -> Dec {
         return Dec::zero();
     }
     let negative = (a.mantissa < 0) ^ (b.mantissa < 0);
-    let mut num = a.mantissa.unsigned_abs();
+    let num = a.mantissa.unsigned_abs();
     let den = b.mantissa.unsigned_abs();
-    let mut exponent = a.exponent - b.exponent;
+    let Some(mut exponent) = a.exponent.checked_sub(b.exponent) else {
+        return Dec::NAN;
+    };
 
     let mut result: i128 = (num / den) as i128;
     let mut rem = num % den;
@@ -158,22 +160,26 @@ pub fn div(a: Dec, b: Dec) -> Dec {
             break;
         };
         rem = scaled;
-        let Some(next) = result
-            .checked_mul(10)
-            .and_then(|r| r.checked_add((rem / den) as i128))
-        else {
+        let (Some(next), Some(next_exp)) = (
+            result
+                .checked_mul(10)
+                .and_then(|r| r.checked_add((rem / den) as i128)),
+            exponent.checked_sub(1),
+        ) else {
             break;
         };
-        exponent -= 1;
+        exponent = next_exp;
         result = next;
         rem %= den;
         produced += 1;
     }
     // Round half-up on the first dropped digit, if any remains.
     if rem != 0 && (rem * 2) >= den {
-        result += 1;
+        match result.checked_add(1) {
+            Some(rounded) => result = rounded,
+            None => return Dec::NAN,
+        }
     }
-    let _ = &mut num;
     let signed = if negative { -result } else { result };
     Dec::new(signed, exponent)
 }
