@@ -8,6 +8,10 @@ Calendar.firstWeekday
 Calendar.identifier
 Calendar.init
 Calendar.isDate
+Calendar.isDateInToday
+Calendar.isDateInTomorrow
+Calendar.isDateInWeekend
+Calendar.isDateInYesterday
 Calendar.longEraSymbols
 Calendar.minimumDaysInFirstWeek
 Calendar.monthSymbols

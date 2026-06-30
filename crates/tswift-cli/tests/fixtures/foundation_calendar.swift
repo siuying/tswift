@@ -60,3 +60,10 @@ print(cal.amSymbol)
 print(cal.pmSymbol)
 print(cal.firstWeekday)
 print(cal.minimumDaysInFirstWeek)
+
+// Weekend detection (deterministic).
+let saturday = cal.date(from: DateComponents(year: 2024, month: 6, day: 29))!
+let sunday = cal.date(from: DateComponents(year: 2024, month: 6, day: 30))!
+print(cal.isDateInWeekend(saturday))
+print(cal.isDateInWeekend(sunday))
+print(cal.isDateInWeekend(made))

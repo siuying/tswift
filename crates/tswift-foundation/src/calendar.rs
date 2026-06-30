@@ -89,6 +89,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("component", false, calendar_component),
         ("startOfDay", false, calendar_start_of_day),
         ("isDate", false, calendar_is_date_in_same_day),
+        ("isDateInWeekend", false, calendar_is_date_in_weekend),
+        ("isDateInToday", false, calendar_is_date_in_today),
+        ("isDateInYesterday", false, calendar_is_date_in_yesterday),
+        ("isDateInTomorrow", false, calendar_is_date_in_tomorrow),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::Calendar,
@@ -175,8 +179,7 @@ pub(crate) fn decompose(ref_seconds: f64) -> Civil {
     let (days, secs_in_day) = floor_div_day(unix);
     let (year, month, day) = civil_from_days(days);
     let secs = secs_in_day as i64;
-    // 1970-01-01 (day 0) is a Thursday; Swift weekday is 1=Sunday..7=Saturday.
-    let weekday = ((days % 7 + 7) % 7 + 4) % 7 + 1;
+    let weekday = weekday_of_day(days);
     Civil {
         year,
         month,
@@ -629,6 +632,82 @@ fn calendar_is_date_in_same_day(
     })
 }
 
+/// The UTC day index (days since 1970-01-01) of a `Date` argument.
+fn date_day_index(args: &[SwiftValue], method: &str) -> Result<i64, StdError> {
+    let [date] = args else {
+        return Err(type_error(format!(
+            "Calendar.{method} expects one argument"
+        )));
+    };
+    let (day, _) = floor_div_day(date_seconds(date)? + REFERENCE_DATE_UNIX_OFFSET);
+    Ok(day)
+}
+
+/// The UTC day index of the current instant.
+fn today_day_index(ctx: &mut dyn StdContext) -> i64 {
+    let (day, _) = floor_div_day(ctx.now_unix_seconds());
+    day
+}
+
+/// Swift weekday (1=Sunday..7=Saturday) for a day index since 1970-01-01
+/// (day 0 is a Thursday).
+pub(crate) fn weekday_of_day(day: i64) -> i64 {
+    ((day % 7 + 7) % 7 + 4) % 7 + 1
+}
+
+fn calendar_is_date_in_weekend(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let day = date_day_index(&args, "isDateInWeekend(_:)")?;
+    let weekday = weekday_of_day(day);
+    // Saturday (7) and Sunday (1) in en_US Gregorian.
+    Ok(Outcome {
+        result: SwiftValue::Bool(weekday == 1 || weekday == 7),
+        receiver: recv,
+    })
+}
+
+fn calendar_is_date_in_today(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let day = date_day_index(&args, "isDateInToday(_:)")?;
+    let today = today_day_index(ctx);
+    Ok(Outcome {
+        result: SwiftValue::Bool(day == today),
+        receiver: recv,
+    })
+}
+
+fn calendar_is_date_in_yesterday(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let day = date_day_index(&args, "isDateInYesterday(_:)")?;
+    let today = today_day_index(ctx);
+    Ok(Outcome {
+        result: SwiftValue::Bool(day == today - 1),
+        receiver: recv,
+    })
+}
+
+fn calendar_is_date_in_tomorrow(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let day = date_day_index(&args, "isDateInTomorrow(_:)")?;
+    let today = today_day_index(ctx);
+    Ok(Outcome {
+        result: SwiftValue::Bool(day == today + 1),
+        receiver: recv,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +807,66 @@ mod tests {
     #[test]
     fn symbol_access_rejects_non_calendar_receiver() {
         assert!(months_long(SwiftValue::int(0)).is_err());
+    }
+
+    /// A `StdContext` whose clock is pinned to a fixed unix instant.
+    struct FixedClock(f64, Vec<u8>);
+    impl StdContext for FixedClock {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
+            unreachable!("calendar predicates never call closures")
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            &mut self.1
+        }
+        fn now_unix_seconds(&mut self) -> f64 {
+            self.0
+        }
+    }
+
+    fn date_at(y: i64, m: i64, d: i64) -> SwiftValue {
+        date_value(ref_seconds_from_ymdhms(y, m, d, 12, 0, 0))
+    }
+
+    fn unwrap_bool(outcome: Outcome) -> bool {
+        match outcome.result {
+            SwiftValue::Bool(b) => b,
+            other => panic!("expected Bool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn weekend_detection_uses_saturday_and_sunday() {
+        let mut ctx = FixedClock(0.0, Vec::new());
+        // 2024-06-29 Sat, 2024-06-30 Sun, 2024-07-01 Mon.
+        assert!(unwrap_bool(
+            calendar_is_date_in_weekend(&mut ctx, gregorian(), vec![date_at(2024, 6, 29)]).unwrap()
+        ));
+        assert!(unwrap_bool(
+            calendar_is_date_in_weekend(&mut ctx, gregorian(), vec![date_at(2024, 6, 30)]).unwrap()
+        ));
+        assert!(!unwrap_bool(
+            calendar_is_date_in_weekend(&mut ctx, gregorian(), vec![date_at(2024, 7, 1)]).unwrap()
+        ));
+    }
+
+    #[test]
+    fn today_yesterday_tomorrow_relative_to_clock() {
+        // Pin "now" to 2024-06-15 18:00 UTC.
+        let now = ref_seconds_from_ymdhms(2024, 6, 15, 18, 0, 0) + REFERENCE_DATE_UNIX_OFFSET;
+        let mut ctx = FixedClock(now, Vec::new());
+        assert!(unwrap_bool(
+            calendar_is_date_in_today(&mut ctx, gregorian(), vec![date_at(2024, 6, 15)]).unwrap()
+        ));
+        assert!(unwrap_bool(
+            calendar_is_date_in_yesterday(&mut ctx, gregorian(), vec![date_at(2024, 6, 14)])
+                .unwrap()
+        ));
+        assert!(unwrap_bool(
+            calendar_is_date_in_tomorrow(&mut ctx, gregorian(), vec![date_at(2024, 6, 16)])
+                .unwrap()
+        ));
+        assert!(!unwrap_bool(
+            calendar_is_date_in_today(&mut ctx, gregorian(), vec![date_at(2024, 6, 16)]).unwrap()
+        ));
     }
 }
