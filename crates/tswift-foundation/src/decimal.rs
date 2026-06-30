@@ -32,6 +32,27 @@ pub fn install(interp: &mut Interpreter<'_>) {
         decimal_is_sign_minus,
     );
     interp.register_property(BuiltinReceiver::Decimal, "hashValue", decimal_hash_value);
+    interp.register_property(BuiltinReceiver::Decimal, "isNormal", decimal_is_normal);
+    interp.register_property(
+        BuiltinReceiver::Decimal,
+        "isSubnormal",
+        decimal_is_subnormal,
+    );
+    interp.register_property(
+        BuiltinReceiver::Decimal,
+        "isCanonical",
+        decimal_is_canonical,
+    );
+    interp.register_property(
+        BuiltinReceiver::Decimal,
+        "isSignaling",
+        decimal_is_false_pred,
+    );
+    interp.register_property(
+        BuiltinReceiver::Decimal,
+        "isSignalingNaN",
+        decimal_is_false_pred,
+    );
 
     interp.register_static(BuiltinReceiver::Decimal, "pi", decimal_pi);
     interp.register_static(BuiltinReceiver::Decimal, "nan", decimal_nan_static);
@@ -45,6 +66,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("subtract", true, decimal_subtract),
         ("multiply", true, decimal_multiply),
         ("divide", true, decimal_divide),
+        ("advanced", false, decimal_advanced),
+        ("distance", false, decimal_distance),
+        ("isEqual", false, decimal_is_equal_to),
+        ("isLess", false, decimal_is_less),
+        ("isLessThanOrEqualTo", false, decimal_is_less_or_equal),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::Decimal,
@@ -117,6 +143,103 @@ fn decimal_pi(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
 
 fn decimal_nan_static(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
     Ok(dec::to_value(Dec::NAN))
+}
+
+fn decimal_is_normal(recv: SwiftValue) -> StdResult {
+    let value = decimal_value(&recv)?;
+    Ok(SwiftValue::Bool(!value.nan && !value.is_zero()))
+}
+
+fn decimal_is_subnormal(recv: SwiftValue) -> StdResult {
+    // A base-10 fixed-point value is never subnormal.
+    decimal_value(&recv)?;
+    Ok(SwiftValue::Bool(false))
+}
+
+fn decimal_is_canonical(recv: SwiftValue) -> StdResult {
+    // Values are normalized on construction, so every Decimal is canonical.
+    decimal_value(&recv)?;
+    Ok(SwiftValue::Bool(true))
+}
+
+fn decimal_is_false_pred(recv: SwiftValue) -> StdResult {
+    // `Decimal` has no signaling representation.
+    decimal_value(&recv)?;
+    Ok(SwiftValue::Bool(false))
+}
+
+fn decimal_advanced(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let by = decimal_operand(&args, "advanced(by:)")?;
+    let value = decimal_value(&recv)?;
+    Ok(Outcome {
+        result: dec::to_value(dec::add(value, by)),
+        receiver: recv,
+    })
+}
+
+fn decimal_distance(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = decimal_operand(&args, "distance(to:)")?;
+    let value = decimal_value(&recv)?;
+    Ok(Outcome {
+        result: dec::to_value(dec::sub(other, value)),
+        receiver: recv,
+    })
+}
+
+fn decimal_compare_pred(
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+    method: &str,
+    want: &[std::cmp::Ordering],
+) -> Result<Outcome, StdError> {
+    let other = decimal_operand(&args, method)?;
+    let value = decimal_value(&recv)?;
+    let result = if value.nan || other.nan {
+        false
+    } else {
+        want.contains(&dec::compare(value, other))
+    };
+    Ok(Outcome {
+        result: SwiftValue::Bool(result),
+        receiver: recv,
+    })
+}
+
+fn decimal_is_equal_to(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    decimal_compare_pred(recv, args, "isEqual(to:)", &[std::cmp::Ordering::Equal])
+}
+
+fn decimal_is_less(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    decimal_compare_pred(recv, args, "isLess(than:)", &[std::cmp::Ordering::Less])
+}
+
+fn decimal_is_less_or_equal(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    decimal_compare_pred(
+        recv,
+        args,
+        "isLessThanOrEqualTo(_:)",
+        &[std::cmp::Ordering::Less, std::cmp::Ordering::Equal],
+    )
 }
 
 fn decimal_negate(
@@ -415,6 +538,60 @@ mod tests {
             }
         }
         Ctx(Vec::new())
+    }
+
+    #[test]
+    fn strideable_advance_and_distance() {
+        let three = decimal(3, 0);
+        let advanced = decimal_advanced(&mut dummy_ctx(), three.clone(), vec![decimal(2, 0)])
+            .unwrap()
+            .result;
+        assert_eq!(advanced, decimal(5, 0));
+        let distance = decimal_distance(&mut dummy_ctx(), three, vec![decimal(5, 0)])
+            .unwrap()
+            .result;
+        assert_eq!(distance, decimal(2, 0));
+        // Distance is signed: 5.distance(to: 3) == -2.
+        let back = decimal_distance(&mut dummy_ctx(), decimal(5, 0), vec![decimal(3, 0)])
+            .unwrap()
+            .result;
+        assert_eq!(back, decimal(-2, 0));
+    }
+
+    #[test]
+    fn floating_point_predicates() {
+        assert_eq!(
+            decimal_is_normal(decimal(5, 0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        assert_eq!(
+            decimal_is_normal(decimal(0, 0)).unwrap(),
+            SwiftValue::Bool(false)
+        );
+        assert_eq!(
+            decimal_is_canonical(decimal(5, 0)).unwrap(),
+            SwiftValue::Bool(true)
+        );
+        // isEqual ignores the (stripped) label and compares the operand.
+        let eq = decimal_is_equal_to(&mut dummy_ctx(), decimal(3, 0), vec![decimal(3, 0)])
+            .unwrap()
+            .result;
+        assert_eq!(eq, SwiftValue::Bool(true));
+        // NaN is never equal, less, or less-than-or-equal.
+        for pred in [
+            decimal_is_equal_to as fn(&mut dyn StdContext, SwiftValue, Vec<SwiftValue>) -> _,
+            decimal_is_less,
+            decimal_is_less_or_equal,
+        ] {
+            let out = pred(
+                &mut dummy_ctx(),
+                dec::to_value(Dec::NAN),
+                vec![decimal(3, 0)],
+            )
+            .unwrap()
+            .result;
+            assert_eq!(out, SwiftValue::Bool(false));
+        }
     }
 
     #[test]
