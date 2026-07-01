@@ -721,6 +721,16 @@ impl<'w> Interpreter<'w> {
             _ => return Err(EvalError::Type("cannot set a member on a non-struct".into()).into()),
         };
 
+        // An integer generic parameter (`Buf<let N: Int>`) is part of the
+        // type, stored as an instance field only for lookup — never writable.
+        if self
+            .types
+            .struct_def(&type_name)
+            .is_some_and(|d| d.value_generic_params.iter().any(|p| p == name))
+        {
+            return Err(EvalError::Immutable(name.to_string()).into());
+        }
+
         // A wrapped property's set goes through its wrapper's `wrappedValue`.
         if self.wrapped_field(&type_name, name) {
             let current = match &value {

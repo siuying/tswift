@@ -516,12 +516,39 @@ impl<'w> Interpreter<'w> {
             if self.types.is_class(&name) {
                 return self.instantiate_class(&name, args);
             }
-            // Struct memberwise initializer.
+            // Struct memberwise initializer. A specialization with integer
+            // generic arguments (`Buf<4>()`) binds them, in order, to the
+            // struct's `let` generic parameters.
             if self.types.is_struct(&name) {
                 let simple: Vec<(Option<String>, SwiftValue)> = args
                     .iter()
                     .map(|a| (a.label.clone(), a.value.clone()))
                     .collect();
+                let value_params = self
+                    .types
+                    .struct_def(&name)
+                    .map(|d| d.value_generic_params.clone())
+                    .unwrap_or_default();
+                if !value_params.is_empty() {
+                    let ints: Vec<SwiftValue> = callee
+                        .children()
+                        .filter(|c| c.kind() == NodeKind::TypeRef)
+                        .filter_map(|c| c.text())
+                        .filter_map(|t| parse_int_generic_arg(&t))
+                        .map(SwiftValue::int)
+                        .collect();
+                    if ints.len() != value_params.len() {
+                        return Err(EvalError::Type(format!(
+                            "{name} expects {} integer generic argument(s), got {}",
+                            value_params.len(),
+                            ints.len()
+                        ))
+                        .into());
+                    }
+                    let type_values: Vec<(String, SwiftValue)> =
+                        value_params.into_iter().zip(ints).collect();
+                    return self.instantiate_struct_specialized(&name, &simple, &type_values);
+                }
                 return self.instantiate_struct(&name, &simple);
             }
             // `@dynamicCallable`: calling a struct instance routes through its
@@ -1023,12 +1050,24 @@ impl<'w> Interpreter<'w> {
                     }
                     SwiftValue::Struct(s) => {
                         let tn = s.type_name.clone();
+                        // Integer generic parameter values live as fields on
+                        // the instance being initialized; delegation rebuilds
+                        // with the same specialization.
+                        let type_values: Vec<(String, SwiftValue)> = self
+                            .types
+                            .struct_def(&tn)
+                            .map(|d| d.value_generic_params.clone())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|n| s.get(&n).cloned().map(|v| (n, v)))
+                            .collect();
                         let args = self.eval_args(arg_nodes)?;
                         let simple: Vec<(Option<String>, SwiftValue)> = args
                             .iter()
                             .map(|a| (a.label.clone(), a.value.clone()))
                             .collect();
-                        let rebuilt = self.instantiate_struct(&tn, &simple)?;
+                        let rebuilt =
+                            self.instantiate_struct_specialized(&tn, &simple, &type_values)?;
                         // A failed failable delegate (`self.init?(...)` returned
                         // nil) fails the delegating initializer too.
                         if matches!(rebuilt, SwiftValue::Nil) {
@@ -1614,4 +1653,20 @@ impl<'w> Interpreter<'w> {
         }
         Some(result)
     }
+}
+
+/// Parse an integer generic argument (`Buf<4>`, `Buf<0xFF>`) in any Swift
+/// radix, honouring `_` separators.
+fn parse_int_generic_arg(text: &str) -> Option<i128> {
+    let s = text.replace('_', "");
+    let (digits, radix) = if let Some(rest) = s.strip_prefix("0x") {
+        (rest, 16)
+    } else if let Some(rest) = s.strip_prefix("0b") {
+        (rest, 2)
+    } else if let Some(rest) = s.strip_prefix("0o") {
+        (rest, 8)
+    } else {
+        (s.as_str(), 10)
+    };
+    i128::from_str_radix(digits, radix).ok()
 }

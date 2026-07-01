@@ -229,7 +229,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
-| [ ] | Integer generic parameters (`let N: Int`) | ⚠️ | ★★★ | R6+ |
+| [x] | Integer generic parameters (`let N: Int`, SE-0452: multi-param, call-site `Buf<4>()` specialization in any radix; each value binds as a write-protected stored field visible to defaults/bodies and preserved through `self.init` delegation. Type-position spelling `let b: Buf<4>` not yet wired) | ✅ | ★★★ | R6+ |
 | [x] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
 
 ### 4c. Extensions

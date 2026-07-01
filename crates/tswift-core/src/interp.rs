@@ -290,6 +290,10 @@ struct StructDef {
     init_overloads: Vec<MethodDef>,
     /// Stored property name → its `@propertyWrapper` type, when wrapped.
     wrappers: std::collections::HashMap<String, String>,
+    /// Integer generic parameter names (`struct Buf<let N: Int>`), in
+    /// declaration order. A call-site specialization (`Buf<4>()`) binds each
+    /// as an immutable stored field on the instance.
+    value_generic_params: Vec<String>,
     /// `@dynamicMemberLookup`: an unresolved member name routes through the
     /// type's `subscript(dynamicMember:)`.
     dynamic_member_lookup: bool,
@@ -2964,6 +2968,19 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         args: &[(Option<String>, SwiftValue)],
     ) -> Eval {
+        self.instantiate_struct_specialized(type_name, args, &[])
+    }
+
+    /// Build a struct instance, additionally binding integer generic
+    /// parameters (`Buf<let N: Int>` specialized as `Buf<4>()`): each value
+    /// becomes an immutable stored field, and is in scope while stored-property
+    /// defaults evaluate.
+    fn instantiate_struct_specialized(
+        &mut self,
+        type_name: &str,
+        args: &[(Option<String>, SwiftValue)],
+        type_values: &[(String, SwiftValue)],
+    ) -> Eval {
         // A custom initializer runs against a fresh empty value, binding `self`.
         let custom_init = self.select_struct_init(type_name, args);
         if let Some((params, body)) = custom_init {
@@ -2981,24 +2998,29 @@ impl<'w> Interpreter<'w> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let mut fields: Vec<(String, SwiftValue)> = Vec::new();
-            for (pname, def) in defaults {
-                let value = self.eval(&def)?;
-                // Wrap `@propertyWrapper` fields in their wrapper instance, the
-                // same way the memberwise initializer does.
-                let wrapper = self
-                    .types
-                    .struct_def(type_name)
-                    .and_then(|d| d.wrappers.get(&pname))
-                    .cloned();
-                let value = match wrapper {
-                    Some(wt) => {
-                        self.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
-                    }
-                    None => value,
-                };
-                fields.push((pname, value));
-            }
+            let mut fields: Vec<(String, SwiftValue)> = type_values.to_vec();
+            let defaults_result = self.with_type_values(type_values, |me| {
+                let mut built: Vec<(String, SwiftValue)> = Vec::new();
+                for (pname, def) in defaults {
+                    let value = me.eval(&def)?;
+                    // Wrap `@propertyWrapper` fields in their wrapper instance,
+                    // the same way the memberwise initializer does.
+                    let wrapper = me
+                        .types
+                        .struct_def(type_name)
+                        .and_then(|d| d.wrappers.get(&pname))
+                        .cloned();
+                    let value = match wrapper {
+                        Some(wt) => {
+                            me.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
+                        }
+                        None => value,
+                    };
+                    built.push((pname, value));
+                }
+                Ok(built)
+            });
+            fields.extend(defaults_result?);
             let this = SwiftValue::Struct(Rc::new(StructObj {
                 type_name: type_name.to_string(),
                 fields,
@@ -3054,53 +3076,80 @@ impl<'w> Interpreter<'w> {
             })
             .unwrap_or_default();
 
-        let mut fields: Vec<(String, SwiftValue)> = Vec::new();
-        let mut positional = args.iter().filter(|(l, _)| l.is_none());
-        for (pname, field_ty, lazy, default) in plan {
-            let labeled = args
-                .iter()
-                .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
-                .map(|(_, v)| v.clone());
-            // The `@propertyWrapper` type backing this field, if any.
-            let wrapper = self
-                .types
-                .struct_def(type_name)
-                .and_then(|d| d.wrappers.get(&pname))
-                .cloned();
-            let value = if let Some(v) = labeled {
-                coerce_numeric(v, field_ty.as_deref())
-            } else if let Some((_, v)) = positional.next() {
-                coerce_numeric(v.clone(), field_ty.as_deref())
-            } else if lazy {
-                // Lazy properties are materialized on first access, not here.
-                continue;
-            } else if let Some(def) = default {
-                self.eval(&def)?
-            } else if let Some(wt) = &wrapper {
-                // A wrapped property with no provided value and no default (e.g.
-                // `@EnvironmentObject var x: T`) is synthesized via the
-                // wrapper's own no-argument `init()` — its value is injected
-                // later (by the environment) rather than supplied here.
-                let synthesized = self.instantiate_struct(wt, &[])?;
-                fields.push((pname, synthesized));
-                continue;
-            } else {
-                return Err(EvalError::Type(format!(
-                    "missing value for property `{pname}` of {type_name}"
-                ))
-                .into());
-            };
-            // Wrap `@propertyWrapper` fields in their wrapper instance.
-            let value = match &wrapper {
-                Some(wt) => self.instantiate_struct(wt, &[(Some("wrappedValue".into()), value)])?,
-                None => value,
-            };
-            fields.push((pname, value));
-        }
+        let mut fields: Vec<(String, SwiftValue)> = type_values.to_vec();
+        let built = self.with_type_values(type_values, |me| {
+            let mut built: Vec<(String, SwiftValue)> = Vec::new();
+            let mut positional = args.iter().filter(|(l, _)| l.is_none());
+            for (pname, field_ty, lazy, default) in plan {
+                let labeled = args
+                    .iter()
+                    .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
+                    .map(|(_, v)| v.clone());
+                // The `@propertyWrapper` type backing this field, if any.
+                let wrapper = me
+                    .types
+                    .struct_def(type_name)
+                    .and_then(|d| d.wrappers.get(&pname))
+                    .cloned();
+                let value = if let Some(v) = labeled {
+                    coerce_numeric(v, field_ty.as_deref())
+                } else if let Some((_, v)) = positional.next() {
+                    coerce_numeric(v.clone(), field_ty.as_deref())
+                } else if lazy {
+                    // Lazy properties are materialized on first access, not here.
+                    continue;
+                } else if let Some(def) = default {
+                    me.eval(&def)?
+                } else if let Some(wt) = &wrapper {
+                    // A wrapped property with no provided value and no default
+                    // (e.g. `@EnvironmentObject var x: T`) is synthesized via
+                    // the wrapper's own no-argument `init()` — its value is
+                    // injected later (by the environment) rather than here.
+                    let synthesized = me.instantiate_struct(wt, &[])?;
+                    built.push((pname, synthesized));
+                    continue;
+                } else {
+                    return Err(EvalError::Type(format!(
+                        "missing value for property `{pname}` of {type_name}"
+                    ))
+                    .into());
+                };
+                // Wrap `@propertyWrapper` fields in their wrapper instance.
+                let value = match &wrapper {
+                    Some(wt) => {
+                        me.instantiate_struct(wt, &[(Some("wrappedValue".into()), value)])?
+                    }
+                    None => value,
+                };
+                built.push((pname, value));
+            }
+            Ok(built)
+        });
+        fields.extend(built?);
         Ok(SwiftValue::Struct(Rc::new(StructObj {
             type_name: type_name.to_string(),
             fields,
         })))
+    }
+
+    /// Run `body` with integer generic parameter values bound in a fresh
+    /// scope (so stored-property defaults can reference them), popping the
+    /// scope regardless of the outcome.
+    fn with_type_values<T>(
+        &mut self,
+        type_values: &[(String, SwiftValue)],
+        body: impl FnOnce(&mut Self) -> Result<T, Signal>,
+    ) -> Result<T, Signal> {
+        if type_values.is_empty() {
+            return body(self);
+        }
+        self.env.push();
+        for (n, v) in type_values {
+            self.env.declare(n, v.clone(), false);
+        }
+        let result = body(self);
+        self.env.pop();
+        result
     }
 
     /// An integer literal, widened to its msf-resolved type when known.
@@ -6113,6 +6162,23 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         assert!(
             msg.contains("unowned"),
             "expected an unowned-dangling trap, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn integer_generic_parameter_is_not_assignable() {
+        let err = run(concat!(
+            "struct Buf<let N: Int> {\n",
+            "  var used = 0\n",
+            "  mutating func corrupt() { N = 99 }\n",
+            "}\n",
+            "var b = Buf<4>()\n",
+            "b.corrupt()\n",
+        ))
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Immutable(_)),
+            "expected an immutability error, got: {err}"
         );
     }
 

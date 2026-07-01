@@ -634,6 +634,13 @@ impl<'a> Parser<'a> {
                         break;
                     }
                 }
+                // A keyword keeps a trailing space so `<let N: Int>` records
+                // as "let N:Int" rather than fusing into "letN:Int".
+                TokenKind::Keyword => {
+                    out.push_str(t.text);
+                    out.push(' ');
+                    self.bump();
+                }
                 _ => {
                     out.push_str(t.text);
                     self.bump();
@@ -2775,14 +2782,16 @@ impl<'a> Parser<'a> {
                     }
                 }
                 // Type-list interior: names, qualified names, optionals,
-                // protocol compositions, nested array/dictionary types, and tuples.
+                // protocol compositions, nested array/dictionary types, tuples,
+                // and integer generic arguments (`Buf<4>`, SE-0452).
                 TokenKind::Identifier
                 | TokenKind::Question
                 | TokenKind::Comma
                 | TokenKind::Dot
                 | TokenKind::LBracket
                 | TokenKind::RBracket
-                | TokenKind::Colon => i += 1,
+                | TokenKind::Colon
+                | TokenKind::IntLiteral => i += 1,
                 TokenKind::Keyword
                     if matches!(t.text, "some" | "any" | "inout" | "protocol" | "class") =>
                 {
@@ -2823,6 +2832,25 @@ impl<'a> Parser<'a> {
                 {
                     match self.generic_call_args() {
                         Some(end) => {
+                            // Integer generic arguments (`Buf<4>()`, SE-0452)
+                            // are values, not inferable types — record each as
+                            // a `TypeRef` child of the callee identifier for
+                            // the runtime to bind against the type's `let`
+                            // generic parameters.
+                            if self.ast.node(expr).kind() == NodeKind::IdentExpr {
+                                for j in self.pos..end {
+                                    let t = self.tokens[j];
+                                    if t.kind == TokenKind::IntLiteral {
+                                        let ty = self.ast.add(
+                                            NodeKind::TypeRef,
+                                            Some(t.text),
+                                            t.line,
+                                            t.col,
+                                        );
+                                        self.ast.append_child(expr, ty);
+                                    }
+                                }
+                            }
                             // Most generics infer their arguments from values, so
                             // the `<…>` clause is discarded. `MemoryLayout<T>`,
                             // however, is parameterised purely by a written type,

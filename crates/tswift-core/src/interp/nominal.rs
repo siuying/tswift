@@ -104,6 +104,25 @@ impl<'w> Interpreter<'w> {
         self.types.record_conformance(type_name, conf);
     }
 
+    /// Integer generic parameter names from a nominal's `<...>` clause:
+    /// entries spelled `let N: Int` (SE-0452), in declaration order.
+    fn value_generic_param_names(&self, node: &Node<'static>) -> Vec<String> {
+        node.children()
+            .filter(|c| c.kind() == NodeKind::GenericParam)
+            .filter_map(|c| c.text())
+            .flat_map(|text| {
+                text.trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .split(',')
+                    .filter_map(|entry| {
+                        let rest = entry.trim().strip_prefix("let ")?;
+                        Some(rest.split(':').next()?.trim().to_string())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// Register a protocol declaration (name + inherited protocols), recording
     /// `@objc optional` requirement names so a non-implementing conformer's
     /// optional-chained use resolves to `nil` instead of erroring.
@@ -723,6 +742,7 @@ impl<'w> Interpreter<'w> {
                 init,
                 init_overloads,
                 wrappers,
+                value_generic_params: self.value_generic_param_names(node),
                 dynamic_member_lookup,
                 dynamic_callable,
             },
