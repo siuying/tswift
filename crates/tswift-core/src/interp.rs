@@ -3310,6 +3310,54 @@ impl<'w> Interpreter<'w> {
         outcome
     }
 
+    /// Drive a custom `AsyncSequence`'s iterator to completion, collecting every
+    /// element into a `Vec` (our cooperative executor runs the producer eagerly,
+    /// ADR-0005). Backs the async-sequence algorithms (`reduce`/`map`/…), which
+    /// materialise the sequence and then reuse the eager array machinery.
+    fn collect_async_sequence(&mut self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        const ITER: &str = "$asynccollect";
+        let seq_ty = self.value_type_name(seq);
+        let iter = if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "next"))
+        {
+            seq.clone()
+        } else if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "makeAsyncIterator"))
+        {
+            let ty = seq_ty.clone().unwrap();
+            self.call_struct_method(seq.clone(), &ty, "makeAsyncIterator", Vec::new(), None)?
+        } else {
+            return Err(EvalError::Type(format!(
+                "cannot iterate over {} (not an AsyncSequence)",
+                seq.type_name()
+            ))
+            .into());
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("async iterator has no type".into()))?;
+
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let mut items = Vec::new();
+        let outcome = loop {
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            match self.call_struct_method(current, &iter_ty, "next", Vec::new(), Some(place)) {
+                Ok(SwiftValue::Nil) => break Ok(()),
+                Ok(v) => items.push(v),
+                Err(e) => break Err(e),
+            }
+        };
+        self.env.pop();
+        outcome.map(|()| items)
+    }
+
     /// The nominal type name backing a value, for protocol/method lookup.
     fn value_type_name(&self, value: &SwiftValue) -> Option<String> {
         match value {
