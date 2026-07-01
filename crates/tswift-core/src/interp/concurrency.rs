@@ -417,6 +417,39 @@ impl<'w> Interpreter<'w> {
         self.call_closure(closure, Vec::new()).map(Some)
     }
 
+    /// `AsyncStream.makeStream(of:)` / `AsyncThrowingStream.makeStream(of:)`:
+    /// the builder-free factory. Opens a fresh stream buffer and returns the
+    /// `(stream, continuation)` tuple, so a producer can `yield`/`finish` on the
+    /// continuation before the reader is drained by `for await` (ADR-0005's
+    /// eager, single-threaded model). Returns `None` for any other receiver.
+    pub(super) fn try_async_stream_static(
+        &mut self,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if method != "makeStream"
+            || base.kind() != NodeKind::IdentExpr
+            || !matches!(
+                base.text().as_deref(),
+                Some("AsyncStream" | "AsyncThrowingStream")
+            )
+            || self.env.get(&base.text().unwrap_or_default()).is_some()
+        {
+            return Ok(None);
+        }
+        // The `of:`/`throwing:` arguments are only type metadata; ignore them.
+        let _ = arg_nodes;
+        let sid = self.sched.new_stream();
+        Ok(Some(SwiftValue::tuple_labeled(
+            vec![
+                SwiftValue::AsyncStreamHandle(sid),
+                SwiftValue::StreamContinuation(sid),
+            ],
+            vec![Some("stream".into()), Some("continuation".into())],
+        )))
+    }
+
     /// Dispatch instance methods on a task handle or task group. Returns `None`
     /// when `base` is neither, so normal method resolution continues.
     pub(super) fn try_concurrency_method(
@@ -610,6 +643,17 @@ impl<'w> Interpreter<'w> {
         self.drive_pending(body_tasks_start, |_| false)?;
         let items = self.sched.take_stream(sid);
         Ok(SwiftValue::Array(Rc::new(items)))
+    }
+
+    /// Drain the reader half of a `makeStream(of:)` stream: run any pending
+    /// producer tasks to completion, then take the buffered elements. Backs
+    /// `for await`/algorithm consumption of an [`SwiftValue::AsyncStreamHandle`].
+    pub(super) fn drain_async_stream_handle(
+        &mut self,
+        sid: usize,
+    ) -> Result<Vec<SwiftValue>, Signal> {
+        self.drive_pending(0, |_| false)?;
+        Ok(self.sched.take_stream(sid))
     }
 
     /// `await with*Continuation { continuation in ... }`: hand the body a

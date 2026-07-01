@@ -741,10 +741,13 @@ impl<'w> Interpreter<'w> {
         if !ASYNC_ALGOS.contains(&method) {
             return Ok(None);
         }
-        let Some(ty) = self.value_type_name(base_value) else {
-            return Ok(None);
-        };
-        if !self.all_protocols(&ty).iter().any(|p| p == "AsyncSequence") {
+        // The `makeStream(of:)` reader is an `AsyncStream`; a user nominal type
+        // must declare `AsyncSequence` conformance.
+        let is_async_seq = matches!(base_value, SwiftValue::AsyncStreamHandle(_))
+            || self
+                .value_type_name(base_value)
+                .is_some_and(|ty| self.all_protocols(&ty).iter().any(|p| p == "AsyncSequence"));
+        if !is_async_seq {
             return Ok(None);
         }
         let items = self.collect_async_sequence(base_value)?;
@@ -981,6 +984,11 @@ impl<'w> Interpreter<'w> {
 
         // `MainActor.run { }` hop (ADR-0005).
         if let Some(result) = self.try_main_actor_method(&base, &method, arg_nodes)? {
+            return Ok(result);
+        }
+
+        // `AsyncStream.makeStream(of:)` factory (ADR-0005).
+        if let Some(result) = self.try_async_stream_static(&base, &method, arg_nodes)? {
             return Ok(result);
         }
 

@@ -3164,6 +3164,8 @@ impl<'w> Interpreter<'w> {
         // `for await r in customSequence`: drive its async iterator protocol.
         let items = match &seq {
             SwiftValue::TaskGroup(gid) => self.drain_group_results(*gid)?,
+            // The reader half of `makeStream(of:)`: drain its producer's buffer.
+            SwiftValue::AsyncStreamHandle(sid) => self.drain_async_stream_handle(*sid)?,
             _ if is_for_await && !is_builtin_iterable(&seq) => {
                 let name = var_name.as_deref().unwrap_or("_");
                 return self.run_async_sequence(&seq, name, where_clause, &body, &label);
@@ -3315,6 +3317,11 @@ impl<'w> Interpreter<'w> {
     /// ADR-0005). Backs the async-sequence algorithms (`reduce`/`map`/…), which
     /// materialise the sequence and then reuse the eager array machinery.
     fn collect_async_sequence(&mut self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        // The reader half of `makeStream(of:)` drains its producer buffer
+        // directly rather than driving an iterator protocol.
+        if let SwiftValue::AsyncStreamHandle(sid) = seq {
+            return self.drain_async_stream_handle(*sid);
+        }
         const ITER: &str = "$asynccollect";
         let seq_ty = self.value_type_name(seq);
         let iter = if seq_ty
