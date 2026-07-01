@@ -63,7 +63,7 @@ impl<'w> Interpreter<'w> {
     ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
-            let def = self.classes.get(&cls)?;
+            let def = self.types.class_def(&cls)?;
             if let Some(m) = def.methods.get(name) {
                 return Some((
                     clone_params(&m.params),
@@ -478,13 +478,16 @@ impl<'w> Interpreter<'w> {
             }
             // `EnumType(rawValue:)` — failable lookup of the case with that raw
             // value, returning the case or `nil` (RawRepresentable synthesis).
-            if self.enums.contains_key(&name) {
+            if self.types.is_enum(&name) {
                 if let Some(raw) = args
                     .iter()
                     .find(|a| a.label.as_deref() == Some("rawValue"))
                     .map(|a| a.value.clone())
                 {
-                    let case = self.enums[&name]
+                    let case = self
+                        .types
+                        .enum_def(&name)
+                        .unwrap()
                         .cases
                         .iter()
                         .find(|c| c.raw.as_ref() == Some(&raw))
@@ -500,11 +503,11 @@ impl<'w> Interpreter<'w> {
                 }
             }
             // Class initializer.
-            if self.classes.contains_key(&name) {
+            if self.types.is_class(&name) {
                 return self.instantiate_class(&name, args);
             }
             // Struct memberwise initializer.
-            if self.structs.contains_key(&name) {
+            if self.types.is_struct(&name) {
                 let simple: Vec<(Option<String>, SwiftValue)> = args
                     .iter()
                     .map(|a| (a.label.clone(), a.value.clone()))
@@ -724,7 +727,7 @@ impl<'w> Interpreter<'w> {
             if let Some(tn) = self.resolve_implicit_static_method(member, &method) {
                 let params = self.user_method_params(&tn, &method);
                 let args = self.eval_args_with(arg_nodes, params.as_deref())?;
-                if self.classes.contains_key(&tn) {
+                if self.types.is_class(&tn) {
                     return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
                 }
                 return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
@@ -741,7 +744,7 @@ impl<'w> Interpreter<'w> {
             let start = self
                 .class_ctx
                 .last()
-                .and_then(|c| self.classes.get(c))
+                .and_then(|c| self.types.class_def(c))
                 .and_then(|d| d.superclass.clone())
                 .ok_or_else(|| EvalError::Unsupported("`super` without a superclass".into()))?;
             let args = self.eval_args(arg_nodes)?;
@@ -788,11 +791,11 @@ impl<'w> Interpreter<'w> {
                     // their simple name, so resolve `method` against the type
                     // tables when `tn` is itself a user type.
                     if user_defined {
-                        if self.classes.contains_key(&method) {
+                        if self.types.is_class(&method) {
                             let args = self.eval_args(arg_nodes)?;
                             return self.instantiate_class(&method, args);
                         }
-                        if self.structs.contains_key(&method) {
+                        if self.types.is_struct(&method) {
                             let simple: Vec<(Option<String>, SwiftValue)> = self
                                 .eval_args(arg_nodes)?
                                 .iter()
@@ -806,14 +809,13 @@ impl<'w> Interpreter<'w> {
                         let payload = args.into_iter().map(|a| a.value).collect();
                         return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
                     }
-                    if self.structs.contains_key(&tn) {
+                    if self.types.is_struct(&tn) {
                         let params = self.user_method_params(&tn, &method);
                         let args = self.eval_args_with(arg_nodes, params.as_deref())?;
                         return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
                     }
                     // `Type.method(...)` — a static method on a class.
-                    if self.classes.contains_key(&tn) && self.lookup_method(&tn, &method).is_some()
-                    {
+                    if self.types.is_class(&tn) && self.lookup_method(&tn, &method).is_some() {
                         let params = self.user_method_params(&tn, &method);
                         let args = self.eval_args_with(arg_nodes, params.as_deref())?;
                         return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
@@ -1004,12 +1006,14 @@ impl<'w> Interpreter<'w> {
     ) -> Result<(), Signal> {
         let mut chain = self.class_chain(start_class);
         chain.reverse(); // most-derived (start) first
-        let owner = chain.into_iter().find(|c| self.classes[c].init.is_some());
+        let owner = chain
+            .into_iter()
+            .find(|c| self.types.class_def(c).unwrap().init.is_some());
         let Some(owner) = owner else {
             return Ok(()); // no explicit init to run
         };
         let (params, body) = {
-            let m = self.classes[&owner].init.as_ref().unwrap();
+            let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
             (clone_params(&m.params), m.body)
         };
         self.class_ctx.push(owner);
@@ -1097,7 +1101,11 @@ impl<'w> Interpreter<'w> {
         method: &str,
         args: &[CallArg],
     ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
-        let overloads = self.structs.get(type_name)?.method_overloads.get(method)?;
+        let overloads = self
+            .types
+            .struct_def(type_name)?
+            .method_overloads
+            .get(method)?;
         if overloads.len() < 2 {
             return None;
         }
@@ -1117,12 +1125,12 @@ impl<'w> Interpreter<'w> {
         if let Some((params, _, _, _)) = self.lookup_method(type_name, method) {
             return Some(params);
         }
-        if let Some(d) = self.structs.get(type_name) {
+        if let Some(d) = self.types.struct_def(type_name) {
             if let Some(m) = d.methods.get(method) {
                 return Some(clone_params(&m.params));
             }
         }
-        if let Some(d) = self.enums.get(type_name) {
+        if let Some(d) = self.types.enum_def(type_name) {
             if let Some(m) = d.methods.get(method) {
                 return Some(clone_params(&m.params));
             }
@@ -1132,12 +1140,12 @@ impl<'w> Interpreter<'w> {
 
     /// Whether a struct or enum type declares a method `method`.
     pub(super) fn type_has_method(&self, type_name: &str, method: &str) -> bool {
-        self.structs
-            .get(type_name)
+        self.types
+            .struct_def(type_name)
             .is_some_and(|d| d.methods.contains_key(method))
             || self
-                .enums
-                .get(type_name)
+                .types
+                .enum_def(type_name)
                 .is_some_and(|d| d.methods.contains_key(method))
             || self.protocol_default_method(type_name, method).is_some()
     }
@@ -1156,12 +1164,12 @@ impl<'w> Interpreter<'w> {
         let own = self
             .select_struct_overload(type_name, method, &args)
             .or_else(|| {
-                self.structs
-                    .get(type_name)
+                self.types
+                    .struct_def(type_name)
                     .and_then(|d| d.methods.get(method))
                     .or_else(|| {
-                        self.enums
-                            .get(type_name)
+                        self.types
+                            .enum_def(type_name)
                             .and_then(|d| d.methods.get(method))
                     })
                     .map(|def| {

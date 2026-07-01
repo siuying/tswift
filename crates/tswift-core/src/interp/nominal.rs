@@ -175,13 +175,13 @@ impl<'w> Interpreter<'w> {
         if let Some(proto) = self.protocols.get_mut(&target) {
             proto.methods.extend(methods);
             proto.computed.extend(computed);
-        } else if let Some(def) = self.structs.get_mut(&target) {
+        } else if let Some(def) = self.types.struct_def_mut(&target) {
             def.methods.extend(methods);
             def.computed.extend(computed);
-        } else if let Some(def) = self.enums.get_mut(&target) {
+        } else if let Some(def) = self.types.enum_def_mut(&target) {
             def.methods.extend(methods);
             def.computed.extend(computed);
-        } else if let Some(def) = self.classes.get_mut(&target) {
+        } else if let Some(def) = self.types.class_def_mut(&target) {
             def.methods.extend(methods);
             def.computed.extend(computed);
         } else {
@@ -254,8 +254,8 @@ impl<'w> Interpreter<'w> {
     pub(super) fn render_description(&mut self, value: &SwiftValue) -> String {
         let described = match value {
             SwiftValue::Struct(o) => self
-                .structs
-                .get(&o.type_name)
+                .types
+                .struct_def(&o.type_name)
                 .is_some_and(|d| d.computed.contains_key("description"))
                 .then(|| self.read_struct_member(value, "description").ok())
                 .flatten(),
@@ -267,8 +267,8 @@ impl<'w> Interpreter<'w> {
                     .flatten()
             }
             SwiftValue::Enum(e) => self
-                .enums
-                .get(&e.type_name)
+                .types
+                .enum_def(&e.type_name)
                 .is_some_and(|d| d.computed.contains_key("description"))
                 .then(|| self.read_enum_computed(value, "description").ok().flatten())
                 .flatten(),
@@ -301,7 +301,7 @@ impl<'w> Interpreter<'w> {
     /// Register an enum type from its declaration.
     fn register_enum(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
-        if self.enums.contains_key(&name) {
+        if self.types.is_enum(&name) {
             return;
         }
         self.record_conformances(&name, node);
@@ -394,7 +394,7 @@ impl<'w> Interpreter<'w> {
                 _ => {}
             }
         }
-        self.enums.insert(
+        self.types.insert_enum(
             name,
             EnumDef {
                 cases,
@@ -407,7 +407,7 @@ impl<'w> Interpreter<'w> {
     /// Register a class type from its declaration.
     fn register_class(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
-        if self.classes.contains_key(&name) {
+        if self.types.is_class(&name) {
             return;
         }
         self.record_conformances(&name, node);
@@ -529,7 +529,7 @@ impl<'w> Interpreter<'w> {
                 _ => {}
             }
         }
-        self.classes.insert(
+        self.types.insert_class(
             name.clone(),
             ClassDef {
                 superclass,
@@ -554,7 +554,7 @@ impl<'w> Interpreter<'w> {
     /// Register a struct type from its declaration.
     fn register_struct(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
-        if self.structs.contains_key(&name) {
+        if self.types.is_struct(&name) {
             return;
         }
         self.record_conformances(&name, node);
@@ -712,7 +712,7 @@ impl<'w> Interpreter<'w> {
                 _ => {}
             }
         }
-        self.structs.insert(
+        self.types.insert_struct(
             name.clone(),
             StructDef {
                 stored,

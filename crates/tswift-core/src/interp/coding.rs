@@ -84,8 +84,8 @@ impl<'w> Interpreter<'w> {
             // a payload-free enum encodes its bare case name.
             SwiftValue::Enum(e) => {
                 let raw = self
-                    .enums
-                    .get(&e.type_name)
+                    .types
+                    .enum_def(&e.type_name)
                     .and_then(|d| d.cases.iter().find(|c| c.name == e.case))
                     .and_then(|c| c.raw.clone());
                 match raw {
@@ -112,7 +112,7 @@ impl<'w> Interpreter<'w> {
         // A `Codable` enum decodes from its raw value, or — for a payload-free
         // case — its bare case name. A case with associated values never matches
         // here (we would have to synthesize a payload), so it is skipped.
-        if let Some(def) = self.enums.get(type_name) {
+        if let Some(def) = self.types.enum_def(type_name) {
             let decoded = self.json_value(json);
             if let Some(case) = def.cases.iter().find(|c| {
                 let raw_matches = c.raw.as_ref().is_some_and(|r| r == &decoded);
@@ -127,7 +127,7 @@ impl<'w> Interpreter<'w> {
                 }));
             }
         }
-        if let (Json::Object(_), Some(def)) = (json, self.structs.get(type_name)) {
+        if let (Json::Object(_), Some(def)) = (json, self.types.struct_def(type_name)) {
             let fields: Vec<(String, SwiftValue)> = def
                 .stored
                 .iter()
@@ -140,8 +140,8 @@ impl<'w> Interpreter<'w> {
                             // to a shape-inferred value otherwise.
                             match p.ty.as_deref() {
                                 Some(full)
-                                    if self.structs.contains_key(decode_element_type(full))
-                                        || self.enums.contains_key(decode_element_type(full)) =>
+                                    if self.types.is_struct(decode_element_type(full))
+                                        || self.types.is_enum(decode_element_type(full)) =>
                                 {
                                     self.json_decode_field(decode_element_type(full), full, j)
                                 }

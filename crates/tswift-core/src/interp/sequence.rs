@@ -35,8 +35,7 @@ impl<'w> Interpreter<'w> {
     /// custom-sequence detection over struct/enum/class conformers.
     fn seq_type_has_method(&self, type_name: &str, method: &str) -> bool {
         self.type_has_method(type_name, method)
-            || (self.classes.contains_key(type_name)
-                && self.lookup_method(type_name, method).is_some())
+            || (self.types.is_class(type_name) && self.lookup_method(type_name, method).is_some())
     }
 
     /// Dispatch `next()`/`makeIterator()` on a sequence/iterator value, routing
@@ -50,7 +49,7 @@ impl<'w> Interpreter<'w> {
         method: &str,
         place: Option<Place>,
     ) -> Eval {
-        if self.classes.contains_key(type_name) {
+        if self.types.is_class(type_name) {
             // A class iterator mutates through its reference; no write-back.
             self.dispatch_class_method(receiver, type_name, method, Vec::new())
         } else {

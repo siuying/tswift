@@ -272,6 +272,7 @@ struct SubscriptDef {
 }
 
 /// A struct type declaration.
+#[derive(Default)]
 struct StructDef {
     stored: Vec<StoredProp>,
     computed: std::collections::HashMap<String, ComputedProp>,
@@ -316,6 +317,7 @@ enum RawKind {
 }
 
 /// An enum type declaration.
+#[derive(Default)]
 struct EnumDef {
     cases: Vec<EnumCaseDef>,
     methods: std::collections::HashMap<String, MethodDef>,
@@ -335,6 +337,70 @@ struct ClassDef {
     deinit: Option<Node<'static>>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
+}
+
+/// The interpreter's registry of user-declared nominal types — the `struct`,
+/// `enum`, and `class` declarations hoisted from a program. Owning the three
+/// maps behind one module keeps the "what types exist" question in a single
+/// place instead of smeared across the interpreter's fields; the query methods
+/// (`is_struct`, `struct_def`, …) are the read surface the dispatcher uses.
+#[derive(Default)]
+struct TypeTable {
+    structs: HashMap<String, StructDef>,
+    enums: HashMap<String, EnumDef>,
+    classes: HashMap<String, ClassDef>,
+}
+
+impl TypeTable {
+    fn is_struct(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+    }
+    fn is_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
+    fn is_class(&self, name: &str) -> bool {
+        self.classes.contains_key(name)
+    }
+    /// Whether `name` is any user-declared nominal type (struct, enum, or class).
+    fn is_nominal(&self, name: &str) -> bool {
+        self.is_struct(name) || self.is_enum(name) || self.is_class(name)
+    }
+    fn struct_def(&self, name: &str) -> Option<&StructDef> {
+        self.structs.get(name)
+    }
+    fn enum_def(&self, name: &str) -> Option<&EnumDef> {
+        self.enums.get(name)
+    }
+    fn class_def(&self, name: &str) -> Option<&ClassDef> {
+        self.classes.get(name)
+    }
+    fn struct_def_mut(&mut self, name: &str) -> Option<&mut StructDef> {
+        self.structs.get_mut(name)
+    }
+    fn enum_def_mut(&mut self, name: &str) -> Option<&mut EnumDef> {
+        self.enums.get_mut(name)
+    }
+    fn class_def_mut(&mut self, name: &str) -> Option<&mut ClassDef> {
+        self.classes.get_mut(name)
+    }
+    fn insert_struct(&mut self, name: String, def: StructDef) {
+        self.structs.insert(name, def);
+    }
+    fn insert_enum(&mut self, name: String, def: EnumDef) {
+        self.enums.insert(name, def);
+    }
+    fn insert_class(&mut self, name: String, def: ClassDef) {
+        self.classes.insert(name, def);
+    }
+    fn struct_names(&self) -> impl Iterator<Item = &String> {
+        self.structs.keys()
+    }
+    fn enum_names(&self) -> impl Iterator<Item = &String> {
+        self.enums.keys()
+    }
+    fn class_names(&self) -> impl Iterator<Item = &String> {
+        self.classes.keys()
+    }
 }
 
 /// A protocol declaration: its inherited protocols and any default member
@@ -457,14 +523,13 @@ pub struct Interpreter<'w> {
     struct_methods: HashMap<String, StructMethodEntry>,
     env: Env,
     funcs: Vec<FuncDef>,
-    structs: HashMap<String, StructDef>,
-    enums: HashMap<String, EnumDef>,
+    /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
+    types: TypeTable,
     /// Names of enums installed via [`Interpreter::register_builtin_enum`].
     /// These are excluded from the global unique-case shorthand fallback so
     /// they cannot shadow SwiftUI implicit statics (`.plain`, …); they still
     /// resolve when a contextual type names them or as a last-resort fallback.
     builtin_enums: std::collections::HashSet<String>,
-    classes: HashMap<String, ClassDef>,
     protocols: HashMap<String, ProtoDef>,
     /// type name → protocols it conforms to (directly).
     conformances: HashMap<String, Vec<String>>,
@@ -570,10 +635,8 @@ impl<'w> Interpreter<'w> {
             builtin_ext_methods: HashMap::new(),
             builtin_ext_computed: HashMap::new(),
             funcs: Vec::new(),
-            structs: HashMap::new(),
-            enums: HashMap::new(),
+            types: TypeTable::default(),
             builtin_enums: std::collections::HashSet::new(),
-            classes: HashMap::new(),
             protocols: HashMap::new(),
             conformances: HashMap::new(),
             protocol_aliases: HashMap::new(),
@@ -629,7 +692,7 @@ impl<'w> Interpreter<'w> {
     /// (e.g. `Calendar.Component`). Cases carry no raw value and no payload; the
     /// enum is skipped if a declaration with the same name already exists.
     pub fn register_builtin_enum(&mut self, name: &str, cases: &[&str]) {
-        if self.enums.contains_key(name) {
+        if self.types.is_enum(name) {
             return;
         }
         let cases = cases
@@ -640,7 +703,7 @@ impl<'w> Interpreter<'w> {
                 payload_types: Vec::new(),
             })
             .collect();
-        self.enums.insert(
+        self.types.insert_enum(
             name.to_string(),
             EnumDef {
                 cases,
@@ -830,7 +893,8 @@ impl<'w> Interpreter<'w> {
     /// Predeclare `Result<Success, Failure>` as a two-case enum so
     /// `.success`/`.failure` construct and `.get()` can throw.
     fn register_builtin_result(&mut self) {
-        self.enums
+        self.types
+            .enums
             .entry("Result".into())
             .or_insert_with(|| EnumDef {
                 cases: vec![
@@ -1206,7 +1270,7 @@ impl<'w> Interpreter<'w> {
             return Ok(value);
         }
         let ty = repr.strip_optionals().text();
-        let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
+        let is_user_type = self.types.is_struct(ty) || self.types.is_class(ty);
         if !is_user_type {
             return Ok(value);
         }
@@ -1216,7 +1280,7 @@ impl<'w> Interpreter<'w> {
     /// Convert a literal value into the contextual user type named by `ty` when
     /// that type declares the matching `ExpressibleBy*Literal` conformance.
     fn coerce_literal_value(&mut self, ty: &str, init_kind: NodeKind, value: SwiftValue) -> Eval {
-        let is_user_type = self.structs.contains_key(ty) || self.classes.contains_key(ty);
+        let is_user_type = self.types.is_struct(ty) || self.types.is_class(ty);
         if !is_user_type {
             return Ok(value);
         }
@@ -1278,7 +1342,7 @@ impl<'w> Interpreter<'w> {
             .into_iter()
             .map(|v| (Some(label.to_string()), v))
             .collect();
-        if self.structs.contains_key(ty) {
+        if self.types.is_struct(ty) {
             self.instantiate_struct(ty, &call_args)
         } else {
             let call_args = call_args
@@ -1499,9 +1563,7 @@ impl<'w> Interpreter<'w> {
     /// Such a name dispatches to its own initializer, so it must not inherit a
     /// builtin of the same spelling.
     fn is_user_nominal_type(&self, name: &str) -> bool {
-        self.structs.contains_key(name)
-            || self.classes.contains_key(name)
-            || self.enums.contains_key(name)
+        self.types.is_nominal(name)
     }
 
     /// Resolve an identifier used as a type in `Type.member` / `Type.method(...)`
@@ -1528,9 +1590,9 @@ impl<'w> Interpreter<'w> {
     /// Whether `name` spells a known type — a user struct/class/enum/protocol
     /// or a builtin value type — so `Type.self` resolves to a metatype.
     fn is_type_name(&self, name: &str) -> bool {
-        self.structs.contains_key(name)
-            || self.classes.contains_key(name)
-            || self.enums.contains_key(name)
+        self.types.is_struct(name)
+            || self.types.is_class(name)
+            || self.types.is_enum(name)
             || self.protocols.contains_key(name)
             || IntWidth::from_type_name(name).is_some()
             || matches!(
@@ -1573,7 +1635,7 @@ impl<'w> Interpreter<'w> {
         case: &str,
         payload: Vec<SwiftValue>,
     ) -> Result<Option<SwiftValue>, Signal> {
-        let payload_types = self.enums.get(type_name).and_then(|d| {
+        let payload_types = self.types.enum_def(type_name).and_then(|d| {
             d.cases
                 .iter()
                 .find(|c| c.name == case)
@@ -1613,7 +1675,7 @@ impl<'w> Interpreter<'w> {
             .into_iter()
             .chain(self.contextual_type().map(String::from))
         {
-            for name in self.enums.keys() {
+            for name in self.types.enum_names() {
                 if ty
                     .split(|c: char| !c.is_alphanumeric() && c != '_')
                     .any(|t| t == name)
@@ -1627,7 +1689,7 @@ impl<'w> Interpreter<'w> {
         // Builtin enums are excluded here so they cannot shadow SwiftUI
         // implicit statics; they get a later, lower-priority fallback.
         let mut found = None;
-        for (name, def) in &self.enums {
+        for (name, def) in &self.types.enums {
             if self.builtin_enums.contains(name) {
                 continue;
             }
@@ -1695,11 +1757,11 @@ impl<'w> Interpreter<'w> {
     fn resolve_implicit_static_method(&self, node: &Node<'static>, method: &str) -> Option<String> {
         let declares = |type_name: &str| -> bool {
             let m = self
-                .structs
-                .get(type_name)
+                .types
+                .struct_def(type_name)
                 .map(|d| &d.methods)
-                .or_else(|| self.classes.get(type_name).map(|d| &d.methods))
-                .or_else(|| self.enums.get(type_name).map(|d| &d.methods));
+                .or_else(|| self.types.class_def(type_name).map(|d| &d.methods))
+                .or_else(|| self.types.enum_def(type_name).map(|d| &d.methods));
             m.and_then(|methods| methods.get(method))
                 .is_some_and(|def| def.is_static)
         };
@@ -1718,10 +1780,10 @@ impl<'w> Interpreter<'w> {
         // Otherwise, a unique type declaring this static method.
         let mut found: Option<String> = None;
         let names = self
-            .structs
-            .keys()
-            .chain(self.classes.keys())
-            .chain(self.enums.keys());
+            .types
+            .struct_names()
+            .chain(self.types.class_names())
+            .chain(self.types.enum_names());
         for name in names {
             if declares(name) {
                 if found.is_some() {
@@ -1735,16 +1797,16 @@ impl<'w> Interpreter<'w> {
 
     /// Whether `name` is a case of enum `type_name`.
     fn enum_has_case(&self, type_name: &str, name: &str) -> bool {
-        self.enums
-            .get(type_name)
+        self.types
+            .enum_def(type_name)
             .is_some_and(|d| d.cases.iter().any(|c| c.name == name))
     }
 
     /// The `rawValue` of an enum case (precomputed at registration).
     fn enum_raw_value(&mut self, type_name: &str, case: &str) -> Eval {
         let raw = self
-            .enums
-            .get(type_name)
+            .types
+            .enum_def(type_name)
             .and_then(|d| d.cases.iter().find(|c| c.name == case))
             .and_then(|c| c.raw.clone());
         raw.ok_or_else(|| EvalError::Type(format!("{type_name}.{case} has no raw value")).into())
@@ -1753,8 +1815,8 @@ impl<'w> Interpreter<'w> {
     /// All cases of an enum as an array (`CaseIterable.allCases`).
     fn enum_all_cases(&mut self, type_name: &str) -> Eval {
         let names: Vec<String> = self
-            .enums
-            .get(type_name)
+            .types
+            .enum_def(type_name)
             .map(|d| d.cases.iter().map(|c| c.name.clone()).collect())
             .unwrap_or_default();
         let items = names
@@ -1778,11 +1840,11 @@ impl<'w> Interpreter<'w> {
         member: &str,
     ) -> Result<Option<SwiftValue>, Signal> {
         let getter = self
-            .structs
-            .get(type_name)
+            .types
+            .struct_def(type_name)
             .map(|d| &d.computed)
-            .or_else(|| self.classes.get(type_name).map(|d| &d.computed))
-            .or_else(|| self.enums.get(type_name).map(|d| &d.computed))
+            .or_else(|| self.types.class_def(type_name).map(|d| &d.computed))
+            .or_else(|| self.types.enum_def(type_name).map(|d| &d.computed))
             .and_then(|c| c.get(member))
             .filter(|c| c.is_static)
             .and_then(|c| c.getter);
@@ -1822,10 +1884,10 @@ impl<'w> Interpreter<'w> {
         let mut chain = Vec::new();
         let mut current = Some(class_name.to_string());
         while let Some(name) = current {
-            if !self.classes.contains_key(&name) {
+            if !self.types.is_class(&name) {
                 break;
             }
-            current = self.classes[&name].superclass.clone();
+            current = self.types.class_def(&name).unwrap().superclass.clone();
             chain.push(name);
         }
         chain.reverse();
@@ -1844,7 +1906,7 @@ impl<'w> Interpreter<'w> {
         class_name: &str,
         args: &[CallArg],
     ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
-        let def = self.classes.get(class_name)?;
+        let def = self.types.class_def(class_name)?;
         if def.init_overloads.len() > 1 {
             if let Some(init) = select_labeled_overload(&def.init_overloads, args) {
                 return Some((clone_params(&init.params), init.body));
@@ -1860,7 +1922,10 @@ impl<'w> Interpreter<'w> {
         let chain = self.class_chain(class_name);
         let mut fields: Vec<(String, SwiftValue)> = Vec::new();
         for cls in &chain {
-            let props: Vec<(String, Option<Node<'static>>)> = self.classes[cls]
+            let props: Vec<(String, Option<Node<'static>>)> = self
+                .types
+                .class_def(cls)
+                .unwrap()
                 .stored
                 .iter()
                 .map(|p| (p.name.clone(), p.default))
@@ -1883,11 +1948,11 @@ impl<'w> Interpreter<'w> {
         let init_owner = chain
             .iter()
             .rev()
-            .find(|c| self.classes[*c].init.is_some())
+            .find(|c| self.types.class_def(c).unwrap().init.is_some())
             .cloned();
         if let Some(owner) = init_owner {
             let (params, body) = self.select_class_init(&owner, &args).unwrap_or_else(|| {
-                let m = self.classes[&owner].init.as_ref().unwrap();
+                let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
                 (clone_params(&m.params), m.body)
             });
             self.class_ctx.push(owner);
@@ -1927,7 +1992,7 @@ impl<'w> Interpreter<'w> {
         let mut chain = self.class_chain(&class_name);
         chain.reverse();
         for cls in chain {
-            if let Some(body) = self.classes.get(&cls).and_then(|d| d.deinit) {
+            if let Some(body) = self.types.class_def(&cls).and_then(|d| d.deinit) {
                 self.class_ctx.push(cls);
                 let _ = self.run_with_self(value.clone(), |me| me.eval(&body));
                 self.class_ctx.pop();
@@ -2310,7 +2375,7 @@ impl<'w> Interpreter<'w> {
     /// Whether `value` is an instance of a `@dynamicCallable` struct type.
     fn is_dynamic_callable(&self, value: &SwiftValue) -> bool {
         matches!(value, SwiftValue::Struct(obj)
-            if self.structs.get(&obj.type_name).is_some_and(|d| d.dynamic_callable))
+            if self.types.struct_def(&obj.type_name).is_some_and(|d| d.dynamic_callable))
     }
 
     /// `@dynamicCallable`: route call syntax on a struct instance through its
@@ -2326,8 +2391,8 @@ impl<'w> Interpreter<'w> {
         // anything else is the positional array form. Fall back to the call
         // site's labels when the type is not introspectable.
         let keyword_param = self
-            .structs
-            .get(&type_name)
+            .types
+            .struct_def(&type_name)
             .and_then(|d| d.methods.get("dynamicallyCall"))
             .and_then(|m| m.params.first())
             .and_then(|p| p.ty.as_deref())
@@ -2362,7 +2427,7 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         args: &[(Option<String>, SwiftValue)],
     ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
-        let def = self.structs.get(type_name)?;
+        let def = self.types.struct_def(type_name)?;
         let call_args: Vec<CallArg> = args
             .iter()
             .map(|(label, value)| CallArg {
@@ -2394,8 +2459,8 @@ impl<'w> Interpreter<'w> {
             // initializer body runs (Swift gives each such property its default
             // value first; the body may then reassign it).
             let defaults: Vec<(String, Node<'static>)> = self
-                .structs
-                .get(type_name)
+                .types
+                .struct_def(type_name)
                 .map(|d| {
                     d.stored
                         .iter()
@@ -2410,8 +2475,8 @@ impl<'w> Interpreter<'w> {
                 // Wrap `@propertyWrapper` fields in their wrapper instance, the
                 // same way the memberwise initializer does.
                 let wrapper = self
-                    .structs
-                    .get(type_name)
+                    .types
+                    .struct_def(type_name)
                     .and_then(|d| d.wrappers.get(&pname))
                     .cloned();
                 let value = match wrapper {
@@ -2456,8 +2521,8 @@ impl<'w> Interpreter<'w> {
         }
 
         let plan: Vec<(String, Option<String>, bool, Option<Node<'static>>)> = self
-            .structs
-            .get(type_name)
+            .types
+            .struct_def(type_name)
             .map(|d| {
                 d.stored
                     .iter()
@@ -2475,8 +2540,8 @@ impl<'w> Interpreter<'w> {
                 .map(|(_, v)| v.clone());
             // The `@propertyWrapper` type backing this field, if any.
             let wrapper = self
-                .structs
-                .get(type_name)
+                .types
+                .struct_def(type_name)
                 .and_then(|d| d.wrappers.get(&pname))
                 .cloned();
             let value = if let Some(v) = labeled {
@@ -3657,8 +3722,8 @@ impl StdContext for Interpreter<'_> {
         // The fields wrapped by `wrapper_type` (e.g. `EnvironmentObject`), with
         // each field's declared type for matching the right object.
         let plan: Vec<(String, Option<String>)> = self
-            .structs
-            .get(&obj.type_name)
+            .types
+            .struct_def(&obj.type_name)
             .map(|d| {
                 d.stored
                     .iter()
@@ -3751,7 +3816,7 @@ impl StdContext for Interpreter<'_> {
                     .any(|p| p == "Comparable")
             {
                 // Case index in declaration order; differing cases decide it.
-                let indices = self.enums.get(&ea.type_name).and_then(|def| {
+                let indices = self.types.enum_def(&ea.type_name).and_then(|def| {
                     let ia = def.cases.iter().position(|c| c.name == ea.case)?;
                     let ib = def.cases.iter().position(|c| c.name == eb.case)?;
                     Some((ia, ib))
@@ -4255,6 +4320,22 @@ fn strip_regex_delimiters(raw: &str) -> &str {
 mod tests {
     use super::*;
     use crate::stdlib::Arg;
+
+    #[test]
+    fn type_table_queries_reflect_registered_declarations() {
+        let mut types = TypeTable::default();
+        assert!(!types.is_nominal("Point"));
+        types.insert_struct("Point".into(), StructDef::default());
+        types.insert_enum("Dir".into(), EnumDef::default());
+        assert!(types.is_struct("Point"));
+        assert!(types.is_enum("Dir"));
+        assert!(!types.is_class("Point"));
+        assert!(types.is_nominal("Point") && types.is_nominal("Dir"));
+        assert!(types.struct_def("Point").is_some());
+        assert!(types.enum_def("Point").is_none());
+        let names: Vec<&String> = types.struct_names().collect();
+        assert_eq!(names, vec![&"Point".to_string()]);
+    }
 
     fn run(src: &str) -> Result<String, EvalError> {
         let analysis = Analysis::analyze(src, "test.swift").expect("analyze");

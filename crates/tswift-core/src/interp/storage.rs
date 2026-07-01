@@ -25,8 +25,8 @@ impl<'w> Interpreter<'w> {
             return Ok(None);
         };
         let getter = self
-            .enums
-            .get(&e.type_name)
+            .types
+            .enum_def(&e.type_name)
             .and_then(|d| d.computed.get(name))
             .filter(|c| !c.is_static)
             .and_then(|c| c.getter);
@@ -75,7 +75,7 @@ impl<'w> Interpreter<'w> {
     ) -> Option<Node<'static>> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
-            let def = self.classes.get(&cls)?;
+            let def = self.types.class_def(&cls)?;
             if let Some(c) = def.computed.get(name).filter(|c| !c.is_static) {
                 return c.getter;
             }
@@ -104,7 +104,7 @@ impl<'w> Interpreter<'w> {
     fn field_is_weak(&self, class_name: &str, name: &str) -> bool {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
-            let Some(def) = self.classes.get(&cls) else {
+            let Some(def) = self.types.class_def(&cls) else {
                 break;
             };
             if def.weak_fields.iter().any(|f| f == name) {
@@ -119,7 +119,7 @@ impl<'w> Interpreter<'w> {
     pub(super) fn class_has_member(&self, class_name: &str, name: &str) -> bool {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
-            let Some(def) = self.classes.get(&cls) else {
+            let Some(def) = self.types.class_def(&cls) else {
                 break;
             };
             if def.stored.iter().any(|p| p.name == name) || def.computed.contains_key(name) {
@@ -141,12 +141,12 @@ impl<'w> Interpreter<'w> {
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {
                 let has_static = self
-                    .structs
-                    .get(&type_name)
+                    .types
+                    .struct_def(&type_name)
                     .is_some_and(|d| d.static_subscript.is_some())
                     || self
-                        .classes
-                        .get(&type_name)
+                        .types
+                        .class_def(&type_name)
                         .is_some_and(|d| d.static_subscript.is_some());
                 if self.env.get(&type_name).is_none() && has_static {
                     let indices: Vec<SwiftValue> =
@@ -233,12 +233,12 @@ impl<'w> Interpreter<'w> {
     fn read_static_subscript(&mut self, type_name: &str, indices: &[SwiftValue]) -> Eval {
         let (params, body) = {
             let m = self
-                .structs
-                .get(type_name)
+                .types
+                .struct_def(type_name)
                 .and_then(|d| d.static_subscript.as_ref())
                 .or_else(|| {
-                    self.classes
-                        .get(type_name)
+                    self.types
+                        .class_def(type_name)
                         .and_then(|d| d.static_subscript.as_ref())
                 })
                 .expect("static subscript exists");
@@ -339,7 +339,7 @@ impl<'w> Interpreter<'w> {
         // mutable, the index parameters, and the `newValue` binding.
         if let SwiftValue::Struct(obj) = &container {
             let type_name = obj.type_name.clone();
-            let selected = self.structs.get(&type_name).and_then(|d| {
+            let selected = self.types.struct_def(&type_name).and_then(|d| {
                 d.subscripts
                     .iter()
                     .find(|s| s.params.len() == indices.len())
@@ -514,7 +514,7 @@ impl<'w> Interpreter<'w> {
                     }
                 }
                 // Select the overload whose arity matches the index count.
-                let getter = self.structs.get(&type_name).and_then(|d| {
+                let getter = self.types.struct_def(&type_name).and_then(|d| {
                     d.subscripts
                         .iter()
                         .find(|s| s.params.len() == indices.len())
@@ -554,7 +554,7 @@ impl<'w> Interpreter<'w> {
 
     /// The default initializer of a lazy stored property, if `name` names one.
     fn lazy_default(&self, type_name: &str, name: &str) -> Option<Node<'static>> {
-        self.structs.get(type_name).and_then(|d| {
+        self.types.struct_def(type_name).and_then(|d| {
             d.stored
                 .iter()
                 .find(|p| p.name == name && p.lazy)
@@ -564,7 +564,7 @@ impl<'w> Interpreter<'w> {
 
     /// Whether a struct type declares a stored/computed property or method.
     pub(super) fn struct_has_member(&self, type_name: &str, name: &str) -> bool {
-        self.structs.get(type_name).is_some_and(|d| {
+        self.types.struct_def(type_name).is_some_and(|d| {
             d.computed.contains_key(name)
                 || d.methods.contains_key(name)
                 || d.stored.iter().any(|p| p.name == name)
@@ -597,8 +597,8 @@ impl<'w> Interpreter<'w> {
             return Ok(v.clone());
         }
         let getter = self
-            .structs
-            .get(&obj.type_name)
+            .types
+            .struct_def(&obj.type_name)
             .and_then(|d| d.computed.get(name))
             .filter(|c| !c.is_static)
             .and_then(|c| c.getter)
@@ -625,7 +625,7 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         member: &str,
     ) -> Result<Option<SwiftValue>, Signal> {
-        let getter = self.structs.get(type_name).and_then(|d| {
+        let getter = self.types.struct_def(type_name).and_then(|d| {
             if !d.dynamic_member_lookup {
                 return None;
             }
@@ -666,8 +666,8 @@ impl<'w> Interpreter<'w> {
 
     /// The `@propertyWrapper` type of `field` on struct `type_name`, if any.
     pub(super) fn wrapped_field(&self, type_name: &str, field: &str) -> bool {
-        self.structs
-            .get(type_name)
+        self.types
+            .struct_def(type_name)
             .is_some_and(|d| d.wrappers.contains_key(field))
     }
 
@@ -723,8 +723,8 @@ impl<'w> Interpreter<'w> {
         }
 
         let setter = self
-            .structs
-            .get(&type_name)
+            .types
+            .struct_def(&type_name)
             .and_then(|d| d.computed.get(name))
             .map(|c| (c.setter, c.setter_param.clone()));
         if let Some((Some(body), param)) = setter {
@@ -737,7 +737,7 @@ impl<'w> Interpreter<'w> {
             return Ok(updated);
         }
 
-        let observers = self.structs.get(&type_name).and_then(|d| {
+        let observers = self.types.struct_def(&type_name).and_then(|d| {
             d.stored
                 .iter()
                 .find(|p| p.name == name)
@@ -989,7 +989,7 @@ impl<'w> Interpreter<'w> {
     /// padding is reusable), matching Swift's value-type layout. Returns `None`
     /// for unmodelled field types or a self-referential (cyclic) layout.
     fn struct_layout(&self, type_name: &str, stack: &mut Vec<String>) -> Option<(u64, u64, u64)> {
-        let def = self.structs.get(type_name)?;
+        let def = self.types.struct_def(type_name)?;
         // A struct that (transitively) contains itself has no finite layout.
         if stack.iter().any(|t| t == type_name) {
             return None;
@@ -1156,7 +1156,7 @@ impl<'w> Interpreter<'w> {
                         return Ok(v);
                     }
                     // Enum case (no associated values) or `allCases`.
-                    if self.enums.contains_key(&type_name) {
+                    if self.types.is_enum(&type_name) {
                         if member == "allCases" {
                             return self.enum_all_cases(&type_name);
                         }
@@ -1537,8 +1537,8 @@ impl<'w> Interpreter<'w> {
         let SwiftValue::Struct(obj) = &container else {
             return false;
         };
-        self.structs
-            .get(&obj.type_name)
+        self.types
+            .struct_def(&obj.type_name)
             .and_then(|d| d.computed.get(leaf))
             .is_some_and(|c| c.setter_nonmutating)
     }
