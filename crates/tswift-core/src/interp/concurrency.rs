@@ -477,11 +477,19 @@ impl<'w> Interpreter<'w> {
         Ok(out)
     }
 
-    /// Resolve a value an `await` produced: drive a task handle, pass anything
-    /// else through unchanged.
+    /// Resolve a value an `await` produced: drive a task handle, recurse into a
+    /// tuple so `await (a, b)` over `async let` bindings drives each child, and
+    /// pass anything else through unchanged.
     fn await_value(&mut self, value: SwiftValue) -> Eval {
         match value {
             SwiftValue::Task(id) => self.run_task(id),
+            SwiftValue::Tuple(items, labels) => {
+                let resolved = items
+                    .into_iter()
+                    .map(|item| self.await_value(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(SwiftValue::Tuple(resolved, labels))
+            }
             other => Ok(other),
         }
     }
