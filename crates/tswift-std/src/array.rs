@@ -624,7 +624,7 @@ fn stable_hash(value: &SwiftValue) -> u64 {
             |h, payload| mix(h, stable_hash(payload)),
         ),
         SwiftValue::Object(obj) => Rc::as_ptr(obj) as usize as u64,
-        SwiftValue::Weak(obj) => obj.as_ptr() as usize as u64,
+        SwiftValue::Weak(obj) | SwiftValue::Unowned(obj) => obj.as_ptr() as usize as u64,
         SwiftValue::Regex(r) => r.pattern().bytes().fold(0xd0, |h, b| mix(h, b as u64)),
         SwiftValue::Metatype(name) => name.bytes().fold(0xe0, |h, b| mix(h, b as u64)),
     }

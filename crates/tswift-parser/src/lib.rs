@@ -2136,6 +2136,14 @@ impl<'a> Parser<'a> {
                     .ast
                     .add(NodeKind::NamePattern, Some(t.text), t.line, t.col))
             }
+            // `self` rebinding: `guard let self = self` / shorthand `if let self`
+            // (SE-0345) — the keyword is a valid binding name here.
+            TokenKind::Keyword if t.text == "self" => {
+                self.bump();
+                Ok(self
+                    .ast
+                    .add(NodeKind::NamePattern, Some(t.text), t.line, t.col))
+            }
             TokenKind::LParen => {
                 self.bump();
                 let tuple = self.ast.add(NodeKind::TuplePattern, None, t.line, t.col);

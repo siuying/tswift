@@ -1555,8 +1555,16 @@ impl<'w> Interpreter<'w> {
                 self.statics.insert(place.root.clone(), value);
                 return Ok(());
             }
+            // Reassigning the last strong reference releases the old object:
+            // run its deinit chain (ARC semantics for `o = nil` / `o = other`).
+            let old = self.env.get(&place.root);
             return match self.env.assign(&place.root, value) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    if let Some(old) = old {
+                        self.run_deinit(&old);
+                    }
+                    Ok(())
+                }
                 Err(BindError::Immutable(n)) => Err(EvalError::Immutable(n).into()),
                 Err(BindError::Unbound(n)) => Err(EvalError::UnknownVariable(n).into()),
             };

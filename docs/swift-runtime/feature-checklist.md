@@ -190,7 +190,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Trailing closures (+ multiple) | ✅ | ★★ | R3 |
 | [x] | Shorthand args `$0 $1` (incl. tuple-splat destructuring of a single tuple arg) | ✅ | ★★ | R3 |
 | [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
-| [~] | Capture lists `[weak self]` `[unowned]` | ✅ | ★★★ | R3 |
+| [x] | Capture lists `[weak self]` `[unowned]` (weak zeroes after dealloc — the captured chain does not retain the referent, incl. alias captures `[weak o = self]`; unowned traps on post-dealloc reads; `guard let self = self` + `if let self` shorthand rebinding; value captures `[y = expr]`. Known limit: a scope holding mutable siblings next to the captured name stays shared, so such captures over-retain until a per-binding env refactor) | ✅ | ★★★ | R3 |
 | [~] | `@escaping` closures | ✅ | ★★★ | R3 |
 | [x] | `@autoclosure` | ✅ | ★★ | R3 |
 | [x] | Closures capturing `inout` | ✅ | ★★★ | R3 |

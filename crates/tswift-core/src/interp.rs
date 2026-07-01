@@ -696,6 +696,24 @@ struct Place {
     path: Vec<String>,
 }
 
+/// Whether any identifier in `node`'s subtree references `name`. String
+/// literals are checked textually because their `\( … )` interpolations are
+/// re-parsed at evaluation time, so an embedded reference is invisible to the
+/// node tree — a substring hit conservatively counts as a reference.
+fn subtree_references_name(node: &Node<'static>, name: &str) -> bool {
+    match node.kind() {
+        NodeKind::IdentExpr if node.text().as_deref() == Some(name) => return true,
+        NodeKind::StringLiteral => {
+            if node.text().is_some_and(|t| t.contains(name)) {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    node.children()
+        .any(|c| subtree_references_name(&c, name))
+}
+
 /// An integer value written into a scalar-annotated context re-types to match:
 /// `Double`/`Float` makes it floating point (`let r: Double = 5`); an explicit
 /// integer width re-types it. `None` when no coercion applies.
@@ -1824,7 +1842,7 @@ impl<'w> Interpreter<'w> {
             if let SwiftValue::AccessorVar(idx) = v {
                 return self.read_accessor_var(idx);
             }
-            return Ok(v);
+            return self.upgrade_reference(v, &name);
         }
         if let Some(v) = self.implicit_self_member(&name)? {
             return Ok(v);
@@ -1843,7 +1861,7 @@ impl<'w> Interpreter<'w> {
             if let SwiftValue::AccessorVar(idx) = v {
                 return self.read_accessor_var(idx);
             }
-            return Ok(v);
+            return self.upgrade_reference(v, &name);
         }
         // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
         // synthesize an operator-function closure the standard-library
@@ -1854,6 +1872,24 @@ impl<'w> Interpreter<'w> {
             return Ok(SwiftValue::Closure(id));
         }
         Err(EvalError::UnknownVariable(name).into())
+    }
+
+    /// Reading a non-strong reference binding resolves it at use: a `weak`
+    /// binding zeroes to `nil` once its referent deallocates; an `unowned`
+    /// binding traps instead (matching Swift's dangling-unowned crash).
+    fn upgrade_reference(&self, value: SwiftValue, name: &str) -> Eval {
+        match value {
+            SwiftValue::Weak(w) => Ok(w
+                .upgrade()
+                .map(SwiftValue::Object)
+                .unwrap_or(SwiftValue::Nil)),
+            SwiftValue::Unowned(w) => w.upgrade().map(SwiftValue::Object).ok_or_else(|| {
+                trap(format!(
+                    "attempted to read an unowned reference `{name}` but the object was already deallocated"
+                ))
+            }),
+            v => Ok(v),
+        }
     }
 
     /// If executing inside a `static` method, read `name` as a static property
@@ -2397,6 +2433,12 @@ impl<'w> Interpreter<'w> {
         let mut body = Vec::new();
         let mut last_param: Option<Node<'static>> = None;
         let mut captured_overrides: Vec<(String, SwiftValue)> = Vec::new();
+        // Names captured `weak`/`unowned`, whose strong bindings must not be
+        // retained through the captured scope chain.
+        let mut nonstrong_names: Vec<String> = Vec::new();
+        // Source bindings of alias captures (`[weak owner = self]` → "self"),
+        // prunable when the body does not itself reference them.
+        let mut alias_sources: Vec<String> = Vec::new();
         for child in node.children() {
             match child.kind() {
                 NodeKind::Param => {
@@ -2430,6 +2472,35 @@ impl<'w> Interpreter<'w> {
                                 other => other.unwrap_or(SwiftValue::Nil),
                             },
                         };
+                        // `[weak x]` / `[unowned x]` capture without retaining:
+                        // the binding holds a non-strong reference, upgraded
+                        // (or zeroed / trapped) at each read.
+                        let mods = child.modifier_names();
+                        let nonstrong = mods.contains(&"weak") || mods.contains(&"unowned");
+                        let v = match &v {
+                            SwiftValue::Object(rc) if mods.contains(&"weak") => {
+                                nonstrong_names.push(name.clone());
+                                SwiftValue::Weak(StdRc::downgrade(rc))
+                            }
+                            SwiftValue::Object(rc) if mods.contains(&"unowned") => {
+                                nonstrong_names.push(name.clone());
+                                SwiftValue::Unowned(StdRc::downgrade(rc))
+                            }
+                            _ => v,
+                        };
+                        // An alias capture `[weak owner = self]` names its
+                        // source binding, which the chain would still retain;
+                        // remember the source so it can be pruned too when the
+                        // body never references it directly.
+                        if nonstrong {
+                            if let Some(src) = child
+                                .first_child()
+                                .filter(|e| e.kind() == NodeKind::IdentExpr)
+                                .and_then(|e| e.text())
+                            {
+                                alias_sources.push(src);
+                            }
+                        }
                         captured_overrides.push((name, v));
                     }
                 }
@@ -2452,7 +2523,43 @@ impl<'w> Interpreter<'w> {
         // `eval_block`, so expand any `#if` wrappers in it now.
         let body = expand_directive_list(body);
 
+        // An alias capture's source is prunable only when the body never
+        // references it — a direct reference is an implicit *strong* capture
+        // (Swift retains it) and must keep the shared chain binding.
+        for src in alias_sources {
+            if !body.iter().any(|n| subtree_references_name(n, &src)) {
+                nonstrong_names.push(src);
+            }
+        }
+
         let mut captured = self.env.capture();
+        // A `weak`/`unowned` capture must not retain the instance through the
+        // captured scope chain (or `[weak self]` would never zero: the chain's
+        // strong `self` would keep the object alive as long as the closure).
+        // A scope binding such a name is replaced by a clone without it when
+        // every co-resident binding is immutable — true for method scopes,
+        // which hold only `self` and parameters. Scopes with mutable siblings
+        // (e.g. the global scope) are left shared: their bindings own the
+        // object legitimately and pruning would break live mutation sharing.
+        if !nonstrong_names.is_empty() {
+            for scope in captured.iter_mut() {
+                let prune = {
+                    let s = scope.borrow();
+                    s.keys().any(|k| nonstrong_names.iter().any(|n| n == k))
+                        && s.iter()
+                            .all(|(k, b)| nonstrong_names.iter().any(|n| n == k) || !b.mutable)
+                };
+                if prune {
+                    let pruned: HashMap<String, crate::env::Binding> = scope
+                        .borrow()
+                        .iter()
+                        .filter(|(k, _)| !nonstrong_names.iter().any(|n| n == *k))
+                        .map(|(k, b)| (k.clone(), b.clone()))
+                        .collect();
+                    *scope = StdRc::new(RefCell::new(pruned));
+                }
+            }
+        }
         if !captured_overrides.is_empty() {
             let scope: Scope = Default::default();
             for (name, v) in captured_overrides {
@@ -3201,9 +3308,21 @@ impl<'w> Interpreter<'w> {
                                     let name = pattern.text().ok_or_else(|| {
                                         EvalError::Unsupported("binding without a name".into())
                                     })?;
-                                    self.env
+                                    // Shorthand reads resolve like any other
+                                    // identifier: accessor-backed variables run
+                                    // their getter, and a `weak`/`unowned`
+                                    // binding upgrades (so `if let self` fails
+                                    // once the referent is gone).
+                                    let raw = self
+                                        .env
                                         .get(&name)
-                                        .ok_or_else(|| EvalError::UnknownVariable(name))?
+                                        .ok_or_else(|| EvalError::UnknownVariable(name.clone()))?;
+                                    match raw {
+                                        SwiftValue::AccessorVar(idx) => {
+                                            self.read_accessor_var(idx)?
+                                        }
+                                        v => self.upgrade_reference(v, &name)?,
+                                    }
                                 }
                             };
                             if matches!(value, SwiftValue::Nil) {
@@ -5878,6 +5997,100 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         })
         .unwrap();
         assert_eq!(out, "freed\nafter\n");
+    }
+
+    #[test]
+    fn deinit_fires_when_last_strong_reference_is_reassigned() {
+        let out = run(concat!(
+            "class R { deinit { print(\"freed\") } }\n",
+            "var o: R? = R()\n",
+            "o = nil\n",
+            "print(\"after\")\n",
+        ))
+        .unwrap();
+        assert_eq!(out, "freed\nafter\n");
+    }
+
+    #[test]
+    fn weak_capture_zeroes_and_does_not_retain() {
+        let out = run(concat!(
+            "class O {\n",
+            "  var name = \"o\"\n",
+            "  var h: (() -> String)? = nil\n",
+            "  func setup() {\n",
+            "    h = { [weak self] in\n",
+            "      guard let self = self else { return \"gone\" }\n",
+            "      return self.name\n",
+            "    }\n",
+            "  }\n",
+            "  deinit { print(\"deinit\") }\n",
+            "}\n",
+            "var o: O? = O()\n",
+            "o!.setup()\n",
+            "let h = o!.h!\n",
+            "print(h())\n",
+            "o = nil\n",
+            "print(h())\n",
+        ))
+        .unwrap();
+        assert_eq!(out, "o\ndeinit\ngone\n");
+    }
+
+    #[test]
+    fn global_computed_var_and_observers_run_accessors() {
+        let out = run(concat!(
+            "var stored = 10\n",
+            "var doubled: Int { stored * 2 }\n",
+            "print(doubled)\n",
+            "var score = 0 {\n",
+            "  willSet { print(\"will \\(newValue)\") }\n",
+            "  didSet { print(\"did \\(oldValue)\") }\n",
+            "}\n",
+            "score = 5\n",
+            "print(score)\n",
+        ))
+        .unwrap();
+        assert_eq!(out, "20\nwill 5\ndid 0\n5\n");
+    }
+
+    #[test]
+    fn weak_alias_capture_does_not_retain_its_source() {
+        let out = run(concat!(
+            "class O {\n",
+            "  var v = 3\n",
+            "  var h: (() -> Int)? = nil\n",
+            "  func setup() {\n",
+            "    h = { [weak owner = self] in owner?.v ?? -1 }\n",
+            "  }\n",
+            "  deinit { print(\"deinit\") }\n",
+            "}\n",
+            "var o: O? = O()\n",
+            "o!.setup()\n",
+            "let h = o!.h!\n",
+            "print(h())\n",
+            "o = nil\n",
+            "print(h())\n",
+        ))
+        .unwrap();
+        assert_eq!(out, "3\ndeinit\n-1\n");
+    }
+
+    #[test]
+    fn unowned_capture_traps_after_referent_deallocates() {
+        let err = run(concat!(
+            "class O { var v = 1 }\n",
+            "var o: O? = O()\n",
+            "let peek = { [unowned obj = o!] in obj.v }\n",
+            "print(peek())\n",
+            "o = nil\n",
+            "print(peek())\n",
+        ))
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unowned"),
+            "expected an unowned-dangling trap, got: {msg}"
+        );
     }
 
     #[test]

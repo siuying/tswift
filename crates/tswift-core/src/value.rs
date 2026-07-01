@@ -180,6 +180,10 @@ pub enum SwiftValue {
     Object(Rc<RefCell<ClassObj>>),
     /// A `weak` reference to a class instance (zeroes to `nil` on dealloc).
     Weak(Weak<RefCell<ClassObj>>),
+    /// An `unowned` reference to a class instance: non-retaining like `weak`,
+    /// but reading it after the referent deallocated is a runtime trap rather
+    /// than `nil`.
+    Unowned(Weak<RefCell<ClassObj>>),
     /// A compiled regular expression, produced by a `/.../`/`#/.../#` literal or
     /// `Regex(_:)`. Shared under an `Rc` (the compiled program is immutable).
     Regex(Rc<Regex>),
@@ -318,6 +322,10 @@ impl SwiftValue {
             SwiftValue::Enum(e) => e.type_name.clone(),
             SwiftValue::Object(o) => o.borrow().class_name.clone(),
             SwiftValue::Weak(_) => "Optional".into(),
+            SwiftValue::Unowned(w) => w
+                .upgrade()
+                .map(|o| o.borrow().class_name.clone())
+                .unwrap_or_else(|| "unowned".into()),
             SwiftValue::Closure(_) => "closure".into(),
             SwiftValue::Task(_) => "Task".into(),
             SwiftValue::TaskGroup(_) => "TaskGroup".into(),
@@ -370,6 +378,7 @@ impl PartialEq for SwiftValue {
             // Class instances compare by identity (`===`).
             (Object(a), Object(b)) => Rc::ptr_eq(a, b),
             (Weak(a), Weak(b)) => a.ptr_eq(b),
+            (Unowned(a), Unowned(b)) => a.ptr_eq(b),
             (Metatype(a), Metatype(b)) => a == b,
             _ => false,
         }
@@ -465,6 +474,10 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Weak(w) => match w.upgrade() {
                 Some(o) => write!(f, "{}", SwiftValue::Object(o)),
                 None => write!(f, "nil"),
+            },
+            SwiftValue::Unowned(w) => match w.upgrade() {
+                Some(o) => write!(f, "{}", SwiftValue::Object(o)),
+                None => write!(f, "<deallocated>"),
             },
             SwiftValue::Closure(_) => write!(f, "(Function)"),
             SwiftValue::Task(_) => write!(f, "Task"),
