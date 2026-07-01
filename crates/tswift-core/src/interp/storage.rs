@@ -156,6 +156,12 @@ impl<'w> Interpreter<'w> {
             }
         }
         let base_value = self.eval(&base)?;
+        // An optional-chained subscript on an absent base (`missing?[i]`)
+        // short-circuits before the index expressions run — Swift skips their
+        // side effects when the chain is nil.
+        if matches!(base_value, SwiftValue::Nil) {
+            return Ok(SwiftValue::Nil);
+        }
         let index_nodes: Vec<Node<'static>> = kids.collect();
         // A single one-sided range index (`a[2...]`, `a[..<2]`, `a[...2]`) is
         // resolved against the base collection's length into a concrete
@@ -548,6 +554,9 @@ impl<'w> Interpreter<'w> {
                 }
                 Err(EvalError::Type(format!("{type_name} has no subscript")).into())
             }
+            // Optional-chained subscript on an absent base (`missing?[0]`)
+            // nil-propagates like `?.` member access.
+            SwiftValue::Nil => Ok(SwiftValue::Nil),
             other => Err(EvalError::Type(format!("cannot subscript {}", other.type_name())).into()),
         }
     }
@@ -784,6 +793,16 @@ impl<'w> Interpreter<'w> {
         let rhs = kids
             .next()
             .ok_or_else(|| EvalError::Unsupported("assignment without value".into()))?;
+
+        // Wildcard discard `_ = expr`: evaluate for effect, bind nothing.
+        // Compound ops (`_ += 1`) read the target and stay an error.
+        if target.kind() == NodeKind::IdentExpr
+            && target.text().as_deref() == Some("_")
+            && op == "="
+        {
+            self.eval(&rhs)?;
+            return Ok(SwiftValue::Void);
+        }
 
         // Tuple-destructuring assignment `(a, b) = (b, a + b)`: evaluate the
         // whole right side first (so swaps read the old values), then write each

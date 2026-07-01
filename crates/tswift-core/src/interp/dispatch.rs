@@ -457,6 +457,16 @@ impl<'w> Interpreter<'w> {
         } else {
             None
         };
+        // An optional-chained call on an absent callee (`completion?()` with
+        // `completion == nil`) short-circuits *before* argument evaluation —
+        // Swift skips the arguments' side effects when the chain is nil.
+        if callee.kind() == NodeKind::IdentExpr {
+            if let Some(name) = callee.text() {
+                if matches!(self.env.get(&name), Some(SwiftValue::Nil)) {
+                    return Ok(SwiftValue::Nil);
+                }
+            }
+        }
         let args = self.eval_args_with(arg_nodes, call_params.as_deref())?;
 
         if callee.kind() == NodeKind::IdentExpr {
@@ -532,6 +542,11 @@ impl<'w> Interpreter<'w> {
                 Some(SwiftValue::Closure(id)) => {
                     return self.call_closure_with_args(id, args);
                 }
+                // An optional-chained call on an absent callee (`completion?()`
+                // with `completion == nil`) evaluates to nil. The parser drops
+                // the `?` like it does for `?.`, so an absent binding in call
+                // position nil-propagates here.
+                Some(SwiftValue::Nil) => return Ok(SwiftValue::Nil),
                 _ => {}
             }
             // `swap(&a, &b)` — exchange two inout locations. Needs the caller
@@ -1005,6 +1020,13 @@ impl<'w> Interpreter<'w> {
         }
 
         let base_value = self.eval(&base)?;
+
+        // An optional-chained method call on an absent base (`none?.f()`)
+        // nil-propagates. Type-qualified and implicit-member bases were
+        // handled above, so a Nil here is a real absent value.
+        if matches!(base_value, SwiftValue::Nil) {
+            return Ok(SwiftValue::Nil);
+        }
 
         // `group.addTask { }` / `group.cancelAll()` and `task.cancel()`.
         if let Some(result) = self.try_concurrency_method(&base_value, &method, arg_nodes)? {

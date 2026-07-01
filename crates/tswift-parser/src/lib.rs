@@ -2850,6 +2850,21 @@ impl<'a> Parser<'a> {
                 TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
                     self.bump();
                 }
+                // Optional-chained call `f?(args)` / subscript `a?[i]`: the `?`
+                // must hug both its expression and the `(`/`[` (Swift's
+                // whitespace rule), distinguishing it from a ternary with a
+                // parenthesized branch (`a ? (b) : c`). Dropped like `?.` —
+                // the runtime nil-propagates through the call/subscript.
+                TokenKind::Question
+                    if matches!(
+                        self.tokens[self.pos + 1].kind,
+                        TokenKind::LParen | TokenKind::LBracket
+                    ) && self.pos > 0
+                        && tokens_adjacent(&self.tokens[self.pos - 1], &self.tokens[self.pos])
+                        && tokens_adjacent(&self.tokens[self.pos], &self.tokens[self.pos + 1]) =>
+                {
+                    self.bump();
+                }
                 // Trailing closure: `expr { ... }` (same line, outside a
                 // control-flow head) attaches a closure argument to a call. A
                 // `{` introducing accessor keywords (`get`/`set`/`willSet`/
@@ -3130,6 +3145,13 @@ fn is_decl_keyword(w: &str) -> bool {
             | "actor"
             | "import"
     )
+}
+
+/// Whether `b` starts at the column immediately after `a` ends on the same
+/// line — no whitespace between them. Columns advance per Unicode scalar, so
+/// the width of `a` is its character count (identifiers may be non-ASCII).
+fn tokens_adjacent(a: &Token<'_>, b: &Token<'_>) -> bool {
+    a.line == b.line && a.col + a.text.chars().count() as u32 == b.col
 }
 
 /// Accessor introducers inside a property/subscript body.
@@ -3953,6 +3975,33 @@ mod tests {
         assert_eq!(clo.kind(), NodeKind::ClosureExpr);
         // Body statement present after the signature.
         assert!(clo.children().count() >= 1);
+    }
+
+    #[test]
+    fn optional_chained_call_drops_the_tight_question() {
+        // `f?()` — the `?` hugs both sides, so it is a chained call.
+        let ast = ast_of("f?()\n");
+        let stmt = first_stmt(&ast);
+        let call = stmt.children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        // `a?[0]` — same for subscripts.
+        let ast = ast_of("a?[0]\n");
+        let stmt = first_stmt(&ast);
+        let sub = stmt.children().next().unwrap();
+        assert_eq!(sub.kind(), NodeKind::SubscriptExpr);
+    }
+
+    #[test]
+    fn ternary_with_parenthesized_branch_is_not_an_optional_call() {
+        // A spaced `?` stays a ternary even with a parenthesized branch.
+        for src in ["let t = a ? (b) : c\n", "let t = a ? (b + 1) : (c + 2)\n"] {
+            let ast = ast_of(src);
+            let decl = first_stmt(&ast);
+            let has_ternary = decl
+                .children()
+                .any(|c| c.kind() == NodeKind::TernaryExpr);
+            assert!(has_ternary, "expected a ternary in {src:?}");
+        }
     }
 
     #[test]

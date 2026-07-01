@@ -6094,6 +6094,25 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
     }
 
     #[test]
+    fn nil_callee_calls_and_nil_base_subscripts_nil_propagate() {
+        // The parser drops the optional-chain `?` (as it does for `?.`), so
+        // the runtime nil-propagates in call/subscript position whenever the
+        // callee/base is nil — including the unchained spelling, which real
+        // Swift rejects at compile time. Documented permissiveness: this
+        // runtime has no chain marker to distinguish the two.
+        let out = run(concat!(
+            "var f: ((Int) -> Void)? = nil\n",
+            "f?(1)\n",
+            "let a: [Int]? = nil\n",
+            "print(a?[0] ?? -1)\n",
+            "let s: String? = nil\n",
+            "print(s?.hasPrefix(\"x\") ?? false)\n",
+        ))
+        .unwrap();
+        assert_eq!(out, "-1\nfalse\n");
+    }
+
+    #[test]
     fn arc_retain_release_counts() {
         use crate::value::{ClassObj, SwiftValue};
         use std::cell::RefCell;

@@ -147,7 +147,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `if let` / `guard let` binding | ✅ | ★★ | R2 |
 | [x] | Shorthand `if let x` (Swift 5.7) | ✅ | ★ | R2 |
 | [x] | Forced unwrap `!` (trap on nil) | ✅ | ★ | R2 |
-| [x] | Optional chaining `?.` | ✅ | ★★★ | R2 |
+| [x] | Optional chaining `?.` (+ chained calls `f?()` and subscripts `a?[i]`, short-circuiting argument/index side effects; the parser drops the `?`, so an *unchained* nil callee/base also nil-propagates instead of erroring — documented permissiveness) | ✅ | ★★★ | R2 |
 | [x] | Nil-coalescing `??` | ✅ | ★ | R2 |
 | [x] | Implicitly unwrapped optionals `T!` | ✅ | ★★ | R2 |
 | [x] | `Optional` pattern `case let x?` | ✅ | ★★ | R2 |
@@ -191,7 +191,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Shorthand args `$0 $1` (incl. tuple-splat destructuring of a single tuple arg) | ✅ | ★★ | R3 |
 | [x] | Capture by reference (open/closed upvalues) | ✅ | ★★★ | R3 |
 | [x] | Capture lists `[weak self]` `[unowned]` (weak zeroes after dealloc — the captured chain does not retain the referent, incl. alias captures `[weak o = self]`; unowned traps on post-dealloc reads; `guard let self = self` + `if let self` shorthand rebinding; value captures `[y = expr]`. Known limit: a scope holding mutable siblings next to the captured name stays shared, so such captures over-retain until a per-binding env refactor) | ✅ | ★★★ | R3 |
-| [~] | `@escaping` closures | ✅ | ★★★ | R3 |
+| [x] | `@escaping` closures (stored + invoked after return, strong implicit `self` retention, per-iteration loop captures, shared mutable captures, optional-chained invocation `completion?(x)`; escape *checking* is not enforced — non-`@escaping` params may escape without diagnostic) | ✅ | ★★★ | R3 |
 | [x] | `@autoclosure` | ✅ | ★★ | R3 |
 | [x] | Closures capturing `inout` | ✅ | ★★★ | R3 |
 
