@@ -43,7 +43,7 @@ impl<'w> Interpreter<'w> {
         base_place: Option<Place>,
     ) -> Option<Eval> {
         let kind = BuiltinReceiver::of(&recv_value)?;
-        let entry = *self.labeled_intrinsics.get(&(kind, method.to_string()))?;
+        let entry = self.builtins.labeled_intrinsic(kind, method)?;
         let outcome = (entry.func)(self, recv_value, args);
         match outcome {
             Ok(Some(outcome)) => {
@@ -774,9 +774,7 @@ impl<'w> Interpreter<'w> {
                     let user_defined = reference.user_defined;
                     if !user_defined {
                         if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
-                            if let Some(func) =
-                                self.static_methods.get(&(recv, method.clone())).copied()
-                            {
+                            if let Some(func) = self.builtins.static_method(recv, &method) {
                                 let labeled: Vec<Arg> = self
                                     .eval_args(arg_nodes)?
                                     .into_iter()
@@ -872,10 +870,7 @@ impl<'w> Interpreter<'w> {
         // labels to choose between overloads without leaking that policy into the
         // interpreter dispatcher.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if self
-                .labeled_intrinsics
-                .contains_key(&(kind, method.clone()))
-            {
+            if self.builtins.has_labeled_intrinsic(kind, &method) {
                 let args = self.eval_args(arg_nodes)?;
                 let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
                 let place = self.resolve_place(&base);
@@ -891,7 +886,7 @@ impl<'w> Interpreter<'w> {
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if let Some(entry) = self.intrinsics.get(&(kind, method.clone())).copied() {
+            if let Some(entry) = self.builtins.intrinsic(kind, &method) {
                 let args = match evaluated_args.take() {
                     Some(args) => args,
                     None => self.eval_args(arg_nodes)?,

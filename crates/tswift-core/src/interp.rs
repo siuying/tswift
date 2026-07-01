@@ -512,6 +512,91 @@ impl TypeTable {
     }
 }
 
+/// The runtime's registry of native members keyed by `(builtin receiver, name)`
+/// — the type-specific methods, labelled overloads, computed properties, and
+/// static methods installed by `tswift-std`/Foundation/SwiftUI. Owning the five
+/// receiver-keyed maps behind one module keeps builtin-member storage in a
+/// single place; the `add_*` methods are the install seam and the singular
+/// query methods are the read surface the dispatcher uses.
+#[derive(Default)]
+struct BuiltinMembers {
+    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
+    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
+    properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
+    static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
+}
+
+impl BuiltinMembers {
+    fn add_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
+        self.intrinsics.insert((recv, name.to_string()), entry);
+    }
+    fn add_labeled_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: LabeledMethodEntry,
+    ) {
+        self.labeled_intrinsics
+            .insert((recv, name.to_string()), entry);
+    }
+    fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
+        self.properties.insert((recv, name.to_string()), f);
+    }
+    fn add_contextual_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: ContextualPropertyFn,
+    ) {
+        self.contextual_properties
+            .insert((recv, name.to_string()), f);
+    }
+    fn add_static_method(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
+        self.static_methods.insert((recv, name.to_string()), f);
+    }
+
+    fn intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<MethodEntry> {
+        self.intrinsics.get(&(recv, name.to_string())).copied()
+    }
+    fn labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<LabeledMethodEntry> {
+        self.labeled_intrinsics
+            .get(&(recv, name.to_string()))
+            .copied()
+    }
+    fn has_labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> bool {
+        self.labeled_intrinsics
+            .contains_key(&(recv, name.to_string()))
+    }
+    fn property(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertyFn> {
+        self.properties.get(&(recv, name.to_string())).copied()
+    }
+    fn contextual_property(
+        &self,
+        recv: BuiltinReceiver,
+        name: &str,
+    ) -> Option<ContextualPropertyFn> {
+        self.contextual_properties
+            .get(&(recv, name.to_string()))
+            .copied()
+    }
+    fn static_method(&self, recv: BuiltinReceiver, name: &str) -> Option<StaticFn> {
+        self.static_methods.get(&(recv, name.to_string())).copied()
+    }
+
+    /// Every registered member as a `"Receiver.name"` string, for the
+    /// coverage-facing key dump ([`Interpreter::registered_keys`]).
+    fn qualified_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.intrinsics
+            .keys()
+            .chain(self.labeled_intrinsics.keys())
+            .chain(self.properties.keys())
+            .chain(self.contextual_properties.keys())
+            .chain(self.static_methods.keys())
+            .map(|(recv, name)| format!("{}.{}", recv.type_name(), name))
+    }
+}
+
 /// A protocol declaration: its inherited protocols and any default member
 /// implementations supplied through `extension Protocol { … }`.
 struct ProtoDef {
@@ -613,16 +698,10 @@ pub struct Interpreter<'w> {
     /// in `eval_call`, gated by [`Interpreter::is_unshadowed`], after user-type
     /// and binding dispatch so a same-named user type or binding wins.
     builtin_ctors: HashMap<&'static str, BuiltinCtor>,
-    /// Method intrinsics keyed by `(builtin receiver, method name)`.
-    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
-    /// Label-aware method intrinsics keyed by `(builtin receiver, method name)`.
-    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
-    /// Computed-property intrinsics keyed by `(builtin receiver, property name)`.
-    properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
-    /// Context-aware computed-property intrinsics keyed by builtin receiver.
-    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
-    /// Static (type-level) method intrinsics keyed by `(builtin receiver, name)`.
-    static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
+    /// Native members keyed by `(builtin receiver, name)` — method intrinsics,
+    /// labelled overloads, computed properties, and static methods — behind one
+    /// registry seam.
+    builtins: BuiltinMembers,
     /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
     /// builtin sequence receiver (layer 2 of the dispatch seam).
     algorithms: HashMap<String, AlgoFn>,
@@ -715,11 +794,7 @@ impl<'w> Interpreter<'w> {
             natives: HashMap::new(),
             free_fns: HashMap::new(),
             builtin_ctors: Self::builtin_ctor_table(),
-            intrinsics: HashMap::new(),
-            labeled_intrinsics: HashMap::new(),
-            properties: HashMap::new(),
-            contextual_properties: HashMap::new(),
-            static_methods: HashMap::new(),
+            builtins: BuiltinMembers::default(),
             algorithms: HashMap::new(),
             struct_methods: HashMap::new(),
             env: Env::new(),
@@ -807,21 +882,7 @@ impl<'w> Interpreter<'w> {
     pub fn registered_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
         keys.extend(self.free_fns.keys().cloned());
-        for (recv, name) in self.intrinsics.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
-        }
-        for (recv, name) in self.labeled_intrinsics.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
-        }
-        for (recv, name) in self.properties.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
-        }
-        for (recv, name) in self.contextual_properties.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
-        }
-        for (recv, name) in self.static_methods.keys() {
-            keys.push(format!("{}.{}", recv.type_name(), name));
-        }
+        keys.extend(self.builtins.qualified_names());
         for name in self.algorithms.keys() {
             keys.push(format!("Sequence.{name}"));
         }
@@ -832,7 +893,7 @@ impl<'w> Interpreter<'w> {
 
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
-        self.properties.insert((recv, name.to_string()), f);
+        self.builtins.add_property(recv, name, f);
     }
 
     /// Register a context-aware computed-property intrinsic on a builtin type.
@@ -842,8 +903,7 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: ContextualPropertyFn,
     ) {
-        self.contextual_properties
-            .insert((recv, name.to_string()), f);
+        self.builtins.add_contextual_property(recv, name, f);
     }
 
     /// Register a static *property value* on a (possibly non-builtin) type, so
@@ -854,7 +914,7 @@ impl<'w> Interpreter<'w> {
 
     /// Register a static (type-level) method intrinsic on a builtin type.
     pub fn register_static(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
-        self.static_methods.insert((recv, name.to_string()), f);
+        self.builtins.add_static_method(recv, name, f);
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
@@ -940,7 +1000,7 @@ impl<'w> Interpreter<'w> {
 
     /// Register a method intrinsic on a builtin receiver type.
     pub fn register_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
-        self.intrinsics.insert((recv, name.to_string()), entry);
+        self.builtins.add_intrinsic(recv, name, entry);
     }
 
     /// Register a label-aware method intrinsic on a builtin receiver type.
@@ -950,8 +1010,7 @@ impl<'w> Interpreter<'w> {
         name: &str,
         entry: LabeledMethodEntry,
     ) {
-        self.labeled_intrinsics
-            .insert((recv, name.to_string()), entry);
+        self.builtins.add_labeled_intrinsic(recv, name, entry);
     }
 
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
@@ -1608,16 +1667,12 @@ impl<'w> Interpreter<'w> {
             // then any user extension computed property on that type.
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&this) {
-                    if let Some(func) = self
-                        .contextual_properties
-                        .get(&(kind, name.to_string()))
-                        .copied()
-                    {
+                    if let Some(func) = self.builtins.contextual_property(kind, name) {
                         return func(self, this)
                             .map(Some)
                             .map_err(Self::std_error_to_signal);
                     }
-                    if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
+                    if let Some(func) = self.builtins.property(kind, name) {
                         return func(this).map(Some).map_err(Self::std_error_to_signal);
                     }
                 }
@@ -4420,6 +4475,22 @@ mod tests {
         assert!(types.enum_def("Point").is_none());
         let names: Vec<&String> = types.struct_names().collect();
         assert_eq!(names, vec![&"Point".to_string()]);
+    }
+
+    #[test]
+    fn builtin_members_registry_stores_and_looks_up_by_receiver() {
+        fn count(recv: SwiftValue) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        let mut b = BuiltinMembers::default();
+        assert!(b.property(BuiltinReceiver::Array, "count").is_none());
+        b.add_property(BuiltinReceiver::Array, "count", count);
+        assert!(b.property(BuiltinReceiver::Array, "count").is_some());
+        // Distinct receivers do not collide on the same member name.
+        assert!(b.property(BuiltinReceiver::String, "count").is_none());
+        assert!(!b.has_labeled_intrinsic(BuiltinReceiver::Array, "count"));
+        let names: Vec<String> = b.qualified_names().collect();
+        assert_eq!(names, vec!["Array.count".to_string()]);
     }
 
     #[test]

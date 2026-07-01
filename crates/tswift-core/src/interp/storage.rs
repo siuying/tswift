@@ -1110,9 +1110,7 @@ impl<'w> Interpreter<'w> {
                         return Ok(SwiftValue::Metatype(type_name));
                     }
                     if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
-                        if let Some(func) =
-                            self.static_methods.get(&(recv, member.clone())).copied()
-                        {
+                        if let Some(func) = self.builtins.static_method(recv, &member) {
                             return func(self, Vec::new()).map_err(Self::std_error_to_signal);
                         }
                     }
@@ -1213,14 +1211,10 @@ impl<'w> Interpreter<'w> {
                 return self.read_struct_member(&value, &member);
             }
             if let Some(kind) = BuiltinReceiver::of(&value) {
-                if let Some(func) = self
-                    .contextual_properties
-                    .get(&(kind, member.clone()))
-                    .copied()
-                {
+                if let Some(func) = self.builtins.contextual_property(kind, &member) {
                     return func(self, value).map_err(Self::std_error_to_signal);
                 }
-                if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
+                if let Some(func) = self.builtins.property(kind, &member) {
                     return func(value).map_err(Self::std_error_to_signal);
                 }
             }
@@ -1229,14 +1223,10 @@ impl<'w> Interpreter<'w> {
         // Standard-library computed-property intrinsics (`Double.isNaN`,
         // `Int.magnitude`, …) on builtin receivers.
         if let Some(kind) = BuiltinReceiver::of(&value) {
-            if let Some(func) = self
-                .contextual_properties
-                .get(&(kind, member.clone()))
-                .copied()
-            {
+            if let Some(func) = self.builtins.contextual_property(kind, &member) {
                 return func(self, value).map_err(Self::std_error_to_signal);
             }
-            if let Some(func) = self.properties.get(&(kind, member.clone())).copied() {
+            if let Some(func) = self.builtins.property(kind, &member) {
                 return func(value).map_err(Self::std_error_to_signal);
             }
         }
@@ -1343,7 +1333,7 @@ impl<'w> Interpreter<'w> {
             }
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&value) {
-                    if let Some(func) = self.properties.get(&(kind, name.to_string())).copied() {
+                    if let Some(func) = self.builtins.property(kind, name) {
                         return func(value).map_err(Self::std_error_to_signal);
                     }
                 }
