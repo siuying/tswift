@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build:wasm": "wasm-pack build ../crates/tswift-wasm --target web --out-dir ../website/public/wasm --out-name tswift_wasm",
+    "build:wasm": "wasm-pack build ../crates/tswift-wasm --target web --out-dir ../../website/public/wasm --out-name tswift_wasm",
     "build": "npm run build:wasm && astro build",
     "preview": "astro preview",
     "test": "node test/wasm-smoke.mjs",
