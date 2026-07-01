@@ -690,13 +690,22 @@ impl<'a> Parser<'a> {
             self.bump();
             self.ast.add_modifier(param, "inout");
         }
-        // Ownership parameter modifiers (`borrowing`/`consuming`, and the older
-        // `__shared`/`__owned`). They do not change tree-walk evaluation, so
-        // accept and discard them before the parameter type.
+        // Ownership parameter modifiers (`borrowing`/`consuming`, the older
+        // `__shared`/`__owned`) and the actor-isolation `isolated`. They do
+        // not change tree-walk evaluation (the cooperative executor is one
+        // thread), so accept and discard them before the parameter type —
+        // but only when a type actually follows, so a *type named* like one
+        // of these contextual words still parses (`func f(_ x: isolated)`).
         while matches!(
             self.peek().text,
-            "borrowing" | "consuming" | "__shared" | "__owned"
+            "borrowing" | "consuming" | "__shared" | "__owned" | "isolated"
         ) && self.peek().kind == TokenKind::Identifier
+            && (self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                || matches!(
+                    self.tokens[self.pos + 1].kind,
+                    TokenKind::LBracket | TokenKind::LParen
+                )
+                || matches!(self.tokens[self.pos + 1].text, "any" | "some" | "inout"))
         {
             self.bump();
         }
@@ -3105,6 +3114,9 @@ fn is_modifier_word(w: &str) -> bool {
             | "unowned"
             | "indirect"
             | "dynamic"
+            // Actor-isolation modifier (`nonisolated func`, `nonisolated var`,
+            // `nonisolated(unsafe) var`).
+            | "nonisolated"
             // Ownership method modifiers (`consuming func`, `borrowing func`).
             | "consuming"
             | "borrowing"
@@ -3975,6 +3987,44 @@ mod tests {
         assert_eq!(clo.kind(), NodeKind::ClosureExpr);
         // Body statement present after the signature.
         assert!(clo.children().count() >= 1);
+    }
+
+    #[test]
+    fn isolation_words_stay_usable_as_identifiers() {
+        // `nonisolated`/`isolated` are contextual: a binding, a call, and a
+        // parameter *type* spelled with these words must still parse.
+        let ast = ast_of("let nonisolated = 5\n");
+        assert_eq!(first_stmt(&ast).kind(), NodeKind::LetDecl);
+        let ast = ast_of("isolated(3)\n");
+        let call = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        // A parameter whose type is literally named `isolated`.
+        let ast = ast_of("func f(_ x: isolated) { }\n");
+        let func = first_stmt(&ast);
+        let param = func
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .unwrap();
+        let ty = param
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .unwrap();
+        assert_eq!(ty.text(), Some("isolated"));
+    }
+
+    #[test]
+    fn isolated_parameter_modifier_is_discarded_before_the_type() {
+        let ast = ast_of("func report(on counter: isolated Counter) -> Int { return 0 }\n");
+        let func = first_stmt(&ast);
+        let param = func
+            .children()
+            .find(|c| c.kind() == NodeKind::Param)
+            .unwrap();
+        let ty = param
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .unwrap();
+        assert_eq!(ty.text(), Some("Counter"));
     }
 
     #[test]
