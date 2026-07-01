@@ -392,7 +392,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
 | [x] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
 | [x] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |
-| [ ] | `@backDeployed` / `@_specialize` | ⚠️ | ★ | R6+ |
+| [x] | `@backDeployed` / `@_specialize` (accepted + ignored; incl. multi-`@_specialize`, `exported:`/`kind:` args) | ✅ | ★ | R6+ |
 | [x] | `@warn_unqualified_access` / misc diagnostics | ⚠️ | ★ | R6+ |
 
 ### 9d. Compiler control / directives
