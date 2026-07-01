@@ -940,6 +940,11 @@ impl<'w> Interpreter<'w> {
             return Ok(result);
         }
 
+        // `MainActor.run { }` hop (ADR-0005).
+        if let Some(result) = self.try_main_actor_method(&base, &method, arg_nodes)? {
+            return Ok(result);
+        }
+
         // `Type.<...>(args)`: builtin static method, nested-type construction,
         // enum case, or a static struct/class method — all resolved off the
         // type named by `base`.

@@ -371,6 +371,29 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// `MainActor.run { ... }`: hop to the main actor and return the operation's
+    /// result. On the cooperative single-threaded executor there is only one
+    /// actor context, so the body runs inline. Returns `None` when `base` is not
+    /// the unshadowed builtin `MainActor`, so normal resolution continues.
+    pub(super) fn try_main_actor_method(
+        &mut self,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if method != "run"
+            || base.kind() != NodeKind::IdentExpr
+            || base.text().as_deref() != Some("MainActor")
+            || self.env.get("MainActor").is_some()
+        {
+            return Ok(None);
+        }
+        let closure = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
+            EvalError::Unsupported("MainActor.run without a body closure".into())
+        })?;
+        self.call_closure(closure, Vec::new()).map(Some)
+    }
+
     /// Dispatch instance methods on a task handle or task group. Returns `None`
     /// when `base` is neither, so normal method resolution continues.
     pub(super) fn try_concurrency_method(
