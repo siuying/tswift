@@ -365,6 +365,23 @@ impl Ast {
         self.nodes[parent.index()].children.push(child);
     }
 
+    /// Add a node and wire `children` in one call — the deep alternative to
+    /// `add` + repeated `append_child`. Span comes from `(line, col)`.
+    pub fn add_with_children(
+        &mut self,
+        kind: NodeKind,
+        text: Option<&str>,
+        line: u32,
+        col: u32,
+        children: &[NodeId],
+    ) -> NodeId {
+        let id = self.add(kind, text, line, col);
+        for &child in children {
+            self.nodes[id.index()].children.push(child);
+        }
+        id
+    }
+
     /// Replace `parent`'s entire child list with `children` (in source order).
     ///
     /// Used by AST→AST rewrites (such as the result-builder transform) that

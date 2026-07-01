@@ -129,6 +129,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Create a node whose span comes from `tok`, with `children` wired in.
+    /// Prefer this over `self.ast.add` + repeated `self.ast.append_child` when
+    /// all children are already computed before the parent node is created.
+    fn node(
+        &mut self,
+        kind: NodeKind,
+        text: Option<&str>,
+        tok: Token<'a>,
+        children: &[NodeId],
+    ) -> NodeId {
+        self.ast
+            .add_with_children(kind, text, tok.line, tok.col, children)
+    }
+
     fn expect(&mut self, kind: TokenKind) -> Result<Token<'a>, ParseError> {
         if self.peek().kind == kind {
             Ok(self.bump())
@@ -716,23 +730,22 @@ impl<'a> Parser<'a> {
     /// `return [expr]`. The value, when present, is on the same line.
     fn parse_return(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::ReturnStmt, None, kw.line, kw.col);
         let next = self.peek();
         let ends = matches!(next.kind, TokenKind::RBrace | TokenKind::Eof);
         if !ends && !next.leading_newline {
             let expr = self.parse_expr(0)?;
-            self.ast.append_child(node, expr);
+            Ok(self.node(NodeKind::ReturnStmt, None, kw, &[expr]))
+        } else {
+            Ok(self.node(NodeKind::ReturnStmt, None, kw, &[]))
         }
-        Ok(node)
     }
 
     /// `if cond { } [else (if ... | { })]`. Usable as a statement or expression.
     fn parse_if(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::IfStmt, None, kw.line, kw.col);
-        self.parse_conditions(node)?;
+        let mut children = self.parse_conditions()?;
         let then = self.parse_block()?;
-        self.ast.append_child(node, then);
+        children.push(then);
         if self.at_keyword("else") {
             self.bump();
             let else_branch = if self.at_keyword("if") {
@@ -740,45 +753,40 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_block()?
             };
-            self.ast.append_child(node, else_branch);
+            children.push(else_branch);
         }
-        Ok(node)
+        Ok(self.node(NodeKind::IfStmt, None, kw, &children))
     }
 
     fn parse_guard(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::GuardStmt, None, kw.line, kw.col);
-        self.parse_conditions(node)?;
+        let mut children = self.parse_conditions()?;
         if !self.at_keyword("else") {
             return self.error("expected 'else' after the guard condition");
         }
         self.bump();
         let body = self.parse_block()?;
-        self.ast.append_child(node, body);
-        Ok(node)
+        children.push(body);
+        Ok(self.node(NodeKind::GuardStmt, None, kw, &children))
     }
 
     fn parse_while(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::WhileStmt, label, kw.line, kw.col);
-        self.parse_conditions(node)?;
+        let mut children = self.parse_conditions()?;
         let body = self.parse_block()?;
-        self.ast.append_child(node, body);
-        Ok(node)
+        children.push(body);
+        Ok(self.node(NodeKind::WhileStmt, label, kw, &children))
     }
 
     fn parse_repeat(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::RepeatStmt, label, kw.line, kw.col);
         let body = self.parse_block()?;
-        self.ast.append_child(node, body);
         if !self.at_keyword("while") {
             return self.error("expected 'while' after a repeat body");
         }
         self.bump();
         let cond = self.parse_expr(0)?;
-        self.ast.append_child(node, cond);
-        Ok(node)
+        Ok(self.node(NodeKind::RepeatStmt, label, kw, &[body, cond]))
     }
 
     /// `for pattern in iterable [where cond] { body }`. Children: pattern,
@@ -1291,19 +1299,15 @@ impl<'a> Parser<'a> {
     /// `throw expr`.
     fn parse_throw(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::ThrowStmt, None, kw.line, kw.col);
         let expr = self.parse_expr(0)?;
-        self.ast.append_child(node, expr);
-        Ok(node)
+        Ok(self.node(NodeKind::ThrowStmt, None, kw, &[expr]))
     }
 
     /// `defer { }`.
     fn parse_defer(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
-        let node = self.ast.add(NodeKind::DeferStmt, None, kw.line, kw.col);
         let body = self.parse_block()?;
-        self.ast.append_child(node, body);
-        Ok(node)
+        Ok(self.node(NodeKind::DeferStmt, None, kw, &[body]))
     }
 
     /// A compiler directive used as a statement: `#warning(...)`, `#error(...)`,
@@ -1696,15 +1700,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_conditions(&mut self, parent: NodeId) -> Result<(), ParseError> {
+    /// Parse a comma-separated condition list (`if`/`guard`/`while`) and return
+    /// the condition nodes. Callers wire them into the parent with `self.node()`
+    /// or explicit `append_child` calls.
+    fn parse_conditions(&mut self) -> Result<Vec<NodeId>, ParseError> {
         let saved = self.no_trailing_closure;
         self.no_trailing_closure = true;
-        let result = self.parse_conditions_inner(parent);
+        let result = self.parse_conditions_inner();
         self.no_trailing_closure = saved;
         result
     }
 
-    fn parse_conditions_inner(&mut self, parent: NodeId) -> Result<(), ParseError> {
+    fn parse_conditions_inner(&mut self) -> Result<Vec<NodeId>, ParseError> {
+        let mut conditions = Vec::new();
         loop {
             let cond = if self.at_keyword("let") || self.at_keyword("var") {
                 self.parse_condition_binding()?
@@ -1713,14 +1721,14 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_expr(0)?
             };
-            self.ast.append_child(parent, cond);
+            conditions.push(cond);
             if self.peek().kind == TokenKind::Comma {
                 self.bump();
                 continue;
             }
             break;
         }
-        Ok(())
+        Ok(conditions)
     }
 
     /// One optional-binding condition (`let x`, `let x = e`, `var y = e`) inside
@@ -2239,11 +2247,12 @@ impl<'a> Parser<'a> {
                 let then_branch = self.parse_expr(0)?;
                 self.expect(TokenKind::Colon)?;
                 let else_branch = self.parse_expr(TERNARY_BP)?;
-                let tern = self.ast.add(NodeKind::TernaryExpr, None, q.line, q.col);
-                self.ast.append_child(tern, lhs);
-                self.ast.append_child(tern, then_branch);
-                self.ast.append_child(tern, else_branch);
-                lhs = tern;
+                lhs = self.node(
+                    NodeKind::TernaryExpr,
+                    None,
+                    q,
+                    &[lhs, then_branch, else_branch],
+                );
                 continue;
             }
             // Type cast `expr is/as/as?/as! Type`, at casting precedence.
@@ -2258,10 +2267,7 @@ impl<'a> Parser<'a> {
                     op.push_str(self.bump().text);
                 }
                 let ty = self.parse_type()?;
-                let cast = self.ast.add(NodeKind::CastExpr, Some(&op), kw.line, kw.col);
-                self.ast.append_child(cast, lhs);
-                self.ast.append_child(cast, ty);
-                lhs = cast;
+                lhs = self.node(NodeKind::CastExpr, Some(&op), kw, &[lhs, ty]);
                 continue;
             }
             let op = self.peek();
@@ -2339,20 +2345,14 @@ impl<'a> Parser<'a> {
                 String::from("try")
             };
             let operand = self.parse_prefix()?;
-            let node = self.ast.add(NodeKind::TryExpr, Some(&op), t.line, t.col);
-            self.ast.append_child(node, operand);
-            return Ok(node);
+            return Ok(self.node(NodeKind::TryExpr, Some(&op), t, &[operand]));
         }
         // `await expr` — suspends until the operand's task completes. Wrapped
         // in an `AwaitExpr` so the runtime can resolve task/async-let values.
         if t.kind == TokenKind::Identifier && t.text == "await" && !self.is_value_ident_context() {
             self.bump();
             let operand = self.parse_prefix()?;
-            let node = self
-                .ast
-                .add(NodeKind::AwaitExpr, Some("await"), t.line, t.col);
-            self.ast.append_child(node, operand);
-            return Ok(node);
+            return Ok(self.node(NodeKind::AwaitExpr, Some("await"), t, &[operand]));
         }
         // Ownership prefix operators `consume`/`copy`/`borrow expr`. They are
         // contextual keywords; treat them as a transparent prefix only when an
@@ -2366,28 +2366,18 @@ impl<'a> Parser<'a> {
         {
             self.bump();
             let operand = self.parse_prefix()?;
-            let node = self
-                .ast
-                .add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
-            self.ast.append_child(node, operand);
-            return Ok(node);
+            return Ok(self.node(NodeKind::PrefixExpr, Some(t.text), t, &[operand]));
         }
         // `&place` — an inout argument (write-back location at a call site).
         if t.kind == TokenKind::Oper && t.text == "&" {
             self.bump();
             let operand = self.parse_prefix()?;
-            let node = self.ast.add(NodeKind::InoutExpr, Some("&"), t.line, t.col);
-            self.ast.append_child(node, operand);
-            return Ok(node);
+            return Ok(self.node(NodeKind::InoutExpr, Some("&"), t, &[operand]));
         }
         if t.kind == TokenKind::Oper && matches!(t.text, "-" | "+" | "!" | "~") {
             self.bump();
             let operand = self.parse_prefix()?;
-            let node = self
-                .ast
-                .add(NodeKind::PrefixExpr, Some(t.text), t.line, t.col);
-            self.ast.append_child(node, operand);
-            return Ok(node);
+            return Ok(self.node(NodeKind::PrefixExpr, Some(t.text), t, &[operand]));
         }
         let primary = self.parse_primary()?;
         self.parse_postfix(primary)
