@@ -592,12 +592,10 @@ impl<'a> Parser<'a> {
         }
         if self.at_keyword("throws") || self.at_keyword("rethrows") {
             self.bump();
-            // Typed throws `throws(E)`.
+            // Typed throws `throws(E)` — depth-balanced so an error type that
+            // itself contains parentheses is consumed whole.
             if self.peek().kind == TokenKind::LParen {
-                while !matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof) {
-                    self.bump();
-                }
-                self.bump();
+                self.skip_balanced_parens();
             }
         }
     }
@@ -1249,6 +1247,9 @@ impl<'a> Parser<'a> {
     fn parse_do(&mut self) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::DoStmt, None, kw.line, kw.col);
+        // Swift 6 `do throws(E) { ... }`: the (typed) effect marker is
+        // accepted and skipped; catch clauses drive runtime behaviour.
+        self.skip_effects();
         let body = self.parse_block()?;
         self.ast.append_child(node, body);
         while self.at_keyword("catch") {
@@ -1686,8 +1687,34 @@ impl<'a> Parser<'a> {
                 }
                 // Effect keywords (`throws`/`rethrows`/`async`) in the closure
                 // signature are consumed and ignored; the body's actual
-                // throwing/async-ness is inferred during evaluation.
-                TokenKind::Keyword if matches!(t.text, "throws" | "rethrows" | "async") => {}
+                // throwing/async-ness is inferred during evaluation. A typed
+                // throws `throws(E)` consumes its parenthesized error type
+                // wholesale so `E` is not mistaken for a parameter name.
+                TokenKind::Keyword if matches!(t.text, "throws" | "rethrows" | "async") => {
+                    self.bump();
+                    if self.peek().kind == TokenKind::LParen {
+                        let mut d = 0i32;
+                        loop {
+                            match self.peek().kind {
+                                TokenKind::LParen => d += 1,
+                                TokenKind::RParen => {
+                                    if d == 1 {
+                                        self.bump();
+                                        break;
+                                    }
+                                    d -= 1;
+                                }
+                                TokenKind::Eof => {
+                                    self.pos = save;
+                                    return false;
+                                }
+                                _ => {}
+                            }
+                            self.bump();
+                        }
+                    }
+                    continue;
+                }
                 TokenKind::Comma => {
                     expect_name = true;
                     in_type = false;

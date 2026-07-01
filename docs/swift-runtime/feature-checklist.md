@@ -253,7 +253,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
 | [x] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
 | [~] | `rethrows` (runtime ✓; static `try`-effect checking not enforced) | ✅ | ★★★ | R5 |
-| [~] | Typed throws `throws(E)` (Swift 6) | ⚠️ | ★★★ | R5 |
+| [x] | Typed throws `throws(E)` (Swift 6; funcs, closures, `do throws(E)`, generic `E` — the declared error type is parsed and skipped, not represented or enforced; errors propagate dynamically) | ✅ | ★★★ | R5 |
 | [x] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
 | [x] | Error propagation through call stack | ✅ | ★★★ | R5 |
 | [x] | `Result<Success, Failure>` (stdlib) | ✅ | ★★ | R5 |
@@ -494,7 +494,7 @@ R6+ Tier 7 (concurrency), Tier 8 (macros), key paths, ownership, packs, unsafe
 These show ⚠️/❌ above and likely need **frontend work** before the runtime can run them:
 - [x] Verify raw-string / extended-delimiter lexing edge cases (multiline `"""`, `#"…"#`, and `\(…)` with inner quotes are lexed as single tokens)
 - [ ] `indirect` enum / recursive layout confirmation
-- [ ] Typed throws `throws(E)` parsing
+- [x] Typed throws `throws(E)` parsing (funcs, closures, `do throws(E)` blocks)
 - [ ] Parameter packs / variadic generics (`each`), integer generic params
 - [ ] Macro expansion engine (freestanding + attached + result builders)
 - [ ] `#if` conditional-compilation evaluation (likely pre-lex or pre-sema pass)
