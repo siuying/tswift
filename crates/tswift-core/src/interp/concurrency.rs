@@ -411,9 +411,9 @@ impl<'w> Interpreter<'w> {
         {
             return Ok(None);
         }
-        let closure = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
-            EvalError::Unsupported("MainActor.run without a body closure".into())
-        })?;
+        let closure = self
+            .eval_body_closure(arg_nodes)?
+            .ok_or_else(|| EvalError::Unsupported("MainActor.run without a body closure".into()))?;
         self.call_closure(closure, Vec::new()).map(Some)
     }
 
@@ -599,9 +599,9 @@ impl<'w> Interpreter<'w> {
     /// cooperative executor runs the producer to completion eagerly (ADR-0005),
     /// so a bounded producer's buffer is fully populated before consumption.
     fn eval_async_stream(&mut self, arg_nodes: &[Node<'static>]) -> Eval {
-        let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
-            EvalError::Unsupported("AsyncStream without a build closure".into())
-        })?;
+        let body = self
+            .eval_body_closure(arg_nodes)?
+            .ok_or_else(|| EvalError::Unsupported("AsyncStream without a build closure".into()))?;
         let sid = self.sched.new_stream();
         let body_tasks_start = self.sched.task_count();
         self.call_closure(body, vec![SwiftValue::StreamContinuation(sid)])?;
