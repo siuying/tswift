@@ -706,6 +706,102 @@ impl<'w> Interpreter<'w> {
 
     /// `base.method(args)`. Binds `self`; for `mutating` methods, writes the
     /// updated `self` back to `base`'s storage.
+    /// Resolve and invoke a method whose selection is driven by the receiver's
+    /// [`BuiltinReceiver`] kind: a label-aware overload (`layer 1a`), a
+    /// type-specific intrinsic (`layer 1`, e.g. `Array.append`), or a
+    /// `Sequence`/`Collection` algorithm (`layer 2`, e.g. `map`/`sorted`).
+    /// Returns `Ok(None)` when none matches so the caller falls through the rest
+    /// of the dispatch ladder. Concentrates the three ordered checks (and their
+    /// argument-evaluation policies) behind one seam.
+    fn try_builtin_receiver_method(
+        &mut self,
+        base_value: &SwiftValue,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let mut evaluated_args = None;
+
+        // Label-aware stdlib overloads (layer 1a): selected APIs need argument
+        // labels to choose between overloads without leaking that policy into the
+        // interpreter dispatcher.
+        if let Some(kind) = BuiltinReceiver::of(base_value) {
+            if self.builtins.has_labeled_intrinsic(kind, method) {
+                let args = self.eval_args(arg_nodes)?;
+                let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
+                let place = self.resolve_place(base);
+                if let Some(result) =
+                    self.dispatch_labeled_intrinsic(base_value.clone(), method, labeled, place)
+                {
+                    return result.map(Some);
+                }
+                evaluated_args = Some(args);
+            }
+        }
+
+        // Standard-library intrinsic registry (layer 1): type-specific members
+        // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
+        if let Some(kind) = BuiltinReceiver::of(base_value) {
+            if let Some(entry) = self.builtins.intrinsic(kind, method) {
+                let args = match evaluated_args.take() {
+                    Some(args) => args,
+                    None => self.eval_args(arg_nodes)?,
+                };
+                // `IndexPath`/`IndexSet` intrinsics take positional arguments.
+                // The sole exception is `IndexSet.update(with:)`, whose one
+                // argument is labelled `with:` (and requires that label).
+                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
+                    let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
+                    let labels_valid = args.iter().all(|arg| match arg.label.as_deref() {
+                        Some("with") => is_update,
+                        Some(_) => false,
+                        None => !is_update,
+                    });
+                    if !labels_valid {
+                        return Err(EvalError::Type(format!(
+                            "{}.{} called with unexpected argument label(s)",
+                            kind.type_name(),
+                            method
+                        ))
+                        .into());
+                    }
+                }
+                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                let place = self.resolve_place(base);
+                return match (entry.func)(self, base_value.clone(), plain) {
+                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                    Err(err) => Err(Self::std_error_to_signal(err)),
+                }
+                .map(Some);
+            }
+        }
+
+        // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
+        // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
+        if self.globals.has_algorithm(method) {
+            let items = if let Some(items) = materialize_sequence(base_value) {
+                Some(items)
+            } else if self.is_custom_sequence(base_value) {
+                Some(self.materialize_custom_sequence(base_value.clone())?)
+            } else {
+                None
+            };
+            if let Some(items) = items {
+                let func = self.globals.algorithm(method).unwrap();
+                let labeled: Vec<Arg> = self
+                    .eval_args(arg_nodes)?
+                    .into_iter()
+                    .map(Arg::from)
+                    .collect();
+                return func(self, items, labeled)
+                    .map(Some)
+                    .map_err(Self::std_error_to_signal);
+            }
+        }
+
+        Ok(None)
+    }
+
     fn eval_method_call(&mut self, member: &Node<'static>, arg_nodes: &[Node<'static>]) -> Eval {
         let mut method = member
             .text()
@@ -864,80 +960,11 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        let mut evaluated_args = None;
-
-        // Label-aware stdlib overloads (layer 1a): selected APIs need argument
-        // labels to choose between overloads without leaking that policy into the
-        // interpreter dispatcher.
-        if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if self.builtins.has_labeled_intrinsic(kind, &method) {
-                let args = self.eval_args(arg_nodes)?;
-                let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
-                let place = self.resolve_place(&base);
-                if let Some(result) =
-                    self.dispatch_labeled_intrinsic(base_value.clone(), &method, labeled, place)
-                {
-                    return result;
-                }
-                evaluated_args = Some(args);
-            }
-        }
-
-        // Standard-library intrinsic registry (layer 1): type-specific members
-        // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
-        if let Some(kind) = BuiltinReceiver::of(&base_value) {
-            if let Some(entry) = self.builtins.intrinsic(kind, &method) {
-                let args = match evaluated_args.take() {
-                    Some(args) => args,
-                    None => self.eval_args(arg_nodes)?,
-                };
-                // `IndexPath`/`IndexSet` intrinsics take positional arguments.
-                // The sole exception is `IndexSet.update(with:)`, whose one
-                // argument is labelled `with:` (and requires that label).
-                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
-                    let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
-                    let labels_valid = args.iter().all(|arg| match arg.label.as_deref() {
-                        Some("with") => is_update,
-                        Some(_) => false,
-                        None => !is_update,
-                    });
-                    if !labels_valid {
-                        return Err(EvalError::Type(format!(
-                            "{}.{} called with unexpected argument label(s)",
-                            kind.type_name(),
-                            method
-                        ))
-                        .into());
-                    }
-                }
-                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
-                let place = self.resolve_place(&base);
-                return match (entry.func)(self, base_value, plain) {
-                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
-                    Err(err) => Err(Self::std_error_to_signal(err)),
-                };
-            }
-        }
-
-        // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
-        // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
-        if self.globals.has_algorithm(&method) {
-            let items = if let Some(items) = materialize_sequence(&base_value) {
-                Some(items)
-            } else if self.is_custom_sequence(&base_value) {
-                Some(self.materialize_custom_sequence(base_value.clone())?)
-            } else {
-                None
-            };
-            if let Some(items) = items {
-                let func = self.globals.algorithm(&method).unwrap();
-                let labeled: Vec<Arg> = self
-                    .eval_args(arg_nodes)?
-                    .into_iter()
-                    .map(Arg::from)
-                    .collect();
-                return func(self, items, labeled).map_err(Self::std_error_to_signal);
-            }
+        // Builtin-receiver method layer: label-aware overloads, type-specific
+        // intrinsics, then `Sequence`/`Collection` algorithms — all keyed off the
+        // receiver's [`BuiltinReceiver`] kind, resolved in one place.
+        if let Some(v) = self.try_builtin_receiver_method(&base_value, &base, &method, arg_nodes)? {
+            return Ok(v);
         }
 
         // `Result.get()`: unwrap success, or throw the failure error.
