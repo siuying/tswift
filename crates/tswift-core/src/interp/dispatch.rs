@@ -447,8 +447,8 @@ impl<'w> Interpreter<'w> {
                     if self.is_user_nominal_type(&name) {
                         None
                     } else {
-                        self.free_fns
-                            .get(&name)
+                        self.globals
+                            .free_fn(&name)
                             .and_then(|e| e.params.as_ref())
                             .map(|p| clone_params(p))
                     }
@@ -571,11 +571,11 @@ impl<'w> Interpreter<'w> {
             }
 
             // Free-function intrinsic served through the StdContext seam.
-            if let Some(free) = self.free_fns.get(&name).map(|e| e.f) {
+            if let Some(free) = self.globals.free_fn(&name).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
-            if let Some(native) = self.natives.get(&name).copied() {
+            if let Some(native) = self.globals.native(&name) {
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 return Ok(native(self.out, &plain));
             }
@@ -921,7 +921,7 @@ impl<'w> Interpreter<'w> {
 
         // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
         // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
-        if self.algorithms.contains_key(&method) {
+        if self.globals.has_algorithm(&method) {
             let items = if let Some(items) = materialize_sequence(&base_value) {
                 Some(items)
             } else if self.is_custom_sequence(&base_value) {
@@ -930,7 +930,7 @@ impl<'w> Interpreter<'w> {
                 None
             };
             if let Some(items) = items {
-                let func = self.algorithms[&method];
+                let func = self.globals.algorithm(&method).unwrap();
                 let labeled: Vec<Arg> = self
                     .eval_args(arg_nodes)?
                     .into_iter()
@@ -961,8 +961,8 @@ impl<'w> Interpreter<'w> {
             .as_ref()
             .and_then(|tn| self.user_method_params(tn, &method))
             .or_else(|| {
-                self.struct_methods
-                    .get(&method)
+                self.globals
+                    .struct_method(&method)
                     .and_then(|e| e.params.as_ref())
                     .map(|p| clone_params(p))
             });
@@ -977,7 +977,7 @@ impl<'w> Interpreter<'w> {
         // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
         // any struct receiver by name, after user methods and builtin receivers.
         if matches!(base_value, SwiftValue::Struct(_)) {
-            if let Some(func) = self.struct_methods.get(&method).map(|e| e.f) {
+            if let Some(func) = self.globals.struct_method(&method).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
             }

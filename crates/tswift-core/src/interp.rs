@@ -597,6 +597,57 @@ impl BuiltinMembers {
     }
 }
 
+/// The runtime's registry of name-keyed global members — native functions,
+/// free-function intrinsics (through the [`StdContext`] seam), `Sequence`
+/// algorithms, and generic struct-method intrinsics (the SwiftUI modifier
+/// seam). Owning the four maps behind one module concentrates global-member
+/// storage; the `add_*` methods are the install seam and the singular query
+/// methods are the read surface `eval_call`/`eval_method_call` use.
+#[derive(Default)]
+struct GlobalMembers {
+    natives: HashMap<String, NativeFn>,
+    free_fns: HashMap<String, FreeFnEntry>,
+    algorithms: HashMap<String, AlgoFn>,
+    struct_methods: HashMap<String, StructMethodEntry>,
+}
+
+impl GlobalMembers {
+    fn add_native(&mut self, name: &str, f: NativeFn) {
+        self.natives.insert(name.to_string(), f);
+    }
+    fn add_free_fn(&mut self, name: &str, entry: FreeFnEntry) {
+        self.free_fns.insert(name.to_string(), entry);
+    }
+    fn add_algorithm(&mut self, name: &str, f: AlgoFn) {
+        self.algorithms.insert(name.to_string(), f);
+    }
+    fn add_struct_method(&mut self, name: &str, entry: StructMethodEntry) {
+        self.struct_methods.insert(name.to_string(), entry);
+    }
+
+    fn native(&self, name: &str) -> Option<NativeFn> {
+        self.natives.get(name).copied()
+    }
+    fn free_fn(&self, name: &str) -> Option<&FreeFnEntry> {
+        self.free_fns.get(name)
+    }
+    fn algorithm(&self, name: &str) -> Option<AlgoFn> {
+        self.algorithms.get(name).copied()
+    }
+    fn has_algorithm(&self, name: &str) -> bool {
+        self.algorithms.contains_key(name)
+    }
+    fn struct_method(&self, name: &str) -> Option<&StructMethodEntry> {
+        self.struct_methods.get(name)
+    }
+    fn free_fn_names(&self) -> impl Iterator<Item = &String> {
+        self.free_fns.keys()
+    }
+    fn algorithm_names(&self) -> impl Iterator<Item = &String> {
+        self.algorithms.keys()
+    }
+}
+
 /// A protocol declaration: its inherited protocols and any default member
 /// implementations supplied through `extension Protocol { … }`.
 struct ProtoDef {
@@ -689,10 +740,6 @@ struct TypeReference {
 /// The tree-walking interpreter.
 pub struct Interpreter<'w> {
     out: &'w mut dyn Write,
-    natives: HashMap<String, NativeFn>,
-    /// Free-function intrinsics served through the [`StdContext`] seam, each
-    /// paired with its optional declared parameter signature.
-    free_fns: HashMap<String, FreeFnEntry>,
     /// Core-internal value-only builtin constructors (collection ctors, scalar
     /// conversions, JSON coder markers), keyed by global name. Consulted once
     /// in `eval_call`, gated by [`Interpreter::is_unshadowed`], after user-type
@@ -702,13 +749,10 @@ pub struct Interpreter<'w> {
     /// labelled overloads, computed properties, and static methods — behind one
     /// registry seam.
     builtins: BuiltinMembers,
-    /// `Sequence`/`Collection` algorithms keyed by method name, applied to any
-    /// builtin sequence receiver (layer 2 of the dispatch seam).
-    algorithms: HashMap<String, AlgoFn>,
-    /// Generic method intrinsics dispatched on any struct receiver by name, a
-    /// fallback after user methods and builtin receivers (SwiftUI modifiers).
-    /// Each is paired with its optional declared parameter signature.
-    struct_methods: HashMap<String, StructMethodEntry>,
+    /// Name-keyed global members — native functions, free-function intrinsics,
+    /// `Sequence` algorithms, and generic struct-method intrinsics — behind one
+    /// registry seam.
+    globals: GlobalMembers,
     env: Env,
     funcs: Vec<FuncDef>,
     /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
@@ -791,12 +835,9 @@ impl<'w> Interpreter<'w> {
     pub fn new(out: &'w mut dyn Write) -> Self {
         Interpreter {
             out,
-            natives: HashMap::new(),
-            free_fns: HashMap::new(),
             builtin_ctors: Self::builtin_ctor_table(),
             builtins: BuiltinMembers::default(),
-            algorithms: HashMap::new(),
-            struct_methods: HashMap::new(),
+            globals: GlobalMembers::default(),
             env: Env::new(),
             type_bindings: Vec::new(),
             funcs: Vec::new(),
@@ -825,13 +866,13 @@ impl<'w> Interpreter<'w> {
 
     /// Register a native function callable from Swift source by `name`.
     pub fn register_native(&mut self, name: &str, f: NativeFn) {
-        self.natives.insert(name.to_string(), f);
+        self.globals.add_native(name, f);
     }
 
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
-        self.free_fns
-            .insert(name.to_string(), FreeFnEntry { f, params: None });
+        self.globals
+            .add_free_fn(name, FreeFnEntry { f, params: None });
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -840,8 +881,8 @@ impl<'w> Interpreter<'w> {
     /// against the parameter type (`VStack(alignment: .leading)`).
     pub fn register_free_fn_typed(&mut self, name: &str, f: FreeFn, params: Vec<BuiltinParam>) {
         let params = params.into_iter().map(BuiltinParam::into_param).collect();
-        self.free_fns.insert(
-            name.to_string(),
+        self.globals.add_free_fn(
+            name,
             FreeFnEntry {
                 f,
                 params: Some(params),
@@ -881,9 +922,9 @@ impl<'w> Interpreter<'w> {
     /// deduplicated so the output is stable.
     pub fn registered_keys(&self) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
-        keys.extend(self.free_fns.keys().cloned());
+        keys.extend(self.globals.free_fn_names().cloned());
         keys.extend(self.builtins.qualified_names());
-        for name in self.algorithms.keys() {
+        for name in self.globals.algorithm_names() {
             keys.push(format!("Sequence.{name}"));
         }
         keys.sort();
@@ -919,7 +960,7 @@ impl<'w> Interpreter<'w> {
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
     pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
-        self.algorithms.insert(name.to_string(), f);
+        self.globals.add_algorithm(name, f);
     }
 
     /// Register a generic method intrinsic dispatched on any struct receiver by
@@ -927,8 +968,8 @@ impl<'w> Interpreter<'w> {
     /// methods and builtin-receiver intrinsics fail to match, so a user method
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
-        self.struct_methods
-            .insert(name.to_string(), StructMethodEntry { f, params: None });
+        self.globals
+            .add_struct_method(name, StructMethodEntry { f, params: None });
     }
 
     /// Register a generic struct-method intrinsic together with a declared
@@ -943,8 +984,8 @@ impl<'w> Interpreter<'w> {
         params: Vec<BuiltinParam>,
     ) {
         let params = params.into_iter().map(BuiltinParam::into_param).collect();
-        self.struct_methods.insert(
-            name.to_string(),
+        self.globals.add_struct_method(
+            name,
             StructMethodEntry {
                 f,
                 params: Some(params),
@@ -4475,6 +4516,26 @@ mod tests {
         assert!(types.enum_def("Point").is_none());
         let names: Vec<&String> = types.struct_names().collect();
         assert_eq!(names, vec![&"Point".to_string()]);
+    }
+
+    #[test]
+    fn global_members_registry_stores_free_fns_and_algorithms() {
+        fn id(_: &mut dyn StdContext, _: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+        let mut g = GlobalMembers::default();
+        assert!(g.free_fn("abs").is_none());
+        g.add_free_fn(
+            "abs",
+            FreeFnEntry {
+                f: id,
+                params: None,
+            },
+        );
+        assert!(g.free_fn("abs").is_some());
+        assert!(!g.has_algorithm("map"));
+        let names: Vec<String> = g.free_fn_names().cloned().collect();
+        assert_eq!(names, vec!["abs".to_string()]);
     }
 
     #[test]
