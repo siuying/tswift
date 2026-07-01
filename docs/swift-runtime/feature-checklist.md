@@ -301,7 +301,7 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 | [x] | `@MainActor` / global actors (+ `MainActor.run`) | ✅ | ★★★★ | R6+ |
 | [~] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
 | [~] | `Sendable` checking | ✅ | ★★★ | R6+ |
-| [x] | `AsyncSequence` / `for await` (+ `AsyncStream`, algorithms) | ✅ | ★★★★ | R6+ |
+| [x] | `AsyncSequence` / `for [try] await` (+ `AsyncStream`, `makeStream`, algorithms) | ✅ | ★★★★ | R6+ |
 | [x] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |
 | [ ] | Strict concurrency (Swift 6 mode) | ✅ | ★★★ | R6+ |
 
@@ -323,11 +323,19 @@ awaiting a tuple of `async let` bindings (`let (x, y) = await (a, b)`),
 producer run to completion — inline or from a spawned `Task`), and the
 `AsyncSequence` algorithms `map`/`filter`/`compactMap`/`flatMap`/`reduce`/
 `contains`/`allSatisfy`/`first`/`prefix`/`dropFirst` (materialised eagerly and
-composed via the array machinery). **Gaps:** preemptive ordering / `Task.yield`
-interleaving (the `corosensei` primitive in `suspend.rs` is the migration path),
-strict-concurrency diagnostics, and the `AsyncStream<T> { }` angle-bracket
-generic spelling (a parser-level comparison ambiguity; use `AsyncStream(T.self)
-{ }`). See ADR-0005 for the fidelity boundary.
+composed via the array machinery).
+
+**Added since (concurrency loop 2):** `for try await` over throwing async
+sequences (parser + error propagation), `AsyncStream.makeStream(of:)` /
+`AsyncThrowingStream.makeStream(of:)` builder-free `(stream, continuation)`
+factory, the idiomatic `AsyncStream<Element> { }` angle-bracket spelling (parser
+disambiguation of specialization + trailing closure), and `Duration`-based
+`Task.sleep(for:)` including the `.seconds`/`.milliseconds` shorthand (a no-op
+on the cooperative executor). **Gaps:** preemptive ordering / `Task.yield`
+interleaving (the `corosensei` primitive in `suspend.rs` is the migration path —
+true interleaving needs per-task coroutines + scheduler round-robin + per-task
+environment save/restore), strict-concurrency (Swift 6) diagnostics, and a
+first-class `Duration` value type. See ADR-0005 for the fidelity boundary.
 
 ---
 
