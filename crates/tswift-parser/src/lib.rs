@@ -36,6 +36,8 @@ pub fn parse(source: &str) -> Result<Ast, ParseError> {
         ast: Ast::new(),
         no_trailing_closure: false,
         op_precedence: HashMap::new(),
+        postfix_ops: std::collections::HashSet::new(),
+        prefix_ops: std::collections::HashSet::new(),
         pending_siblings: Vec::new(),
     };
     p.collect_operator_precedence();
@@ -54,6 +56,12 @@ struct Parser<'a> {
     /// from `operator`/`precedencegroup` declarations in a pre-pass so the Pratt
     /// parser nests custom operators by their real precedence group.
     op_precedence: HashMap<String, (u8, bool)>,
+    /// User-declared `postfix operator` names (same pre-pass), so `90.0°`
+    /// parses as a postfix application rather than a dangling infix operator.
+    postfix_ops: std::collections::HashSet<String>,
+    /// User-declared `prefix operator` names (same pre-pass), so `√16.0`
+    /// parses as a prefix application.
+    prefix_ops: std::collections::HashSet<String>,
     /// Extra declarations produced by desugaring a single source statement into
     /// several (a multi-name binding `var a, b: T`). Drained by
     /// [`Parser::append_statement`] into the same parent as the primary node.
@@ -158,6 +166,8 @@ impl<'a> Parser<'a> {
     fn collect_operator_precedence(&mut self) {
         let mut groups: HashMap<String, RawPrecedenceGroup> = HashMap::new();
         let mut operators: Vec<(String, Option<String>)> = Vec::new();
+        let mut postfix: Vec<String> = Vec::new();
+        let mut prefix: Vec<String> = Vec::new();
         let mut i = 0;
         while i < self.tokens.len() {
             let t = self.tokens[i];
@@ -166,6 +176,31 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if t.text == "operator" && t.kind == TokenKind::Identifier {
+                // Remember prefix/postfix fixity so the expression parser can
+                // apply the operator on the matching side of its operand
+                // (`√16.0`, `90.0°`). scan_operator_decl only registers infix
+                // operators, so scan the name here.
+                let fixity = if i > 0 { self.tokens[i - 1].text } else { "" };
+                if matches!(fixity, "prefix" | "postfix") {
+                    let mut k = i + 1;
+                    let mut op = String::new();
+                    while k < self.tokens.len()
+                        && self.tokens[k].kind == TokenKind::Oper
+                        && !self.tokens[k].leading_newline
+                    {
+                        op.push_str(self.tokens[k].text);
+                        k += 1;
+                    }
+                    if !op.is_empty() {
+                        if fixity == "postfix" {
+                            postfix.push(op);
+                        } else {
+                            prefix.push(op);
+                        }
+                        i = k;
+                        continue;
+                    }
+                }
                 if let Some((op, group, next)) = self.scan_operator_decl(i) {
                     operators.push((op, group));
                     i = next;
@@ -183,6 +218,8 @@ impl<'a> Parser<'a> {
             };
             self.op_precedence.insert(op, bp);
         }
+        self.postfix_ops.extend(postfix);
+        self.prefix_ops.extend(prefix);
     }
 
     /// Scan a `precedencegroup Name { … }` starting at `i` (the keyword); record
@@ -333,6 +370,12 @@ impl<'a> Parser<'a> {
             // `actor Name { … }` (a contextual keyword, not a reserved word).
             if w == "actor" && self.tokens[self.pos + 1].kind == TokenKind::Identifier {
                 return self.parse_nominal(NodeKind::ActorDecl);
+            }
+            // `macro name(params) -> T = #externalMacro(...)` — accepted and
+            // recorded as a MacroDecl the runtime ignores (no expansion
+            // engine; see the feature checklist, Tier 8).
+            if w == "macro" && self.tokens[self.pos + 1].kind == TokenKind::Identifier {
+                return self.parse_macro_decl();
             }
             // `discard self` / `discard expr` — ends a value's lifetime without
             // running its deinit. A no-op in the tree-walker: parse the operand
@@ -1323,6 +1366,37 @@ impl<'a> Parser<'a> {
             let cbody = self.parse_block()?;
             self.ast.append_child(clause, cbody);
             self.ast.append_child(node, clause);
+        }
+        Ok(node)
+    }
+
+    /// `macro name[<generics>](params) [-> Type] [= #externalMacro(...)]`.
+    /// The declaration is recorded (name only) and everything through the end
+    /// of the logical line is consumed — the runtime has no expansion engine,
+    /// so the body/definition is never evaluated.
+    fn parse_macro_decl(&mut self) -> Result<NodeId, ParseError> {
+        let kw = self.bump(); // `macro`
+        let name = self.bump(); // the macro's name
+        let node = self
+            .ast
+            .add(NodeKind::MacroDecl, Some(name.text), kw.line, kw.col);
+        let mut last_was_eq = false;
+        while !matches!(self.peek().kind, TokenKind::Eof | TokenKind::RBrace) {
+            // The definition may wrap after `=` (`macro f(...) =\n  #external…`);
+            // otherwise a newline ends the declaration.
+            if self.peek().leading_newline && !last_was_eq {
+                break;
+            }
+            last_was_eq = false;
+            match self.peek().kind {
+                TokenKind::LParen => self.skip_balanced_parens(),
+                TokenKind::Oper if self.peek().text.starts_with('<') => {
+                    let _ = self.consume_angle_group();
+                }
+                _ => {
+                    last_was_eq = self.bump().text == "=";
+                }
+            }
         }
         Ok(node)
     }
@@ -2486,7 +2560,9 @@ impl<'a> Parser<'a> {
             let operand = self.parse_prefix()?;
             return Ok(self.node(NodeKind::InoutExpr, Some("&"), t, &[operand]));
         }
-        if t.kind == TokenKind::Oper && matches!(t.text, "-" | "+" | "!" | "~") {
+        if t.kind == TokenKind::Oper
+            && (matches!(t.text, "-" | "+" | "!" | "~") || self.prefix_ops.contains(t.text))
+        {
             self.bump();
             let operand = self.parse_prefix()?;
             return Ok(self.node(NodeKind::PrefixExpr, Some(t.text), t, &[operand]));
@@ -2865,6 +2941,24 @@ impl<'a> Parser<'a> {
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
         loop {
             match self.peek().kind {
+                // A user-declared postfix operator (`90.0°`), hugging its
+                // operand per Swift's whitespace rule. Checked before the
+                // generic-specialization arm so a declared postfix operator
+                // starting with `<` is not mistaken for (and broken by) a
+                // failed specialization scan. `!` stays the force-unwrap arm.
+                TokenKind::Oper
+                    if self.peek().text != "!"
+                        && self.postfix_ops.contains(self.peek().text)
+                        && self.pos > 0
+                        && tokens_adjacent(&self.tokens[self.pos - 1], &self.tokens[self.pos]) =>
+                {
+                    let op = self.bump();
+                    let node = self
+                        .ast
+                        .add(NodeKind::PostfixExpr, Some(op.text), op.line, op.col);
+                    self.ast.append_child(node, expr);
+                    expr = node;
+                }
                 // Generic specialization at a call/member site: `Type<Args>(…)`
                 // or `Type<Args>.member`. The runtime infers type arguments
                 // from values, so the `<…>` clause is skipped here.
@@ -3237,6 +3331,9 @@ fn is_decl_keyword(w: &str) -> bool {
             // (`@globalActor actor …`, `@preconcurrency import …`).
             | "actor"
             | "import"
+            // `macro` declarations (Swift 5.9) may carry `@freestanding` /
+            // `@attached` role attributes.
+            | "macro"
     )
 }
 

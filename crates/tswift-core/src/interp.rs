@@ -2837,6 +2837,22 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("force-unwrap without operand".into()))?;
         let v = self.eval(&inner)?;
+        // A user-declared postfix operator (`90.0°`) is a function named
+        // after it, applied to the single operand.
+        let op = node.text();
+        if let Some(op) = op.filter(|o| o != "!") {
+            if let Some(SwiftValue::Function(id)) = self.env.get(&op) {
+                return self.call_function(
+                    id,
+                    vec![CallArg {
+                        label: None,
+                        value: v,
+                        place: None,
+                    }],
+                );
+            }
+            return Err(EvalError::UnknownFunction(format!("postfix {op}")).into());
+        }
         if matches!(v, SwiftValue::Nil) {
             Err(trap(
                 "unexpectedly found nil while unwrapping an Optional".into(),
@@ -3834,7 +3850,23 @@ impl<'w> Interpreter<'w> {
         if matches!(op.as_str(), "consume" | "copy" | "borrow" | "repeat each") {
             return Ok(v);
         }
-        ops::unary(&op, &v).map_err(trap)
+        match ops::unary(&op, &v) {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                // A user-declared prefix operator is a function named after it.
+                if let Some(SwiftValue::Function(id)) = self.env.get(&op) {
+                    return self.call_function(
+                        id,
+                        vec![CallArg {
+                            label: None,
+                            value: v,
+                            place: None,
+                        }],
+                    );
+                }
+                Err(trap(e))
+            }
+        }
     }
 
     /// A string literal, processing escapes and `\( … )` interpolation.

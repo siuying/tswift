@@ -71,6 +71,10 @@ pub enum NodeKind {
     TypeAliasDecl,
     /// An `import` declaration (text is the imported module path).
     ImportDecl,
+    /// A `macro` declaration (text is the macro name). Accepted and ignored:
+    /// the runtime has no expansion engine, so declaring is legal but
+    /// *invoking* a user macro is not.
+    MacroDecl,
     /// A generic parameter `T` (optionally constrained).
     GenericParam,
     /// A `deinit { }` declaration.
@@ -206,6 +210,7 @@ impl NodeKind {
             NodeKind::AssociatedTypeDecl => "associatedtype_decl",
             NodeKind::TypeAliasDecl => "typealias_decl",
             NodeKind::ImportDecl => "import_decl",
+            NodeKind::MacroDecl => "macro_decl",
             NodeKind::GenericParam => "generic_param",
             NodeKind::DeinitDecl => "deinit_decl",
             NodeKind::DoStmt => "do_stmt",

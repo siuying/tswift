@@ -26,7 +26,9 @@ enum Expectation {
     NoDiagnostics,
     /// Each `(line, substring)` must be matched by some diagnostic on that line.
     Errors(Vec<(u32, String)>),
-    /// Excluded from this backend (a documented C-oracle gap).
+    /// A documented C-oracle gap. The C oracle is decommissioned, so this
+    /// harness validates these as positives (zero diagnostics) — the whole
+    /// point of the tag is that the *Rust* frontend must accept them.
     OracleGap,
     /// Valid Swift that the **Rust frontend** cannot yet handle — a known gap in
     /// our own pipeline, not in the C oracle.  Skipped by this harness so the
@@ -89,11 +91,13 @@ fn check_fixture(path: &Path, source: &str) -> Result<(), String> {
     let diags = analysis.diagnostics();
 
     match parse_expectation(source) {
-        Expectation::OracleGap | Expectation::FrontendGap => Ok(()),
+        Expectation::FrontendGap => Ok(()),
         Expectation::Missing => {
             Err("no directive (expected-no-diagnostics / expected-error / oracle-gap)".to_string())
         }
-        Expectation::NoDiagnostics => {
+        // Oracle-gap files are positives: the pure-Rust frontend must accept
+        // them even though the (decommissioned) C oracle could not.
+        Expectation::NoDiagnostics | Expectation::OracleGap => {
             if diags.is_empty() {
                 Ok(())
             } else {
@@ -153,10 +157,7 @@ fn corpus_satisfies_directives() {
     let mut skipped = 0;
     for path in &files {
         let source = fs::read_to_string(path).expect("read fixture");
-        if matches!(
-            parse_expectation(&source),
-            Expectation::OracleGap | Expectation::FrontendGap
-        ) {
+        if matches!(parse_expectation(&source), Expectation::FrontendGap) {
             skipped += 1;
             continue;
         }
@@ -169,11 +170,11 @@ fn corpus_satisfies_directives() {
 
     assert!(
         failures.is_empty(),
-        "{} of {checked} checked fixtures failed ({skipped} oracle-gap skipped):\n\n{}",
+        "{} of {checked} checked fixtures failed ({skipped} frontend-gap skipped):\n\n{}",
         failures.len(),
         failures.join("\n\n")
     );
-    eprintln!("golden corpus: {checked} checked, {skipped} oracle-gap skipped");
+    eprintln!("golden corpus: {checked} checked, {skipped} frontend-gap skipped");
 }
 
 #[cfg(test)]

@@ -348,7 +348,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 |---|---|----|----|-------|
 | [ ] | Freestanding macros `#macro` | ⚠️ | ★★★★ | R6+ |
 | [ ] | Attached macros `@Macro` | ⚠️ | ★★★★ | R6+ |
-| [ ] | Macro declarations | ✅(AST_MACRO_DECL) | ★★★★ | R6+ |
+| [~] | Macro declarations (parsed to `MacroDecl` incl. multi-line `= #externalMacro(...)` definitions and `@freestanding`/`@attached` roles; accepted + ignored — *invoking* a user macro is unsupported, there is no expansion engine) | ✅ | ★★★★ | R6+ |
 | [x] | Built-in `#file`/`#line`/`#function`/`#column` | ⚠️ | ★★ | R5 |
 | [x] | `#warning` / `#error` | ⚠️ | ★ | R1 |
 | [ ] | `@freestanding` / `@attached` roles | ⚠️ | ★★★★ | R6+ |
@@ -388,7 +388,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [~] | `@resultBuilder` | ✅ | ★★★★ | R6+ |
 | [x] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
 | [x] | `@Sendable` | ✅ | ★★ | R6+ |
-| [~] | `@autoclosure` / `@escaping` / `@convention` | ✅/⚠️ | ★★ | R3 |
+| [x] | `@autoclosure` / `@escaping` / `@convention` (`@convention(c/block/swift)` accepted in type position; calling conventions are meaningless in the tree-walker) | ✅ | ★★ | R3 |
 | [x] | `@dynamicMemberLookup` / `@dynamicCallable` | ✅/⚠️ | ★★★ | R6+ |
 | [x] | `@preconcurrency` / `@unchecked` | ✅ | ★★ | R6+ |
 | [x] | `@NSCopying` / `@NSManaged` / IB attrs | ⚠️ | ★★ | R6+ |

@@ -348,9 +348,43 @@ impl<'a> Lexer<'a> {
             // lexer, so a `\` reaching here is always a key-path sigil.
             b'\\' => self.single(TokenKind::Oper),
             b'0'..=b'9' => self.number(),
+            // A non-ASCII scalar is either a unicode *operator* character
+            // (TSPL operator-head: `√`, `°`, `±`, arrows, math symbols, …) or
+            // an identifier character — decode the scalar to decide.
+            _ if c >= 0x80 && is_unicode_operator_scalar(self.scalar_at(start).0) => {
+                self.take(self.scalar_at(start).1); // keeps `col` in sync
+                loop {
+                    match self.peek() {
+                        Some(b) if b < 0x80 && is_pure_operator_byte(b) => self.advance_byte(),
+                        Some(b) if b >= 0x80 => {
+                            let (ch, len) = self.scalar_at(self.pos);
+                            if is_unicode_operator_scalar(ch) {
+                                self.take(len);
+                            } else {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                TokenKind::Oper
+            }
             _ if is_ident_start(c) => {
-                while self.peek().is_some_and(is_ident_continue) {
-                    self.advance_byte();
+                while let Some(b) = self.peek() {
+                    if b < 0x80 {
+                        if !is_ident_continue(b) {
+                            break;
+                        }
+                        self.advance_byte();
+                    } else {
+                        // A new non-ASCII scalar: an operator character ends
+                        // the identifier (`degrees°`); anything else continues it.
+                        let (ch, len) = self.scalar_at(self.pos);
+                        if is_unicode_operator_scalar(ch) {
+                            break;
+                        }
+                        self.take(len);
+                    }
                 }
                 let text = &self.src[start..self.pos];
                 if KEYWORDS.contains(&text) {
@@ -672,8 +706,20 @@ impl<'a> Lexer<'a> {
             .all(|b| is_pure_operator_byte(*b))
         {
             let mut len = base;
-            while self.peek_at(len).is_some_and(is_pure_operator_byte) {
-                len += 1;
+            loop {
+                match self.peek_at(len) {
+                    Some(b) if b < 0x80 && is_pure_operator_byte(b) => len += 1,
+                    // A unicode operator scalar continues the run (`+°`).
+                    Some(b) if b >= 0x80 => {
+                        let (ch, scalar_len) = self.scalar_at(self.pos + len);
+                        if is_unicode_operator_scalar(ch) {
+                            len += scalar_len;
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
             }
             return Some(len);
         }
@@ -697,6 +743,12 @@ impl<'a> Lexer<'a> {
     fn single(&mut self, kind: TokenKind) -> TokenKind {
         self.advance_byte();
         kind
+    }
+
+    /// Decode the UTF-8 scalar starting at byte offset `i` and its byte length.
+    fn scalar_at(&self, i: usize) -> (char, usize) {
+        let ch = self.src[i..].chars().next().unwrap_or('\u{FFFD}');
+        (ch, ch.len_utf8())
     }
 
     fn take(&mut self, n: usize) {
@@ -755,6 +807,19 @@ fn regex_allowed(prev: Option<Token<'_>>) -> bool {
         TokenKind::Keyword => !matches!(t.text, "true" | "false" | "nil" | "self" | "super"),
         _ => true,
     }
+}
+
+/// Whether a non-ASCII scalar is a Swift operator character (TSPL
+/// "operator-head" unicode ranges — math symbols, arrows, dingbats, …).
+fn is_unicode_operator_scalar(c: char) -> bool {
+    matches!(u32::from(c),
+        0x00A1..=0x00A7
+        | 0x00A9 | 0x00AB | 0x00AC | 0x00AE
+        | 0x00B0..=0x00B1 | 0x00B6 | 0x00BB | 0x00BF | 0x00D7 | 0x00F7
+        | 0x2016..=0x2017 | 0x2020..=0x2027
+        | 0x2030..=0x203E | 0x2041..=0x2053 | 0x2055..=0x205E
+        | 0x2190..=0x23FF | 0x2500..=0x2775 | 0x2794..=0x2BFF
+        | 0x2E00..=0x2E7F | 0x3001..=0x3003 | 0x3008..=0x3020 | 0x3030)
 }
 
 fn is_ident_start(c: u8) -> bool {
