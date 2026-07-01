@@ -195,6 +195,18 @@ impl Scheduler {
         std::mem::take(&mut self.groups[gid])
     }
 
+    /// Remove and return the next child id of group `gid` in add order, or
+    /// `None` when the group is drained. Backs `TaskGroup.next()`, which yields
+    /// one finished child at a time (our cooperative executor runs children in
+    /// add order, so "next to finish" is the next added).
+    fn next_in_group(&mut self, gid: usize) -> Option<usize> {
+        if self.groups[gid].is_empty() {
+            None
+        } else {
+            Some(self.groups[gid].remove(0))
+        }
+    }
+
     // --- continuations ---
 
     /// Open a new `Pending` continuation slot and return its id.
@@ -394,6 +406,12 @@ impl<'w> Interpreter<'w> {
                         self.drain_group(gid)?;
                         Ok(Some(SwiftValue::Void))
                     }
+                    // `next()` runs one child (in add order) and yields its
+                    // result as `.some`, or `nil` once the group is drained.
+                    "next" => match self.sched.next_in_group(gid) {
+                        Some(tid) => self.run_task(tid).map(Some),
+                        None => Ok(Some(SwiftValue::Nil)),
+                    },
                     _ => Ok(None),
                 }
             }
@@ -679,6 +697,21 @@ mod tests {
 
         assert_eq!(s.take_group(gid), vec![early, late]);
         assert!(s.take_group(gid).is_empty(), "taking a group drains it");
+    }
+
+    /// `next_in_group` yields children in add order, then `None` once drained.
+    #[test]
+    fn next_in_group_yields_children_in_add_order_then_none() {
+        let mut s = Scheduler::default();
+        let gid = s.new_group();
+        let a = s.spawn(0, Vec::new(), false);
+        let b = s.spawn(1, Vec::new(), false);
+        s.add_to_group(gid, a);
+        s.add_to_group(gid, b);
+
+        assert_eq!(s.next_in_group(gid), Some(a));
+        assert_eq!(s.next_in_group(gid), Some(b));
+        assert_eq!(s.next_in_group(gid), None);
     }
 
     /// A continuation accepts exactly one resume; the value is read once, and a

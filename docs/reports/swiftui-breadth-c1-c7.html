@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tswift · SwiftUI breadth C1–C7 report</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #141821; --panel-2: #1b2030; --ink: #e8ecf4;
+    --muted: #97a0b5; --line: #262d3d; --accent: #5b8cff; --accent-2: #34c759;
+    --warn: #ffb020; --pink: #ff6b9d; --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 600px at 70% -10%, #18203a 0%, var(--bg) 55%);
+    color: var(--ink); font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 56px 24px 96px; }
+  header .eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-size: 40px; line-height: 1.1; margin: 14px 0 8px; letter-spacing: -.02em; }
+  h1 .grad { background: linear-gradient(92deg, #5b8cff, #ff6b9d 60%, #ffb020); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { color: var(--muted); font-size: 18px; max-width: 70ch; }
+  .meta { margin-top: 18px; font: 500 13px/1 var(--mono); color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+  .meta b { color: var(--ink); }
+
+  section { margin-top: 52px; }
+  h2 { font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 22px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .stat .n { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .stat .n .small { font-size: 16px; color: var(--muted); font-weight: 500; }
+  .stat .l { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .stat.green .n { color: var(--accent-2); } .stat.blue .n { color: var(--accent); }
+  .stat.pink .n { color: var(--pink); } .stat.warn .n { color: var(--warn); }
+
+  .bar { height: 12px; border-radius: 999px; background: var(--panel-2); overflow: hidden; margin-top: 8px; border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+  .batches { display: grid; gap: 12px; margin-top: 20px; }
+  .batch { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: grid; grid-template-columns: 56px 1fr auto; gap: 16px; align-items: start; }
+  .batch .tag { font: 700 14px/1 var(--mono); color: var(--accent); background: rgba(91,140,255,.12); border: 1px solid rgba(91,140,255,.3); border-radius: 9px; padding: 8px 0; text-align: center; }
+  .batch h3 { margin: 2px 0 4px; font-size: 16px; }
+  .batch p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .batch code { font: 12px/1.5 var(--mono); color: var(--ink); background: var(--panel-2); padding: 1px 6px; border-radius: 6px; }
+  .pr { font: 600 12px/1 var(--mono); color: var(--accent-2); white-space: nowrap; text-decoration: none; border: 1px solid var(--line); padding: 6px 10px; border-radius: 8px; }
+  .pr:hover { border-color: var(--accent-2); }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  td code { font: 12px/1.5 var(--mono); color: var(--accent); }
+
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 20px; }
+  .gate { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; }
+  .gate .g { font: 700 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+  .gate p { margin: 8px 0 0; color: var(--muted); font-size: 12.5px; }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .pill { font: 12px/1 var(--mono); color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; }
+  .pill.warn { color: var(--warn); border-color: rgba(255,176,32,.35); }
+
+  ul.clean { list-style: none; padding: 0; margin: 16px 0 0; }
+  ul.clean li { padding: 11px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 11px; margin-bottom: 9px; color: var(--muted); }
+  ul.clean li b { color: var(--ink); } ul.clean li a { color: var(--accent); text-decoration: none; }
+  footer { margin-top: 60px; color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--line); padding-top: 20px; }
+  @media (max-width: 720px) { .stats, .flow { grid-template-columns: repeat(2, 1fr); } .batch { grid-template-columns: 48px 1fr; } .batch .pr { grid-column: 2; justify-self: start; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">tswift · autoloop report</div>
+  <h1>SwiftUI breadth: <span class="grad">the three appliers, widened</span></h1>
+  <p class="lede">Seven vertical batches (C1–C7) grew the SwiftUI surface across all three appliers — the Rust runtime, the web <code>&lt;swiftui-canvas&gt;</code>, and the iOS <code>UiirRenderer</code> — each landed in lockstep behind a golden, codex-reviewed, and merged.</p>
+  <div class="meta">
+    <span>📅 <b>2026-06-28</b></span>
+    <span>🌿 base <b>origin/main</b></span>
+    <span>🔀 <b>8 PRs</b> merged (#195–#202)</span>
+    <span>🤖 review <b>codex gpt-5.5</b></span>
+  </div>
+</header>
+
+<section>
+  <h2>Outcome</h2>
+  <div class="stats">
+    <div class="stat green"><div class="n">9.1<span class="small">%</span></div><div class="l">SwiftUI members implemented (60 / 658) — up from 4.4%</div><div class="bar"><i style="width:9.1%"></i></div></div>
+    <div class="stat blue"><div class="n">65</div><div class="l">registry keys · 31 view inits + 34 modifiers</div></div>
+    <div class="stat pink"><div class="n">+31</div><div class="l">new members across C1–C7 (doubled the surface)</div></div>
+    <div class="stat warn"><div class="n">19</div><div class="l">golden fixtures (8 new) · Rust UIIR goldens green</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>The seven batches</h2>
+  <div class="batches">
+    <div class="batch"><div class="tag">C1</div><div><h3>Text &amp; universal styling modifiers</h3><p><code>bold</code> <code>italic</code> <code>underline</code> <code>strikethrough</code> <code>opacity</code> <code>foregroundStyle</code> <code>tint</code> <code>lineLimit</code> <code>multilineTextAlignment</code> <code>textCase</code> — plus the <code>TextAlignment</code>/<code>TextCase</code> token namespaces.</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/196">#196</a></div>
+    <div class="batch"><div class="tag">C2</div><div><h3>Layout args &amp; modifiers</h3><p>Stack <code>spacing:</code>, numeric <code>frame</code> min/max, <code>Spacer(minLength:)</code>, <code>offset</code>. <code>alignment:</code>/<code>.infinity</code>/edge padding deferred (leading-dot typing).</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/197">#197</a></div>
+    <div class="batch"><div class="tag">C3</div><div><h3>Structural containers</h3><p><code>Group</code> · <code>Divider</code> · <code>ScrollView</code> (+ <code>Axis</code> token). Surfaced &amp; fixed an iOS <code>setArgs</code> merge bug and Picker/Group flattening.</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/198">#198</a></div>
+    <div class="batch"><div class="tag">C4</div><div><h3>Visual decoration</h3><p><code>border</code> · <code>shadow</code> · <code>clipShape</code> · <code>clipped</code>. Added <code>UiirValue.array</code> on iOS so nested shape nodes decode. <code>background(view)</code>/<code>overlay</code> deferred.</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/199">#199</a></div>
+    <div class="batch"><div class="tag">C5</div><div><h3>Content views</h3><p><code>Label</code> · <code>Image(systemName:)</code> · <code>Image(_)</code> · <code>ProgressView</code>. New web SF-Symbol → Unicode glyph table (accepted iOS-vs-web drift).</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/200">#200</a></div>
+    <div class="batch"><div class="tag">C6</div><div><h3>Lazy stacks, Grid, Form</h3><p><code>LazyVStack</code> · <code>LazyHStack</code> · <code>Grid</code> · <code>GridRow</code> · <code>Form</code>. Web uses real CSS-grid so columns align. <code>LazyVGrid</code>/<code>LazyHGrid</code> deferred.</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/201">#201</a></div>
+    <div class="batch"><div class="tag">C7</div><div><h3>Control styling &amp; a11y no-ops</h3><p><code>buttonStyle</code> <code>listStyle</code> <code>pickerStyle</code> <code>textFieldStyle</code> <code>disabled</code> + accept-and-drop accessibility modifiers (one shared <code>_ControlStyle</code> token namespace).</p></div><a class="pr" href="https://github.com/siuying/tswift/pull/202">#202</a></div>
+  </div>
+</section>
+
+<section>
+  <h2>The three appliers — landed in lockstep</h2>
+  <table>
+    <tr><th>Layer</th><th>Where</th><th>Extension point per item</th></tr>
+    <tr><td><b>Runtime</b> (Rust)</td><td><code>crates/tswift-swiftui</code></td><td><code>modifier!</code> + <code>MODIFIER_FNS</code> / <code>register_free_fn</code> + init; token namespaces via <code>PRELUDE</code> → <code>token_of</code> → <code>uiir::write_value</code> tag</td></tr>
+    <tr><td><b>Web</b> (TS)</td><td><code>web/swiftui-canvas</code></td><td><code>element()</code> + <code>applyArgs</code> (kinds) · <code>applyModifiers</code> + token tables (modifiers) · <code>sf-symbols.ts</code></td></tr>
+    <tr><td><b>iOS</b> (Swift)</td><td><code>ios/UiirRenderer</code></td><td><code>ViewFactory.build()</code> (kinds) · <code>ModifierApply.applyOne()</code> + <code>Tokens.swift</code> resolvers</td></tr>
+    <tr><td><b>Gate</b></td><td><code>tests/swiftui-fixtures</code></td><td>UIIR golden (Layer B) + <code>registered_keys.txt</code>; iOS simulator snapshots (Layer D) via pre-push hook</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Every batch ran four gates</h2>
+  <div class="flow">
+    <div class="gate"><div class="g">1 · Implement</div><p>TDD red→green: a failing UIIR serialization test, then the minimal three-applier change.</p></div>
+    <div class="gate"><div class="g">2 · Review</div><p>codex <b>gpt-5.5</b> read-only review. Every batch had Important issues — all fixed before commit.</p></div>
+    <div class="gate"><div class="g">3 · Verify</div><p><code>cargo test</code> goldens + <code>tsc</code> + iOS <code>swift build</code>; pre-push hook ran the full Rust + iOS-sim + web suites.</p></div>
+    <div class="gate"><div class="g">4 · Ship</div><p>Conventional commit → PR → admin-merge to <code>main</code>. Bookkept in <code>loop-log</code>.</p></div>
+  </div>
+  <div class="pills">
+    <span class="pill">iOS setArgs replace-not-merge</span>
+    <span class="pill">Picker/Group flatten</span>
+    <span class="pill">web base-style isolation</span>
+    <span class="pill">UiirValue.array decode</span>
+    <span class="pill">Rectangle clip</span>
+    <span class="pill">CSS-grid columns</span>
+    <span class="pill">#if os(iOS) style guards</span>
+    <span class="pill">infinity → JSON-valid sentinel</span>
+  </div>
+</section>
+
+<section>
+  <h2>Deliberately deferred → tracked follow-ups</h2>
+  <ul class="clean">
+    <li><b>Typed-token prelude shims</b> — unblocks <code>alignment:</code>, <code>.infinity</code>, edge padding (the leading-dot resolution limit). <a href="https://github.com/siuying/tswift/issues/203">#203</a></li>
+    <li><b>background(_ view) &amp; overlay(_ view)</b> — arbitrary-view compositing needs a detached web renderer. <a href="https://github.com/siuying/tswift/issues/204">#204</a></li>
+    <li><b>LazyVGrid / LazyHGrid + GridItem</b> — needs a GridItem prelude type + array-valued arg serialization. <a href="https://github.com/siuying/tswift/issues/205">#205</a></li>
+    <li><b>ProgressView label</b> — deferred to keep hosts lockstep. <a href="https://github.com/siuying/tswift/issues/206">#206</a></li>
+    <li><b>Record Layer-D baselines</b> for the breadth fixtures (iOS clean run + web playwright). <a href="https://github.com/siuying/tswift/issues/207">#207</a></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Animation (ADR-0009, drafted)</h2>
+  <p style="color:var(--muted)">A separate workstream was specced: animation as <b>host-played, optional patch metadata</b> — the runtime never interpolates; web uses CSS transitions, iOS uses real SwiftUI. Additive <code>anim</code> field keeps all goldens byte-identical. See <code>docs/adr/0009-swiftui-animation-as-patch-metadata.md</code> and <code>docs/plan/swiftui-breadth-and-animation.md §3</code> (phases AN0–AN4). Not yet implemented.</p>
+</section>
+
+<footer>
+  Generated for the tswift SwiftUI breadth autoloop · plan: <code>docs/plan/swiftui-breadth-and-animation.md</code> · architecture: ADR-0006 · issues #188–#194 closed, #203–#207 opened.
+</footer>
+</div>
+</body>
+</html>
