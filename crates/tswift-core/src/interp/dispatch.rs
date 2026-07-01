@@ -848,15 +848,10 @@ impl<'w> Interpreter<'w> {
         // User declarations are consulted before the stdlib seam so a program's
         // extension can shadow an otherwise-available intrinsic/algorithm.
         let builtin_name = base_value.type_name();
-        if self
-            .builtin_ext_methods
-            .get(&builtin_name)
-            .is_some_and(|m| m.contains_key(&method))
-        {
+        if self.types.has_builtin_ext_method(&builtin_name, &method) {
             let params = self
-                .builtin_ext_methods
-                .get(&builtin_name)
-                .and_then(|m| m.get(&method))
+                .types
+                .builtin_ext_method(&builtin_name, &method)
                 .map(|def| clone_params(&def.params));
             let args = self.eval_args_with(arg_nodes, params.as_deref())?;
             let place = self.resolve_place(&base);
@@ -1285,7 +1280,7 @@ impl<'w> Interpreter<'w> {
         args: Vec<CallArg>,
         place: Option<Place>,
     ) -> Option<Eval> {
-        let def = self.builtin_ext_methods.get(type_name)?.get(method)?;
+        let def = self.types.builtin_ext_method(type_name, method)?;
         let params = clone_params(&def.params);
         let body = def.body;
         let mutating = def.mutating;

@@ -179,14 +179,7 @@ impl<'w> Interpreter<'w> {
             // Extension on a builtin type (`extension Int`, `extension Array`,
             // `extension String`, …). Store the members so value-typed
             // receivers can dispatch to them.
-            self.builtin_ext_methods
-                .entry(target.clone())
-                .or_default()
-                .extend(methods);
-            self.builtin_ext_computed
-                .entry(target)
-                .or_default()
-                .extend(computed);
+            self.types.add_builtin_ext(target, methods, computed);
         }
     }
 

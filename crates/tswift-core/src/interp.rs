@@ -356,6 +356,16 @@ struct TypeTable {
     /// component protocol names, so a conformance to `X` expands to `A` + `B`
     /// for default-implementation lookup.
     protocol_aliases: HashMap<String, Vec<String>>,
+    /// User extension methods declared on builtin types (`extension Int`,
+    /// `extension Array`, …), keyed by the builtin type name then method name.
+    builtin_ext_methods: HashMap<String, HashMap<String, MethodDef>>,
+    /// User extension computed properties on builtin types, keyed the same way.
+    builtin_ext_computed: HashMap<String, HashMap<String, ComputedProp>>,
+    /// Names of enums installed via [`Interpreter::register_builtin_enum`].
+    /// Excluded from the global unique-case shorthand fallback so they cannot
+    /// shadow SwiftUI implicit statics (`.plain`, …); they still resolve when a
+    /// contextual type names them or as a last-resort fallback.
+    builtin_enums: std::collections::HashSet<String>,
 }
 
 impl TypeTable {
@@ -438,6 +448,43 @@ impl TypeTable {
                 .extend(protocols);
         }
     }
+    fn has_builtin_ext_method(&self, type_name: &str, method: &str) -> bool {
+        self.builtin_ext_methods
+            .get(type_name)
+            .is_some_and(|m| m.contains_key(method))
+    }
+    fn builtin_ext_method(&self, type_name: &str, method: &str) -> Option<&MethodDef> {
+        self.builtin_ext_methods.get(type_name)?.get(method)
+    }
+    fn builtin_ext_computed(&self, type_name: &str, prop: &str) -> Option<&ComputedProp> {
+        self.builtin_ext_computed.get(type_name)?.get(prop)
+    }
+    /// Record the members an `extension` adds to a builtin type.
+    fn add_builtin_ext(
+        &mut self,
+        type_name: String,
+        methods: HashMap<String, MethodDef>,
+        computed: HashMap<String, ComputedProp>,
+    ) {
+        self.builtin_ext_methods
+            .entry(type_name.clone())
+            .or_default()
+            .extend(methods);
+        self.builtin_ext_computed
+            .entry(type_name)
+            .or_default()
+            .extend(computed);
+    }
+    fn mark_builtin_enum(&mut self, name: &str) {
+        self.builtin_enums.insert(name.to_string());
+    }
+    fn is_builtin_enum(&self, name: &str) -> bool {
+        self.builtin_enums.contains(name)
+    }
+    fn builtin_enum_names(&self) -> impl Iterator<Item = &String> {
+        self.builtin_enums.iter()
+    }
+
     /// All protocols a type conforms to, transitively (including protocol
     /// inheritance and composition-typealias expansion), for
     /// default-implementation lookup.
@@ -587,11 +634,6 @@ pub struct Interpreter<'w> {
     funcs: Vec<FuncDef>,
     /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
     types: TypeTable,
-    /// Names of enums installed via [`Interpreter::register_builtin_enum`].
-    /// These are excluded from the global unique-case shorthand fallback so
-    /// they cannot shadow SwiftUI implicit statics (`.plain`, …); they still
-    /// resolve when a contextual type names them or as a last-resort fallback.
-    builtin_enums: std::collections::HashSet<String>,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
     /// Stack of type names for the `static` methods currently executing, so an
@@ -604,11 +646,6 @@ pub struct Interpreter<'w> {
     /// executing, so a static reference through a generic placeholder
     /// (`T.zero()` where `T == Vec2`) resolves to the concrete type.
     type_bindings: Vec<HashMap<String, String>>,
-    /// User extension methods declared on builtin types (`extension Int`,
-    /// `extension Array`, …), keyed by the builtin type name then method name.
-    builtin_ext_methods: HashMap<String, HashMap<String, MethodDef>>,
-    /// User extension computed properties on builtin types, keyed the same way.
-    builtin_ext_computed: HashMap<String, HashMap<String, ComputedProp>>,
     /// Per-scope stack of `defer` blocks, run LIFO on scope exit.
     defer_stack: Vec<Vec<Node<'static>>>,
     /// The `@main` entry type, if one was declared.
@@ -687,11 +724,8 @@ impl<'w> Interpreter<'w> {
             struct_methods: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
-            builtin_ext_methods: HashMap::new(),
-            builtin_ext_computed: HashMap::new(),
             funcs: Vec::new(),
             types: TypeTable::default(),
-            builtin_enums: std::collections::HashSet::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
             static_ctx: Vec::new(),
@@ -763,7 +797,7 @@ impl<'w> Interpreter<'w> {
                 computed: std::collections::HashMap::new(),
             },
         );
-        self.builtin_enums.insert(name.to_string());
+        self.types.mark_builtin_enum(name);
     }
 
     /// The keys of every registered standard-library entry, for coverage
@@ -1589,9 +1623,8 @@ impl<'w> Interpreter<'w> {
                 }
                 let tn = this.type_name();
                 if let Some(body) = self
-                    .builtin_ext_computed
-                    .get(&tn)
-                    .and_then(|m| m.get(name))
+                    .types
+                    .builtin_ext_computed(&tn, name)
                     .and_then(|c| c.getter)
                 {
                     return self
@@ -1742,7 +1775,7 @@ impl<'w> Interpreter<'w> {
         // implicit statics; they get a later, lower-priority fallback.
         let mut found = None;
         for (name, def) in &self.types.enums {
-            if self.builtin_enums.contains(name) {
+            if self.types.is_builtin_enum(name) {
                 continue;
             }
             if def.cases.iter().any(|c| c.name == case) {
@@ -1765,8 +1798,8 @@ impl<'w> Interpreter<'w> {
     /// on the case string, not the enum type, so this stays correct for the
     /// shared style/`none` cases while keeping `==` results stable.
     fn resolve_builtin_member_enum(&self, case: &str) -> Option<String> {
-        self.builtin_enums
-            .iter()
+        self.types
+            .builtin_enum_names()
             .filter(|name| self.enum_has_case(name, case))
             .min()
             .cloned()

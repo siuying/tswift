@@ -1265,9 +1265,8 @@ impl<'w> Interpreter<'w> {
                 // (`extension Int { var isEven: Bool { … } }`).
                 let tn = value.type_name();
                 if let Some(body) = self
-                    .builtin_ext_computed
-                    .get(&tn)
-                    .and_then(|m| m.get(member.as_str()))
+                    .types
+                    .builtin_ext_computed(&tn, member.as_str())
                     .and_then(|c| c.getter)
                 {
                     return self
