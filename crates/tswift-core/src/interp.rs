@@ -3164,6 +3164,8 @@ impl<'w> Interpreter<'w> {
         // `for await r in customSequence`: drive its async iterator protocol.
         let items = match &seq {
             SwiftValue::TaskGroup(gid) => self.drain_group_results(*gid)?,
+            // The reader half of `makeStream(of:)`: drain its producer's buffer.
+            SwiftValue::AsyncStreamHandle(sid) => self.drain_async_stream_handle(*sid)?,
             _ if is_for_await && !is_builtin_iterable(&seq) => {
                 let name = var_name.as_deref().unwrap_or("_");
                 return self.run_async_sequence(&seq, name, where_clause, &body, &label);
@@ -3308,6 +3310,59 @@ impl<'w> Interpreter<'w> {
         };
         self.env.pop();
         outcome
+    }
+
+    /// Drive a custom `AsyncSequence`'s iterator to completion, collecting every
+    /// element into a `Vec` (our cooperative executor runs the producer eagerly,
+    /// ADR-0005). Backs the async-sequence algorithms (`reduce`/`map`/…), which
+    /// materialise the sequence and then reuse the eager array machinery.
+    fn collect_async_sequence(&mut self, seq: &SwiftValue) -> Result<Vec<SwiftValue>, Signal> {
+        // The reader half of `makeStream(of:)` drains its producer buffer
+        // directly rather than driving an iterator protocol.
+        if let SwiftValue::AsyncStreamHandle(sid) = seq {
+            return self.drain_async_stream_handle(*sid);
+        }
+        const ITER: &str = "$asynccollect";
+        let seq_ty = self.value_type_name(seq);
+        let iter = if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "next"))
+        {
+            seq.clone()
+        } else if seq_ty
+            .as_deref()
+            .is_some_and(|t| self.type_has_method(t, "makeAsyncIterator"))
+        {
+            let ty = seq_ty.clone().unwrap();
+            self.call_struct_method(seq.clone(), &ty, "makeAsyncIterator", Vec::new(), None)?
+        } else {
+            return Err(EvalError::Type(format!(
+                "cannot iterate over {} (not an AsyncSequence)",
+                seq.type_name()
+            ))
+            .into());
+        };
+        let iter_ty = self
+            .value_type_name(&iter)
+            .ok_or_else(|| EvalError::Type("async iterator has no type".into()))?;
+
+        self.env.push();
+        self.env.declare(ITER, iter, true);
+        let mut items = Vec::new();
+        let outcome = loop {
+            let current = self.env.get(ITER).unwrap_or(SwiftValue::Nil);
+            let place = Place {
+                root: ITER.into(),
+                path: Vec::new(),
+            };
+            match self.call_struct_method(current, &iter_ty, "next", Vec::new(), Some(place)) {
+                Ok(SwiftValue::Nil) => break Ok(()),
+                Ok(v) => items.push(v),
+                Err(e) => break Err(e),
+            }
+        };
+        self.env.pop();
+        outcome.map(|()| items)
     }
 
     /// The nominal type name backing a value, for protocol/method lookup.

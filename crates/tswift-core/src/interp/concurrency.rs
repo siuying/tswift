@@ -82,6 +82,9 @@ pub(super) struct Scheduler {
     group_cancelled: Vec<bool>,
     /// `with*Continuation` slots, one per continuation handed to a body.
     continuations: Vec<ContinuationState>,
+    /// `AsyncStream` buffers, one per stream. `yield(_:)` appends; the enclosing
+    /// `AsyncStream { }` drains the buffer once the builder has run.
+    streams: Vec<Vec<SwiftValue>>,
 }
 
 impl Scheduler {
@@ -193,6 +196,37 @@ impl Scheduler {
     /// Remove and return group `gid`'s child ids, in add order (for draining).
     fn take_group(&mut self, gid: usize) -> Vec<usize> {
         std::mem::take(&mut self.groups[gid])
+    }
+
+    /// Remove and return the next child id of group `gid` in add order, or
+    /// `None` when the group is drained. Backs `TaskGroup.next()`, which yields
+    /// one finished child at a time (our cooperative executor runs children in
+    /// add order, so "next to finish" is the next added).
+    fn next_in_group(&mut self, gid: usize) -> Option<usize> {
+        if self.groups[gid].is_empty() {
+            None
+        } else {
+            Some(self.groups[gid].remove(0))
+        }
+    }
+
+    // --- async streams ---
+
+    /// Open a new `AsyncStream` buffer and return its id.
+    fn new_stream(&mut self) -> usize {
+        let sid = self.streams.len();
+        self.streams.push(Vec::new());
+        sid
+    }
+
+    /// Append `value` to stream `sid`'s buffer (`continuation.yield(_:)`).
+    fn stream_yield(&mut self, sid: usize, value: SwiftValue) {
+        self.streams[sid].push(value);
+    }
+
+    /// Remove and return stream `sid`'s buffered elements, in yield order.
+    fn take_stream(&mut self, sid: usize) -> Vec<SwiftValue> {
+        std::mem::take(&mut self.streams[sid])
     }
 
     // --- continuations ---
@@ -314,6 +348,7 @@ impl<'w> Interpreter<'w> {
             | "withUnsafeThrowingContinuation" => {
                 self.eval_with_continuation(name, arg_nodes).map(Some)
             }
+            "AsyncStream" | "AsyncThrowingStream" => self.eval_async_stream(arg_nodes).map(Some),
             _ => Ok(None),
         }
     }
@@ -331,6 +366,15 @@ impl<'w> Interpreter<'w> {
             || self.env.get("Task").is_some()
         {
             return Ok(None);
+        }
+
+        // `Task.sleep`/`Task.yield` are cooperative no-ops on the single-threaded
+        // executor. Handled before argument evaluation so a `Duration` argument
+        // — including the `.seconds(_:)`/`.milliseconds(_:)` leading-dot shorthand,
+        // which resolves against a `Duration` type we do not model — is accepted
+        // rather than eagerly (and fruitlessly) evaluated.
+        if matches!(method, "sleep" | "yield") {
+            return Ok(Some(SwiftValue::Void));
         }
 
         let args = self.eval_args(arg_nodes)?;
@@ -353,10 +397,64 @@ impl<'w> Interpreter<'w> {
                 }
                 Ok(Some(SwiftValue::Void))
             }
-            // Cooperative no-ops on our single-threaded executor.
-            "yield" | "sleep" => Ok(Some(SwiftValue::Void)),
             _ => Ok(None),
         }
+    }
+
+    /// `MainActor.run { ... }`: hop to the main actor and return the operation's
+    /// result. On the cooperative single-threaded executor there is only one
+    /// actor context, so the body runs inline. Returns `None` when `base` is not
+    /// the unshadowed builtin `MainActor`, so normal resolution continues.
+    pub(super) fn try_main_actor_method(
+        &mut self,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if method != "run"
+            || base.kind() != NodeKind::IdentExpr
+            || base.text().as_deref() != Some("MainActor")
+            || self.env.get("MainActor").is_some()
+        {
+            return Ok(None);
+        }
+        let closure = self
+            .eval_body_closure(arg_nodes)?
+            .ok_or_else(|| EvalError::Unsupported("MainActor.run without a body closure".into()))?;
+        self.call_closure(closure, Vec::new()).map(Some)
+    }
+
+    /// `AsyncStream.makeStream(of:)` / `AsyncThrowingStream.makeStream(of:)`:
+    /// the builder-free factory. Opens a fresh stream buffer and returns the
+    /// `(stream, continuation)` tuple, so a producer can `yield`/`finish` on the
+    /// continuation before the reader is drained by `for await` (ADR-0005's
+    /// eager, single-threaded model). Returns `None` for any other receiver.
+    pub(super) fn try_async_stream_static(
+        &mut self,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if method != "makeStream"
+            || base.kind() != NodeKind::IdentExpr
+            || !matches!(
+                base.text().as_deref(),
+                Some("AsyncStream" | "AsyncThrowingStream")
+            )
+            || self.env.get(&base.text().unwrap_or_default()).is_some()
+        {
+            return Ok(None);
+        }
+        // The `of:`/`throwing:` arguments are only type metadata; ignore them.
+        let _ = arg_nodes;
+        let sid = self.sched.new_stream();
+        Ok(Some(SwiftValue::tuple_labeled(
+            vec![
+                SwiftValue::AsyncStreamHandle(sid),
+                SwiftValue::StreamContinuation(sid),
+            ],
+            vec![Some("stream".into()), Some("continuation".into())],
+        )))
     }
 
     /// Dispatch instance methods on a task handle or task group. Returns `None`
@@ -394,6 +492,12 @@ impl<'w> Interpreter<'w> {
                         self.drain_group(gid)?;
                         Ok(Some(SwiftValue::Void))
                     }
+                    // `next()` runs one child (in add order) and yields its
+                    // result as `.some`, or `nil` once the group is drained.
+                    "next" => match self.sched.next_in_group(gid) {
+                        Some(tid) => self.run_task(tid).map(Some),
+                        None => Ok(Some(SwiftValue::Nil)),
+                    },
                     _ => Ok(None),
                 }
             }
@@ -404,6 +508,24 @@ impl<'w> Interpreter<'w> {
                         self.sched.cancel_task(tid);
                         Ok(Some(SwiftValue::Void))
                     }
+                    _ => Ok(None),
+                }
+            }
+            SwiftValue::StreamContinuation(sid) => {
+                let sid = *sid;
+                match method {
+                    // `yield(_:)` appends one element; the discardable result
+                    // (`.enqueued` in Swift) is modelled as `Void`.
+                    "yield" => {
+                        let args = self.eval_args(arg_nodes)?;
+                        if let Some(arg) = args.into_iter().next() {
+                            self.sched.stream_yield(sid, arg.value);
+                        }
+                        Ok(Some(SwiftValue::Void))
+                    }
+                    // `finish()` closes the stream; the buffer is drained by the
+                    // enclosing `AsyncStream { }`, so this is a no-op marker.
+                    "finish" => Ok(Some(SwiftValue::Void)),
                     _ => Ok(None),
                 }
             }
@@ -436,11 +558,19 @@ impl<'w> Interpreter<'w> {
         Ok(out)
     }
 
-    /// Resolve a value an `await` produced: drive a task handle, pass anything
-    /// else through unchanged.
+    /// Resolve a value an `await` produced: drive a task handle, recurse into a
+    /// tuple so `await (a, b)` over `async let` bindings drives each child, and
+    /// pass anything else through unchanged.
     fn await_value(&mut self, value: SwiftValue) -> Eval {
         match value {
             SwiftValue::Task(id) => self.run_task(id),
+            SwiftValue::Tuple(items, labels) => {
+                let resolved = items
+                    .into_iter()
+                    .map(|item| self.await_value(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(SwiftValue::Tuple(resolved, labels))
+            }
             other => Ok(other),
         }
     }
@@ -501,6 +631,36 @@ impl<'w> Interpreter<'w> {
             }
         }
         Ok(None)
+    }
+
+    /// `AsyncStream { continuation in ... }`: hand the builder a stream
+    /// continuation, run it (draining any tasks it spawns), then materialise the
+    /// yielded elements as an array the caller iterates with `for await`. Our
+    /// cooperative executor runs the producer to completion eagerly (ADR-0005),
+    /// so a bounded producer's buffer is fully populated before consumption.
+    fn eval_async_stream(&mut self, arg_nodes: &[Node<'static>]) -> Eval {
+        let body = self
+            .eval_body_closure(arg_nodes)?
+            .ok_or_else(|| EvalError::Unsupported("AsyncStream without a build closure".into()))?;
+        let sid = self.sched.new_stream();
+        let body_tasks_start = self.sched.task_count();
+        self.call_closure(body, vec![SwiftValue::StreamContinuation(sid)])?;
+        // The builder may hand the continuation to spawned tasks; run them so
+        // their `yield`s land before we read the buffer.
+        self.drive_pending(body_tasks_start, |_| false)?;
+        let items = self.sched.take_stream(sid);
+        Ok(SwiftValue::Array(Rc::new(items)))
+    }
+
+    /// Drain the reader half of a `makeStream(of:)` stream: run any pending
+    /// producer tasks to completion, then take the buffered elements. Backs
+    /// `for await`/algorithm consumption of an [`SwiftValue::AsyncStreamHandle`].
+    pub(super) fn drain_async_stream_handle(
+        &mut self,
+        sid: usize,
+    ) -> Result<Vec<SwiftValue>, Signal> {
+        self.drive_pending(0, |_| false)?;
+        Ok(self.sched.take_stream(sid))
     }
 
     /// `await with*Continuation { continuation in ... }`: hand the body a
@@ -681,6 +841,21 @@ mod tests {
         assert!(s.take_group(gid).is_empty(), "taking a group drains it");
     }
 
+    /// `next_in_group` yields children in add order, then `None` once drained.
+    #[test]
+    fn next_in_group_yields_children_in_add_order_then_none() {
+        let mut s = Scheduler::default();
+        let gid = s.new_group();
+        let a = s.spawn(0, Vec::new(), false);
+        let b = s.spawn(1, Vec::new(), false);
+        s.add_to_group(gid, a);
+        s.add_to_group(gid, b);
+
+        assert_eq!(s.next_in_group(gid), Some(a));
+        assert_eq!(s.next_in_group(gid), Some(b));
+        assert_eq!(s.next_in_group(gid), None);
+    }
+
     /// A continuation accepts exactly one resume; the value is read once, and a
     /// second or late resume is rejected.
     #[test]
@@ -702,6 +877,20 @@ mod tests {
         // second consume yields nothing (the caller turns that into a trap).
         assert!(!s.resume_continuation(cid, Ok(SwiftValue::Void)));
         assert!(s.consume_continuation(cid).is_none());
+    }
+
+    /// An `AsyncStream` buffer collects `yield`s in order and is drained once.
+    #[test]
+    fn stream_buffers_yields_in_order_then_drains() {
+        let mut s = Scheduler::default();
+        let sid = s.new_stream();
+        s.stream_yield(sid, SwiftValue::int(1));
+        s.stream_yield(sid, SwiftValue::int(2));
+        assert_eq!(
+            s.take_stream(sid),
+            vec![SwiftValue::int(1), SwiftValue::int(2)]
+        );
+        assert!(s.take_stream(sid).is_empty(), "draining empties the buffer");
     }
 
     /// An unresumed continuation has no outcome to consume.

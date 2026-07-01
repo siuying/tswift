@@ -197,6 +197,13 @@ pub enum SwiftValue {
     /// index into the interpreter's continuation table. `resume(...)` fills the
     /// slot; the enclosing `with*Continuation` reads it back as its result.
     Continuation(usize),
+    /// An `AsyncStream.Continuation`: an index into the interpreter's stream
+    /// table. `yield(_:)` appends to the stream's buffer; `finish()` closes it.
+    StreamContinuation(usize),
+    /// The reader half of an `AsyncStream` produced by `makeStream(of:)`: an
+    /// index into the stream table. Iterating it (`for await`) drains the buffer
+    /// its paired `StreamContinuation` filled.
+    AsyncStreamHandle(usize),
     /// A metatype value, e.g. `Int.self` or `type(of: x)`. Carries the spelled
     /// type name; printing it renders the bare type name like Swift.
     Metatype(String),
@@ -310,6 +317,8 @@ impl SwiftValue {
             SwiftValue::Task(_) => "Task".into(),
             SwiftValue::TaskGroup(_) => "TaskGroup".into(),
             SwiftValue::Continuation(_) => "Continuation".into(),
+            SwiftValue::StreamContinuation(_) => "AsyncStream.Continuation".into(),
+            SwiftValue::AsyncStreamHandle(_) => "AsyncStream".into(),
             SwiftValue::Metatype(name) => format!("{name}.Type"),
         }
     }
@@ -455,6 +464,8 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Task(_) => write!(f, "Task"),
             SwiftValue::TaskGroup(_) => write!(f, "TaskGroup"),
             SwiftValue::Continuation(_) => write!(f, "Continuation"),
+            SwiftValue::StreamContinuation(_) => write!(f, "AsyncStream.Continuation"),
+            SwiftValue::AsyncStreamHandle(_) => write!(f, "AsyncStream"),
             SwiftValue::Metatype(name) => write!(f, "{name}"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;

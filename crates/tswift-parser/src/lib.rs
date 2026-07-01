@@ -794,11 +794,19 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::ForStmt, label, kw.line, kw.col);
-        // `for await x in seq` — asynchronous iteration (await is contextual).
-        let is_await = self.peek().kind == TokenKind::Identifier && self.peek().text == "await";
-        if is_await {
-            self.bump();
-            self.ast.add_modifier(node, "async");
+        // `for [try] [await] x in seq` — asynchronous iteration over an
+        // `AsyncSequence` (`await`, contextual) that may throw (`try`). Swift
+        // spells the effects `for try await`; accept either order defensively.
+        loop {
+            if self.peek().kind == TokenKind::Identifier && self.peek().text == "await" {
+                self.bump();
+                self.ast.add_modifier(node, "async");
+            } else if self.at_keyword("try") {
+                self.bump();
+                self.ast.add_modifier(node, "throws");
+            } else {
+                break;
+            }
         }
         // `for case <pattern> in seq` — pattern-matching iteration.
         let pattern = if self.at_keyword("case") {
@@ -2679,8 +2687,9 @@ impl<'a> Parser<'a> {
     /// access (`Type<Args>(…)` / `Type<Args>.member`), return the token index
     /// just past the closing `>`. Swift's heuristic: the angle group must be
     /// balanced, contain only type-like tokens, and be immediately followed by
-    /// `(` (same line) or `.`. This disambiguates specialization from the
-    /// comparison chain `a < b > c`.
+    /// `(` (same line), `.`, or a same-line trailing-closure `{` (outside a
+    /// control-flow head). This disambiguates specialization from the comparison
+    /// chain `a < b > c` — which never has a matching `>` before a `{`/`(`.
     fn generic_call_args(&self) -> Option<usize> {
         let first = self.tokens.get(self.pos)?;
         if first.kind != TokenKind::Oper || !first.text.starts_with('<') {
@@ -2733,6 +2742,15 @@ impl<'a> Parser<'a> {
         let next = self.tokens.get(i)?;
         match next.kind {
             TokenKind::LParen if !next.leading_newline => Some(i),
+            // `Type<Args> { }` — a trailing-closure call (e.g. `AsyncStream<Int>
+            // { }`). Suppressed in a control-flow head, where `{` opens a block.
+            TokenKind::LBrace
+                if !next.leading_newline
+                    && !self.no_trailing_closure
+                    && !is_accessor_kw(self.tokens[i + 1].text) =>
+            {
+                Some(i)
+            }
             TokenKind::Dot => Some(i),
             _ => None,
         }
@@ -4330,6 +4348,49 @@ mod tests {
         let for_stmt = stmts[2];
         assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
         assert_eq!(for_stmt.modifiers(), &["async".to_string()]);
+    }
+
+    #[test]
+    fn generic_type_with_trailing_closure_is_a_call() {
+        // `AsyncStream<Int> { … }` is a specialization + trailing-closure call,
+        // not the comparison chain `AsyncStream < Int > { … }`.
+        let ast = ast_of("let s = AsyncStream<Int> { c in c.finish() }");
+        let init = ast
+            .node(ast.root())
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .last()
+            .unwrap();
+        assert_eq!(init.kind(), NodeKind::CallExpr);
+        let callee = init.children().next().unwrap();
+        assert_eq!(callee.kind(), NodeKind::IdentExpr);
+        assert_eq!(callee.text().as_deref(), Some("AsyncStream"));
+    }
+
+    #[test]
+    fn for_try_await_carries_async_and_throws() {
+        // `for try await` over a throwing async sequence carries both effects.
+        let ast = ast_of(
+            "func run() async {\n\
+             for try await x in stream { use(x) }\n\
+             }",
+        );
+        let body = ast
+            .node(ast.root())
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let for_stmt = body.children().next().unwrap();
+        assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
+        assert_eq!(
+            for_stmt.modifiers(),
+            &["throws".to_string(), "async".to_string()]
+        );
     }
 
     #[test]

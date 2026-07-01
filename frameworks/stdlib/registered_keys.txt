@@ -11,6 +11,8 @@ Array.index
 Array.insert
 Array.isEmpty
 Array.last
+Array.popFirst
+Array.popLast
 Array.remove
 Array.removeAll
 Array.removeFirst

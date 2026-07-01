@@ -713,6 +713,48 @@ impl<'w> Interpreter<'w> {
     /// Returns `Ok(None)` when none matches so the caller falls through the rest
     /// of the dispatch ladder. Concentrates the three ordered checks (and their
     /// argument-evaluation policies) behind one seam.
+    /// Dispatch an `async` `AsyncSequence` algorithm (`reduce`, `map`, `filter`,
+    /// `compactMap`, `flatMap`, `contains`, `allSatisfy`, `first`, `prefix`,
+    /// `dropFirst`) on a custom sequence by collecting its elements
+    /// eagerly and re-dispatching the call on the resulting array. Returns `None`
+    /// when `base_value` is not a custom `AsyncSequence` or `method` is not one
+    /// of these algorithms, so normal resolution continues.
+    fn try_async_sequence_method(
+        &mut self,
+        base_value: &SwiftValue,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        const ASYNC_ALGOS: &[&str] = &[
+            "reduce",
+            "map",
+            "filter",
+            "compactMap",
+            "flatMap",
+            "contains",
+            "allSatisfy",
+            "first",
+            "prefix",
+            "dropFirst",
+        ];
+        if !ASYNC_ALGOS.contains(&method) {
+            return Ok(None);
+        }
+        // The `makeStream(of:)` reader is an `AsyncStream`; a user nominal type
+        // must declare `AsyncSequence` conformance.
+        let is_async_seq = matches!(base_value, SwiftValue::AsyncStreamHandle(_))
+            || self
+                .value_type_name(base_value)
+                .is_some_and(|ty| self.all_protocols(&ty).iter().any(|p| p == "AsyncSequence"));
+        if !is_async_seq {
+            return Ok(None);
+        }
+        let items = self.collect_async_sequence(base_value)?;
+        let array = SwiftValue::Array(Rc::new(items));
+        self.try_builtin_receiver_method(&array, base, method, arg_nodes)
+    }
+
     fn try_builtin_receiver_method(
         &mut self,
         base_value: &SwiftValue,
@@ -940,6 +982,16 @@ impl<'w> Interpreter<'w> {
             return Ok(result);
         }
 
+        // `MainActor.run { }` hop (ADR-0005).
+        if let Some(result) = self.try_main_actor_method(&base, &method, arg_nodes)? {
+            return Ok(result);
+        }
+
+        // `AsyncStream.makeStream(of:)` factory (ADR-0005).
+        if let Some(result) = self.try_async_stream_static(&base, &method, arg_nodes)? {
+            return Ok(result);
+        }
+
         // `Type.<...>(args)`: builtin static method, nested-type construction,
         // enum case, or a static struct/class method — all resolved off the
         // type named by `base`.
@@ -980,6 +1032,13 @@ impl<'w> Interpreter<'w> {
 
         // `Result.get()`: unwrap success, or throw the failure error.
         if let Some(v) = self.try_result_get(&base_value, &method)? {
+            return Ok(v);
+        }
+
+        // AsyncSequence algorithms (`reduce`/`map`/`filter`/`contains`/…): the
+        // executor runs the producer to completion (ADR-0005), so materialise
+        // the elements and reuse the eager array algorithm machinery.
+        if let Some(v) = self.try_async_sequence_method(&base_value, &base, &method, arg_nodes)? {
             return Ok(v);
         }
 

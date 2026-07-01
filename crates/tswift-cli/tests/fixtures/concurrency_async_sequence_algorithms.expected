@@ -1,0 +1,6 @@
+map [0, 2, 4, 6, 8]
+filter [0, 2, 4]
+reduce 10
+contains true
+first 3
+prefix [0, 1]
