@@ -104,7 +104,9 @@ impl<'w> Interpreter<'w> {
         self.types.record_conformance(type_name, conf);
     }
 
-    /// Register a protocol declaration (name + inherited protocols).
+    /// Register a protocol declaration (name + inherited protocols), recording
+    /// `@objc optional` requirement names so a non-implementing conformer's
+    /// optional-chained use resolves to `nil` instead of erroring.
     fn register_protocol(&mut self, node: &Node<'static>) {
         let Some(name) = node.text() else { return };
         let inherited: Vec<String> = node
@@ -112,7 +114,19 @@ impl<'w> Interpreter<'w> {
             .filter(|c| c.kind() == NodeKind::TypeRef)
             .filter_map(|c| c.text())
             .collect();
-        self.types.ensure_protocol(name, inherited);
+        let optional_of = |kinds: &'static [NodeKind]| -> Vec<String> {
+            node.children()
+                .filter(|c| kinds.contains(&c.kind()) && c.modifier_names().contains(&"optional"))
+                .filter_map(|c| c.text().or_else(|| c.decl_name()))
+                .collect()
+        };
+        let methods = optional_of(&[NodeKind::FuncDecl]);
+        let properties = optional_of(&[NodeKind::VarDecl, NodeKind::LetDecl]);
+        self.types.ensure_protocol(name.clone(), inherited);
+        if let Some(def) = self.types.protocol_def_mut(&name) {
+            def.optional_methods.extend(methods);
+            def.optional_properties.extend(properties);
+        }
     }
 
     /// Register an extension: add its members to the extended type, or — when the
@@ -187,6 +201,28 @@ impl<'w> Interpreter<'w> {
     /// inheritance), for default-implementation lookup.
     pub(super) fn all_protocols(&self, type_name: &str) -> Vec<String> {
         self.types.all_protocols(type_name)
+    }
+
+    /// Whether `member` is an `@objc optional` *method* requirement of any
+    /// protocol `type_name` conforms to — an unimplemented one called on a
+    /// conformer resolves to `nil` (plain or chained access alike; the parser
+    /// drops the `?`, so no chain marker survives).
+    pub(super) fn protocol_optional_method(&self, type_name: &str, member: &str) -> bool {
+        self.all_protocols(type_name).iter().any(|p| {
+            self.types
+                .protocol_def(p)
+                .is_some_and(|d| d.optional_methods.iter().any(|m| m == member))
+        })
+    }
+
+    /// Whether `member` is an `@objc optional` *property* requirement of any
+    /// protocol `type_name` conforms to — an unimplemented one reads as `nil`.
+    pub(super) fn protocol_optional_property(&self, type_name: &str, member: &str) -> bool {
+        self.all_protocols(type_name).iter().any(|p| {
+            self.types
+                .protocol_def(p)
+                .is_some_and(|d| d.optional_properties.iter().any(|m| m == member))
+        })
     }
 
     /// A protocol default method for `type_name`'s `method`, if any.

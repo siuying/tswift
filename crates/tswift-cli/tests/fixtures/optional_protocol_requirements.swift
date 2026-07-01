@@ -30,3 +30,17 @@ MinimalHandler().start()
 var optional = 10
 optional += 5
 print(optional)
+
+// A non-implementing conformer's optional members resolve to nil through
+// optional chaining — methods, labeled methods, and properties.
+let handlers: [Delegate] = [MinimalHandler(), FullHandler()]
+for d in handlers {
+  print(d.didLoad?(count: 5) ?? -1)
+  print(d.badge ?? 0)
+}
+
+@objc protocol DataSource {
+  @objc optional func title(for row: Int) -> String
+}
+class Bare: DataSource {}
+print(Bare().title?(for: 1) ?? "untitled")

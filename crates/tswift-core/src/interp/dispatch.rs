@@ -1325,14 +1325,21 @@ impl<'w> Interpreter<'w> {
     ) -> Eval {
         let (params, body, owner, generics) = match self.lookup_method(from_class, method) {
             Some(m) => m,
-            None => {
-                let (p, b, _, g) = self
-                    .protocol_default_method(from_class, method)
-                    .ok_or_else(|| {
-                        EvalError::Unsupported(format!("{from_class} has no method `{method}`"))
-                    })?;
-                (p, b, from_class.to_string(), g)
-            }
+            None => match self.protocol_default_method(from_class, method) {
+                Some((p, b, _, g)) => (p, b, from_class.to_string(), g),
+                // An `@objc optional` method requirement the conformer does
+                // not implement resolves to nil — for chained and plain calls
+                // alike (the parser drops the `?`; documented permissiveness).
+                None if self.protocol_optional_method(from_class, method) => {
+                    return Ok(SwiftValue::Nil);
+                }
+                None => {
+                    return Err(EvalError::Unsupported(format!(
+                        "{from_class} has no method `{method}`"
+                    ))
+                    .into());
+                }
+            },
         };
         // A type-level (`static`/`class`) method has no instance `self`.
         let is_static_call = matches!(this, SwiftValue::Void);

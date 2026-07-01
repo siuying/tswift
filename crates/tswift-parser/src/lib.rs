@@ -662,7 +662,15 @@ impl<'a> Parser<'a> {
         }
 
         let first = self.peek();
-        if first.kind != TokenKind::Identifier {
+        // A keyword may serve as the *external label* when a binding name
+        // follows (`func title(for row: Int)`), but never as the binding
+        // name — and never a binding/modifier/type-introducer keyword, so
+        // legacy or invalid spellings like `func f(inout x: Int)` are not
+        // silently read as a label.
+        let keyword_label = first.kind == TokenKind::Keyword
+            && !matches!(first.text, "inout" | "let" | "var" | "some" | "any" | "repeat")
+            && self.tokens[self.pos + 1].kind == TokenKind::Identifier;
+        if first.kind != TokenKind::Identifier && !keyword_label {
             return self.error(format!("expected a parameter name, found {:?}", first.kind));
         }
         self.bump();
@@ -3987,6 +3995,25 @@ mod tests {
         assert_eq!(clo.kind(), NodeKind::ClosureExpr);
         // Body statement present after the signature.
         assert!(clo.children().count() >= 1);
+    }
+
+    #[test]
+    fn keyword_argument_labels_are_accepted_but_binding_keywords_are_not() {
+        // `for`/`in`/`default` are valid external labels.
+        for src in [
+            "func wait(for seconds: Int) { }\n",
+            "func clamp(_ v: Int, in r: Int) { }\n",
+            "func pick(default d: Int) { }\n",
+        ] {
+            let ast = ast_of(src);
+            assert_eq!(first_stmt(&ast).kind(), NodeKind::FuncDecl, "in {src:?}");
+        }
+        // `inout x: Int` (legacy modifier position) must not silently become
+        // a labeled parameter.
+        assert!(
+            parse("func f(inout x: Int) { }\n").is_err(),
+            "expected `func f(inout x: Int)` to be rejected"
+        );
     }
 
     #[test]

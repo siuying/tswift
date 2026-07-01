@@ -211,7 +211,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Protocol as type / existential `any P` | ✅ | ★★★ | R4 |
 | [x] | `Self` requirements | ✅ | ★★★ | R4 |
 | [x] | Protocol witness for operators | ✅ | ★★ | R4 |
-| [~] | Optional protocol requirements (`@objc optional`) | ⚠️ | ★★★ | R4+ |
+| [x] | Optional protocol requirements (`@objc optional` funcs/vars; non-implementing conformers resolve to `nil` through optional chaining — methods, labeled methods incl. keyword labels, properties) | ✅ | ★★★ | R4+ |
 | [x] | Class-only protocols (`AnyObject`) | ✅ | ★★ | R4 |
 | [x] | Conditional conformance | ✅ | ★★★ | R4 |
 | [x] | Synthesized `Equatable`/`Hashable`/`Comparable` (enum `Comparable` ordered by case then payload; non-`Comparable` payloads aren't statically rejected — they trap at use) | ✅ | ★★★ | R4 |
@@ -223,7 +223,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Generic functions `<T>` | ✅ | ★★★ | R4 |
 | [x] | Generic types (struct/class/enum) | ✅ | ★★★ | R4 |
 | [x] | Type constraints `<T: Protocol>` | ✅ | ★★★ | R4 |
-| [~] | `where` clauses (msf `type_substitute`) | ✅ | ★★★ | R4 |
+| [x] | `where` clauses (same-type + conformance constraints on associated types, trailing `where`, contextual `where` extensions — pinned by fixture; constraints are not statically *enforced*, a non-conforming call fails at use) | ✅ | ★★★ | R4 |
 | [x] | Associated-type constraints | ✅ | ★★★ | R4 |
 | [x] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
@@ -252,7 +252,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `throw` statement | ✅ | ★★ | R5 |
 | [x] | `do` / `catch` (+ pattern catches) | ✅ | ★★★ | R5 |
 | [x] | `try` / `try?` / `try!` | ✅ | ★★ | R5 |
-| [~] | `rethrows` (runtime ✓; static `try`-effect checking not enforced) | ✅ | ★★★ | R5 |
+| [x] | `rethrows` (runtime forwarding pinned by fixture: non-throwing callers need no `try`, thrown errors propagate; static `try`-effect checking is not enforced) | ✅ | ★★★ | R5 |
 | [x] | Typed throws `throws(E)` (Swift 6; funcs, closures, `do throws(E)`, generic `E` — the declared error type is parsed and skipped, not represented or enforced; errors propagate dynamically) | ✅ | ★★★ | R5 |
 | [x] | `defer` statements (LIFO on scope exit) | ✅ | ★★ | R5 |
 | [x] | Error propagation through call stack | ✅ | ★★★ | R5 |

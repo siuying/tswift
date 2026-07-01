@@ -29,6 +29,8 @@ pub(crate) const INDIRECT: u32 = 1 << 16;
 pub(crate) const REQUIRED: u32 = 1 << 17;
 pub(crate) const CONVENIENCE: u32 = 1 << 18;
 pub(crate) const DYNAMIC: u32 = 1 << 19;
+/// `@objc optional` protocol requirement.
+pub(crate) const OPTIONAL_REQ: u32 = 1 << 20;
 pub(crate) const ESCAPING: u32 = 1 << 26;
 pub(crate) const AUTOCLOSURE: u32 = 1 << 27;
 pub(crate) const VARIADIC: u32 = 1 << 28;
@@ -62,6 +64,7 @@ const FLAG_NAMES: &[(u32, &str)] = &[
     (REQUIRED, "required"),
     (CONVENIENCE, "convenience"),
     (DYNAMIC, "dynamic"),
+    (OPTIONAL_REQ, "optional"),
     (ESCAPING, "escaping"),
     (AUTOCLOSURE, "autoclosure"),
     (VARIADIC, "variadic"),
@@ -94,6 +97,7 @@ pub(crate) fn modifier_bits(modifiers: &[String]) -> u32 {
             "required" => REQUIRED,
             "convenience" => CONVENIENCE,
             "dynamic" => DYNAMIC,
+            "optional" => OPTIONAL_REQ,
             // Parameter type attributes carried for the runtime.
             "escaping" => ESCAPING,
             "autoclosure" => AUTOCLOSURE,

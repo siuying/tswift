@@ -64,6 +64,12 @@ impl<'w> Interpreter<'w> {
             self.class_ctx.pop();
             return r;
         }
+        // An `@objc optional` property requirement the conformer does not
+        // implement reads as nil (plain or chained — no chain marker survives
+        // parsing; documented permissiveness).
+        if self.protocol_optional_property(&class_name, name) {
+            return Ok(SwiftValue::Nil);
+        }
         Err(EvalError::Type(format!("{class_name} has no member `{name}`")).into())
     }
 

@@ -434,6 +434,8 @@ impl TypeTable {
             inherited,
             methods: HashMap::new(),
             computed: HashMap::new(),
+            optional_methods: Vec::new(),
+            optional_properties: Vec::new(),
         });
     }
     fn add_protocol_alias(&mut self, name: String, components: Vec<String>) {
@@ -671,6 +673,14 @@ struct ProtoDef {
     inherited: Vec<String>,
     methods: std::collections::HashMap<String, MethodDef>,
     computed: std::collections::HashMap<String, ComputedProp>,
+    /// `@objc optional` method requirement names: a conformer may omit them,
+    /// and a call on a non-implementing conformer resolves to `nil` (chained
+    /// or not — the parser drops the `?`, so plain access nil-propagates too).
+    optional_methods: Vec<String>,
+    /// `@objc optional` property requirement names, resolving to `nil` on
+    /// reads from a non-implementing conformer. Kept separate from methods so
+    /// a property name never nils out a *call* miss and vice versa.
+    optional_properties: Vec<String>,
 }
 
 /// A closure value's definition: either a user closure (parameters + body
