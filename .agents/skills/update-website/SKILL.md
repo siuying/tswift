@@ -36,18 +36,21 @@ After updating the tables, **recount** `done`/`total` and update every `<Coverag
 
 To count: grep the MDX file for `| ✅` (done) and `| 🟡` (partial counts as done for the bar), total is the row count.
 
-### 4. Update WASM (if runtime changed)
+### 4. Build and verify
 
-```sh
-wasm-pack build crates/tswift-wasm --target web \
-  --out-dir website/public/wasm --out-name tswift_wasm
-```
-
-### 5. Build and verify
+`npm run build` now **automatically rebuilds the WASM** before the Astro build
+(via the `build:wasm` pre-step), so no manual `wasm-pack` invocation is needed.
 
 ```sh
 cd website
-npm run build        # must complete with 0 errors, 11 pages
+npm run build        # runs wasm-pack + astro build; must complete with 0 errors, 11 pages
+```
+
+To rebuild WASM alone (e.g. to test the playground without a full site build):
+
+```sh
+cd website
+npm run build:wasm
 ```
 
 If the build fails, check for `{#anchor}` syntax in MDX headings — replace with plain headings (MDX parses `{...}` as JSX).
