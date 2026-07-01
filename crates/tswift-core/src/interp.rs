@@ -5650,6 +5650,33 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
     }
 
     #[test]
+    fn mutating_method_preserves_receiver_uniqueness() {
+        // Regression guard: a `mutating` method must receive its `self` by move,
+        // not by an extra clone, or `isKnownUniquelyReferenced` on a stored
+        // class reference sees a phantom retain and copy-on-write copies when it
+        // should mutate in place. Exercises the struct-method dispatch path in
+        // the fast core signal (the CLI golden fixture is not in that signal).
+        let src = concat!(
+            "final class Box { var n: Int\n",
+            "  init(_ n: Int) { self.n = n } }\n",
+            "struct W {\n",
+            "  var box: Box\n",
+            "  init(_ n: Int) { box = Box(n) }\n",
+            "  mutating func touch() {\n",
+            "    if isKnownUniquelyReferenced(&box) { print(\"unique\") }\n",
+            "    else { print(\"shared\") }\n",
+            "  }\n",
+            "}\n",
+            "var a = W(1)\n",
+            "a.touch()\n", // receiver moved in -> box uniquely referenced
+            "var b = a\n",
+            "b.touch()\n", // struct copy shares the box -> not unique
+        );
+        let out = run(src).unwrap();
+        assert_eq!(out, "unique\nshared\n");
+    }
+
+    #[test]
     fn casting_is_as_optional() {
         let out = run(
             "class A {}\nclass B: A {}\nlet x: A = B()\nprint(x is B)\nprint((x as? B) != nil)\nlet n: Int = 5\nprint(n is Int)\n",
