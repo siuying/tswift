@@ -1254,6 +1254,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::OperatorDecl
             | NodeKind::PrecedenceGroupDecl
             | NodeKind::TypeAliasDecl
+            | NodeKind::MacroDecl
             | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
@@ -3828,8 +3829,9 @@ impl<'w> Interpreter<'w> {
             .ok_or_else(|| EvalError::Unsupported("unary without operand".into()))?;
         let v = self.eval(&operand)?;
         // Ownership operators are transparent in the tree-walker: `consume x`,
-        // `copy x`, and `borrow x` evaluate to the operand's value.
-        if matches!(op.as_str(), "consume" | "copy" | "borrow") {
+        // `copy x`, and `borrow x` evaluate to the operand's value — as does a
+        // pack expansion `repeat each x` (a pack is the collected array).
+        if matches!(op.as_str(), "consume" | "copy" | "borrow" | "repeat each") {
             return Ok(v);
         }
         ops::unary(&op, &v).map_err(trap)

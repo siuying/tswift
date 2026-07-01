@@ -379,7 +379,15 @@ impl<'a> Parser<'a> {
                 "if" => return self.parse_if(),
                 "guard" => return self.parse_guard(),
                 "while" => return self.parse_while(None),
-                "repeat" => return self.parse_repeat(None),
+                // `repeat { } while` — unless the exact `repeat each` pair
+                // follows, which is a statement-position pack expansion and
+                // parses as an expression.
+                "repeat"
+                    if !(self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                        && self.tokens[self.pos + 1].text == "each") =>
+                {
+                    return self.parse_repeat(None)
+                }
                 "for" => return self.parse_for(None),
                 "switch" => return self.parse_switch(None),
                 "break" => return self.parse_jump(NodeKind::BreakStmt),
@@ -704,6 +712,21 @@ impl<'a> Parser<'a> {
         if self.at_keyword("inout") {
             self.bump();
             self.ast.add_modifier(param, "inout");
+        }
+        // A pack-expansion parameter type `repeat each T` collects its
+        // arguments like a variadic parameter (the runtime models a pack as
+        // the collected array). Only the exact `repeat each` pair qualifies —
+        // a bare `repeat Int` is not a type.
+        if self.at_keyword("repeat") {
+            if !(self.tokens[self.pos + 1].kind == TokenKind::Identifier
+                && self.tokens[self.pos + 1].text == "each")
+            {
+                return self
+                    .error("expected `each` after `repeat` in a parameter type".to_string());
+            }
+            self.bump(); // repeat
+            self.bump(); // each
+            self.ast.add_modifier(param, "variadic");
         }
         // Ownership parameter modifiers (`borrowing`/`consuming`, the older
         // `__shared`/`__owned`) and the actor-isolation `isolated`. They do
@@ -2203,9 +2226,17 @@ impl<'a> Parser<'a> {
     fn parse_type_text(&mut self) -> Result<String, ParseError> {
         // Type attributes `@escaping`, `@autoclosure`, `@Sendable`, … prefix a
         // type. A following `(` belongs to the type (e.g. `@escaping () -> Void`),
-        // not the attribute, so it is left for the type grammar to consume.
+        // not the attribute, so it is left for the type grammar to consume —
+        // except for argumented attributes like `@convention(c)`, whose
+        // parenthesized argument parameterizes the attribute itself.
         while self.peek().kind == TokenKind::Attribute {
+            let name = self.peek().text;
             self.bump();
+            if matches!(name, "@convention" | "@isolated" | "@_opaqueReturnTypeOf")
+                && self.peek().kind == TokenKind::LParen
+            {
+                self.skip_balanced_parens();
+            }
         }
         // Suppressed constraint `~Copyable` / `~Escapable`: a tilde prefix that
         // removes an implicit conformance. It is a no-op for the tree-walker, so
@@ -2434,6 +2465,20 @@ impl<'a> Parser<'a> {
             self.bump();
             let operand = self.parse_prefix()?;
             return Ok(self.node(NodeKind::PrefixExpr, Some(t.text), t, &[operand]));
+        }
+        // Pack expansion `repeat each pack` (and its `each pack` interior) in
+        // expression position: the tree-walker models a pack as the array the
+        // variadic binding collected, so the expansion is a transparent
+        // prefix recorded for call-site splatting.
+        if t.kind == TokenKind::Keyword
+            && t.text == "repeat"
+            && self.tokens[self.pos + 1].kind == TokenKind::Identifier
+            && self.tokens[self.pos + 1].text == "each"
+        {
+            self.bump(); // repeat
+            self.bump(); // each
+            let operand = self.parse_prefix()?;
+            return Ok(self.node(NodeKind::PrefixExpr, Some("repeat each"), t, &[operand]));
         }
         // `&place` — an inout argument (write-back location at a call site).
         if t.kind == TokenKind::Oper && t.text == "&" {

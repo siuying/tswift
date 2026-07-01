@@ -713,6 +713,25 @@ impl<'w> Interpreter<'w> {
                 continue;
             }
             let hint = hints.as_ref().and_then(|h| h[i].clone());
+            // Pack expansion at a call site (`f(repeat each pack)`): the pack
+            // array splats into individual positional arguments, so a pack
+            // forwards through another variadic/pack parameter faithfully.
+            if arg.kind() == NodeKind::PrefixExpr && arg.text().as_deref() == Some("repeat each") {
+                if let SwiftValue::Array(items) = self.eval(arg)? {
+                    for item in items.iter() {
+                        args.push(CallArg {
+                            label: None,
+                            value: item.clone(),
+                            place: None,
+                        });
+                    }
+                    continue;
+                }
+                return Err(EvalError::Type(
+                    "`repeat each` expects a parameter pack".into(),
+                )
+                .into());
+            }
             if arg.kind() == NodeKind::InoutExpr {
                 let inner = arg
                     .children()

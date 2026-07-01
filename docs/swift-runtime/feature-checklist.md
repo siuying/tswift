@@ -228,7 +228,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Generic subscripts | ✅ | ★★ | R4 |
 | [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
-| [ ] | Parameter packs / variadic generics `each` | ⚠️ | ★★★★ | R6+ |
+| [~] | Parameter packs / variadic generics `each` (SE-0393 core shapes: `<each T>` + `repeat each T` params collect like variadics, `for x in repeat each pack` iteration incl. statement position, call-site splat forwarding `f(repeat each pack)`. Not modeled: pack expansion in tuple/type positions `(repeat each T)`, multiple positional packs / a pack before positional params (greedy variadic binder — use one final positional pack), same-shape zip, pack element type relationships; `repeat each <any array>` splats because packs *are* arrays here) | ✅ | ★★★★ | R6+ |
 | [x] | Integer generic parameters (`let N: Int`, SE-0452: multi-param, call-site `Buf<4>()` specialization in any radix; each value binds as a write-protected stored field visible to defaults/bodies and preserved through `self.init` delegation. Type-position spelling `let b: Buf<4>` not yet wired) | ✅ | ★★★ | R6+ |
 | [x] | `~Copyable` / `~Escapable` (suppressed constraints) | ✅ | ★★★★ | R6+ |
 
