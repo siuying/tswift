@@ -802,6 +802,90 @@ impl<'w> Interpreter<'w> {
         Ok(None)
     }
 
+    /// Resolve and invoke a `Type.member(...)` call where `base` names a type
+    /// (after `Self`/generic-alias substitution): a builtin static method
+    /// (`Bool.random()`), a nested-type constructor (`Outer.Nested(...)`), an
+    /// enum case, or a static struct/class method. Returns `Ok(None)` when
+    /// `base` is not a type reference or names no such member, so the caller
+    /// falls through to evaluating `base` as a value.
+    fn try_type_qualified_method(
+        &mut self,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if base.kind() != NodeKind::IdentExpr {
+            return Ok(None);
+        }
+        let Some(tn) = base.text() else {
+            return Ok(None);
+        };
+        // `Self.method(...)` calls a static method of the enclosing type (the
+        // keyword is never a value binding); any other name is a type reference
+        // only when no local value shadows it.
+        let Some(reference) = self.resolve_type_reference(&tn) else {
+            return Ok(None);
+        };
+        let tn = reference.name;
+        // Builtin static methods, e.g. `Bool.random()`. A user type shadowing a
+        // builtin name (`struct Bool { … }`) wins, so only fall back to the
+        // builtin when no user type matches.
+        let user_defined = reference.user_defined;
+        if !user_defined {
+            if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
+                if let Some(func) = self.builtins.static_method(recv, method) {
+                    let labeled: Vec<Arg> = self
+                        .eval_args(arg_nodes)?
+                        .into_iter()
+                        .map(Arg::from)
+                        .collect();
+                    return func(self, labeled)
+                        .map(Some)
+                        .map_err(Self::std_error_to_signal);
+                }
+            }
+        }
+        // `Outer.Nested(args)`: construct a nested type referenced through its
+        // enclosing type. Nested types are registered by their simple name, so
+        // resolve `method` against the type tables when `tn` is itself a user
+        // type.
+        if user_defined {
+            if self.types.is_class(method) {
+                let args = self.eval_args(arg_nodes)?;
+                return self.instantiate_class(method, args).map(Some);
+            }
+            if self.types.is_struct(method) {
+                let simple: Vec<(Option<String>, SwiftValue)> = self
+                    .eval_args(arg_nodes)?
+                    .iter()
+                    .map(|a| (a.label.clone(), a.value.clone()))
+                    .collect();
+                return self.instantiate_struct(method, &simple).map(Some);
+            }
+        }
+        if self.enum_has_case(&tn, method) {
+            let args = self.eval_args(arg_nodes)?;
+            let payload = args.into_iter().map(|a| a.value).collect();
+            return Ok(Some(self.make_enum_case(&tn, method, payload)?.unwrap()));
+        }
+        if self.types.is_struct(&tn) {
+            let params = self.user_method_params(&tn, method);
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            return self
+                .call_struct_method(SwiftValue::Void, &tn, method, args, None)
+                .map(Some);
+        }
+        // `Type.method(...)` — a static method on a class.
+        if self.types.is_class(&tn) && self.lookup_method(&tn, method).is_some() {
+            let params = self.user_method_params(&tn, method);
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            return self
+                .dispatch_class_method(SwiftValue::Void, &tn, method, args)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
     fn eval_method_call(&mut self, member: &Node<'static>, arg_nodes: &[Node<'static>]) -> Eval {
         let mut method = member
             .text()
@@ -856,66 +940,11 @@ impl<'w> Interpreter<'w> {
             return Ok(result);
         }
 
-        // `Type.<...>(args)`: enum case construction or a static struct method.
-        if base.kind() == NodeKind::IdentExpr {
-            if let Some(tn) = base.text() {
-                // `Self.method(...)` calls a static method of the enclosing type
-                // (the keyword is never a value binding); any other name is a
-                // type reference only when no local value shadows it.
-                if let Some(reference) = self.resolve_type_reference(&tn) {
-                    let tn = reference.name;
-                    // Builtin static methods, e.g. `Bool.random()`. A user type
-                    // shadowing a builtin name (`struct Bool { … }`) wins, so
-                    // only fall back to the builtin when no user type matches.
-                    let user_defined = reference.user_defined;
-                    if !user_defined {
-                        if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
-                            if let Some(func) = self.builtins.static_method(recv, &method) {
-                                let labeled: Vec<Arg> = self
-                                    .eval_args(arg_nodes)?
-                                    .into_iter()
-                                    .map(Arg::from)
-                                    .collect();
-                                return func(self, labeled).map_err(Self::std_error_to_signal);
-                            }
-                        }
-                    }
-                    // `Outer.Nested(args)`: construct a nested type referenced
-                    // through its enclosing type. Nested types are registered by
-                    // their simple name, so resolve `method` against the type
-                    // tables when `tn` is itself a user type.
-                    if user_defined {
-                        if self.types.is_class(&method) {
-                            let args = self.eval_args(arg_nodes)?;
-                            return self.instantiate_class(&method, args);
-                        }
-                        if self.types.is_struct(&method) {
-                            let simple: Vec<(Option<String>, SwiftValue)> = self
-                                .eval_args(arg_nodes)?
-                                .iter()
-                                .map(|a| (a.label.clone(), a.value.clone()))
-                                .collect();
-                            return self.instantiate_struct(&method, &simple);
-                        }
-                    }
-                    if self.enum_has_case(&tn, &method) {
-                        let args = self.eval_args(arg_nodes)?;
-                        let payload = args.into_iter().map(|a| a.value).collect();
-                        return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
-                    }
-                    if self.types.is_struct(&tn) {
-                        let params = self.user_method_params(&tn, &method);
-                        let args = self.eval_args_with(arg_nodes, params.as_deref())?;
-                        return self.call_struct_method(SwiftValue::Void, &tn, &method, args, None);
-                    }
-                    // `Type.method(...)` — a static method on a class.
-                    if self.types.is_class(&tn) && self.lookup_method(&tn, &method).is_some() {
-                        let params = self.user_method_params(&tn, &method);
-                        let args = self.eval_args_with(arg_nodes, params.as_deref())?;
-                        return self.dispatch_class_method(SwiftValue::Void, &tn, &method, args);
-                    }
-                }
-            }
+        // `Type.<...>(args)`: builtin static method, nested-type construction,
+        // enum case, or a static struct/class method — all resolved off the
+        // type named by `base`.
+        if let Some(v) = self.try_type_qualified_method(&base, &method, arg_nodes)? {
+            return Ok(v);
         }
 
         let base_value = self.eval(&base)?;
