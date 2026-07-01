@@ -349,6 +349,13 @@ struct TypeTable {
     structs: HashMap<String, StructDef>,
     enums: HashMap<String, EnumDef>,
     classes: HashMap<String, ClassDef>,
+    protocols: HashMap<String, ProtoDef>,
+    /// type name → protocols it conforms to (directly).
+    conformances: HashMap<String, Vec<String>>,
+    /// Protocol-composition typealiases (`typealias X = A & B`) → their
+    /// component protocol names, so a conformance to `X` expands to `A` + `B`
+    /// for default-implementation lookup.
+    protocol_aliases: HashMap<String, Vec<String>>,
 }
 
 impl TypeTable {
@@ -400,6 +407,61 @@ impl TypeTable {
     }
     fn class_names(&self) -> impl Iterator<Item = &String> {
         self.classes.keys()
+    }
+
+    fn is_protocol(&self, name: &str) -> bool {
+        self.protocols.contains_key(name)
+    }
+    fn protocol_def(&self, name: &str) -> Option<&ProtoDef> {
+        self.protocols.get(name)
+    }
+    fn protocol_def_mut(&mut self, name: &str) -> Option<&mut ProtoDef> {
+        self.protocols.get_mut(name)
+    }
+    /// Register a protocol declaration, keeping the first `inherited` list seen.
+    fn ensure_protocol(&mut self, name: String, inherited: Vec<String>) {
+        self.protocols.entry(name).or_insert_with(|| ProtoDef {
+            inherited,
+            methods: HashMap::new(),
+            computed: HashMap::new(),
+        });
+    }
+    fn add_protocol_alias(&mut self, name: String, components: Vec<String>) {
+        self.protocol_aliases.insert(name, components);
+    }
+    /// Record that `type_name` directly conforms to `protocols`.
+    fn record_conformance(&mut self, type_name: &str, protocols: Vec<String>) {
+        if !protocols.is_empty() {
+            self.conformances
+                .entry(type_name.to_string())
+                .or_default()
+                .extend(protocols);
+        }
+    }
+    /// All protocols a type conforms to, transitively (including protocol
+    /// inheritance and composition-typealias expansion), for
+    /// default-implementation lookup.
+    fn all_protocols(&self, type_name: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut stack: Vec<String> = self
+            .conformances
+            .get(type_name)
+            .cloned()
+            .unwrap_or_default();
+        while let Some(p) = stack.pop() {
+            if let Some(components) = self.protocol_aliases.get(&p) {
+                stack.extend(components.iter().cloned());
+                continue;
+            }
+            if result.contains(&p) {
+                continue;
+            }
+            if let Some(def) = self.protocols.get(&p) {
+                stack.extend(def.inherited.iter().cloned());
+            }
+            result.push(p);
+        }
+        result
     }
 }
 
@@ -530,13 +592,6 @@ pub struct Interpreter<'w> {
     /// they cannot shadow SwiftUI implicit statics (`.plain`, …); they still
     /// resolve when a contextual type names them or as a last-resort fallback.
     builtin_enums: std::collections::HashSet<String>,
-    protocols: HashMap<String, ProtoDef>,
-    /// type name → protocols it conforms to (directly).
-    conformances: HashMap<String, Vec<String>>,
-    /// Protocol-composition typealiases (`typealias X = A & B`) → their
-    /// component protocol names, so a conformance to `X` expands to `A` + `B`
-    /// for default-implementation lookup.
-    protocol_aliases: HashMap<String, Vec<String>>,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
     statics: HashMap<String, SwiftValue>,
     /// Stack of type names for the `static` methods currently executing, so an
@@ -637,9 +692,6 @@ impl<'w> Interpreter<'w> {
             funcs: Vec::new(),
             types: TypeTable::default(),
             builtin_enums: std::collections::HashSet::new(),
-            protocols: HashMap::new(),
-            conformances: HashMap::new(),
-            protocol_aliases: HashMap::new(),
             closures: Vec::new(),
             statics: HashMap::new(),
             static_ctx: Vec::new(),
@@ -1593,7 +1645,7 @@ impl<'w> Interpreter<'w> {
         self.types.is_struct(name)
             || self.types.is_class(name)
             || self.types.is_enum(name)
-            || self.protocols.contains_key(name)
+            || self.types.is_protocol(name)
             || IntWidth::from_type_name(name).is_some()
             || matches!(
                 name,
@@ -4335,6 +4387,30 @@ mod tests {
         assert!(types.enum_def("Point").is_none());
         let names: Vec<&String> = types.struct_names().collect();
         assert_eq!(names, vec![&"Point".to_string()]);
+    }
+
+    #[test]
+    fn type_table_all_protocols_is_transitive() {
+        let mut types = TypeTable::default();
+        // Equatable inherits nothing; Hashable inherits Equatable.
+        types.ensure_protocol("Equatable".into(), vec![]);
+        types.ensure_protocol("Hashable".into(), vec!["Equatable".into()]);
+        types.record_conformance("Point", vec!["Hashable".into()]);
+        let mut protos = types.all_protocols("Point");
+        protos.sort();
+        assert_eq!(
+            protos,
+            vec!["Equatable".to_string(), "Hashable".to_string()]
+        );
+        // Composition alias expands to its members.
+        types.add_protocol_alias(
+            "Codable".into(),
+            vec!["Encodable".into(), "Decodable".into()],
+        );
+        types.record_conformance("Model", vec!["Codable".into()]);
+        let mut m = types.all_protocols("Model");
+        m.sort();
+        assert_eq!(m, vec!["Decodable".to_string(), "Encodable".to_string()]);
     }
 
     fn run(src: &str) -> Result<String, EvalError> {

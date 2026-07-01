@@ -3,7 +3,7 @@ use tswift_frontend::{Node, NodeKind};
 use super::{
     clone_method, clone_params, expand_directives, field_type_name, generic_param_names, is_expr,
     is_value_node, parse_params, ClassDef, ComputedProp, EnumCaseDef, EnumDef, Interpreter,
-    MethodDef, Param, ProtoDef, RawKind, StoredProp, StructDef, SubscriptDef,
+    MethodDef, Param, RawKind, StoredProp, StructDef, SubscriptDef,
 };
 use crate::value::{IntWidth, SwiftValue};
 
@@ -89,7 +89,7 @@ impl<'w> Interpreter<'w> {
             .filter(|s| !s.is_empty())
             .collect();
         if !components.is_empty() {
-            self.protocol_aliases.insert(name, components);
+            self.types.add_protocol_alias(name, components);
         }
     }
 
@@ -101,12 +101,7 @@ impl<'w> Interpreter<'w> {
             .filter(|c| c.kind() == NodeKind::TypeRef)
             .filter_map(|c| c.text())
             .collect();
-        if !conf.is_empty() {
-            self.conformances
-                .entry(type_name.to_string())
-                .or_default()
-                .extend(conf);
-        }
+        self.types.record_conformance(type_name, conf);
     }
 
     /// Register a protocol declaration (name + inherited protocols).
@@ -117,11 +112,7 @@ impl<'w> Interpreter<'w> {
             .filter(|c| c.kind() == NodeKind::TypeRef)
             .filter_map(|c| c.text())
             .collect();
-        self.protocols.entry(name).or_insert_with(|| ProtoDef {
-            inherited,
-            methods: std::collections::HashMap::new(),
-            computed: std::collections::HashMap::new(),
-        });
+        self.types.ensure_protocol(name, inherited);
     }
 
     /// Register an extension: add its members to the extended type, or — when the
@@ -172,7 +163,7 @@ impl<'w> Interpreter<'w> {
                 _ => {}
             }
         }
-        if let Some(proto) = self.protocols.get_mut(&target) {
+        if let Some(proto) = self.types.protocol_def_mut(&target) {
             proto.methods.extend(methods);
             proto.computed.extend(computed);
         } else if let Some(def) = self.types.struct_def_mut(&target) {
@@ -202,28 +193,7 @@ impl<'w> Interpreter<'w> {
     /// All protocols a type conforms to, transitively (including protocol
     /// inheritance), for default-implementation lookup.
     pub(super) fn all_protocols(&self, type_name: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut stack: Vec<String> = self
-            .conformances
-            .get(type_name)
-            .cloned()
-            .unwrap_or_default();
-        while let Some(p) = stack.pop() {
-            // Expand a protocol-composition typealias (`typealias X = A & B`)
-            // into its component protocols.
-            if let Some(components) = self.protocol_aliases.get(&p) {
-                stack.extend(components.iter().cloned());
-                continue;
-            }
-            if result.contains(&p) {
-                continue;
-            }
-            if let Some(def) = self.protocols.get(&p) {
-                stack.extend(def.inherited.iter().cloned());
-            }
-            result.push(p);
-        }
-        result
+        self.types.all_protocols(type_name)
     }
 
     /// A protocol default method for `type_name`'s `method`, if any.
@@ -234,8 +204,8 @@ impl<'w> Interpreter<'w> {
     ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
         for proto in self.all_protocols(type_name) {
             if let Some(m) = self
-                .protocols
-                .get(&proto)
+                .types
+                .protocol_def(&proto)
                 .and_then(|d| d.methods.get(method))
             {
                 return Some((
@@ -288,8 +258,8 @@ impl<'w> Interpreter<'w> {
     ) -> Option<Node<'static>> {
         for proto in self.all_protocols(type_name) {
             if let Some(c) = self
-                .protocols
-                .get(&proto)
+                .types
+                .protocol_def(&proto)
                 .and_then(|d| d.computed.get(name))
             {
                 return c.getter;
