@@ -368,6 +368,15 @@ impl<'w> Interpreter<'w> {
             return Ok(None);
         }
 
+        // `Task.sleep`/`Task.yield` are cooperative no-ops on the single-threaded
+        // executor. Handled before argument evaluation so a `Duration` argument
+        // — including the `.seconds(_:)`/`.milliseconds(_:)` leading-dot shorthand,
+        // which resolves against a `Duration` type we do not model — is accepted
+        // rather than eagerly (and fruitlessly) evaluated.
+        if matches!(method, "sleep" | "yield") {
+            return Ok(Some(SwiftValue::Void));
+        }
+
         let args = self.eval_args(arg_nodes)?;
         match method {
             "detached" => {
@@ -388,8 +397,6 @@ impl<'w> Interpreter<'w> {
                 }
                 Ok(Some(SwiftValue::Void))
             }
-            // Cooperative no-ops on our single-threaded executor.
-            "yield" | "sleep" => Ok(Some(SwiftValue::Void)),
             _ => Ok(None),
         }
     }
