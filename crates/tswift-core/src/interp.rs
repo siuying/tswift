@@ -840,6 +840,9 @@ pub struct Interpreter<'w> {
     static_ctx: Vec<String>,
     /// Stack of class names for the methods currently executing (for `super`).
     class_ctx: Vec<String>,
+    /// Nesting depth of initializer bodies currently executing; `self.init`
+    /// delegation is legal only when this is non-zero.
+    init_ctx: usize,
     /// Stack of generic type-parameter substitutions for the calls currently
     /// executing, so a static reference through a generic placeholder
     /// (`T.zero()` where `T == Vec2`) resolves to the concrete type.
@@ -919,6 +922,7 @@ impl<'w> Interpreter<'w> {
             types: TypeTable::default(),
             closures: Vec::new(),
             accessor_vars: Vec::new(),
+            init_ctx: 0,
             statics: HashMap::new(),
             static_ctx: Vec::new(),
             class_ctx: Vec::new(),
@@ -2320,24 +2324,6 @@ impl<'w> Interpreter<'w> {
         self.class_chain(sub).iter().any(|c| c == super_)
     }
 
-    /// Select a class initializer overload by labels/types, falling back to the
-    /// last declared initializer when no overload is uniquely selected.
-    fn select_class_init(
-        &self,
-        class_name: &str,
-        args: &[CallArg],
-    ) -> Option<(Vec<Param>, Option<Node<'static>>)> {
-        let def = self.types.class_def(class_name)?;
-        if def.init_overloads.len() > 1 {
-            if let Some(init) = select_labeled_overload(&def.init_overloads, args) {
-                return Some((clone_params(&init.params), init.body));
-            }
-        }
-        def.init
-            .as_ref()
-            .map(|init| (clone_params(&init.params), init.body))
-    }
-
     /// Instantiate a class: lay out fields from the whole chain, then run init.
     fn instantiate_class(&mut self, class_name: &str, args: Vec<CallArg>) -> Eval {
         let chain = self.class_chain(class_name);
@@ -2365,21 +2351,36 @@ impl<'w> Interpreter<'w> {
         }));
         let value = SwiftValue::Object(obj);
 
-        // Run the most-derived initializer (walk up for an inherited one).
-        let init_owner = chain
-            .iter()
-            .rev()
-            .find(|c| self.types.class_def(c).unwrap().init.is_some())
-            .cloned();
+        // Select the initializer: the closest class (most-derived first) whose
+        // declared initializers label-match the call — finding an *inherited*
+        // convenience/designated init when the subclass declares its own with
+        // different labels — falling back to the most-derived class with any
+        // initializer.
+        let selected = chain.iter().rev().find_map(|c| {
+            let def = self.types.class_def(c)?;
+            select_labeled_overload(&def.init_overloads, &args)
+                .map(|m| (c.clone(), clone_params(&m.params), m.body))
+        });
+        let init_owner = selected.as_ref().map(|(c, ..)| c.clone()).or_else(|| {
+            chain
+                .iter()
+                .rev()
+                .find(|c| self.types.class_def(c).unwrap().init.is_some())
+                .cloned()
+        });
         if let Some(owner) = init_owner {
-            let (params, body) = self.select_class_init(&owner, &args).unwrap_or_else(|| {
-                let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
-                (clone_params(&m.params), m.body)
-            });
+            let (params, body) = match selected {
+                Some((_, params, body)) => (params, body),
+                None => {
+                    let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
+                    (clone_params(&m.params), m.body)
+                }
+            };
             self.class_ctx.push(owner);
             let saved_env = self.env.enter_isolated();
             self.env.declare("self", value.clone(), false);
             let bound = self.bind_params(&params, args);
+            self.init_ctx += 1;
             let result = match bound {
                 Ok(_) => match body {
                     Some(b) => self.eval(&b),
@@ -2387,6 +2388,7 @@ impl<'w> Interpreter<'w> {
                 },
                 Err(e) => Err(e),
             };
+            self.init_ctx -= 1;
             self.env.restore(saved_env);
             self.class_ctx.pop();
             match result {
@@ -2999,9 +3001,18 @@ impl<'w> Interpreter<'w> {
                     place: None,
                 })
                 .collect();
+            // Depth-guarded: `self.init` delegation re-enters here, and a
+            // self-recursive delegate must trap instead of overflowing the
+            // native stack.
+            self.depth += 1;
+            if self.depth > MAX_CALL_DEPTH {
+                self.depth -= 1;
+                return Err(trap("stack overflow: initializer delegation too deep".into()));
+            }
             let saved_env = self.env.enter_isolated();
             self.env.declare("self", this, true);
             let bound = self.bind_params(&params, call_args);
+            self.init_ctx += 1;
             let result = match bound {
                 Ok(_) => match body {
                     Some(b) => self.eval(&b),
@@ -3009,8 +3020,10 @@ impl<'w> Interpreter<'w> {
                 },
                 Err(e) => Err(e),
             };
+            self.init_ctx -= 1;
             let built = self.env.get("self").unwrap_or(SwiftValue::Void);
             self.env.restore(saved_env);
+            self.depth -= 1;
             return match result {
                 // A failable initializer that runs `return nil` produces the
                 // absent optional rather than the half-built value.
@@ -6090,6 +6103,46 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         assert!(
             msg.contains("unowned"),
             "expected an unowned-dangling trap, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn recursive_init_delegation_traps_instead_of_overflowing() {
+        // Run on a generous stack so the depth guard fires before any native
+        // overflow (matching `deep_recursion_traps_not_crashes`).
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                run(concat!(
+                    "class Loop {\n",
+                    "  var x: Int\n",
+                    "  init(x: Int) { self.x = x }\n",
+                    "  convenience init(loop n: Int) { self.init(loop: n) }\n",
+                    "}\n",
+                    "let _ = Loop(loop: 1)\n",
+                ))
+            })
+            .unwrap();
+        let err = handle.join().unwrap().unwrap_err();
+        assert!(
+            err.to_string().contains("delegation too deep"),
+            "expected a clean delegation trap, got: {err}"
+        );
+    }
+
+    #[test]
+    fn self_init_outside_an_initializer_is_rejected() {
+        let err = run(concat!(
+            "class C {\n",
+            "  var x = 1\n",
+            "  func reset() { self.init() }\n",
+            "}\n",
+            "C().reset()\n",
+        ))
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("inside an initializer"),
+            "expected an initializer-context error, got: {err}"
         );
     }
 

@@ -172,8 +172,8 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `final` / `override` semantics | ✅ | ★★ | R3 |
 | [x] | Dynamic dispatch (vtables) | ✅ | ★★★ | R3 |
 | [x] | `super.` calls | ✅ | ★★ | R3 |
-| [~] | Designated / convenience initializers | ✅ | ★★★ | R3 |
-| [~] | Initializer delegation + 2-phase init | ✅ | ★★★★ | R3 |
+| [x] | Designated / convenience initializers (incl. `override convenience`, label-selected overloads. Inherited inits resolve by label-matching up the chain — more permissive than Swift's inheritance rule, so an ancestor designated init Swift would not inherit can run and leave defaultless subclass fields nil) | ✅ | ★★★ | R3 |
+| [x] | Initializer delegation + 2-phase init (`self.init` across the chain for classes; struct delegation rebuilds + rebinds `self`; failable delegation propagates. 2-phase *ordering rules* — e.g. reading `self` before `super.init` — are not statically diagnosed) | ✅ | ★★★★ | R3 |
 | [x] | `required` initializers | ✅ | ★★ | R3 |
 | [x] | Failable initializers `init?` / `init!` | ✅ | ★★ | R3 |
 | [x] | `weak` references (zeroing side table) | ✅ | ★★★ | R3 |
@@ -299,7 +299,7 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 | [x] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
 | [~] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
 | [x] | `@MainActor` / global actors (+ `MainActor.run`) | ✅ | ★★★★ | R6+ |
-| [~] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
+| [x] | `nonisolated` / `isolated` params (incl. `nonisolated(unsafe)`; accepted + parsed — isolation is semantically trivial on the single-threaded cooperative executor, ADR-0005) | ✅ | ★★★ | R6+ |
 | [~] | `Sendable` checking | ✅ | ★★★ | R6+ |
 | [x] | `AsyncSequence` / `for [try] await` (+ `AsyncStream`, `makeStream`, algorithms) | ✅ | ★★★★ | R6+ |
 | [x] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |

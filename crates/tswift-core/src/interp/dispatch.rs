@@ -997,6 +997,56 @@ impl<'w> Interpreter<'w> {
             return self.dispatch_class_method(this, &start, &method, args);
         }
 
+        // `self.init(args)`: initializer delegation — a convenience init
+        // delegating across to a designated/sibling initializer (classes), or
+        // an init delegating to another overload (structs, where it rebuilds
+        // the value and rebinds `self`).
+        if base.kind() == NodeKind::IdentExpr
+            && base.text().as_deref() == Some("self")
+            && method == "init"
+        {
+            // Delegation is only legal while an initializer body is running;
+            // Swift rejects `self.init` in ordinary methods at compile time.
+            if self.init_ctx == 0 {
+                return Err(EvalError::Unsupported(
+                    "`self.init` can only be used inside an initializer".into(),
+                )
+                .into());
+            }
+            if let Some(this) = self.env.get("self") {
+                match &this {
+                    SwiftValue::Object(obj) => {
+                        let cls = obj.borrow().class_name.clone();
+                        let args = self.eval_args(arg_nodes)?;
+                        self.run_class_init(this.clone(), &cls, args)?;
+                        return Ok(SwiftValue::Void);
+                    }
+                    SwiftValue::Struct(s) => {
+                        let tn = s.type_name.clone();
+                        let args = self.eval_args(arg_nodes)?;
+                        let simple: Vec<(Option<String>, SwiftValue)> = args
+                            .iter()
+                            .map(|a| (a.label.clone(), a.value.clone()))
+                            .collect();
+                        let rebuilt = self.instantiate_struct(&tn, &simple)?;
+                        // A failed failable delegate (`self.init?(...)` returned
+                        // nil) fails the delegating initializer too.
+                        if matches!(rebuilt, SwiftValue::Nil) {
+                            return Err(Signal::Return(SwiftValue::Nil));
+                        }
+                        if self.env.assign("self", rebuilt).is_err() {
+                            return Err(EvalError::Unsupported(
+                                "`self.init` outside an initializer".into(),
+                            )
+                            .into());
+                        }
+                        return Ok(SwiftValue::Void);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // `Task.*` concurrency entry points (ADR-0005).
         if let Some(result) = self.try_task_type_method(&base, &method, arg_nodes)? {
             return Ok(result);
@@ -1199,7 +1249,9 @@ impl<'w> Interpreter<'w> {
         Ok(None)
     }
 
-    /// Run the initializer declared at or above `start_class` for `this`.
+    /// Run the initializer declared at or above `start_class` for `this`,
+    /// selecting among overloads by the call's argument labels. Used for both
+    /// `super.init(...)` chaining and `self.init(...)` delegation.
     fn run_class_init(
         &mut self,
         this: SwiftValue,
@@ -1208,20 +1260,40 @@ impl<'w> Interpreter<'w> {
     ) -> Result<(), Signal> {
         let mut chain = self.class_chain(start_class);
         chain.reverse(); // most-derived (start) first
-        let owner = chain
-            .into_iter()
-            .find(|c| self.types.class_def(c).unwrap().init.is_some());
-        let Some(owner) = owner else {
-            return Ok(()); // no explicit init to run
+        // Prefer the closest class whose declared initializers label-match the
+        // call — this also finds an *inherited* initializer when the subclass
+        // declares its own with different labels.
+        let selected = chain.iter().find_map(|c| {
+            let def = self.types.class_def(c)?;
+            select_labeled_overload(&def.init_overloads, &args)
+                .map(|m| (c.clone(), clone_params(&m.params), m.body))
+        });
+        let (owner, params, body) = match selected {
+            Some(t) => t,
+            None => {
+                let Some(owner) = chain
+                    .into_iter()
+                    .find(|c| self.types.class_def(c).unwrap().init.is_some())
+                else {
+                    return Ok(()); // no explicit init to run
+                };
+                let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
+                (owner, clone_params(&m.params), m.body)
+            }
         };
-        let (params, body) = {
-            let m = self.types.class_def(&owner).unwrap().init.as_ref().unwrap();
-            (clone_params(&m.params), m.body)
-        };
+        // Depth-guarded: `self.init` delegation re-enters here, and a
+        // self-recursive delegate must trap instead of overflowing the native
+        // stack.
+        self.depth += 1;
+        if self.depth > MAX_CALL_DEPTH {
+            self.depth -= 1;
+            return Err(trap("stack overflow: initializer delegation too deep".into()));
+        }
         self.class_ctx.push(owner);
         let saved_env = self.env.enter_isolated();
         self.env.declare("self", this, false);
         let bound = self.bind_params(&params, args);
+        self.init_ctx += 1;
         let result = match bound {
             Ok(_) => match body {
                 Some(b) => self.eval(&b),
@@ -1229,8 +1301,10 @@ impl<'w> Interpreter<'w> {
             },
             Err(e) => Err(e),
         };
+        self.init_ctx -= 1;
         self.env.restore(saved_env);
         self.class_ctx.pop();
+        self.depth -= 1;
         match result {
             // A failing `super.init?` (`return nil`) must propagate so the
             // calling subclass initializer also fails, rather than producing a
