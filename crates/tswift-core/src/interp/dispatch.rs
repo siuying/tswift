@@ -960,33 +960,15 @@ impl<'w> Interpreter<'w> {
         }
 
         // Class instance: dynamic dispatch from the runtime class.
-        if let SwiftValue::Object(obj) = &base_value {
-            let class_name = obj.borrow().class_name.clone();
-            let params = self.user_method_params(&class_name, &method);
-            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
-            return self.dispatch_class_method(base_value.clone(), &class_name, &method, args);
+        if let Some(v) = self.try_class_instance_method(&base_value, &method, arg_nodes)? {
+            return Ok(v);
         }
 
-        // User extension method on a builtin type (`extension Int { … }`).
-        // User declarations are consulted before the stdlib seam so a program's
-        // extension can shadow an otherwise-available intrinsic/algorithm.
-        let builtin_name = base_value.type_name();
-        if self.types.has_builtin_ext_method(&builtin_name, &method) {
-            let params = self
-                .types
-                .builtin_ext_method(&builtin_name, &method)
-                .map(|def| clone_params(&def.params));
-            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
-            let place = self.resolve_place(&base);
-            if let Some(result) = self.call_builtin_ext_method(
-                base_value.clone(),
-                &builtin_name,
-                &method,
-                args,
-                place,
-            ) {
-                return result;
-            }
+        // User extension method on a builtin type (`extension Int { … }`),
+        // consulted before the stdlib seam so a program's extension can shadow
+        // an otherwise-available intrinsic/algorithm.
+        if let Some(v) = self.try_builtin_ext_method(&base_value, &base, &method, arg_nodes)? {
+            return Ok(v);
         }
 
         // Builtin-receiver method layer: label-aware overloads, type-specific
@@ -997,17 +979,102 @@ impl<'w> Interpreter<'w> {
         }
 
         // `Result.get()`: unwrap success, or throw the failure error.
-        if let SwiftValue::Enum(e) = &base_value {
+        if let Some(v) = self.try_result_get(&base_value, &method)? {
+            return Ok(v);
+        }
+
+        // User struct/enum method, then the generic struct-method fallback
+        // (SwiftUI view modifiers) dispatched on any struct receiver by name.
+        // `base_value` is moved in (not cloned) so a mutating method sees a
+        // uniquely-referenced receiver — the copy-on-write / `make_mut` and
+        // `isKnownUniquelyReferenced` semantics depend on the strong count. The
+        // error name is captured first since the value is consumed on a miss.
+        let builtin_name = base_value.type_name();
+        if let Some(v) = self.try_struct_receiver_method(base_value, &base, &method, arg_nodes)? {
+            return Ok(v);
+        }
+
+        Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
+    }
+
+    /// Dispatch a method on a class instance (`SwiftValue::Object`) dynamically
+    /// from its runtime class. Returns `Ok(None)` when `base_value` is not an
+    /// object.
+    fn try_class_instance_method(
+        &mut self,
+        base_value: &SwiftValue,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if let SwiftValue::Object(obj) = base_value {
+            let class_name = obj.borrow().class_name.clone();
+            let params = self.user_method_params(&class_name, method);
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            return self
+                .dispatch_class_method(base_value.clone(), &class_name, method, args)
+                .map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Dispatch a user extension method declared on a builtin type
+    /// (`extension Int { … }`). Returns `Ok(None)` when no such extension member
+    /// matches so the stdlib seam is consulted next.
+    fn try_builtin_ext_method(
+        &mut self,
+        base_value: &SwiftValue,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let builtin_name = base_value.type_name();
+        if self.types.has_builtin_ext_method(&builtin_name, method) {
+            let params = self
+                .types
+                .builtin_ext_method(&builtin_name, method)
+                .map(|def| clone_params(&def.params));
+            let args = self.eval_args_with(arg_nodes, params.as_deref())?;
+            let place = self.resolve_place(base);
+            if let Some(result) =
+                self.call_builtin_ext_method(base_value.clone(), &builtin_name, method, args, place)
+            {
+                return result.map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    /// `Result.get()`: unwrap a `.success` payload, or throw the `.failure`
+    /// error. Returns `Ok(None)` when `base_value` is not a `Result` `.get()`.
+    fn try_result_get(
+        &self,
+        base_value: &SwiftValue,
+        method: &str,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        if let SwiftValue::Enum(e) = base_value {
             if e.type_name == "Result" && method == "get" {
                 return match e.case.as_str() {
-                    "success" => Ok(e.payload.first().cloned().unwrap_or(SwiftValue::Void)),
+                    "success" => Ok(Some(e.payload.first().cloned().unwrap_or(SwiftValue::Void))),
                     _ => Err(Signal::Throw(
                         e.payload.first().cloned().unwrap_or(SwiftValue::Nil),
                     )),
                 };
             }
         }
+        Ok(None)
+    }
 
+    /// Dispatch a method on a struct/enum receiver: a user-declared method
+    /// first, then the generic struct-method fallback (the SwiftUI view-modifier
+    /// seam) dispatched on any struct receiver by name. Returns `Ok(None)` when
+    /// neither matches, leaving the caller to report an unsupported method.
+    fn try_struct_receiver_method(
+        &mut self,
+        base_value: SwiftValue,
+        base: &Node<'static>,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
         let type_name = match &base_value {
             SwiftValue::Struct(o) => Some(o.type_name.clone()),
             SwiftValue::Enum(e) => Some(e.type_name.clone()),
@@ -1015,32 +1082,35 @@ impl<'w> Interpreter<'w> {
         };
         let method_params = type_name
             .as_ref()
-            .and_then(|tn| self.user_method_params(tn, &method))
+            .and_then(|tn| self.user_method_params(tn, method))
             .or_else(|| {
                 self.globals
-                    .struct_method(&method)
+                    .struct_method(method)
                     .and_then(|e| e.params.as_ref())
                     .map(|p| clone_params(p))
             });
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
         if let Some(type_name) = type_name {
-            if self.type_has_method(&type_name, &method) {
-                let place = self.resolve_place(&base);
-                return self.call_struct_method(base_value, &type_name, &method, args, place);
+            if self.type_has_method(&type_name, method) {
+                let place = self.resolve_place(base);
+                return self
+                    .call_struct_method(base_value, &type_name, method, args, place)
+                    .map(Some);
             }
         }
 
         // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
         // any struct receiver by name, after user methods and builtin receivers.
         if matches!(base_value, SwiftValue::Struct(_)) {
-            if let Some(func) = self.globals.struct_method(&method).map(|e| e.f) {
+            if let Some(func) = self.globals.struct_method(method).map(|e| e.f) {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
-                return func(self, base_value, labeled).map_err(Self::std_error_to_signal);
+                return func(self, base_value, labeled)
+                    .map(Some)
+                    .map_err(Self::std_error_to_signal);
             }
         }
 
-        let builtin_name = base_value.type_name();
-        Err(EvalError::Unsupported(format!("method .{method}() on {builtin_name}")).into())
+        Ok(None)
     }
 
     /// Run the initializer declared at or above `start_class` for `this`.
