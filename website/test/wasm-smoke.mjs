@@ -237,6 +237,40 @@ for (const [label, code] of Object.entries(TEXT_PRESETS)) {
   });
 }
 
+// 4b. Swift Concurrency through the shipped binary. A stale wasm (built before
+//     PR #239 landed AsyncStream/TaskGroup/async-let) compiles fine but traps
+//     at runtime with `unknown function: AsyncStream` — this asserts the served
+//     binary actually carries the concurrency runtime, not just the source tree.
+check('AsyncStream program runs and produces the expected output', () => {
+  const src = [
+    'func run() async {',
+    '    let stream = AsyncStream(Int.self) { cont in',
+    '        for i in 1...3 { cont.yield(i) }',
+    '        cont.finish()',
+    '    }',
+    '    var sum = 0',
+    '    for await x in stream { sum += x }',
+    '    print("sum \\(sum)")',
+    '    let deferred = AsyncStream(Int.self) { cont in',
+    '        Task {',
+    '            cont.yield(10)',
+    '            cont.yield(20)',
+    '            cont.finish()',
+    '        }',
+    '    }',
+    '    var collected: [Int] = []',
+    '    for await x in deferred { collected.append(x) }',
+    '    print("collected \\(collected)")',
+    '}',
+    'run()',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'sum 6\ncollected [10, 20]\n',
+    `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
 // 5. The SwiftUI playground presets (mirrored from FullPlayground.astro) all
 //    compile + render a tree.
 const SWIFTUI_PRESETS = {
