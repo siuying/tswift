@@ -138,7 +138,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | Type properties `static`/`class` | ✅ | ★★ | R2 |
 | [x] | Property wrappers `@propertyWrapper` | ✅ | ★★★ | R5 |
 | [x] | Projected values `$wrapper` | ⚠️ | ★★★ | R5 |
-| [ ] | Global & local variables (lazy globals) | ✅ | ★★ | R2 |
+| [x] | Global & local variables (computed get/set + willSet/didSet on globals and locals; top-level code runs sequentially so library-mode lazy-global init does not apply) | ✅ | ★★ | R2 |
 
 ### 2c. Optionals
 | ✓ | Feature | FE | RT | Phase |

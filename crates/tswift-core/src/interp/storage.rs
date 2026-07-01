@@ -923,6 +923,9 @@ impl<'w> Interpreter<'w> {
             .get(&place.root)
             .or_else(|| self.statics.get(&place.root).cloned())
             .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
+        if let SwiftValue::AccessorVar(idx) = value {
+            value = self.read_accessor_var(idx)?;
+        }
         for field in &place.path {
             value = self.read_struct_member(&value, field)?;
         }
@@ -1535,6 +1538,17 @@ impl<'w> Interpreter<'w> {
     /// Write `value` to the storage named by `place`, applying copy-on-write and
     /// any property observers at the leaf.
     pub(super) fn write_place(&mut self, place: &Place, value: SwiftValue) -> Result<(), Signal> {
+        // A variable with accessor bodies (computed or observed global/local):
+        // writes run its setter/observers. A nested write reads the current
+        // value through the accessors, updates the field path, writes back.
+        if let Some(SwiftValue::AccessorVar(idx)) = self.env.get(&place.root) {
+            if place.path.is_empty() {
+                return self.write_accessor_var(idx, value);
+            }
+            let current = self.read_accessor_var(idx)?;
+            let updated = self.set_in(current, &place.path, value)?;
+            return self.write_accessor_var(idx, updated);
+        }
         if place.path.is_empty() {
             // A static-property place is rooted at its `Type.name` key.
             if self.env.get(&place.root).is_none() && self.statics.contains_key(&place.root) {

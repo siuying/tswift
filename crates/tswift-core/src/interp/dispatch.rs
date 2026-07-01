@@ -521,8 +521,13 @@ impl<'w> Interpreter<'w> {
                     return self.dynamic_call(value, args);
                 }
             }
-            // A bound function or closure value (incl. recursion).
-            match self.env.get(&name) {
+            // A bound function or closure value (incl. recursion). A computed
+            // variable holding a function value runs its getter first.
+            let callee_binding = match self.env.get(&name) {
+                Some(SwiftValue::AccessorVar(idx)) => Some(self.read_accessor_var(idx)?),
+                other => other,
+            };
+            match callee_binding {
                 Some(SwiftValue::Function(id)) => return self.call_function(id, args),
                 Some(SwiftValue::Closure(id)) => {
                     return self.call_closure_with_args(id, args);
@@ -1385,10 +1390,18 @@ impl<'w> Interpreter<'w> {
             // Only a *root* stored binding is vacated: vacating a nested member
             // (`outer.buffer.append(...)`) would route the placeholder write
             // through `willSet`/`didSet`/computed setters/property wrappers,
-            // which must not observe the transient. Nested receivers keep the
-            // pre-existing clone-and-write-back behaviour.
+            // which must not observe the transient. Nested receivers — and
+            // roots that are themselves accessor-backed variables (computed or
+            // observed globals/locals) — keep the pre-existing
+            // clone-and-write-back behaviour.
             match &base_place {
-                Some(place) if place.path.is_empty() => {
+                Some(place)
+                    if place.path.is_empty()
+                        && !matches!(
+                            self.env.get(&place.root),
+                            Some(SwiftValue::AccessorVar(_))
+                        ) =>
+                {
                     drop(this);
                     let mut taken = self.read_place(place)?;
                     self.write_place(place, SwiftValue::Void)?;

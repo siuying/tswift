@@ -696,6 +696,43 @@ struct Place {
     path: Vec<String>,
 }
 
+/// An integer value written into a scalar-annotated context re-types to match:
+/// `Double`/`Float` makes it floating point (`let r: Double = 5`); an explicit
+/// integer width re-types it. `None` when no coercion applies.
+fn coerce_int_to_type_name(ty: &str, value: &SwiftValue) -> Option<SwiftValue> {
+    let SwiftValue::Int(i) = value else {
+        return None;
+    };
+    if matches!(ty, "Double" | "Float") {
+        return Some(SwiftValue::Double(i.raw as f64));
+    }
+    IntWidth::from_type_name(ty).map(|w| SwiftValue::Int(IntValue::new(i.raw, w)))
+}
+
+/// A global/local variable declared with accessor bodies (TSPL "Global and
+/// Local Variables"): either computed (`get`/`set`) or stored with observers
+/// (`willSet`/`didSet`). Accessor bodies are stored as closures capturing the
+/// declaration's scope chain; the variable's environment binding holds a
+/// `SwiftValue::AccessorVar` marker pointing at this slot.
+struct AccessorVarSlot {
+    /// The variable's name, for diagnostics.
+    name: String,
+    /// The declared type annotation, used to coerce written integer values
+    /// into a floating/width-specific scalar (`var f: Double { set }`).
+    ty: Option<String>,
+    /// Computed getter closure id.
+    getter: Option<usize>,
+    /// Computed setter closure id; its single parameter is the written value.
+    setter: Option<usize>,
+    /// `willSet` observer closure id; its parameter is the incoming value.
+    will_set: Option<usize>,
+    /// `didSet` observer closure id; its parameter is the replaced value.
+    did_set: Option<usize>,
+    /// Backing storage for an observed stored variable (`None` when computed).
+    /// Shared so closures capturing the scope observe live updates.
+    storage: Option<Rc<RefCell<SwiftValue>>>,
+}
+
 /// A single evaluated call argument: its label, value, and (for `inout`) the
 /// caller location to write back to.
 struct CallArg {
@@ -775,6 +812,9 @@ pub struct Interpreter<'w> {
     /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
     types: TypeTable,
     closures: Vec<(ClosureDef, Vec<Scope>)>,
+    /// Global/local variables with accessor bodies, indexed by
+    /// `SwiftValue::AccessorVar` markers held in environment bindings.
+    accessor_vars: Vec<AccessorVarSlot>,
     statics: HashMap<String, SwiftValue>,
     /// Stack of type names for the `static` methods currently executing, so an
     /// unqualified reference inside a `static func` resolves to a type-level
@@ -860,6 +900,7 @@ impl<'w> Interpreter<'w> {
             funcs: Vec::new(),
             types: TypeTable::default(),
             closures: Vec::new(),
+            accessor_vars: Vec::new(),
             statics: HashMap::new(),
             static_ctx: Vec::new(),
             class_ctx: Vec::new(),
@@ -1421,6 +1462,15 @@ impl<'w> Interpreter<'w> {
             .decl_name()
             .ok_or_else(|| EvalError::Unsupported("declaration without a name".into()))?;
 
+        // A variable with accessor bodies — computed `get`/`set` or observers
+        // `willSet`/`didSet` — routes reads and writes through those bodies
+        // (TSPL: computed properties and observers are also available to
+        // global and local variables).
+        let acc = node.var_accessors();
+        if acc.is_computed || acc.will_set_body.is_some() || acc.did_set_body.is_some() {
+            return self.declare_accessor_var(&name, &acc, init_expr, node);
+        }
+
         // `async let name = expr` spawns a child task; the binding holds its
         // handle and `await name` later retrieves the result (ADR-0005).
         if node.is_async_let() {
@@ -1441,6 +1491,143 @@ impl<'w> Interpreter<'w> {
         };
         self.env.declare(&name, value, mutable);
         Ok(SwiftValue::Void)
+    }
+
+    /// Declare a global/local variable whose reads/writes run accessor bodies:
+    /// computed (`get`/`set`) or stored with observers (`willSet`/`didSet`).
+    /// Each body becomes a closure capturing the declaration's scope chain, so
+    /// it sees surrounding variables live (and, for observers, the variable
+    /// itself through its marker binding).
+    fn declare_accessor_var(
+        &mut self,
+        name: &str,
+        acc: &tswift_frontend::VarAccessors<'static>,
+        init_expr: Option<Node<'static>>,
+        node: &Node<'static>,
+    ) -> Eval {
+        let getter = acc.getter_body.map(|b| self.accessor_closure(None, &b));
+        let setter = acc
+            .setter_body
+            .map(|b| self.accessor_closure(Some(acc.setter_param.as_deref().unwrap_or("newValue")), &b));
+        let will_set = acc
+            .will_set_body
+            .map(|b| self.accessor_closure(Some(acc.will_set_param.as_deref().unwrap_or("newValue")), &b));
+        let did_set = acc
+            .did_set_body
+            .map(|b| self.accessor_closure(Some(acc.did_set_param.as_deref().unwrap_or("oldValue")), &b));
+
+        // An observed stored variable evaluates its initializer up front;
+        // observers do not fire for the initial value (TSPL). A computed
+        // variable has no storage.
+        let storage = if acc.is_computed {
+            None
+        } else {
+            let value = match init_expr {
+                Some(init) => {
+                    let v = self.eval(&init)?;
+                    let v = self.coerce_to_literal_type(node, v)?;
+                    self.coerce_to_decl_type(node, v)
+                }
+                None => SwiftValue::Void,
+            };
+            Some(Rc::new(RefCell::new(value)))
+        };
+
+        let ty = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .and_then(|c| c.text());
+        let idx = self.accessor_vars.len();
+        self.accessor_vars.push(AccessorVarSlot {
+            name: name.to_string(),
+            ty,
+            getter,
+            setter,
+            will_set,
+            did_set,
+            storage,
+        });
+        self.env
+            .declare(name, SwiftValue::AccessorVar(idx), true);
+        Ok(SwiftValue::Void)
+    }
+
+    /// Build a closure for an accessor body: zero parameters for a getter, one
+    /// (the accessor's named or implicit parameter) otherwise.
+    fn accessor_closure(&mut self, param: Option<&str>, body: &Node<'static>) -> usize {
+        let params = param
+            .map(|p| {
+                vec![Param {
+                    label: None,
+                    name: p.to_string(),
+                    ty: None,
+                    variadic: false,
+                    inout_: false,
+                    autoclosure: false,
+                    default: None,
+                }]
+            })
+            .unwrap_or_default();
+        let body = expand_directive_list(body.children().collect());
+        let id = self.closures.len();
+        self.closures
+            .push((ClosureDef::User { params, body }, self.env.capture()));
+        id
+    }
+
+    /// Read a variable bound to an accessor slot: run the computed getter, or
+    /// return the observed variable's backing storage.
+    fn read_accessor_var(&mut self, idx: usize) -> Eval {
+        if let Some(g) = self.accessor_vars[idx].getter {
+            return self.call_closure(g, Vec::new());
+        }
+        if let Some(st) = &self.accessor_vars[idx].storage {
+            return Ok(st.borrow().clone());
+        }
+        let name = self.accessor_vars[idx].name.clone();
+        Err(EvalError::Unsupported(format!("variable `{name}` has no getter")).into())
+    }
+
+    /// Write a variable bound to an accessor slot: run the computed setter, or
+    /// update the observed variable's storage firing `willSet`/`didSet`.
+    fn write_accessor_var(&mut self, idx: usize, value: SwiftValue) -> Result<(), Signal> {
+        let slot = &self.accessor_vars[idx];
+        let (setter, will_set, did_set, storage) = (
+            slot.setter,
+            slot.will_set,
+            slot.did_set,
+            slot.storage.clone(),
+        );
+        // The written value adopts the variable's annotated scalar type
+        // (`fahrenheit = 212` passes `newValue` as 212.0 when `: Double`).
+        let value = match &slot.ty {
+            Some(ty) => coerce_int_to_type_name(ty, &value).unwrap_or(value),
+            None => value,
+        };
+        if let Some(st) = storage {
+            let old = st.borrow().clone();
+            if let Some(w) = will_set {
+                self.call_closure(w, vec![value.clone()])?;
+            }
+            *st.borrow_mut() = value;
+            if let Some(d) = did_set {
+                self.call_closure(d, vec![old])?;
+            }
+            return Ok(());
+        }
+        match setter {
+            Some(s) => {
+                self.call_closure(s, vec![value])?;
+                Ok(())
+            }
+            None => {
+                let name = self.accessor_vars[idx].name.clone();
+                Err(EvalError::Unsupported(format!(
+                    "cannot assign to `{name}`: it is a get-only computed variable"
+                ))
+                .into())
+            }
+        }
     }
 
     /// If the declaration is annotated with a user type that conforms to an
@@ -1611,19 +1798,13 @@ impl<'w> Interpreter<'w> {
             }
             return value;
         }
-        let SwiftValue::Int(i) = &value else {
-            return value;
-        };
         for child in node.children() {
             if child.kind() == NodeKind::TypeRef {
-                let ty = child.text();
-                // An integer literal in a `Double`/`Float` context coerces to
-                // floating point (`let r: Double = 5`).
-                if matches!(ty.as_deref(), Some("Double") | Some("Float")) {
-                    return SwiftValue::Double(i.raw as f64);
-                }
-                if let Some(w) = ty.as_deref().and_then(IntWidth::from_type_name) {
-                    return SwiftValue::Int(IntValue::new(i.raw, w));
+                if let Some(coerced) = child
+                    .text()
+                    .and_then(|ty| coerce_int_to_type_name(&ty, &value))
+                {
+                    return coerced;
                 }
             }
         }
@@ -1640,6 +1821,9 @@ impl<'w> Interpreter<'w> {
         // then the enclosing type's members (which shadow module globals),
         // then the module/global scope.
         if let Some(v) = self.env.get_local(&name) {
+            if let SwiftValue::AccessorVar(idx) = v {
+                return self.read_accessor_var(idx);
+            }
             return Ok(v);
         }
         if let Some(v) = self.implicit_self_member(&name)? {
@@ -1656,6 +1840,9 @@ impl<'w> Interpreter<'w> {
             }
         }
         if let Some(v) = self.env.get_global(&name) {
+            if let SwiftValue::AccessorVar(idx) = v {
+                return self.read_accessor_var(idx);
+            }
             return Ok(v);
         }
         // A bare operator used as a value (`reduce(0, +)`, `sorted(by: >)`):
@@ -2233,7 +2420,15 @@ impl<'w> Interpreter<'w> {
                     if let Some(name) = child.text() {
                         let v = match child.first_child() {
                             Some(expr) => self.eval(&expr)?,
-                            None => self.env.get(&name).unwrap_or(SwiftValue::Nil),
+                            // A capture list snapshots the *current value*; an
+                            // accessor-backed variable snapshots via its getter
+                            // or storage, never the marker itself.
+                            None => match self.env.get(&name) {
+                                Some(SwiftValue::AccessorVar(idx)) => {
+                                    self.read_accessor_var(idx)?
+                                }
+                                other => other.unwrap_or(SwiftValue::Nil),
+                            },
                         };
                         captured_overrides.push((name, v));
                     }

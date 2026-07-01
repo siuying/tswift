@@ -207,6 +207,11 @@ pub enum SwiftValue {
     /// A metatype value, e.g. `Int.self` or `type(of: x)`. Carries the spelled
     /// type name; printing it renders the bare type name like Swift.
     Metatype(String),
+    /// A global/local variable with accessor bodies (computed `get`/`set` or
+    /// `willSet`/`didSet` observers): an index into the interpreter's
+    /// accessor-variable table. The environment binding holds this marker;
+    /// reads and writes route through the accessors and never expose it.
+    AccessorVar(usize),
 }
 
 /// The storage of a class instance.
@@ -320,6 +325,7 @@ impl SwiftValue {
             SwiftValue::StreamContinuation(_) => "AsyncStream.Continuation".into(),
             SwiftValue::AsyncStreamHandle(_) => "AsyncStream".into(),
             SwiftValue::Metatype(name) => format!("{name}.Type"),
+            SwiftValue::AccessorVar(_) => "variable".into(),
         }
     }
 }
@@ -467,6 +473,7 @@ impl fmt::Display for SwiftValue {
             SwiftValue::StreamContinuation(_) => write!(f, "AsyncStream.Continuation"),
             SwiftValue::AsyncStreamHandle(_) => write!(f, "AsyncStream"),
             SwiftValue::Metatype(name) => write!(f, "{name}"),
+            SwiftValue::AccessorVar(_) => write!(f, "(Variable)"),
             SwiftValue::Enum(e) => {
                 write!(f, "{}", e.case)?;
                 if !e.payload.is_empty() {
