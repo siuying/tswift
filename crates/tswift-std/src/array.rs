@@ -46,6 +46,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     label_aware(interp, "insert", insert_labeled);
     mutating(interp, "remove", remove_at);
     mutating(interp, "removeLast", remove_last);
+    mutating(interp, "popLast", pop_last);
+    mutating(interp, "popFirst", pop_first);
     mutating(interp, "removeFirst", remove_first);
     mutating(interp, "removeAll", remove_all);
     mutating(interp, "removeSubrange", remove_subrange);
@@ -322,6 +324,38 @@ fn remove_last(
         .ok_or_else(|| StdError::Error(EvalError::Trap("removeLast on empty array".into())))?;
     Ok(Outcome {
         result: removed,
+        receiver: SwiftValue::Array(v),
+    })
+}
+
+/// `Array.popLast()` — remove and return the last element as `Optional`, or `nil` if empty.
+fn pop_last(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut v = items(recv)?;
+    let result = Rc::make_mut(&mut v).pop().unwrap_or(SwiftValue::Nil);
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Array(v),
+    })
+}
+
+/// `Array.popFirst()` — remove and return the first element as `Optional`, or `nil` if empty.
+fn pop_first(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut v = items(recv)?;
+    let result = if v.is_empty() {
+        SwiftValue::Nil
+    } else {
+        Rc::make_mut(&mut v).remove(0)
+    };
+    Ok(Outcome {
+        result,
         receiver: SwiftValue::Array(v),
     })
 }

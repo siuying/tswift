@@ -73,7 +73,42 @@ check('missing View returns a structured error (text-mode fallback)', () => {
   assert(r.root == null, `expected root=null, got ${r.root}`);
 });
 
-// 4. The SwiftUI playground presets (mirrored from FullPlayground.astro) all
+// 4. The text-mode (runSwift) playground presets.
+const { runSwift } = await import(new URL('tswift_wasm.js', wasmDir));
+const TEXT_PRESETS = {
+  'Hello World': `let language = "Swift"\nlet version = 6\nprint("Hello from \\(language) \\(version)! 👋")`,
+  'Fibonacci': `func fib(_ n: Int) -> Int {\n  if n < 2 { return n }\n  return fib(n - 1) + fib(n - 2)\n}\nprint(fib(10))`,
+  'Closures & HOF': `let nums = [1,2,3,4,5]\nprint(nums.map { $0 * 2 })\nprint(nums.filter { $0 % 2 == 0 })\nprint(nums.reduce(0, +))`,
+  'Generics / popLast': [
+    'func maxOf<T: Comparable>(_ a: T, _ b: T) -> T { a > b ? a : b }',
+    'print(maxOf(3, 7))',
+    'struct Stack<Element> {',
+    '    private var items: [Element] = []',
+    '    mutating func push(_ item: Element) { items.append(item) }',
+    '    mutating func pop() -> Element? { items.popLast() }',
+    '    var top: Element? { items.last }',
+    '}',
+    'var s = Stack<Int>()',
+    's.push(1); s.push(2); s.push(3)',
+    'print(s.top!)',
+    'while let x = s.pop() { print(x) }',
+  ].join('\n'),
+  'Error Handling': [
+    'enum E: Error { case bad }',
+    'func f(_ x: Int) throws -> Int { guard x > 0 else { throw E.bad }; return x * 2 }',
+    'do { print(try f(3)) } catch { print("err") }',
+    'do { print(try f(-1)) } catch { print("caught") }',
+  ].join('\n'),
+};
+for (const [label, code] of Object.entries(TEXT_PRESETS)) {
+  check(`text preset "${label}" runs ok`, () => {
+    const r = JSON.parse(runSwift(code));
+    assert(r.run?.ok === true,
+      `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  });
+}
+
+// 5. The SwiftUI playground presets (mirrored from FullPlayground.astro) all
 //    compile + render a tree.
 const SWIFTUI_PRESETS = {
   Toggle: [
