@@ -2687,8 +2687,9 @@ impl<'a> Parser<'a> {
     /// access (`Type<Args>(…)` / `Type<Args>.member`), return the token index
     /// just past the closing `>`. Swift's heuristic: the angle group must be
     /// balanced, contain only type-like tokens, and be immediately followed by
-    /// `(` (same line) or `.`. This disambiguates specialization from the
-    /// comparison chain `a < b > c`.
+    /// `(` (same line), `.`, or a same-line trailing-closure `{` (outside a
+    /// control-flow head). This disambiguates specialization from the comparison
+    /// chain `a < b > c` — which never has a matching `>` before a `{`/`(`.
     fn generic_call_args(&self) -> Option<usize> {
         let first = self.tokens.get(self.pos)?;
         if first.kind != TokenKind::Oper || !first.text.starts_with('<') {
@@ -2741,6 +2742,15 @@ impl<'a> Parser<'a> {
         let next = self.tokens.get(i)?;
         match next.kind {
             TokenKind::LParen if !next.leading_newline => Some(i),
+            // `Type<Args> { }` — a trailing-closure call (e.g. `AsyncStream<Int>
+            // { }`). Suppressed in a control-flow head, where `{` opens a block.
+            TokenKind::LBrace
+                if !next.leading_newline
+                    && !self.no_trailing_closure
+                    && !is_accessor_kw(self.tokens[i + 1].text) =>
+            {
+                Some(i)
+            }
             TokenKind::Dot => Some(i),
             _ => None,
         }
@@ -4338,6 +4348,25 @@ mod tests {
         let for_stmt = stmts[2];
         assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
         assert_eq!(for_stmt.modifiers(), &["async".to_string()]);
+    }
+
+    #[test]
+    fn generic_type_with_trailing_closure_is_a_call() {
+        // `AsyncStream<Int> { … }` is a specialization + trailing-closure call,
+        // not the comparison chain `AsyncStream < Int > { … }`.
+        let ast = ast_of("let s = AsyncStream<Int> { c in c.finish() }");
+        let init = ast
+            .node(ast.root())
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .last()
+            .unwrap();
+        assert_eq!(init.kind(), NodeKind::CallExpr);
+        let callee = init.children().next().unwrap();
+        assert_eq!(callee.kind(), NodeKind::IdentExpr);
+        assert_eq!(callee.text().as_deref(), Some("AsyncStream"));
     }
 
     #[test]
