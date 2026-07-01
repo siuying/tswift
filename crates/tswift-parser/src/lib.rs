@@ -794,11 +794,19 @@ impl<'a> Parser<'a> {
     fn parse_for(&mut self, label: Option<&str>) -> Result<NodeId, ParseError> {
         let kw = self.bump();
         let node = self.ast.add(NodeKind::ForStmt, label, kw.line, kw.col);
-        // `for await x in seq` — asynchronous iteration (await is contextual).
-        let is_await = self.peek().kind == TokenKind::Identifier && self.peek().text == "await";
-        if is_await {
-            self.bump();
-            self.ast.add_modifier(node, "async");
+        // `for [try] [await] x in seq` — asynchronous iteration over an
+        // `AsyncSequence` (`await`, contextual) that may throw (`try`). Swift
+        // spells the effects `for try await`; accept either order defensively.
+        loop {
+            if self.peek().kind == TokenKind::Identifier && self.peek().text == "await" {
+                self.bump();
+                self.ast.add_modifier(node, "async");
+            } else if self.at_keyword("try") {
+                self.bump();
+                self.ast.add_modifier(node, "throws");
+            } else {
+                break;
+            }
         }
         // `for case <pattern> in seq` — pattern-matching iteration.
         let pattern = if self.at_keyword("case") {
@@ -4330,6 +4338,30 @@ mod tests {
         let for_stmt = stmts[2];
         assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
         assert_eq!(for_stmt.modifiers(), &["async".to_string()]);
+    }
+
+    #[test]
+    fn for_try_await_carries_async_and_throws() {
+        // `for try await` over a throwing async sequence carries both effects.
+        let ast = ast_of(
+            "func run() async {\n\
+             for try await x in stream { use(x) }\n\
+             }",
+        );
+        let body = ast
+            .node(ast.root())
+            .children()
+            .next()
+            .unwrap()
+            .children()
+            .find(|c| c.kind() == NodeKind::Block)
+            .unwrap();
+        let for_stmt = body.children().next().unwrap();
+        assert_eq!(for_stmt.kind(), NodeKind::ForStmt);
+        assert_eq!(
+            for_stmt.modifiers(),
+            &["throws".to_string(), "async".to_string()]
+        );
     }
 
     #[test]
