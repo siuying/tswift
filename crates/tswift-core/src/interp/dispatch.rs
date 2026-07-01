@@ -563,7 +563,7 @@ impl<'w> Interpreter<'w> {
             // types with no shadow guard). Each entry returns `None` to fall
             // through to the rest of the ladder.
             if self.is_unshadowed(&name) {
-                if let Some(ctor) = self.builtin_ctors.get(name.as_str()).copied() {
+                if let Some(ctor) = self.builtin_ctors.ctor(&name) {
                     if let Some(v) = ctor(self, &name, &args)? {
                         return Ok(v);
                     }

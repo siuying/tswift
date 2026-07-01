@@ -648,6 +648,23 @@ impl GlobalMembers {
     }
 }
 
+/// The runtime's table of core-internal, value-only builtin constructors —
+/// generic collection ctors (`Array`/`Set`/`Dictionary`/…), scalar conversion
+/// initializers, and the `JSONEncoder`/`JSONDecoder` markers — keyed by global
+/// name. Fixed at construction (no registration seam) and consulted once by
+/// `eval_call`; owning it behind a newtype keeps the raw map off the
+/// interpreter and gives the lookup a named query method.
+#[derive(Default)]
+struct BuiltinCtors {
+    table: HashMap<&'static str, BuiltinCtor>,
+}
+
+impl BuiltinCtors {
+    fn ctor(&self, name: &str) -> Option<BuiltinCtor> {
+        self.table.get(name).copied()
+    }
+}
+
 /// A protocol declaration: its inherited protocols and any default member
 /// implementations supplied through `extension Protocol { … }`.
 struct ProtoDef {
@@ -744,7 +761,7 @@ pub struct Interpreter<'w> {
     /// conversions, JSON coder markers), keyed by global name. Consulted once
     /// in `eval_call`, gated by [`Interpreter::is_unshadowed`], after user-type
     /// and binding dispatch so a same-named user type or binding wins.
-    builtin_ctors: HashMap<&'static str, BuiltinCtor>,
+    builtin_ctors: BuiltinCtors,
     /// Native members keyed by `(builtin receiver, name)` — method intrinsics,
     /// labelled overloads, computed properties, and static methods — behind one
     /// registry seam.
@@ -3551,7 +3568,7 @@ impl<'w> Interpreter<'w> {
     /// once per call in `eval_call`. Each entry arg-dispatches internally and
     /// returns `Ok(None)` when the arguments do not match its initializer, so
     /// the call falls through the rest of the dispatch ladder.
-    fn builtin_ctor_table() -> HashMap<&'static str, BuiltinCtor> {
+    fn builtin_ctor_table() -> BuiltinCtors {
         let mut t: HashMap<&'static str, BuiltinCtor> = HashMap::new();
         // JSON coder markers (value-only opaque structs).
         t.insert("JSONEncoder", Self::ctor_json_coder);
@@ -3569,7 +3586,7 @@ impl<'w> Interpreter<'w> {
         ] {
             t.insert(name, Self::ctor_conversion);
         }
-        t
+        BuiltinCtors { table: t }
     }
 
     /// `JSONEncoder()` / `JSONDecoder()` — opaque value markers carrying only
