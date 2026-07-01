@@ -94,6 +94,8 @@ validate_web_all() {
 
   if [[ -f website/package.json ]]; then
     npm_install_if_needed website
+    section "Web: website smoke test"
+    npm --prefix website test
     section "Web: website build"
     npm --prefix website run build
   fi
@@ -154,6 +156,8 @@ validate_changed() {
     validate_web_canvas
     if (( website )); then
       npm_install_if_needed website
+      section "Web: website smoke test"
+      npm --prefix website test
       section "Web: website build"
       npm --prefix website run build
     fi
