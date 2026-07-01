@@ -82,6 +82,9 @@ pub(super) struct Scheduler {
     group_cancelled: Vec<bool>,
     /// `with*Continuation` slots, one per continuation handed to a body.
     continuations: Vec<ContinuationState>,
+    /// `AsyncStream` buffers, one per stream. `yield(_:)` appends; the enclosing
+    /// `AsyncStream { }` drains the buffer once the builder has run.
+    streams: Vec<Vec<SwiftValue>>,
 }
 
 impl Scheduler {
@@ -207,6 +210,25 @@ impl Scheduler {
         }
     }
 
+    // --- async streams ---
+
+    /// Open a new `AsyncStream` buffer and return its id.
+    fn new_stream(&mut self) -> usize {
+        let sid = self.streams.len();
+        self.streams.push(Vec::new());
+        sid
+    }
+
+    /// Append `value` to stream `sid`'s buffer (`continuation.yield(_:)`).
+    fn stream_yield(&mut self, sid: usize, value: SwiftValue) {
+        self.streams[sid].push(value);
+    }
+
+    /// Remove and return stream `sid`'s buffered elements, in yield order.
+    fn take_stream(&mut self, sid: usize) -> Vec<SwiftValue> {
+        std::mem::take(&mut self.streams[sid])
+    }
+
     // --- continuations ---
 
     /// Open a new `Pending` continuation slot and return its id.
@@ -326,6 +348,7 @@ impl<'w> Interpreter<'w> {
             | "withUnsafeThrowingContinuation" => {
                 self.eval_with_continuation(name, arg_nodes).map(Some)
             }
+            "AsyncStream" | "AsyncThrowingStream" => self.eval_async_stream(arg_nodes).map(Some),
             _ => Ok(None),
         }
     }
@@ -448,6 +471,24 @@ impl<'w> Interpreter<'w> {
                     _ => Ok(None),
                 }
             }
+            SwiftValue::StreamContinuation(sid) => {
+                let sid = *sid;
+                match method {
+                    // `yield(_:)` appends one element; the discardable result
+                    // (`.enqueued` in Swift) is modelled as `Void`.
+                    "yield" => {
+                        let args = self.eval_args(arg_nodes)?;
+                        if let Some(arg) = args.into_iter().next() {
+                            self.sched.stream_yield(sid, arg.value);
+                        }
+                        Ok(Some(SwiftValue::Void))
+                    }
+                    // `finish()` closes the stream; the buffer is drained by the
+                    // enclosing `AsyncStream { }`, so this is a no-op marker.
+                    "finish" => Ok(Some(SwiftValue::Void)),
+                    _ => Ok(None),
+                }
+            }
             SwiftValue::Continuation(cid) => {
                 let cid = *cid;
                 if method != "resume" {
@@ -550,6 +591,25 @@ impl<'w> Interpreter<'w> {
             }
         }
         Ok(None)
+    }
+
+    /// `AsyncStream { continuation in ... }`: hand the builder a stream
+    /// continuation, run it (draining any tasks it spawns), then materialise the
+    /// yielded elements as an array the caller iterates with `for await`. Our
+    /// cooperative executor runs the producer to completion eagerly (ADR-0005),
+    /// so a bounded producer's buffer is fully populated before consumption.
+    fn eval_async_stream(&mut self, arg_nodes: &[Node<'static>]) -> Eval {
+        let body = self.eval_body_closure(arg_nodes)?.ok_or_else(|| {
+            EvalError::Unsupported("AsyncStream without a build closure".into())
+        })?;
+        let sid = self.sched.new_stream();
+        let body_tasks_start = self.sched.task_count();
+        self.call_closure(body, vec![SwiftValue::StreamContinuation(sid)])?;
+        // The builder may hand the continuation to spawned tasks; run them so
+        // their `yield`s land before we read the buffer.
+        self.drive_pending(body_tasks_start, |_| false)?;
+        let items = self.sched.take_stream(sid);
+        Ok(SwiftValue::Array(Rc::new(items)))
     }
 
     /// `await with*Continuation { continuation in ... }`: hand the body a
@@ -766,6 +826,20 @@ mod tests {
         // second consume yields nothing (the caller turns that into a trap).
         assert!(!s.resume_continuation(cid, Ok(SwiftValue::Void)));
         assert!(s.consume_continuation(cid).is_none());
+    }
+
+    /// An `AsyncStream` buffer collects `yield`s in order and is drained once.
+    #[test]
+    fn stream_buffers_yields_in_order_then_drains() {
+        let mut s = Scheduler::default();
+        let sid = s.new_stream();
+        s.stream_yield(sid, SwiftValue::int(1));
+        s.stream_yield(sid, SwiftValue::int(2));
+        assert_eq!(
+            s.take_stream(sid),
+            vec![SwiftValue::int(1), SwiftValue::int(2)]
+        );
+        assert!(s.take_stream(sid).is_empty(), "draining empties the buffer");
     }
 
     /// An unresumed continuation has no outcome to consume.
