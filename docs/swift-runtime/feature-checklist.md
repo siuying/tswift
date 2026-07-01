@@ -292,16 +292,16 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 |---|---|----|----|-------|
 | [x] | `async` functions | ✅ | ★★★★ | R6+ |
 | [x] | `await` expressions | ✅ | ★★★★ | R6+ |
-| [x] | `async let` | ⚠️ | ★★★★ | R6+ |
+| [x] | `async let` (incl. tuple `await (a, b)`) | ✅ | ★★★★ | R6+ |
 | [x] | `Task` / `Task.detached` | ✅(stdlib) | ★★★★ | R6+ |
-| [x] | Task groups (`withTaskGroup`) | ✅(stdlib) | ★★★★ | R6+ |
+| [x] | Task groups (`withTaskGroup` + `next()`) | ✅(stdlib) | ★★★★ | R6+ |
 | [x] | Task cancellation (`cancel()`/`isCancelled`/`Task.isCancelled`/`checkCancellation()`+`CancellationError`, child inheritance) | n/a | ★★★ | R6+ |
 | [x] | `actor` declarations + isolation | ✅ | ★★★★ | R6+ |
 | [~] | Actor reentrancy / serial executor | n/a | ★★★★ | R6+ |
-| [x] | `@MainActor` / global actors | ✅ | ★★★★ | R6+ |
+| [x] | `@MainActor` / global actors (+ `MainActor.run`) | ✅ | ★★★★ | R6+ |
 | [~] | `nonisolated` / `isolated` params | ✅ | ★★★ | R6+ |
 | [~] | `Sendable` checking | ✅ | ★★★ | R6+ |
-| [x] | `AsyncSequence` / `for await` | ⚠️ | ★★★★ | R6+ |
+| [x] | `AsyncSequence` / `for await` (+ `AsyncStream`, algorithms) | ✅ | ★★★★ | R6+ |
 | [x] | Continuations (`withCheckedContinuation`) | n/a | ★★★★ | R6+ |
 | [ ] | Strict concurrency (Swift 6 mode) | ✅ | ★★★ | R6+ |
 
@@ -314,10 +314,20 @@ preemptive interleaving order may differ (documented in ADR-0005).*
 (every value is effectively sendable on one thread), plus
 `withCheckedContinuation`/`withUnsafeContinuation` (and their throwing variants)
 with `resume(returning:)`/`resume(throwing:)`/`resume(with:)`/`resume()`, resumed
-inline or from a spawned `Task` (drained before the slot is read). **Gaps:**
-preemptive ordering / `Task.yield` interleaving (the `corosensei` primitive in
-`suspend.rs` is the migration path) and strict-concurrency diagnostics. See
-ADR-0005 for the fidelity boundary.
+inline or from a spawned `Task` (drained before the slot is read).
+
+**Added since #12:** `TaskGroup.next()` (manual one-at-a-time draining),
+`MainActor.run { }` (main-actor hop, inline on the cooperative executor),
+awaiting a tuple of `async let` bindings (`let (x, y) = await (a, b)`),
+`AsyncStream`/`AsyncThrowingStream` producer/consumer (buffered `yield`/`finish`,
+producer run to completion — inline or from a spawned `Task`), and the
+`AsyncSequence` algorithms `map`/`filter`/`compactMap`/`flatMap`/`reduce`/
+`contains`/`allSatisfy`/`first`/`prefix`/`dropFirst` (materialised eagerly and
+composed via the array machinery). **Gaps:** preemptive ordering / `Task.yield`
+interleaving (the `corosensei` primitive in `suspend.rs` is the migration path),
+strict-concurrency diagnostics, and the `AsyncStream<T> { }` angle-bracket
+generic spelling (a parser-level comparison ambiguity; use `AsyncStream(T.self)
+{ }`). See ADR-0005 for the fidelity boundary.
 
 ---
 
