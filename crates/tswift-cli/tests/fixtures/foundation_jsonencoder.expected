@@ -1,0 +1,8 @@
+{"x":3,"y":4}
+{"name":"Alice","age":30,"active":true}
+Alice
+30
+true
+{"label":"nums","values":[1,2,3]}
+{"score":9.5,"counts":{"alpha":1,"beta":2}}
+non-finite throws

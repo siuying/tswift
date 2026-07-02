@@ -22,7 +22,7 @@ impl<'w> Interpreter<'w> {
         let SwiftValue::Struct(o) = base_value else {
             return Ok(None);
         };
-        // `JSONEncoder().encode(value)` → a JSON `Data` (modeled as a String).
+        // `JSONEncoder().encode(value)` → a JSON `Data` (UTF-8 bytes).
         if o.type_name == "JSONEncoder" && method == "encode" {
             let args = self.eval_args(arg_nodes)?;
             let value = args
@@ -30,7 +30,16 @@ impl<'w> Interpreter<'w> {
                 .map(|a| a.value.clone())
                 .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
             let json = self.json_encode(&value)?;
-            return Ok(Some(SwiftValue::Str(crate::json::to_string(&json))));
+            let json_str = crate::json::to_string(&json);
+            let bytes: Vec<SwiftValue> = json_str
+                .bytes()
+                .map(|b| SwiftValue::int(b as i128))
+                .collect();
+            let data = SwiftValue::Struct(Rc::new(crate::value::StructObj {
+                type_name: "Data".into(),
+                fields: vec![("_bytes".into(), SwiftValue::Array(Rc::new(bytes)))],
+            }));
+            return Ok(Some(data));
         }
         // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
         if o.type_name == "JSONDecoder" && method == "decode" {
@@ -45,6 +54,35 @@ impl<'w> Interpreter<'w> {
                 .ok_or_else(|| EvalError::Type("decode expects data".into()))?;
             let text = match data {
                 SwiftValue::Str(s) => s,
+                SwiftValue::Struct(ref obj) if obj.type_name == "Data" => {
+                    // Extract UTF-8 bytes from the Data value.
+                    let bytes = match obj.get("_bytes") {
+                        Some(SwiftValue::Array(items)) => items
+                            .iter()
+                            .map(|v| match v {
+                                SwiftValue::Int(i) if (0..=255).contains(&i.raw) => Ok(i.raw as u8),
+                                other => Err(EvalError::Type(format!(
+                                    "decode: Data contains non-byte value: {}",
+                                    other.type_name()
+                                ))
+                                .into()),
+                            })
+                            .collect::<Result<Vec<u8>, Signal>>()?,
+                        _ => {
+                            return Err(
+                                EvalError::Type("decode: malformed Data value".into()).into()
+                            )
+                        }
+                    };
+                    match std::string::String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            return Err(
+                                EvalError::Type("decode: Data is not valid UTF-8".into()).into()
+                            )
+                        }
+                    }
+                }
                 other => {
                     return Err(EvalError::Type(format!(
                         "decode expects String/Data, got {}",
@@ -66,7 +104,19 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Nil => Json::Null,
             SwiftValue::Bool(b) => Json::Bool(*b),
             SwiftValue::Int(i) => Json::Int(i.raw as i64),
-            SwiftValue::Double(d) => Json::Double(*d),
+            SwiftValue::Double(d) => {
+                // Match Swift semantics: JSONEncoder.encode throws
+                // EncodingError.invalidValue for non-finite doubles. We model
+                // this as a thrown string so `try/catch` can intercept it;
+                // silently emitting `inf`/`nan` would produce invalid JSON.
+                if d.is_finite() {
+                    Json::Double(*d)
+                } else {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "EncodingError: cannot encode non-finite Double ({d})"
+                    ))));
+                }
+            }
             SwiftValue::Str(s) => Json::Str(s.clone()),
             SwiftValue::Array(items) => Json::Array(
                 items
@@ -74,12 +124,33 @@ impl<'w> Interpreter<'w> {
                     .map(|v| self.json_encode(v))
                     .collect::<Result<_, _>>()?,
             ),
-            SwiftValue::Struct(o) => Json::Object(
-                o.fields
+            SwiftValue::Struct(o) => {
+                // Encode fields in declaration order — the parser always
+                // produces them in the same sequence, so output is stable.
+                let entries: Vec<(String, Json)> = o
+                    .fields
                     .iter()
                     .map(|(k, v)| Ok((k.clone(), self.json_encode(v)?)))
-                    .collect::<Result<_, Signal>>()?,
-            ),
+                    .collect::<Result<_, Signal>>()?;
+                Json::Object(entries)
+            }
+            // Dictionary encodes as a JSON object. Keys must be strings; sort
+            // them alphabetically so output is deterministic regardless of
+            // insertion order.
+            SwiftValue::Dict(pairs) => {
+                let mut entries: Vec<(String, Json)> = pairs
+                    .iter()
+                    .map(|(k, v)| {
+                        let key = match k {
+                            SwiftValue::Str(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        Ok((key, self.json_encode(v)?))
+                    })
+                    .collect::<Result<_, Signal>>()?;
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                Json::Object(entries)
+            }
             // A `Codable` enum: a `RawRepresentable` enum encodes its raw value;
             // a payload-free enum encodes its bare case name.
             SwiftValue::Enum(e) => {

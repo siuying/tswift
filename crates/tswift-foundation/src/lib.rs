@@ -7,6 +7,7 @@
 mod calendar;
 mod decimal;
 mod formatter;
+mod json;
 mod measurement;
 mod numberformatter;
 mod url;
@@ -28,6 +29,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     calendar::install(interp);
     formatter::install(interp);
     decimal::install(interp);
+    json::install(interp);
     numberformatter::install(interp);
     measurement::install(interp);
     interp.register_free_fn("Date", date_init);
@@ -289,6 +291,10 @@ pub fn registered_keys() -> Vec<String> {
             _ => None,
         })
         .collect();
+    // JSONEncoder / JSONDecoder are handled by the interpreter's built-in
+    // coding machinery (not the standard registry), so their keys are injected
+    // manually here so the coverage tooling counts them.
+    keys.extend(json::registered_keys());
     keys.sort();
     keys.dedup();
     keys

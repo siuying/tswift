@@ -157,6 +157,10 @@ IndexSet.removeAll
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update
+JSONDecoder.decode
+JSONDecoder.init
+JSONEncoder.encode
+JSONEncoder.init
 Measurement.convert
 Measurement.converted
 Measurement.debugDescription

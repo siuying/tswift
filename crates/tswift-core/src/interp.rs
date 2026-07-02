@@ -6443,11 +6443,12 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
 
     #[test]
     fn codable_json_round_trip() {
+        // encode returns Data; round-trip through decode to verify end-to-end.
         let out = run(
-            "struct User: Codable { let name: String; let age: Int }\n@main struct App {\n  static func main() throws {\n    let u = User(name: \"Sam\", age: 30)\n    let data = try JSONEncoder().encode(u)\n    print(data)\n    let back = try JSONDecoder().decode(User.self, from: data)\n    print(back.name, back.age)\n  }\n}\n",
+            "struct User: Codable { let name: String; let age: Int }\n@main struct App {\n  static func main() throws {\n    let u = User(name: \"Sam\", age: 30)\n    let data = try JSONEncoder().encode(u)\n    let back = try JSONDecoder().decode(User.self, from: data)\n    print(back.name, back.age)\n  }\n}\n",
         )
         .unwrap();
-        assert_eq!(out, "{\"name\":\"Sam\",\"age\":30}\nSam 30\n");
+        assert_eq!(out, "Sam 30\n");
     }
 
     #[test]

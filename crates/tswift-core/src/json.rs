@@ -83,6 +83,14 @@ fn write_string(out: &mut String, s: &str) {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            // Escape remaining C0 control characters (U+0000–U+001F) per the
+            // JSON spec (RFC 8259 § 7). \b and \f get their shorthand; the rest
+            // use the \uXXXX six-character form.
+            '\x08' => out.push_str("\\b"),
+            '\x0C' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04X}", c as u32);
+            }
             _ => out.push(c),
         }
     }
@@ -294,5 +302,18 @@ mod tests {
         assert_eq!(json.get("age"), Some(&Json::Int(30)));
         let s = to_string(&json);
         assert_eq!(s, r#"{"name":"Sam","age":30,"tags":["a","b"],"ok":true}"#);
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        // \n, \t, \r get short escapes; other C0 controls get \uXXXX.
+        let s = to_string(&Json::Str("a\nb\tc\rd\x00e\x01f\x08g\x0Ch".into()));
+        assert_eq!(s, r#""a\nb\tc\rd\u0000e\u0001f\bg\fh""#);
+    }
+
+    #[test]
+    fn quote_and_backslash_are_escaped() {
+        let s = to_string(&Json::Str("say \"hi\" and \\\\".into()));
+        assert_eq!(s, "\"say \\\"hi\\\" and \\\\\\\\\"");
     }
 }
