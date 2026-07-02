@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "autoloop": {
+      "source": "siuying/skills",
+      "sourceType": "github",
+      "skillPath": "skills/autoloop/SKILL.md",
+      "computedHash": "6be46619357358aaebdbd05e45bea6323aa3683a89a6e21c6a5c85386a216b4f"
+    },
     "codebase-design": {
       "source": "mattpocock/skills",
       "sourceType": "github",
