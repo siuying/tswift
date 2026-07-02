@@ -14,4 +14,4 @@ dist/
 examples/ios/*.xcodeproj
 apps/TSwiftPlayground/*.xcodeproj
 loop-log*.md
-loop-log.md
+docs/loop-logs/
