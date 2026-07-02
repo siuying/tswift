@@ -111,7 +111,7 @@ Run each task on a real OS thread, blocking on a channel at `await`.
 
 ## Decision
 
-**Go with Option 1 (stackful coroutines).** See **ADR-0003** for the full rationale and
+**Go with Option 1 (stackful coroutines).** See **ADR-0004** for the full rationale and
 consequences. In short: it delivers the suspension primitive #12 needs with the **least
 code and zero changes to the proven tree-walker**, and it **decouples suspension from the
 bytecode-VM throughput decision** (ADR-0002) — so #12 is no longer hostage to #11's

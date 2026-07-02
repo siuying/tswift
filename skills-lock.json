@@ -55,29 +55,11 @@
       "skillPath": "skills/requesting-code-review/SKILL.md",
       "computedHash": "cde520e9118d7e6b74b5ab0123cff2f68d9c07bddb3f82c997753b6126600aed"
     },
-    "rust-async-internals": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rust-async-internals/SKILL.md",
-      "computedHash": "426642b578012af58d08dbbf5c5297dd88251eece4e468d348aefb64c55f094b"
-    },
     "rust-best-practices": {
       "source": "apollographql/skills",
       "sourceType": "github",
       "skillPath": "skills/rust-best-practices/SKILL.md",
       "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
-    },
-    "rust-build-times": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rust-build-times/SKILL.md",
-      "computedHash": "80825b76fc15facc5a1f609eb8356c957758fb75feef4248d913b61d897ccefd"
-    },
-    "rust-cross": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rust-cross/SKILL.md",
-      "computedHash": "85da1c9f50dcf43048a1e55ed9b18dee61ca6ec072e273f3df5ca8d2fcbeca01"
     },
     "rust-debugging": {
       "source": "mohitmishra786/low-level-dev-skills",
@@ -91,12 +73,6 @@
       "skillPath": "skills/rust/rust-ffi/SKILL.md",
       "computedHash": "55fadeaff081bf9ccdc7a266cd85850fadf17508c2733a3519f52c40a1071735"
     },
-    "rust-no-std": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rust-no-std/SKILL.md",
-      "computedHash": "797e2e67e004552a4d1caaec57f0e98a3d57f0ba53588ee1389e89383163a573"
-    },
     "rust-profiling": {
       "source": "mohitmishra786/low-level-dev-skills",
       "sourceType": "github",
@@ -109,23 +85,11 @@
       "skillPath": "skills/rust/rust-sanitizers-miri/SKILL.md",
       "computedHash": "40dd6e8743eb7cab2c02f70c9019967856975efd273700f31f0ace6fc2740ccb"
     },
-    "rust-security": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rust-security/SKILL.md",
-      "computedHash": "3c3763fbb2da225b1286304e42bae6d95201e1a1fdc15d7550eee5ab337394f6"
-    },
     "rust-unsafe": {
       "source": "mohitmishra786/low-level-dev-skills",
       "sourceType": "github",
       "skillPath": "skills/rust/rust-unsafe/SKILL.md",
       "computedHash": "0f98528d2805553c7264c19c006b582cf2bccfc501932feabbde284fed5a412c"
-    },
-    "rustc-basics": {
-      "source": "mohitmishra786/low-level-dev-skills",
-      "sourceType": "github",
-      "skillPath": "skills/rust/rustc-basics/SKILL.md",
-      "computedHash": "4adaaf43e27841c15ccb529d17c537e575e5238af0e11886aa7ef7c9f4800b03"
     },
     "tdd": {
       "source": "mattpocock/skills",
