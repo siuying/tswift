@@ -1,0 +1,10 @@
+animal says ...
+dog says woof
+dog says yip woof
+false
+dog-ish: woof
+false
+dog-ish: yip woof
+true
+custom wave-custom
+default wave-default

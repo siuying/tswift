@@ -2388,8 +2388,16 @@ impl<'a> Parser<'a> {
             }
             other => return self.error(format!("expected a type, found {other:?}")),
         };
-        // Optional / IUO suffixes.
-        while self.peek().kind == TokenKind::Question || self.at_oper("!") {
+        // Optional / IUO suffixes. A double optional `Int??` lexes its two
+        // question marks as one nil-coalescing operator token — accept it.
+        // Suffixes must hug the type (Swift's rule), so a spaced `Int ?? x`
+        // nil-coalescing after a cast stays an expression operator.
+        while (self.peek().kind == TokenKind::Question
+            || self.at_oper("!")
+            || self.at_oper("??"))
+            && self.pos > 0
+            && tokens_adjacent(&self.tokens[self.pos - 1], &self.tokens[self.pos])
+        {
             text.push_str(self.bump().text);
         }
         // Protocol composition `P & Q`.

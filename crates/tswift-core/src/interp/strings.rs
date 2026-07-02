@@ -22,7 +22,7 @@ impl<'w> Interpreter<'w> {
             .strip_prefix("\"\"\"")
             .and_then(|s| s.strip_suffix("\"\"\""))
         {
-            (strip_multiline_indent(b).to_string(), true)
+            (strip_multiline_indent(b), true)
         } else {
             let b = raw
                 .strip_prefix('"')
@@ -169,7 +169,7 @@ pub(super) fn decode_string_literal(raw: &str) -> String {
         .strip_prefix("\"\"\"")
         .and_then(|s| s.strip_suffix("\"\"\""))
     {
-        return decode_escapes(strip_multiline_indent(body));
+        return decode_escapes(&strip_multiline_indent(body));
     }
     let body = raw
         .strip_prefix('"')
@@ -178,8 +178,25 @@ pub(super) fn decode_string_literal(raw: &str) -> String {
     decode_escapes(body)
 }
 
-fn strip_multiline_indent(body: &str) -> &str {
-    body.trim_start_matches('\n').trim_end_matches([' ', '\t'])
+/// Apply Swift's multiline-literal shaping: the whitespace preceding the
+/// closing `"""` is stripped from every line, and the newlines adjacent to
+/// the delimiters are not part of the value. Blank lines may omit the indent.
+fn strip_multiline_indent(body: &str) -> String {
+    let body = body.strip_prefix('\n').unwrap_or(body);
+    // The closing line (after the final newline) holds the reference indent.
+    let (content, indent) = match body.rfind('\n') {
+        Some(i) => (&body[..i], &body[i + 1..]),
+        None => (body, ""),
+    };
+    if !indent.is_empty() && !indent.chars().all(|c| c == ' ' || c == '\t') {
+        // Single-line body (`"""x"""`): nothing to strip.
+        return body.to_string();
+    }
+    content
+        .split('\n')
+        .map(|l| l.strip_prefix(indent).unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn decode_escapes(s: &str) -> String {

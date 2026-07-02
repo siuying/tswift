@@ -38,6 +38,16 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Read a member off any nominal value, dispatching by kind: class
+    /// instances go through `read_object_member`, everything else through
+    /// `read_struct_member` — the same split `set_in` uses when writing.
+    fn read_member_value(&mut self, value: &SwiftValue, name: &str) -> Eval {
+        match value {
+            SwiftValue::Object(_) => self.read_object_member(value, name),
+            _ => self.read_struct_member(value, name),
+        }
+    }
+
     /// Read a member off a class instance: a stored field (upgrading weak
     /// references), or a computed getter.
     pub(super) fn read_object_member(&mut self, value: &SwiftValue, name: &str) -> Eval {
@@ -309,13 +319,25 @@ impl<'w> Interpreter<'w> {
             ops::binary(op.trim_end_matches('='), &cur_elem, &r).map_err(trap)?
         };
 
+        self.write_subscript_element(&base, current, &index_values, new_value)
+    }
+
+    /// Write `value` into `base_container[indices]` and rebind the result to
+    /// `base` (skipping the rebind when a class instance was mutated in place).
+    pub(super) fn write_subscript_element(
+        &mut self,
+        base: &Node<'static>,
+        base_container: SwiftValue,
+        indices: &[SwiftValue],
+        value: SwiftValue,
+    ) -> Eval {
         // Remember the original class identity (if any) so an in-place mutation
         // can be told apart from a whole-value replacement below.
-        let prev_ref = match &current {
+        let prev_ref = match &base_container {
             SwiftValue::Object(o) => Some(o.clone()),
             _ => None,
         };
-        let updated = self.set_subscript_element(current, &index_values, new_value)?;
+        let updated = self.set_subscript_element(base_container, indices, value)?;
         // A class instance is a reference: when the write mutated *the same*
         // instance in place, there is nothing to rebind (and re-assigning to a
         // `let` binding would be illegal). A whole-value replacement
@@ -326,7 +348,7 @@ impl<'w> Interpreter<'w> {
                 return Ok(SwiftValue::Void);
             }
         }
-        self.assign_value_to(&base, updated)
+        self.assign_value_to(base, updated)
     }
 
     /// Return a copy of `container` with `container[indices]` set to `value`,
@@ -830,6 +852,80 @@ impl<'w> Interpreter<'w> {
             return Ok(SwiftValue::Void);
         }
 
+        // Member assignment through a subscript element (`a[i].x.y = v`):
+        // read the element, set the member path on the copy, and write it back
+        // through the subscript (which itself recurses through its base).
+        // Ordered BEFORE the class-member fast path, whose speculative base
+        // evaluation would run the subscript's index expressions a second time.
+        if target.kind() == NodeKind::MemberExpr {
+            let mut members: Vec<String> = Vec::new();
+            let mut cursor = target;
+            let mut unwrapped = false;
+            loop {
+                match cursor.kind() {
+                    NodeKind::MemberExpr => {
+                        let Some(name) = cursor.text() else { break };
+                        members.push(name);
+                    }
+                    // A force-unwrap in the chain (`d["a"]!.x = v`) is
+                    // transparent for the write; a nil along the path traps.
+                    NodeKind::PostfixExpr if cursor.text().as_deref() == Some("!") => {
+                        unwrapped = true;
+                    }
+                    _ => break,
+                }
+                let Some(child) = cursor.first_child() else { break };
+                cursor = child;
+            }
+            if cursor.kind() == NodeKind::SubscriptExpr {
+                members.reverse();
+                let mut sub_kids = cursor.children();
+                let sub_base = sub_kids
+                    .next()
+                    .ok_or_else(|| EvalError::Unsupported("subscript without a base".into()))?;
+                let indices: Vec<SwiftValue> =
+                    sub_kids.map(|n| self.eval(&n)).collect::<Result<_, _>>()?;
+                let container = self.eval(&sub_base)?;
+                let elem = self.read_subscript(&container, &indices)?;
+                // Walk the member path up front so a nil anywhere along it
+                // behaves like Swift: trap under a force-unwrap, no-op
+                // otherwise (the parser drops `?.`, so a chained write on nil
+                // is indistinguishable from — and treated as — the no-op).
+                let mut probe = elem.clone();
+                for m in &members[..members.len().saturating_sub(1)] {
+                    if matches!(probe, SwiftValue::Nil) {
+                        break;
+                    }
+                    probe = self.read_member_value(&probe, m)?;
+                }
+                if matches!(elem, SwiftValue::Nil) || matches!(probe, SwiftValue::Nil) {
+                    if unwrapped {
+                        return Err(trap(
+                            "unexpectedly found nil while unwrapping an Optional".into(),
+                        ));
+                    }
+                    return Ok(SwiftValue::Void);
+                }
+                let new_value = if op == "=" {
+                    self.eval(&rhs)?
+                } else {
+                    let mut cur = elem.clone();
+                    for m in &members {
+                        cur = self.read_member_value(&cur, m)?;
+                    }
+                    let r = self.eval(&rhs)?;
+                    ops::binary(op.trim_end_matches('='), &cur, &r).map_err(trap)?
+                };
+                let updated_elem = self.set_in(elem, &members, new_value)?;
+                // A class element was mutated in place by set_in already.
+                if matches!(updated_elem, SwiftValue::Object(_)) {
+                    return Ok(SwiftValue::Void);
+                }
+                self.write_subscript_element(&sub_base, container, &indices, updated_elem)?;
+                return Ok(SwiftValue::Void);
+            }
+        }
+
         // Member assignment whose base is a class instance mutates in place
         // (reference semantics) rather than through a copy-on-write place.
         if target.kind() == NodeKind::MemberExpr {
@@ -1118,6 +1214,31 @@ impl<'w> Interpreter<'w> {
             }
             return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
         };
+
+        // `super.member` — read the member through the superclass's accessors
+        // with the current instance as `self` (mirrors `super.method()` in the
+        // call path; reached from overriding computed-property bodies).
+        if base.kind() == NodeKind::IdentExpr && base.text().as_deref() == Some("super") {
+            let this = self
+                .env
+                .get("self")
+                .ok_or_else(|| EvalError::Unsupported("`super` outside a method".into()))?;
+            let super_class = self
+                .class_ctx
+                .last()
+                .and_then(|c| self.types.class_def(c))
+                .and_then(|d| d.superclass.clone())
+                .ok_or_else(|| EvalError::Unsupported("`super` without a superclass".into()))?;
+            if let Some(body) = self.class_computed_getter(&super_class, &member) {
+                self.class_ctx.push(super_class);
+                let r = self
+                    .run_with_self(this.clone(), |me| me.eval(&body))
+                    .map(|(v, _)| v);
+                self.class_ctx.pop();
+                return r;
+            }
+            return self.read_object_member(&this, &member);
+        }
 
         if base.kind() == NodeKind::IdentExpr {
             if let Some(type_name) = base.text() {

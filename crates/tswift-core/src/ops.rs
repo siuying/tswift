@@ -21,6 +21,10 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        // Tuples compare element-wise (`==`/`!=`) and lexicographically
+        // (`<`/`<=`/`>`/`>=`), as Swift defines for tuples of comparable
+        // elements.
+        (SwiftValue::Tuple(a, _), SwiftValue::Tuple(b, _)) => tuple_binary(op, a, b),
         (SwiftValue::Set(a), SwiftValue::Set(b)) => set_binary(op, a, b),
         (SwiftValue::Dict(a), SwiftValue::Dict(b)) => dict_binary(op, a, b),
         (
@@ -498,6 +502,34 @@ fn array_binary(
         "==" => Ok(SwiftValue::Bool(a == b)),
         "!=" => Ok(SwiftValue::Bool(a != b)),
         _ => Err(format!("unknown array operator `{op}`")),
+    }
+}
+
+/// Tuples compare element-wise: `==`/`!=` for equality, and the ordering
+/// operators lexicographically — the first unequal element pair decides
+/// (Swift defines these for tuples of Equatable/Comparable elements).
+fn tuple_binary(op: &str, a: &[SwiftValue], b: &[SwiftValue]) -> Result<SwiftValue, String> {
+    if a.len() != b.len() {
+        return Err(format!(
+            "operator `{op}` cannot apply to tuples of different arity"
+        ));
+    }
+    match op {
+        "==" => Ok(SwiftValue::Bool(a == b)),
+        "!=" => Ok(SwiftValue::Bool(a != b)),
+        "<" | "<=" | ">" | ">=" => {
+            for (x, y) in a.iter().zip(b.iter()) {
+                if x == y {
+                    continue;
+                }
+                // The first unequal pair decides; `<=`/`>=` reduce to the
+                // strict compare there.
+                return binary(op.trim_end_matches('='), x, y);
+            }
+            // All elements equal: `<=`/`>=` hold, `<`/`>` do not.
+            Ok(SwiftValue::Bool(op.ends_with('=')))
+        }
+        _ => Err(format!("operator `{op}` cannot apply to tuple and tuple")),
     }
 }
 
