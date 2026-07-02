@@ -2716,7 +2716,13 @@ impl<'w> Interpreter<'w> {
             .ok_or_else(|| EvalError::Unsupported("cast without an expression".into()))?;
         let ty = kids.next().and_then(|t| t.text()).unwrap_or_default();
         let value = self.eval(&expr)?;
-        let matches = self.value_is_type(&value, &ty);
+        // A cast to an *optional* type (`b as A?`, `5 as Int?`) checks against
+        // the wrapped type; nil always casts to an optional type (a present
+        // optional is its wrapped value in this runtime's model).
+        let repr = TypeRepr::parse(&ty);
+        let target = repr.strip_optionals().text();
+        let matches = (repr.is_optional() && matches!(value, SwiftValue::Nil))
+            || self.value_is_type(&value, target);
         // `as?` yields an optional; `is` yields Bool.
         let optional = node.is_optional_cast();
         if op == "is" {

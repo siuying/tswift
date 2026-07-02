@@ -2258,7 +2258,10 @@ impl<'a> Parser<'a> {
                     .add(NodeKind::NamePattern, Some(t.text), t.line, t.col))
             }
             // `self` rebinding: `guard let self = self` / shorthand `if let self`
-            // (SE-0345) — the keyword is a valid binding name here.
+            // (SE-0345) — the keyword is a valid binding name here. (Other
+            // contextual keywords like `any`/`some` are NOT accepted: reading
+            // them back in expression position would need type-vs-value
+            // disambiguation this parser does not do.)
             TokenKind::Keyword if t.text == "self" => {
                 self.bump();
                 Ok(self

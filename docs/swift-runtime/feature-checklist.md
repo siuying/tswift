@@ -226,7 +226,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `where` clauses (same-type + conformance constraints on associated types, trailing `where`, contextual `where` extensions — pinned by fixture; constraints are not statically *enforced*, a non-conforming call fails at use) | ✅ | ★★★ | R4 |
 | [x] | Associated-type constraints | ✅ | ★★★ | R4 |
 | [x] | Generic subscripts | ✅ | ★★ | R4 |
-| [ ] | Monomorphization vs witness dispatch | ✅ | ★★★★ | R4 |
+| [x] | Monomorphization vs witness dispatch (n/a by design: the tree-walker dispatches every generic dynamically — monomorphization is a codegen/perf strategy that would come with the #11 bytecode VM, not a semantic feature) | ✅ | ★★★★ | R4 |
 | [x] | Contextual `where` on extensions | ✅ | ★★★ | R4 |
 | [~] | Parameter packs / variadic generics `each` (SE-0393 core shapes: `<each T>` + `repeat each T` params collect like variadics, `for x in repeat each pack` iteration incl. statement position, call-site splat forwarding `f(repeat each pack)`. Not modeled: pack expansion in tuple/type positions `(repeat each T)`, multiple positional packs / a pack before positional params (greedy variadic binder — use one final positional pack), same-shape zip, pack element type relationships; `repeat each <any array>` splats because packs *are* arrays here) | ✅ | ★★★★ | R6+ |
 | [x] | Integer generic parameters (`let N: Int`, SE-0452: multi-param, call-site `Buf<4>()` specialization in any radix; each value binds as a write-protected stored field visible to defaults/bodies and preserved through `self.init` delegation. Type-position spelling `let b: Buf<4>` not yet wired) | ✅ | ★★★ | R6+ |
@@ -385,7 +385,7 @@ needs a macro-expansion engine over the AST before evaluation.*
 | [x] | `@inline` / `@_optimize` (perf hints) | ⚠️ | ★ | R6+ |
 | [x] | `@discardableResult` | ✅ | ★ | R1 |
 | [x] | `@propertyWrapper` | ✅ | ★★★ | R5 |
-| [~] | `@resultBuilder` | ✅ | ★★★★ | R6+ |
+| [x] | `@resultBuilder` (see Tier 8: transform + method synthesis are done; buildExpression-less builders mixing component types are not statically rejected) | ✅ | ★★★★ | R6+ |
 | [x] | `@globalActor` | ⚠️ | ★★★★ | R6+ |
 | [x] | `@Sendable` | ✅ | ★★ | R6+ |
 | [x] | `@autoclosure` / `@escaping` / `@convention` (`@convention(c/block/swift)` accepted in type position; calling conventions are meaningless in the tree-walker) | ✅ | ★★ | R3 |
