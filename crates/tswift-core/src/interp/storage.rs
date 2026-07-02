@@ -874,7 +874,9 @@ impl<'w> Interpreter<'w> {
                     }
                     _ => break,
                 }
-                let Some(child) = cursor.first_child() else { break };
+                let Some(child) = cursor.first_child() else {
+                    break;
+                };
                 cursor = child;
             }
             if cursor.kind() == NodeKind::SubscriptExpr {

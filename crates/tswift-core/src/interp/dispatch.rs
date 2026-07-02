@@ -727,10 +727,9 @@ impl<'w> Interpreter<'w> {
                     }
                     continue;
                 }
-                return Err(EvalError::Type(
-                    "`repeat each` expects a parameter pack".into(),
-                )
-                .into());
+                return Err(
+                    EvalError::Type("`repeat each` expects a parameter pack".into()).into(),
+                );
             }
             if arg.kind() == NodeKind::InoutExpr {
                 let inner = arg
@@ -1318,9 +1317,9 @@ impl<'w> Interpreter<'w> {
     ) -> Result<(), Signal> {
         let mut chain = self.class_chain(start_class);
         chain.reverse(); // most-derived (start) first
-        // Prefer the closest class whose declared initializers label-match the
-        // call — this also finds an *inherited* initializer when the subclass
-        // declares its own with different labels.
+                         // Prefer the closest class whose declared initializers label-match the
+                         // call — this also finds an *inherited* initializer when the subclass
+                         // declares its own with different labels.
         let selected = chain.iter().find_map(|c| {
             let def = self.types.class_def(c)?;
             select_labeled_overload(&def.init_overloads, &args)
@@ -1345,7 +1344,9 @@ impl<'w> Interpreter<'w> {
         self.depth += 1;
         if self.depth > MAX_CALL_DEPTH {
             self.depth -= 1;
-            return Err(trap("stack overflow: initializer delegation too deep".into()));
+            return Err(trap(
+                "stack overflow: initializer delegation too deep".into(),
+            ));
         }
         self.class_ctx.push(owner);
         let saved_env = self.env.enter_isolated();

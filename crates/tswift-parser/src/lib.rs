@@ -726,7 +726,10 @@ impl<'a> Parser<'a> {
         // legacy or invalid spellings like `func f(inout x: Int)` are not
         // silently read as a label.
         let keyword_label = first.kind == TokenKind::Keyword
-            && !matches!(first.text, "inout" | "let" | "var" | "some" | "any" | "repeat")
+            && !matches!(
+                first.text,
+                "inout" | "let" | "var" | "some" | "any" | "repeat"
+            )
             && self.tokens[self.pos + 1].kind == TokenKind::Identifier;
         if first.kind != TokenKind::Identifier && !keyword_label {
             return self.error(format!("expected a parameter name, found {:?}", first.kind));
@@ -2395,9 +2398,7 @@ impl<'a> Parser<'a> {
         // question marks as one nil-coalescing operator token — accept it.
         // Suffixes must hug the type (Swift's rule), so a spaced `Int ?? x`
         // nil-coalescing after a cast stays an expression operator.
-        while (self.peek().kind == TokenKind::Question
-            || self.at_oper("!")
-            || self.at_oper("??"))
+        while (self.peek().kind == TokenKind::Question || self.at_oper("!") || self.at_oper("??"))
             && self.pos > 0
             && tokens_adjacent(&self.tokens[self.pos - 1], &self.tokens[self.pos])
         {
@@ -4255,9 +4256,7 @@ mod tests {
         for src in ["let t = a ? (b) : c\n", "let t = a ? (b + 1) : (c + 2)\n"] {
             let ast = ast_of(src);
             let decl = first_stmt(&ast);
-            let has_ternary = decl
-                .children()
-                .any(|c| c.kind() == NodeKind::TernaryExpr);
+            let has_ternary = decl.children().any(|c| c.kind() == NodeKind::TernaryExpr);
             assert!(has_ternary, "expected a ternary in {src:?}");
         }
     }

@@ -724,8 +724,7 @@ fn subtree_references_name(node: &Node<'static>, name: &str) -> bool {
         }
         _ => {}
     }
-    node.children()
-        .any(|c| subtree_references_name(&c, name))
+    node.children().any(|c| subtree_references_name(&c, name))
 }
 
 /// An integer value written into a scalar-annotated context re-types to match:
@@ -1543,15 +1542,18 @@ impl<'w> Interpreter<'w> {
         node: &Node<'static>,
     ) -> Eval {
         let getter = acc.getter_body.map(|b| self.accessor_closure(None, &b));
-        let setter = acc
-            .setter_body
-            .map(|b| self.accessor_closure(Some(acc.setter_param.as_deref().unwrap_or("newValue")), &b));
-        let will_set = acc
-            .will_set_body
-            .map(|b| self.accessor_closure(Some(acc.will_set_param.as_deref().unwrap_or("newValue")), &b));
-        let did_set = acc
-            .did_set_body
-            .map(|b| self.accessor_closure(Some(acc.did_set_param.as_deref().unwrap_or("oldValue")), &b));
+        let setter = acc.setter_body.map(|b| {
+            self.accessor_closure(Some(acc.setter_param.as_deref().unwrap_or("newValue")), &b)
+        });
+        let will_set = acc.will_set_body.map(|b| {
+            self.accessor_closure(
+                Some(acc.will_set_param.as_deref().unwrap_or("newValue")),
+                &b,
+            )
+        });
+        let did_set = acc.did_set_body.map(|b| {
+            self.accessor_closure(Some(acc.did_set_param.as_deref().unwrap_or("oldValue")), &b)
+        });
 
         // An observed stored variable evaluates its initializer up front;
         // observers do not fire for the initial value (TSPL). A computed
@@ -1584,8 +1586,7 @@ impl<'w> Interpreter<'w> {
             did_set,
             storage,
         });
-        self.env
-            .declare(name, SwiftValue::AccessorVar(idx), true);
+        self.env.declare(name, SwiftValue::AccessorVar(idx), true);
         Ok(SwiftValue::Void)
     }
 
@@ -3059,7 +3060,9 @@ impl<'w> Interpreter<'w> {
             self.depth += 1;
             if self.depth > MAX_CALL_DEPTH {
                 self.depth -= 1;
-                return Err(trap("stack overflow: initializer delegation too deep".into()));
+                return Err(trap(
+                    "stack overflow: initializer delegation too deep".into(),
+                ));
             }
             let saved_env = self.env.enter_isolated();
             self.env.declare("self", this, true);
