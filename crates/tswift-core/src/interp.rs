@@ -2553,25 +2553,22 @@ impl<'w> Interpreter<'w> {
         // A `weak`/`unowned` capture must not retain the instance through the
         // captured scope chain (or `[weak self]` would never zero: the chain's
         // strong `self` would keep the object alive as long as the closure).
-        // A scope binding such a name is replaced by a clone without it when
-        // every co-resident binding is immutable — true for method scopes,
-        // which hold only `self` and parameters. Scopes with mutable siblings
-        // (e.g. the global scope) are left shared: their bindings own the
-        // object legitimately and pruning would break live mutation sharing.
+        // A scope binding such a name is replaced in this closure's chain by a
+        // clone of the scope *map* without it — every other binding keeps live
+        // mutation sharing through its own cell, and the executing method's
+        // original scope is untouched.
         if !nonstrong_names.is_empty() {
             for scope in captured.iter_mut() {
-                let prune = {
-                    let s = scope.borrow();
-                    s.keys().any(|k| nonstrong_names.iter().any(|n| n == k))
-                        && s.iter()
-                            .all(|(k, b)| nonstrong_names.iter().any(|n| n == k) || !b.mutable)
-                };
-                if prune {
-                    let pruned: HashMap<String, crate::env::Binding> = scope
+                let has_pruned = scope
+                    .borrow()
+                    .keys()
+                    .any(|k| nonstrong_names.iter().any(|n| n == k));
+                if has_pruned {
+                    let pruned: HashMap<String, crate::env::BindingCell> = scope
                         .borrow()
                         .iter()
                         .filter(|(k, _)| !nonstrong_names.iter().any(|n| n == *k))
-                        .map(|(k, b)| (k.clone(), b.clone()))
+                        .map(|(k, c)| (k.clone(), c.clone()))
                         .collect();
                     *scope = StdRc::new(RefCell::new(pruned));
                 }
@@ -2582,10 +2579,10 @@ impl<'w> Interpreter<'w> {
             for (name, v) in captured_overrides {
                 scope.borrow_mut().insert(
                     name,
-                    crate::env::Binding {
+                    StdRc::new(RefCell::new(crate::env::Binding {
                         value: v,
                         mutable: false,
-                    },
+                    })),
                 );
             }
             captured.push(scope);
