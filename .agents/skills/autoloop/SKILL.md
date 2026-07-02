@@ -1,6 +1,6 @@
 ---
 name: autoloop
-description: Autonomous iterative problem-solving loop. Given any problem (fix a bug, implement a feature, improve test coverage, boost performance, etc.), the agent surveys the codebase to devise a strategy, proposes a verification signal (test suite, benchmark, build, linter), asks the user to confirm the plan, then loops — each iteration follows implement → review → verify → commit, keeping improvements and discarding regressions, with every attempt bookept in loop-log.md. Use when the user states any open-ended improvement goal or says "keep iterating", "loop on this", "autoloop", or "iterate until fixed".
+description: Autonomous iterative problem-solving loop. Given any problem (fix a bug, implement a feature, improve test coverage, boost performance, etc.), the agent surveys the codebase to devise a strategy, proposes a verification signal (test suite, benchmark, build, linter), asks the user to confirm the plan, then loops — each iteration follows implement → review → verify → commit, keeping improvements and discarding regressions, with every attempt bookept in docs/loop-logs/loop-log.{yyyymmdd}.md. Use when the user states any open-ended improvement goal or says "keep iterating", "loop on this", "autoloop", or "iterate until fixed".
 ---
 
 # Autoloop
@@ -36,7 +36,7 @@ Problem:        <restate>
 Scope:          <list>
 Signal:         <command> → <metric>  (or "none found — propose: <suggestion>")
 Strategy:       1. <idea>  2. <idea>  …
-Log file:       loop-log.{yyyymmdd}.md (untracked)
+Log file:       docs/loop-logs/loop-log.{yyyymmdd}.md (untracked)
 ```
 
 ---
@@ -85,11 +85,11 @@ Create a check list for each of the four gates, and **do not proceed to the next
 | Crash / timeout                       | Diagnose briefly; fix trivially or skip → status = **crash**        |
 | Review Critical unfixable             | Discard idea → status = **discard**                                 |
 
-After each iteration, append a row to `loop-log.{yyyymmdd}.md`.
+After each iteration, append a row to `docs/loop-logs/loop-log.{yyyymmdd}.md`.
 
 ---
 
-## Bookkeeping — loop-log.{yyyymmdd}.md
+## Bookkeeping — docs/loop-logs/loop-log.{yyyymmdd}.md
 
 Create in the project root; do **not** commit it (add to `.gitignore` if needed).
 
