@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use tswift_frontend::Node;
+use tswift_frontend::{Node, TypeRepr};
 
 use super::{decode_element_type, metatype_name, EvalError, Interpreter, Signal};
 use crate::json::Json;
@@ -93,7 +93,7 @@ impl<'w> Interpreter<'w> {
             };
             let json = crate::json::parse(&text)
                 .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
-            return Ok(Some(self.json_decode(&type_name, &json)));
+            return Ok(Some(self.json_decode(&type_name, &json)?));
         }
         Ok(None)
     }
@@ -178,8 +178,12 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Build a runtime value from JSON for the given target type (a registered
-    /// struct, else inferred from the JSON shape).
-    fn json_decode(&self, type_name: &str, json: &Json) -> SwiftValue {
+    /// struct, else inferred from the JSON shape).  Returns a `Signal::Throw`
+    /// when decoding cannot satisfy Swift's `Decodable` contract:
+    /// * `keyNotFound` — a non-optional field is absent from the JSON object.
+    /// * `typeMismatch` — the JSON value's shape doesn't match the field type
+    ///   (e.g. a fractional number where `Int` is expected).
+    fn json_decode(&self, type_name: &str, json: &Json) -> Result<SwiftValue, Signal> {
         // A `Codable` enum decodes from its raw value, or — for a payload-free
         // case — its bare case name. A case with associated values never matches
         // here (we would have to synthesize a payload), so it is skipped.
@@ -191,57 +195,191 @@ impl<'w> Interpreter<'w> {
                     && matches!(&decoded, SwiftValue::Str(s) if s == &c.name);
                 raw_matches || name_matches
             }) {
-                return SwiftValue::Enum(Rc::new(EnumObj {
+                return Ok(SwiftValue::Enum(Rc::new(EnumObj {
                     type_name: type_name.to_string(),
                     case: case.name.clone(),
                     payload: Vec::new(),
-                }));
+                })));
             }
         }
         if let (Json::Object(_), Some(def)) = (json, self.types.struct_def(type_name)) {
             let fields: Vec<(String, SwiftValue)> = def
                 .stored
                 .iter()
-                .map(|p| {
-                    let v = json
-                        .get(&p.name)
-                        .map(|j| {
-                            // Decode typed nested fields (structs/enums) by their
-                            // declared element type so they round-trip; fall back
-                            // to a shape-inferred value otherwise.
-                            match p.ty.as_deref() {
-                                Some(full)
-                                    if self.types.is_struct(decode_element_type(full))
-                                        || self.types.is_enum(decode_element_type(full)) =>
-                                {
-                                    self.json_decode_field(decode_element_type(full), full, j)
-                                }
-                                _ => self.json_value(j),
-                            }
-                        })
-                        .unwrap_or(SwiftValue::Nil);
-                    (p.name.clone(), v)
+                .map(|p| -> Result<(String, SwiftValue), Signal> {
+                    let full_ty = p.ty.as_deref();
+                    let is_optional = full_ty
+                        .map(|t| TypeRepr::parse(t).is_optional())
+                        .unwrap_or(false);
+                    let v = match json.get(&p.name) {
+                        Some(j) => self.json_decode_typed(full_ty, &p.name, j)?,
+                        None if is_optional => SwiftValue::Nil,
+                        None => {
+                            return Err(Signal::Throw(SwiftValue::Str(format!(
+                                "DecodingError.keyNotFound: no value for key '{}'",
+                                p.name
+                            ))))
+                        }
+                    };
+                    Ok((p.name.clone(), v))
                 })
-                .collect();
-            return SwiftValue::Struct(Rc::new(StructObj {
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(SwiftValue::Struct(Rc::new(StructObj {
                 type_name: type_name.to_string(),
                 fields,
-            }));
+            })));
         }
-        self.json_value(json)
+        // A registered struct with a non-object JSON payload is a type mismatch —
+        // never fall back to shape-inferred values for known struct types.
+        if self.types.is_struct(type_name) {
+            return Err(Signal::Throw(SwiftValue::Str(format!(
+                "DecodingError.typeMismatch: expected JSON object for '{}', got {}",
+                type_name,
+                json_kind_name(json)
+            ))));
+        }
+        Ok(self.json_value(json))
+    }
+
+    /// Decode a JSON value with an optional type-annotation hint.
+    ///
+    /// * `Int`/`UInt` variants: accept only integer JSON numbers; reject
+    ///   fractional doubles with `typeMismatch`.
+    /// * `Double`/`Float` variants: coerce integer JSON numbers to floating
+    ///   point (matching Swift's `JSONDecoder` behaviour).
+    /// * `String`/`Bool`: reject mismatched JSON shapes.
+    /// * Optional (`T?`): `null` → `nil`; otherwise decode the inner type.
+    /// * Named struct/enum types: delegate to [`json_decode`].
+    /// * Array (`[T]`): delegate to [`json_decode_field`].
+    /// * Unknown / no hint: fall back to shape-inferred [`json_value`].
+    fn json_decode_typed(
+        &self,
+        ty: Option<&str>,
+        field: &str,
+        json: &Json,
+    ) -> Result<SwiftValue, Signal> {
+        let Some(full) = ty else {
+            return Ok(self.json_value(json));
+        };
+        let repr = TypeRepr::parse(full);
+        // Optional wrapper: `null` → Nil; otherwise decode the inner type.
+        if repr.is_optional() {
+            if matches!(json, Json::Null) {
+                return Ok(SwiftValue::Nil);
+            }
+            let inner_ty = repr.unwrap_optional().text();
+            return self.json_decode_typed(Some(inner_ty), field, json);
+        }
+        // Primitive type matching.
+        match full.trim() {
+            "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt" | "UInt8" | "UInt16"
+            | "UInt32" | "UInt64" => match json {
+                Json::Int(i) => return Ok(SwiftValue::int(*i as i128)),
+                Json::Double(_) => {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: expected Int for '{}', got floating-point number",
+                    field
+                ))))
+                }
+                other => {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.typeMismatch: expected Int for '{}', got {}",
+                        field,
+                        json_kind_name(other)
+                    ))))
+                }
+            },
+            "Double" | "Float" | "Float32" | "Float64" | "Float80" => match json {
+                Json::Int(i) => return Ok(SwiftValue::Double(*i as f64)),
+                Json::Double(d) => return Ok(SwiftValue::Double(*d)),
+                other => {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.typeMismatch: expected Double for '{}', got {}",
+                        field,
+                        json_kind_name(other)
+                    ))))
+                }
+            },
+            "String" => match json {
+                Json::Str(s) => return Ok(SwiftValue::Str(s.clone())),
+                other => {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.typeMismatch: expected String for '{}', got {}",
+                        field,
+                        json_kind_name(other)
+                    ))))
+                }
+            },
+            "Bool" => match json {
+                Json::Bool(b) => return Ok(SwiftValue::Bool(*b)),
+                other => {
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.typeMismatch: expected Bool for '{}', got {}",
+                        field,
+                        json_kind_name(other)
+                    ))))
+                }
+            },
+            _ => {}
+        }
+        // Compute the element type once; used by both the array and
+        // struct/enum branches below.
+        let inner = decode_element_type(full);
+        // Array type (`[T]`) MUST be checked before the registered struct/enum
+        // branch: for `[Point]`, inner="Point" is a registered struct, but the
+        // field is an array — JSON must be an array, not an object or null.
+        // Checking array first ensures every array-typed field is validated
+        // uniformly regardless of whether its element type is registered.
+        if full.trim_start().starts_with('[') {
+            return match json {
+                Json::Array(_) => self.json_decode_field(inner, full, json),
+                other => Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: expected array for '{}', got {}",
+                    field,
+                    json_kind_name(other)
+                )))),
+            };
+        }
+        // Named struct/enum (non-array): delegate to field decoder.
+        if self.types.is_struct(inner) || self.types.is_enum(inner) {
+            return self.json_decode_field(inner, full, json);
+        }
+        Ok(self.json_value(json))
     }
 
     /// Decode a struct field whose declared type is `inner` (the element type)
     /// and full spelling `full` (e.g. `[User]`, `User?`). Handles arrays and
     /// optionals of a registered struct/enum element.
-    fn json_decode_field(&self, inner: &str, full: &str, json: &Json) -> SwiftValue {
+    fn json_decode_field(
+        &self,
+        inner: &str,
+        full: &str,
+        json: &Json,
+    ) -> Result<SwiftValue, Signal> {
         match json {
-            // `nil` for an absent optional.
-            Json::Null => SwiftValue::Nil,
-            // `[Element]` decodes each item by the element type.
-            Json::Array(items) if full.trim_start().starts_with('[') => SwiftValue::Array(Rc::new(
-                items.iter().map(|j| self.json_decode(inner, j)).collect(),
-            )),
+            // `nil` only for an optional type; a non-optional field receiving
+            // JSON null is Swift's `valueNotFound`.
+            Json::Null => {
+                if TypeRepr::parse(full).is_optional() {
+                    Ok(SwiftValue::Nil)
+                } else {
+                    Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.valueNotFound: null for non-optional type '{}'",
+                        full
+                    ))))
+                }
+            }
+            // `[Element]` decodes each item with the element type as hint so
+            // primitive element types (Int, String, …) are type-checked and
+            // registered struct/enum elements recurse through json_decode.
+            Json::Array(items) if full.trim_start().starts_with('[') => {
+                Ok(SwiftValue::Array(Rc::new(
+                    items
+                        .iter()
+                        .map(|j| self.json_decode_typed(Some(inner), "element", j))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )))
+            }
             _ => self.json_decode(inner, json),
         }
     }
@@ -265,5 +403,18 @@ impl<'w> Interpreter<'w> {
                     .collect(),
             })),
         }
+    }
+}
+
+/// A human-readable name for a JSON value's kind, used in `typeMismatch` error
+/// messages to mirror what Swift's `JSONDecoder` would report.
+fn json_kind_name(json: &Json) -> &'static str {
+    match json {
+        Json::Null => "null",
+        Json::Bool(_) => "Bool",
+        Json::Int(_) | Json::Double(_) => "number",
+        Json::Str(_) => "String",
+        Json::Array(_) => "array",
+        Json::Object(_) => "object",
     }
 }

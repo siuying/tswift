@@ -1,0 +1,23 @@
+Alice
+30
+9.5
+true
+Al
+2
+swift
+rust
+nil
+8.0
+origin
+1
+2
+malformed JSON throws
+fractional Int throws
+keyNotFound throws
+[String] rejects non-string element
+[Int] rejects fractional element
+struct from scalar throws
+array field from scalar throws
+[Point] from object throws
+[Point] from null throws
+non-optional struct field from null throws
