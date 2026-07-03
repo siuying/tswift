@@ -19,6 +19,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(d, "capacity", capacity);
     interp.register_property(d, "hashValue", hash_value);
     interp.register_property(d, "description", description);
+    interp.register_property(d, "debugDescription", description);
 
     interp.register_intrinsic(
         d,

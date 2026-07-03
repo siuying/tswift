@@ -124,6 +124,7 @@ ContiguousArray.startIndex
 Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
+Dictionary.debugDescription
 Dictionary.description
 Dictionary.filter
 Dictionary.hashValue

@@ -25,23 +25,28 @@ sequence_types = [
 # them: arithmetic/concatenation `+`/`+=` for Int/Double/String, and `==` for
 # the value collections (Set/Dictionary/Range equality added in ops.rs).
 [core_members]
-Array = ["+", "+=", "=="]
-ArraySlice = ["=="]
-ContiguousArray = ["=="]
+# Items listed here are handled directly by the interpreter (subscript/init via
+# the builtin-ctor/dispatch machinery, encode via JSONEncoder.json_encode,
+# ! via ops.rs unary prefix) and therefore never appear in registered_keys.txt.
+# They count as both "implemented" and — when the token already appears in a
+# stdlib_*.swift fixture — "verified" for coverage reporting purposes.
+Array = ["+", "+=", "==", "subscript", "init", "encode"]
+ArraySlice = ["==", "subscript"]
+ContiguousArray = ["==", "subscript", "init", "encode"]
 Int = [
   "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
   "==", "!=", "<", "<=", ">", ">=",
   "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>",
 ]
 String = ["+", "+=", "==", "<"]
-Bool = ["&&", "||", "=="]
+Bool = ["&&", "||", "==", "!", "init", "encode"]
 Set = ["=="]
-Dictionary = ["=="]
+Dictionary = ["==", "subscript", "init", "encode"]
 Range = ["=="]
 ClosedRange = ["==", "<"]
 ReversedCollection = ["==", "<"]
 EmptyCollection = ["=="]
-Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue"]
+Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue", "init", "some", "none", "encode"]
 # Floating-point type constants resolved directly by the interpreter
 # (interp/storage.rs `double_type_constant`), plus the `+`/`+=`/`==` operators
 # from `ops.rs`. Neither path goes through the method registry.

@@ -4086,6 +4086,8 @@ impl<'w> Interpreter<'w> {
         t.insert("ArraySlice", Self::ctor_conversion);
         t.insert("CollectionOfOne", Self::ctor_conversion);
         t.insert("EmptyCollection", Self::ctor_empty_collection);
+        // `Optional(x)` — wraps a single value; identity in the flattened model.
+        t.insert("Optional", Self::ctor_optional);
         // Scalar conversion initializers (one argument each).
         for name in [
             "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32",
@@ -4165,6 +4167,22 @@ impl<'w> Interpreter<'w> {
             type_name: "EmptyCollection".into(),
             fields: vec![],
         }))))
+    }
+
+    /// `Optional(x)` — wraps one value in an `Optional`.
+    ///
+    /// In the flattened-value model a present optional *is* its wrapped value,
+    /// so `Optional(x)` is the identity function on the argument.  The
+    /// zero-argument form (`Optional<Int>()`) is not valid Swift and is rejected.
+    fn ctor_optional(
+        _interp: &mut Interpreter,
+        _name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        match args {
+            [arg] => Ok(Some(arg.value.clone())),
+            _ => Ok(None),
+        }
     }
 
     /// Single-argument scalar/sequence conversion initializers (integer widths,

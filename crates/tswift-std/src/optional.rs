@@ -6,9 +6,22 @@
 //! (`Int`/`Double`/`Bool`/`String`) have no other `map`, so registering it there
 //! is unambiguous; `nil` itself dispatches as the `Optional` receiver.
 //!
+//! **Known dispatch limitation** — `take()` and `debugDescription` are NOT
+//! registered because both would require knowing the *declared* type of the
+//! receiver variable at call time:
+//!
+//! * A present `Optional<Int>` is stored as `SwiftValue::Int(n)` at runtime,
+//!   indistinguishable from a plain `Int`.  Routing `take()` to an Optional
+//!   implementation via wrapped-kind registration would allow `var x = 1;
+//!   x.take()` (non-optional) to silently corrupt `x` to `nil`.
+//! * The `Binding` struct in `env.rs` stores only the current value and
+//!   mutability flag — no declared type.  Declared-type-aware dispatch would
+//!   require storing the type annotation in every binding and threading it
+//!   through ~20 `env.declare()` call sites — deferred to a future slice.
+//!
 //! Known gap: a present `Optional<[T]>` is an `Array` receiver, where `map`
 //! means `Sequence.map`; the two are indistinguishable in this value model, so
-//! the sequence meaning wins (documented limitation).
+//! the sequence meaning wins (same root cause).
 
 use tswift_core::{
     BuiltinReceiver, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult, SwiftValue,
@@ -32,6 +45,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
         // follows the interpreter's optional-member semantics on `Nil`.)
         interp.register_property(kind, "unsafelyUnwrapped", unsafely_unwrapped);
     }
+    // NOTE: `take()` and `debugDescription` are intentionally NOT registered.
+    // See module-level doc comment for the full rationale (declared-type-aware
+    // dispatch is required but not yet implemented).
 }
 
 /// `Optional.unsafelyUnwrapped` — the wrapped value of a present optional.
