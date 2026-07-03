@@ -15,6 +15,21 @@ use crate::type_error;
 pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_builtin_enum("Decimal.RoundingMode", &["plain", "down", "up", "bankers"]);
     interp.register_builtin_enum("FloatingPointSign", &["plus", "minus"]);
+    interp.register_builtin_enum(
+        "FloatingPointClassification",
+        &[
+            "quietNaN",
+            "signalingNaN",
+            "negativeInfinity",
+            "negativeNormal",
+            "negativeSubnormal",
+            "negativeZero",
+            "positiveZero",
+            "positiveSubnormal",
+            "positiveNormal",
+            "positiveInfinity",
+        ],
+    );
 
     interp.register_free_fn("Decimal", decimal_init);
     interp.register_property(BuiltinReceiver::Decimal, "isZero", decimal_is_zero);
@@ -53,10 +68,40 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "isSignalingNaN",
         decimal_is_false_pred,
     );
+    interp.register_property(BuiltinReceiver::Decimal, "ulp", decimal_ulp);
+    interp.register_property(BuiltinReceiver::Decimal, "nextUp", decimal_next_up);
+    interp.register_property(BuiltinReceiver::Decimal, "nextDown", decimal_next_down);
+    interp.register_property(
+        BuiltinReceiver::Decimal,
+        "floatingPointClass",
+        decimal_floating_point_class,
+    );
+    // formatted() is a no-arg method call in Swift (not a computed property).
 
     interp.register_static(BuiltinReceiver::Decimal, "pi", decimal_pi);
     interp.register_static(BuiltinReceiver::Decimal, "nan", decimal_nan_static);
     interp.register_static(BuiltinReceiver::Decimal, "quietNaN", decimal_nan_static);
+    interp.register_static(BuiltinReceiver::Decimal, "radix", decimal_radix);
+    interp.register_static(
+        BuiltinReceiver::Decimal,
+        "greatestFiniteMagnitude",
+        decimal_greatest_finite_magnitude,
+    );
+    interp.register_static(
+        BuiltinReceiver::Decimal,
+        "leastFiniteMagnitude",
+        decimal_least_finite_magnitude,
+    );
+    interp.register_static(
+        BuiltinReceiver::Decimal,
+        "leastNonzeroMagnitude",
+        decimal_least_nonzero_magnitude,
+    );
+    interp.register_static(
+        BuiltinReceiver::Decimal,
+        "leastNormalMagnitude",
+        decimal_least_nonzero_magnitude,
+    );
 
     for (name, mutating, func) in [
         ("rounded", false, decimal_rounded as IntrinsicFn),
@@ -71,6 +116,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("isEqual", false, decimal_is_equal_to),
         ("isLess", false, decimal_is_less),
         ("isLessThanOrEqualTo", false, decimal_is_less_or_equal),
+        ("isTotallyOrdered", false, decimal_is_totally_ordered),
+        ("formatted", false, decimal_formatted_method),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::Decimal,
@@ -430,6 +477,227 @@ fn parse_round_args(args: &[SwiftValue]) -> Result<(i32, RoundingMode), StdError
     }
 }
 
+// ── Static constants ────────────────────────────────────────────────────────
+
+fn decimal_radix(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(SwiftValue::int(10))
+}
+
+/// Largest finite `Decimal` in this runtime's `i128` mantissa model.
+///
+/// Foundation's real `greatestFiniteMagnitude` is `(2^128 − 1) × 10^127`
+/// (mantissa = 340282366920938463463374607431768211455, 39 digits).
+/// Our signed `i128` can only hold up to `i128::MAX = 2^127 − 1` as the
+/// positive mantissa (≈ 1.70×10^38 vs NSDecimal's ≈ 3.40×10^38), so our
+/// value is approximately *half* of the real `greatestFiniteMagnitude`.
+/// The description string therefore differs from Apple's Foundation.
+/// This deviation is documented in `notes.md`.
+fn decimal_greatest_finite_magnitude(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(dec::to_value(Dec {
+        nan: false,
+        mantissa: i128::MAX,
+        exponent: 127,
+    }))
+}
+
+/// Most negative `Decimal` in this runtime (mirror of `greatestFiniteMagnitude`).
+/// Same signed-mantissa limitation applies; see `decimal_greatest_finite_magnitude`.
+fn decimal_least_finite_magnitude(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(dec::to_value(Dec {
+        nan: false,
+        mantissa: i128::MIN,
+        exponent: 127,
+    }))
+}
+
+/// Smallest positive non-zero `Decimal` that matches Foundation's value.
+///
+/// Foundation's `leastNonzeroMagnitude` == `leastNormalMagnitude` == `10^(-127)`,
+/// even though smaller values (e.g. `1e-128`) are representable in NSDecimal.
+/// The value `10^(-127)` is what `Decimal.leastNonzeroMagnitude` returns in
+/// real Swift/Foundation; we match it exactly.
+fn decimal_least_nonzero_magnitude(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(dec::to_value(Dec {
+        nan: false,
+        mantissa: 1,
+        exponent: -127,
+    }))
+}
+
+// ── ULP / neighbours ────────────────────────────────────────────────────────
+
+/// Unit in the last place, matching NSDecimal's 38-significant-digit model.
+///
+/// Formula: `ulp(x) = 10^(max(floor(log10(|x|)) - 38, -128))` where
+/// `floor(log10(|x|))` for a normalised `m * 10^e` is `e + num_digits(|m|) - 1`.
+/// The floor at `-128` reflects NSDecimal's minimum representable exponent.
+fn decimal_ulp(recv: SwiftValue) -> StdResult {
+    let v = decimal_value(&recv)?;
+    if v.nan || v.is_zero() {
+        return Ok(dec::to_value(Dec::NAN));
+    }
+    let num_digits = v.mantissa.unsigned_abs().to_string().len() as i32;
+    let mag_exp = v.exponent + num_digits - 1; // floor(log10(|v|))
+    let ulp_exp = (mag_exp - 38).max(-128);
+    Ok(dec::to_value(Dec {
+        nan: false,
+        mantissa: 1,
+        exponent: ulp_exp,
+    }))
+}
+
+/// Compute the ulp for a non-NaN, non-zero `Dec`.
+/// See `decimal_ulp` for the formula.
+fn dec_ulp(v: Dec) -> Dec {
+    let num_digits = v.mantissa.unsigned_abs().to_string().len() as i32;
+    let mag_exp = v.exponent + num_digits - 1;
+    let ulp_exp = (mag_exp - 38).max(-128);
+    Dec {
+        nan: false,
+        mantissa: 1,
+        exponent: ulp_exp,
+    }
+}
+
+/// Next representable value above `self` (= self + ulp(self)). NaN → NaN.
+fn decimal_next_up(recv: SwiftValue) -> StdResult {
+    let v = decimal_value(&recv)?;
+    if v.nan || v.is_zero() {
+        return Ok(dec::to_value(Dec::NAN));
+    }
+    Ok(dec::to_value(dec::add(v, dec_ulp(v))))
+}
+
+/// Next representable value below `self` (= self - ulp(self)). NaN → NaN.
+fn decimal_next_down(recv: SwiftValue) -> StdResult {
+    let v = decimal_value(&recv)?;
+    if v.nan || v.is_zero() {
+        return Ok(dec::to_value(Dec::NAN));
+    }
+    Ok(dec::to_value(dec::sub(v, dec_ulp(v))))
+}
+
+// ── isTotallyOrdered ────────────────────────────────────────────────────────
+
+/// Total ordering predicate — matches Foundation.Decimal behaviour.
+///
+/// Foundation's `Decimal.isTotallyOrdered(belowOrEqualTo:)` returns `false`
+/// whenever **either** operand is NaN (verified against real Swift 5.9+).
+/// This deviates from the pure IEEE 754-2008 total-order spec (which places
+/// NaN at a defined position) but is what the runtime must match.
+fn decimal_is_totally_ordered(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let other = decimal_operand(&args, "isTotallyOrdered(belowOrEqualTo:)")?;
+    let value = decimal_value(&recv)?;
+    let result = if value.nan || other.nan {
+        false // Foundation returns false for any NaN operand
+    } else {
+        matches!(
+            dec::compare(value, other),
+            std::cmp::Ordering::Less | std::cmp::Ordering::Equal
+        )
+    };
+    Ok(Outcome {
+        result: SwiftValue::Bool(result),
+        receiver: recv,
+    })
+}
+
+// ── floatingPointClass ───────────────────────────────────────────────────────
+
+fn floating_point_classification(case: &str) -> SwiftValue {
+    SwiftValue::Enum(std::rc::Rc::new(tswift_core::EnumObj {
+        type_name: "FloatingPointClassification".into(),
+        case: case.into(),
+        payload: Vec::new(),
+    }))
+}
+
+/// Returns the `FloatingPointClassification` of this `Decimal`.
+///
+/// `Decimal` has no infinity and no subnormals, so only four cases arise:
+/// `.quietNaN`, `.positiveZero`, `.positiveNormal`, `.negativeNormal`.
+fn decimal_floating_point_class(recv: SwiftValue) -> StdResult {
+    let v = decimal_value(&recv)?;
+    let case = if v.nan {
+        "quietNaN"
+    } else if v.mantissa == 0 {
+        "positiveZero"
+    } else if v.mantissa > 0 {
+        "positiveNormal"
+    } else {
+        "negativeNormal"
+    };
+    Ok(floating_point_classification(case))
+}
+
+// ── formatted() ─────────────────────────────────────────────────────────────
+
+/// Basic en_US number formatting: integer part with `,` grouping, decimal
+/// separator `.`, fractional digits preserved as-is.
+///
+/// Approximates `Decimal.formatted()` with the default number format style.
+/// Full `FormatStyle` locale sensitivity is out of scope for this runtime.
+fn decimal_format_to_string(v: Dec) -> String {
+    if v.nan {
+        return "NaN".to_string();
+    }
+    let s = dec::to_string(v);
+    let (negative, body) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, s.as_str())
+    };
+    let (int_part, frac_part) = match body.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (body, None),
+    };
+    let grouped = group_with_commas(int_part);
+    let mut result = if negative {
+        format!("-{grouped}")
+    } else {
+        grouped
+    };
+    if let Some(frac) = frac_part {
+        result.push('.');
+        result.push_str(frac);
+    }
+    result
+}
+
+/// `formatted()` intrinsic wrapper (no-arg method call form).
+fn decimal_formatted_method(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("Decimal.formatted() takes no arguments"));
+    }
+    let v = decimal_value(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Str(decimal_format_to_string(v).into()),
+        receiver: recv,
+    })
+}
+
+/// Add thousand-group commas to a non-negative integer digit string.
+fn group_with_commas(digits: &str) -> String {
+    let chars: Vec<char> = digits.chars().collect();
+    let len = chars.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (idx, ch) in chars.iter().enumerate() {
+        if idx > 0 && (len - idx) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*ch);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,6 +860,150 @@ mod tests {
             .result;
             assert_eq!(out, SwiftValue::Bool(false));
         }
+    }
+
+    #[test]
+    fn static_constants_are_well_formed() {
+        let greatest = decimal_greatest_finite_magnitude(&mut dummy_ctx(), vec![]).unwrap();
+        let least = decimal_least_finite_magnitude(&mut dummy_ctx(), vec![]).unwrap();
+        let least_nonzero = decimal_least_nonzero_magnitude(&mut dummy_ctx(), vec![]).unwrap();
+        let radix = decimal_radix(&mut dummy_ctx(), vec![]).unwrap();
+        assert_eq!(radix, SwiftValue::int(10));
+        // greatestFiniteMagnitude > 0, uses i128::MAX mantissa (documented deviation from NSDecimal)
+        let gfm = dec::from_value(&greatest).unwrap();
+        assert!(gfm.mantissa > 0);
+        assert_eq!(gfm.exponent, 127);
+        assert_eq!(gfm.mantissa, i128::MAX);
+        // leastFiniteMagnitude < 0
+        let lfm = dec::from_value(&least).unwrap();
+        assert!(lfm.mantissa < 0);
+        // leastNonzeroMagnitude matches Foundation's real value: 10^(-127)
+        let lnzm = dec::from_value(&least_nonzero).unwrap();
+        assert_eq!(lnzm.mantissa, 1);
+        assert_eq!(lnzm.exponent, -127); // Foundation returns 10^-127, not 10^-128
+        assert_eq!(dec::to_string(lnzm), "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001");
+    }
+
+    #[test]
+    fn ulp_uses_38_significant_digit_model() {
+        // ulp(1) = 10^(floor(log10(1)) - 38) = 10^(0 - 38) = 10^-38
+        let ulp1 = decimal_ulp(decimal(1, 0)).unwrap();
+        assert_eq!(
+            dec::to_string(dec::from_value(&ulp1).unwrap()),
+            "0.00000000000000000000000000000000000001"
+        );
+        // ulp(1.5): floor(log10(1.5)) = 0, ulp = 10^-38 (same as ulp(1))
+        let ulp15 = decimal_ulp(decimal(15, -1)).unwrap();
+        assert_eq!(ulp15, ulp1);
+        // ulp(0.01): floor(log10(0.01)) = -2, ulp = 10^(-2-38) = 10^-40
+        let ulp001 = decimal_ulp(decimal(1, -2)).unwrap();
+        assert_eq!(
+            dec::to_string(dec::from_value(&ulp001).unwrap()),
+            "0.0000000000000000000000000000000000000001"
+        );
+        // ulp(lnzm = 10^-127): floor(log10(10^-127)) = -127, ulp = max(-165, -128) = 10^-128
+        let lnzm = dec::to_value(Dec {
+            nan: false,
+            mantissa: 1,
+            exponent: -127,
+        });
+        let ulp_lnzm = decimal_ulp(lnzm).unwrap();
+        assert_eq!(dec::from_value(&ulp_lnzm).unwrap().exponent, -128);
+        // NaN → NaN
+        assert!(
+            dec::from_value(&decimal_ulp(dec::to_value(Dec::NAN)).unwrap())
+                .unwrap()
+                .nan
+        );
+    }
+
+    #[test]
+    fn next_up_and_next_down() {
+        // nextUp(1.5) = 1.5 + 10^-38 = 1.50000000000000000000000000000000000001
+        let up = decimal_next_up(decimal(15, -1)).unwrap();
+        assert_eq!(
+            dec::to_string(dec::from_value(&up).unwrap()),
+            "1.50000000000000000000000000000000000001"
+        );
+        // nextDown(1.5) = 1.5 - 10^-38 = 1.49999999999999999999999999999999999999
+        let down = decimal_next_down(decimal(15, -1)).unwrap();
+        assert_eq!(
+            dec::to_string(dec::from_value(&down).unwrap()),
+            "1.49999999999999999999999999999999999999"
+        );
+        // NaN propagates
+        assert!(
+            dec::from_value(&decimal_next_up(dec::to_value(Dec::NAN)).unwrap())
+                .unwrap()
+                .nan
+        );
+    }
+
+    #[test]
+    fn is_totally_ordered_predicate() {
+        let r = |recv, arg| {
+            decimal_is_totally_ordered(&mut dummy_ctx(), recv, vec![arg])
+                .unwrap()
+                .result
+        };
+        assert_eq!(r(decimal(3, 0), decimal(5, 0)), SwiftValue::Bool(true));
+        assert_eq!(r(decimal(5, 0), decimal(3, 0)), SwiftValue::Bool(false));
+        assert_eq!(r(decimal(3, 0), decimal(3, 0)), SwiftValue::Bool(true));
+        // Foundation: any NaN operand → false (verified against real Swift)
+        assert_eq!(
+            r(dec::to_value(Dec::NAN), decimal(5, 0)),
+            SwiftValue::Bool(false)
+        );
+        assert_eq!(
+            r(decimal(5, 0), dec::to_value(Dec::NAN)),
+            SwiftValue::Bool(false)
+        );
+        // NaN vs NaN → false
+        assert_eq!(
+            r(dec::to_value(Dec::NAN), dec::to_value(Dec::NAN)),
+            SwiftValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn floating_point_class_cases() {
+        assert_eq!(
+            decimal_floating_point_class(decimal(5, 0)).unwrap(),
+            floating_point_classification("positiveNormal")
+        );
+        assert_eq!(
+            decimal_floating_point_class(decimal(-5, 0)).unwrap(),
+            floating_point_classification("negativeNormal")
+        );
+        assert_eq!(
+            decimal_floating_point_class(decimal(0, 0)).unwrap(),
+            floating_point_classification("positiveZero")
+        );
+        assert_eq!(
+            decimal_floating_point_class(dec::to_value(Dec::NAN)).unwrap(),
+            floating_point_classification("quietNaN")
+        );
+    }
+
+    #[test]
+    fn formatted_adds_thousand_separators() {
+        fn fmt(v: Dec) -> String {
+            decimal_format_to_string(v)
+        }
+        assert_eq!(fmt(Dec::new(1234567, 0)), "1,234,567");
+        assert_eq!(fmt(dec::parse("1234.56").unwrap()), "1,234.56");
+        assert_eq!(fmt(Dec::new(-1234, 0)), "-1,234");
+        assert_eq!(fmt(Dec::zero()), "0");
+        assert_eq!(fmt(Dec::new(999, 0)), "999");
+        assert_eq!(fmt(Dec::NAN), "NaN");
+    }
+
+    #[test]
+    fn group_with_commas_boundaries() {
+        assert_eq!(group_with_commas("1"), "1");
+        assert_eq!(group_with_commas("100"), "100");
+        assert_eq!(group_with_commas("1000"), "1,000");
+        assert_eq!(group_with_commas("1234567"), "1,234,567");
     }
 
     #[test]
