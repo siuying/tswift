@@ -30,6 +30,7 @@ mod dispatch;
 mod nominal;
 mod pattern;
 mod sequence;
+mod static_type;
 mod storage;
 mod strings;
 
@@ -223,6 +224,12 @@ struct FuncDef {
     /// to a returned tuple so `f().lo` works even when the `return` expression
     /// itself was unlabeled.
     ret_tuple_labels: Option<Vec<Option<String>>>,
+    /// The written return type annotation (`-> String?` → `String?`), if any.
+    /// Type-level metadata only, used to recover static optionality at call
+    /// sites via [`Interpreter::static_type_of`]. Consumed by the type-directed
+    /// printing/dispatch stages that build on this foundation.
+    #[allow(dead_code)]
+    return_type: Option<String>,
 }
 
 /// A stored property of a struct.
@@ -1479,11 +1486,11 @@ impl<'w> Interpreter<'w> {
         }
         let params = parse_params(node);
         let body = node.find_child(NodeKind::Block);
-        let ret_tuple_labels = node
+        let return_type = node
             .children()
             .find(|c| c.kind() == NodeKind::TypeRef)
-            .and_then(|t| t.text())
-            .and_then(|t| tuple_type_labels(&t));
+            .and_then(|t| t.text());
+        let ret_tuple_labels = return_type.as_deref().and_then(tuple_type_labels);
         let captured = self.env.capture();
         let generic_params = generic_param_names(node);
         let id = self.funcs.len();
@@ -1493,6 +1500,7 @@ impl<'w> Interpreter<'w> {
             captured,
             generic_params,
             ret_tuple_labels,
+            return_type,
         });
         self.env.declare(&name, SwiftValue::Function(id), false);
     }
@@ -1548,7 +1556,8 @@ impl<'w> Interpreter<'w> {
             }
             None => SwiftValue::Void,
         };
-        self.env.declare(&name, value, mutable);
+        let declared_type = decl_annotation_type(node).map(Rc::from);
+        self.env.declare_typed(&name, value, mutable, declared_type);
         Ok(SwiftValue::Void)
     }
 
@@ -1599,6 +1608,10 @@ impl<'w> Interpreter<'w> {
             .children()
             .find(|c| c.kind() == NodeKind::TypeRef)
             .and_then(|c| c.text());
+        // Preserve the written annotation on the env binding too, so
+        // `static_type_of` can recover optionality for computed/observed vars
+        // just as it does for plain `let`/`var`.
+        let declared_type = ty.as_deref().map(Rc::from);
         let idx = self.accessor_vars.len();
         self.accessor_vars.push(AccessorVarSlot {
             name: name.to_string(),
@@ -1609,7 +1622,8 @@ impl<'w> Interpreter<'w> {
             did_set,
             storage,
         });
-        self.env.declare(name, SwiftValue::AccessorVar(idx), true);
+        self.env
+            .declare_typed(name, SwiftValue::AccessorVar(idx), true, declared_type);
         Ok(SwiftValue::Void)
     }
 
@@ -2603,10 +2617,7 @@ impl<'w> Interpreter<'w> {
             for (name, v) in captured_overrides {
                 scope.borrow_mut().insert(
                     name,
-                    StdRc::new(RefCell::new(crate::env::Binding {
-                        value: v,
-                        mutable: false,
-                    })),
+                    StdRc::new(RefCell::new(crate::env::Binding::new(v, false))),
                 );
             }
             captured.push(scope);
@@ -4035,7 +4046,8 @@ impl<'w> Interpreter<'w> {
                 // `inout` params are mutable and write back to the caller.
                 // Coerce an integer literal argument into a floating parameter.
                 let value = coerce_numeric(arg.value.clone(), p.ty.as_deref());
-                self.env.declare(&p.name, value, p.inout_);
+                self.env
+                    .declare_typed(&p.name, value, p.inout_, p.ty.as_deref().map(Rc::from));
                 if p.inout_ {
                     if let Some(place) = arg.place.clone() {
                         inout_binds.push((p.name.clone(), place));
@@ -4044,7 +4056,8 @@ impl<'w> Interpreter<'w> {
                 ai += 1;
             } else if let Some(def) = p.default {
                 let v = self.eval(&def)?;
-                self.env.declare(&p.name, v, false);
+                self.env
+                    .declare_typed(&p.name, v, false, p.ty.as_deref().map(Rc::from));
             } else {
                 return Err(EvalError::Type(format!("missing argument for `{}`", p.name)).into());
             }
@@ -4646,6 +4659,15 @@ fn array_element_type(name: &str) -> Option<&str> {
     TypeRepr::parse(name).array_element().map(TypeRepr::text)
 }
 
+/// The written type annotation on a `let`/`var` declaration (`var x: Int?`
+/// → `Int?`), if any — the first `TypeRef` child. Type-level metadata used to
+/// recover static optionality; never used for coercion.
+fn decl_annotation_type(node: &Node<'static>) -> Option<String> {
+    node.children()
+        .find(|c| c.kind() == NodeKind::TypeRef)
+        .and_then(|c| c.text())
+}
+
 /// The written type annotation of a stored-property declaration (`var x: Double`
 /// → `Double`), if any.
 fn field_type_name(member: &Node<'static>) -> Option<String> {
@@ -5209,6 +5231,138 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    /// Analyze `src`, evaluate its top-level declarations (without the
+    /// end-of-program global drain that `run` performs), then hand the live
+    /// interpreter and AST to `f` so it can inspect declared types and probe
+    /// `static_type_of` on real expression nodes.
+    fn with_interp<R>(src: &str, f: impl FnOnce(&Interpreter, Node<'static>) -> R) -> R {
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        crate::install_test_print(&mut interp);
+        interp.eval(&analysis.root()).expect("eval");
+        f(&interp, analysis.root())
+    }
+
+    /// The first node in `node`'s subtree (pre-order) satisfying `pred`.
+    fn find_node(
+        node: Node<'static>,
+        pred: &impl Fn(&Node<'static>) -> bool,
+    ) -> Option<Node<'static>> {
+        if pred(&node) {
+            return Some(node);
+        }
+        for c in node.children() {
+            if let Some(n) = find_node(c, pred) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn annotated_let_and_var_record_their_written_type() {
+        with_interp(
+            "let a: Int? = 5\nvar b: String = \"x\"\nlet c = 7\n",
+            |interp, _root| {
+                assert_eq!(interp.env.declared_type_of("a").as_deref(), Some("Int?"));
+                assert_eq!(interp.env.declared_type_of("b").as_deref(), Some("String"));
+                // Un-annotated binding carries no declared type.
+                assert_eq!(interp.env.declared_type_of("c"), None);
+            },
+        );
+    }
+
+    #[test]
+    fn parameters_record_their_written_type() {
+        // A param's declared type is recorded in the call scope; capture it in
+        // a closure so it survives past the call for inspection.
+        with_interp("func probe(x: Int?) {}\nprobe(x: 1)\n", |interp, _root| {
+            let id = match interp.env.get("probe") {
+                Some(SwiftValue::Function(id)) => id,
+                other => panic!("expected function, got {other:?}"),
+            };
+            assert_eq!(interp.funcs[id].params[0].ty.as_deref(), Some("Int?"));
+        });
+        // Exercise `bind_params` directly to confirm the annotation lands on
+        // the binding it creates.
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        let params = vec![Param {
+            label: None,
+            name: "x".into(),
+            ty: Some("Int?".into()),
+            variadic: false,
+            inout_: false,
+            autoclosure: false,
+            default: None,
+        }];
+        let args = vec![CallArg {
+            label: None,
+            value: SwiftValue::Bool(true),
+            place: None,
+        }];
+        interp.env.push();
+        interp.bind_params(&params, args).expect("bind");
+        assert_eq!(interp.env.declared_type_of("x").as_deref(), Some("Int?"));
+    }
+
+    #[test]
+    fn accessor_var_retains_declared_type() {
+        // A computed/observed `var` declares its env binding through the
+        // accessor path; its written annotation must still reach
+        // `static_type_of` (so optionality is recoverable for computed vars).
+        let src = concat!("var x: Int? { get { nil } }\n", "let echo = x\n",);
+        with_interp(src, |interp, root| {
+            assert_eq!(interp.env.declared_type_of("x").as_deref(), Some("Int?"));
+            let ident_x = find_node(root, &|n| {
+                n.kind() == NodeKind::IdentExpr && n.text().as_deref() == Some("x")
+            })
+            .expect("ident x");
+            assert_eq!(interp.static_type_of(&ident_x).as_deref(), Some("Int?"));
+        });
+    }
+
+    #[test]
+    fn static_type_of_resolves_identifier_call_and_cast() {
+        let src = concat!(
+            "let a: Int? = 5\n",
+            "func makeName() -> String { return \"n\" }\n",
+            "let b = makeName()\n",
+            "let c = a as? Double\n",
+            "let u = 9\n",
+            "let echo = u\n",
+        );
+        with_interp(src, |interp, root| {
+            // Identifier → the binding's declared type.
+            let ident_a = find_node(root, &|n| {
+                n.kind() == NodeKind::IdentExpr && n.text().as_deref() == Some("a")
+            })
+            .expect("ident a");
+            assert_eq!(interp.static_type_of(&ident_a).as_deref(), Some("Int?"));
+
+            // Call to a user function → its declared return type.
+            let call = find_node(root, &|n| {
+                n.kind() == NodeKind::CallExpr
+                    && n.children().next().and_then(|c| c.text()).as_deref() == Some("makeName")
+            })
+            .expect("call makeName");
+            assert_eq!(interp.static_type_of(&call).as_deref(), Some("String"));
+
+            // `as?` cast → the target, marked optional.
+            let cast = find_node(root, &|n| n.kind() == NodeKind::CastExpr).expect("cast");
+            assert_eq!(interp.static_type_of(&cast).as_deref(), Some("Double?"));
+
+            // Un-annotated binding and unknown shapes degrade to None.
+            let ident_u = find_node(root, &|n| {
+                n.kind() == NodeKind::IdentExpr && n.text().as_deref() == Some("u")
+            })
+            .expect("ident u");
+            assert_eq!(interp.static_type_of(&ident_u), None);
+        });
     }
 
     #[test]

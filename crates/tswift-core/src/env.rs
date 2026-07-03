@@ -13,10 +13,27 @@ use std::rc::Rc;
 use crate::value::SwiftValue;
 
 /// One variable binding: its current value and whether it may be reassigned.
+///
+/// `declared_type` is *type-level metadata only* — the written type annotation
+/// (via `TypeRepr` text) recorded at the binding site. It never participates in
+/// equality, mutation, or coercion; it exists purely so consumers can recover
+/// static optionality the flattened value model has erased.
 #[derive(Debug, Clone)]
 pub struct Binding {
     pub value: SwiftValue,
     pub mutable: bool,
+    pub declared_type: Option<Rc<str>>,
+}
+
+impl Binding {
+    /// A binding with no recorded declared type (the common case).
+    pub fn new(value: SwiftValue, mutable: bool) -> Binding {
+        Binding {
+            value,
+            mutable,
+            declared_type: None,
+        }
+    }
 }
 
 /// A binding slot, shareable *individually*: a scope map can be cloned (e.g.
@@ -124,14 +141,42 @@ impl Env {
 
     /// Declare a new binding in the innermost scope (shadowing any outer one).
     pub fn declare(&mut self, name: &str, value: SwiftValue, mutable: bool) {
+        self.declare_typed(name, value, mutable, None);
+    }
+
+    /// Declare a new binding, recording its written type annotation. The
+    /// `declared_type` is type-level metadata only (see [`Binding`]).
+    pub fn declare_typed(
+        &mut self,
+        name: &str,
+        value: SwiftValue,
+        mutable: bool,
+        declared_type: Option<Rc<str>>,
+    ) {
         self.scopes
             .last()
             .expect("at least one scope")
             .borrow_mut()
             .insert(
                 name.to_string(),
-                Rc::new(RefCell::new(Binding { value, mutable })),
+                Rc::new(RefCell::new(Binding {
+                    value,
+                    mutable,
+                    declared_type,
+                })),
             );
+    }
+
+    /// The written type annotation recorded for a binding, searching
+    /// innermost-outward. `None` when the name is unbound or was declared
+    /// without a usable annotation.
+    pub fn declared_type_of(&self, name: &str) -> Option<Rc<str>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(c) = scope.borrow().get(name) {
+                return c.borrow().declared_type.clone();
+            }
+        }
+        None
     }
 
     /// Look up a binding's value, searching innermost-outward.
@@ -178,5 +223,51 @@ impl Env {
             }
         }
         Err(BindError::Unbound(name.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declare_records_no_type_by_default() {
+        let mut env = Env::new();
+        env.declare("x", SwiftValue::Void, false);
+        assert_eq!(env.declared_type_of("x"), None);
+    }
+
+    #[test]
+    fn declare_typed_records_and_resolves_annotation() {
+        let mut env = Env::new();
+        env.declare_typed("x", SwiftValue::Void, true, Some(Rc::from("Int?")));
+        assert_eq!(env.declared_type_of("x").as_deref(), Some("Int?"));
+    }
+
+    #[test]
+    fn declared_type_of_unbound_is_none() {
+        let env = Env::new();
+        assert_eq!(env.declared_type_of("missing"), None);
+    }
+
+    #[test]
+    fn assign_preserves_declared_type() {
+        // `declared_type` is type-level metadata: reassigning the value must
+        // not disturb it.
+        let mut env = Env::new();
+        env.declare_typed("x", SwiftValue::Void, true, Some(Rc::from("String?")));
+        env.assign("x", SwiftValue::Bool(true)).expect("assign");
+        assert_eq!(env.declared_type_of("x").as_deref(), Some("String?"));
+    }
+
+    #[test]
+    fn inner_scope_shadows_declared_type() {
+        let mut env = Env::new();
+        env.declare_typed("x", SwiftValue::Void, false, Some(Rc::from("Int")));
+        env.push();
+        env.declare_typed("x", SwiftValue::Void, false, Some(Rc::from("String?")));
+        assert_eq!(env.declared_type_of("x").as_deref(), Some("String?"));
+        env.pop();
+        assert_eq!(env.declared_type_of("x").as_deref(), Some("Int"));
     }
 }
