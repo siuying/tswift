@@ -1,24 +1,32 @@
 //! JSON-coding support for Foundation: `String.Encoding` statics,
-//! `String(data:encoding:)` initializer, and date-strategy static values for
-//! `JSONEncoder.DateEncodingStrategy` / `JSONDecoder.DateDecodingStrategy`.
+//! `String(data:encoding:)` initializer, and strategy enums for
+//! `JSONEncoder` / `JSONDecoder`.
 //!
-//! ## Date strategy resolution
+//! ## Strategy resolution (leading-dot only)
 //!
-//! In real Swift, the strategy enums are nested types
-//! (`JSONEncoder.DateEncodingStrategy`). The runtime interpreter resolves
-//! static values via two-level `Type.member` paths; three-level chaining
-//! (`Type.Nested.member`) is not yet supported in the static-lookup path.
-//! We therefore register strategy constants directly on the encoder/decoder
-//! type:
+//! In real Swift all strategy enums are nested types whose cases are accessed
+//! via leading-dot shorthand (e.g. `enc.dateEncodingStrategy = .iso8601`).
+//! The two-level form `JSONEncoder.iso8601` does NOT exist in Foundation.
 //!
-//! * `JSONEncoder.deferredToDate` / `JSONEncoder.secondsSince1970` /
-//!   `JSONEncoder.millisecondsSince1970` / `JSONEncoder.iso8601` → integer raw
-//!   values (0–3) read by `tswift-core::interp::coding::DateEncoding`.
-//! * Analogous `JSONDecoder.*` constants for the decode side.
+//! This module registers the strategy enums as **builtin enums** so that
+//! `.iso8601`, `.secondsSince1970`, etc. resolve through the interpreter's
+//! implicit-member mechanism.  The strategy readers in `coding.rs` accept
+//! either a `SwiftValue::Enum` (from leading-dot) or a legacy `SwiftValue::Int`
+//! (for backward compatibility with older test programs).
 //!
-//! Fixture code uses `JSONEncoder.secondsSince1970` (explicit 2-level) rather
-//! than `.secondsSince1970` (leading-dot) to avoid ambiguity between the
-//! encoder and decoder namespaces.
+//! Registered builtin enum types:
+//! * `JSONEncoder.DateEncodingStrategy` — deferredToDate, secondsSince1970,
+//!   millisecondsSince1970, iso8601
+//! * `JSONDecoder.DateDecodingStrategy` — same cases
+//! * `JSONEncoder.DataEncodingStrategy` — base64, deferredToData
+//! * `JSONDecoder.DataDecodingStrategy` — same cases
+//! * `JSONEncoder.KeyEncodingStrategy` — useDefaultKeys, convertToSnakeCase
+//! * `JSONDecoder.KeyDecodingStrategy` — useDefaultKeys, convertFromSnakeCase
+//! * `JSONEncoder.OutputFormatting` — prettyPrinted, sortedKeys
+//!
+//! `.iso8601` is shared with `Date.FormatStyle`; the resolver always picks
+//! `Date.FormatStyle` (alphabetically first) which is fine — the strategy
+//! readers dispatch on the case name, not the type name.
 
 use tswift_core::{Arg, BuiltinParam, Interpreter, StdContext, StdError, StdResult, SwiftValue};
 
@@ -46,38 +54,44 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ],
     );
 
-    // `JSONEncoder` date-encoding strategy constants.
-    // Raw values (0–3) match `DateEncoding` discriminants in coding.rs.
-    interp.register_static_value("JSONEncoder", "deferredToDate", SwiftValue::int(0));
-    interp.register_static_value("JSONEncoder", "secondsSince1970", SwiftValue::int(1));
-    interp.register_static_value("JSONEncoder", "millisecondsSince1970", SwiftValue::int(2));
-    interp.register_static_value("JSONEncoder", "iso8601", SwiftValue::int(3));
+    // ---- Strategy enums (builtin enums for leading-dot resolution) ----
+    //
+    // These replace the old `register_static_value("JSONEncoder", "iso8601", …)`
+    // pattern. `JSONEncoder.iso8601` does not exist in real Foundation;
+    // only the leading-dot `.iso8601` form is valid Swift.  The strategy
+    // readers in coding.rs accept `SwiftValue::Enum { case }` produced by
+    // these registrations.
 
-    // `JSONDecoder` date-decoding strategy constants (same raw values).
-    interp.register_static_value("JSONDecoder", "deferredToDate", SwiftValue::int(0));
-    interp.register_static_value("JSONDecoder", "secondsSince1970", SwiftValue::int(1));
-    interp.register_static_value("JSONDecoder", "millisecondsSince1970", SwiftValue::int(2));
-    interp.register_static_value("JSONDecoder", "iso8601", SwiftValue::int(3));
+    // Date strategies.
+    const DATE_STRATEGY_CASES: &[&str] = &[
+        "deferredToDate",
+        "secondsSince1970",
+        "millisecondsSince1970",
+        "iso8601",
+    ];
+    interp.register_builtin_enum("JSONEncoder.DateEncodingStrategy", DATE_STRATEGY_CASES);
+    interp.register_builtin_enum("JSONDecoder.DateDecodingStrategy", DATE_STRATEGY_CASES);
 
-    // `JSONEncoder.OutputFormatting` OptionSet bit-flags.
-    // Bit 0 (1) = prettyPrinted, Bit 1 (2) = sortedKeys.
-    interp.register_static_value("JSONEncoder", "prettyPrinted", SwiftValue::int(1));
-    interp.register_static_value("JSONEncoder", "sortedKeys", SwiftValue::int(2));
+    // Data strategies.
+    const DATA_STRATEGY_CASES: &[&str] = &["base64", "deferredToData"];
+    interp.register_builtin_enum("JSONEncoder.DataEncodingStrategy", DATA_STRATEGY_CASES);
+    interp.register_builtin_enum("JSONDecoder.DataDecodingStrategy", DATA_STRATEGY_CASES);
 
-    // `JSONEncoder.KeyEncodingStrategy` raw values (1 = convertToSnakeCase).
-    interp.register_static_value("JSONEncoder", "convertToSnakeCase", SwiftValue::int(1));
+    // Key strategies.
+    interp.register_builtin_enum(
+        "JSONEncoder.KeyEncodingStrategy",
+        &["useDefaultKeys", "convertToSnakeCase"],
+    );
+    interp.register_builtin_enum(
+        "JSONDecoder.KeyDecodingStrategy",
+        &["useDefaultKeys", "convertFromSnakeCase"],
+    );
 
-    // `JSONDecoder.KeyDecodingStrategy` raw values (1 = convertFromSnakeCase).
-    interp.register_static_value("JSONDecoder", "convertFromSnakeCase", SwiftValue::int(1));
-
-    // `JSONEncoder.DataEncodingStrategy` raw values.
-    // 0 = base64 (default), 1 = deferredToData (array of byte numbers).
-    interp.register_static_value("JSONEncoder", "base64", SwiftValue::int(0));
-    interp.register_static_value("JSONEncoder", "deferredToData", SwiftValue::int(1));
-
-    // `JSONDecoder.DataDecodingStrategy` raw values (mirrors encoder side).
-    interp.register_static_value("JSONDecoder", "base64", SwiftValue::int(0));
-    interp.register_static_value("JSONDecoder", "deferredToData", SwiftValue::int(1));
+    // OutputFormatting (OptionSet) — treated as enum for leading-dot resolution.
+    interp.register_builtin_enum(
+        "JSONEncoder.OutputFormatting",
+        &["prettyPrinted", "sortedKeys"],
+    );
 }
 
 /// Returns the member keys exposed by this module (for coverage tracking).

@@ -703,7 +703,44 @@ fn set_percent_encoded_query_items(
     }
 }
 
+/// Setter for `queryItems`: converts `[URLQueryItem]?` into the canonical
+/// `query` string and stores it in the `"query"` field.
+///
+/// Setting `queryItems` to `[]` stores an empty query string `""` (which
+/// produces a `?` in the URL with no params), matching Foundation behavior.
+/// Setting to `nil` clears the query.
+fn set_query_items(recv: SwiftValue, new_value: SwiftValue) -> Result<SwiftValue, StdError> {
+    match new_value {
+        SwiftValue::Nil => comp_set_field(recv, "query", SwiftValue::Nil),
+        SwiftValue::Array(items) => {
+            let mut parts: Vec<String> = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                let SwiftValue::Struct(obj) = item else {
+                    return Err(crate::type_error(
+                        "queryItems elements must be URLQueryItem",
+                    ));
+                };
+                let name = match obj.get("name") {
+                    Some(SwiftValue::Str(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                match obj.get("value") {
+                    Some(SwiftValue::Str(v)) => parts.push(format!("{name}={v}")),
+                    Some(SwiftValue::Nil) | None => parts.push(name),
+                    _ => return Err(crate::type_error("URLQueryItem value must be String?")),
+                }
+            }
+            // Empty array → empty query string (produces `?` in URL).
+            let query = parts.join("&");
+            comp_set_field(recv, "query", SwiftValue::Str(query))
+        }
+        _ => Err(crate::type_error("queryItems must be [URLQueryItem]?")),
+    }
+}
+
 const URL_COMPONENTS_ENCODED_SETTERS: &[(&str, PropertySetterFn)] = &[
+    // `queryItems` setter: translates item array to the `query` string field.
+    ("queryItems", set_query_items),
     // Plain field setters that need side-effects (clearing _encodedHost).
     ("host", set_host),
     // Percent-encoded setters.
@@ -1079,7 +1116,15 @@ fn appended_component(recv: &SwiftValue, args: &[SwiftValue]) -> Result<SwiftVal
         return Err(type_error("URL.appendingPathComponent expects one String"));
     };
     let parsed = parse_url(&url_string(recv)?);
-    let new_path = join_path(&parsed.path, comp);
+    // Foundation's `appendingPathComponent` percent-encodes the component
+    // (same charset as `appending(component:)`), so spaces and other special
+    // chars are escaped.  An empty component appends a trailing slash.
+    let encoded = percent_encode_component(comp);
+    let new_path = if encoded.is_empty() {
+        format!("{}/", parsed.path.trim_end_matches('/'))
+    } else {
+        join_path(&parsed.path, &encoded)
+    };
     Ok(url_value(rebuild_with_path(&parsed, &new_path)))
 }
 
@@ -1151,7 +1196,14 @@ fn url_appending_path_extension(
         return Err(type_error("URL.appendingPathExtension expects one String"));
     };
     let parsed = parse_url(&url_string(&recv)?);
-    let new_path = format!("{}.{}", parsed.path.trim_end_matches('/'), ext);
+    // Foundation preserves a trailing slash: "/a/b/" + ext "txt" -> "/a/b.txt/".
+    let had_slash = parsed.path.ends_with('/');
+    let stem = parsed.path.trim_end_matches('/');
+    let new_path = if had_slash {
+        format!("{stem}.{ext}/")
+    } else {
+        format!("{stem}.{ext}")
+    };
     let result = url_value(rebuild_with_path(&parsed, &new_path));
     Ok(Outcome {
         result,
@@ -1418,14 +1470,20 @@ fn standardize_path(path: &str) -> String {
         match seg {
             "." => {} // self-reference: discard
             ".." => {
-                // Find the rightmost non-empty segment to pop.
-                if let Some(pos) = out.iter().rposition(|s| !s.is_empty()) {
-                    out.remove(pos);
+                // Foundation's `standardized` resolves `..` by popping the
+                // most-recent segment — whether empty or not — so that `..`
+                // after a double-slash (empty segment) steps over the gap.
+                // For absolute paths clamp at the root marker (the leading
+                // `""` produced by the initial `/`); for relative paths keep
+                // the unresolvable `..`.
+                let min_len = if is_absolute { 1 } else { 0 };
+                if out.len() > min_len {
+                    out.pop();
                 } else if !is_absolute {
                     // Relative path with nothing to resolve: keep the `..`.
                     out.push("..");
                 }
-                // Absolute: clamped — discard the `..`.
+                // Absolute at root: clamp — discard the `..`.
             }
             other => out.push(other),
         }
@@ -1552,7 +1610,13 @@ fn url_append_path_extension(
         });
     }
     let parsed = parse_url(&url_string(&recv)?);
-    let new_path = format!("{}.{}", parsed.path.trim_end_matches('/'), ext);
+    let had_slash = parsed.path.ends_with('/');
+    let stem = parsed.path.trim_end_matches('/');
+    let new_path = if had_slash {
+        format!("{stem}.{ext}/")
+    } else {
+        format!("{stem}.{ext}")
+    };
     let updated = url_value(rebuild_with_path(&parsed, &new_path));
     Ok(Outcome {
         result: SwiftValue::Void,
@@ -1973,7 +2037,7 @@ mod tests {
     fn standardize_path_resolves_dot_and_dotdot() {
         assert_eq!(standardize_path("/a/b/../c"), "/a/c");
         assert_eq!(standardize_path("/a/./b"), "/a/b");
-        // double slashes are PRESERVED
+        // double slashes are PRESERVED when no '..' is involved
         assert_eq!(standardize_path("/a//b"), "/a//b");
         // '..' clamped at root for absolute paths
         assert_eq!(standardize_path("/../../a"), "/a");
@@ -1986,6 +2050,10 @@ mod tests {
         assert_eq!(standardize_path("../a"), "../a");
         // trailing slash preserved
         assert_eq!(standardize_path("/a/b/../"), "/a/");
+        // '..' after empty segment (double-slash): pops the empty, resolves correctly
+        assert_eq!(standardize_path("/a//../c"), "/a/c");
+        assert_eq!(standardize_path("/a//b/../c"), "/a//c");
+        assert_eq!(standardize_path("/a//b/../../c"), "/a/c");
     }
 
     #[test]

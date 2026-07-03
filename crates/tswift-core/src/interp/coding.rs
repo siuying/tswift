@@ -40,6 +40,14 @@ impl DateEncoding {
             _ => Self::DeferredToDate,
         }
     }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "secondsSince1970" => Self::SecondsSince1970,
+            "millisecondsSince1970" => Self::MillisecondsSince1970,
+            "iso8601" => Self::Iso8601,
+            _ => Self::DeferredToDate,
+        }
+    }
 }
 
 /// Mirrors `JSONDecoder.DateDecodingStrategy` cases.
@@ -61,6 +69,14 @@ impl DateDecoding {
             1 => Self::SecondsSince1970,
             2 => Self::MillisecondsSince1970,
             3 => Self::Iso8601,
+            _ => Self::DeferredToDate,
+        }
+    }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "secondsSince1970" => Self::SecondsSince1970,
+            "millisecondsSince1970" => Self::MillisecondsSince1970,
+            "iso8601" => Self::Iso8601,
             _ => Self::DeferredToDate,
         }
     }
@@ -88,6 +104,12 @@ impl DataEncoding {
             _ => Self::Base64,
         }
     }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "deferredToData" => Self::DeferredToData,
+            _ => Self::Base64,
+        }
+    }
 }
 
 /// Mirrors `JSONDecoder.DataDecodingStrategy` cases.
@@ -104,6 +126,12 @@ impl DataDecoding {
     fn from_raw(raw: i128) -> Self {
         match raw {
             1 => Self::DeferredToData,
+            _ => Self::Base64,
+        }
+    }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "deferredToData" => Self::DeferredToData,
             _ => Self::Base64,
         }
     }
@@ -131,6 +159,12 @@ impl KeyEncoding {
             _ => Self::UseDefaultKeys,
         }
     }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "convertToSnakeCase" => Self::ConvertToSnakeCase,
+            _ => Self::UseDefaultKeys,
+        }
+    }
 }
 
 /// Mirrors `JSONDecoder.KeyDecodingStrategy`.
@@ -147,6 +181,12 @@ impl KeyDecoding {
     fn from_raw(raw: i128) -> Self {
         match raw {
             1 => Self::ConvertFromSnakeCase,
+            _ => Self::UseDefaultKeys,
+        }
+    }
+    fn from_case(case: &str) -> Self {
+        match case {
+            "convertFromSnakeCase" => Self::ConvertFromSnakeCase,
             _ => Self::UseDefaultKeys,
         }
     }
@@ -216,7 +256,12 @@ fn iso8601_parse(s: &str) -> Option<f64> {
     let s = s.strip_suffix('Z')?;
     // Strip optional fractional seconds: find the last ':' then look for '.'.
     // "…:00.500" → strip ".500" giving "…:00".
+    // Validate that every char in the fractional part is an ASCII digit.
     let s = if let Some(pos) = s.rfind('.') {
+        let frac = &s[pos + 1..];
+        if frac.is_empty() || !frac.bytes().all(|b| b.is_ascii_digit()) {
+            return None; // reject ".abcZ" or just ".Z"
+        }
         &s[..pos]
     } else {
         s
@@ -282,18 +327,23 @@ fn date_value(ref_seconds: f64) -> SwiftValue {
     }))
 }
 
-/// Read a `DateEncodingStrategy` raw integer from a `JSONEncoder` struct.
+/// Read a `DateEncodingStrategy` from a `JSONEncoder` struct.
+/// Accepts both the legacy raw-integer form and the builtin-enum form
+/// produced by leading-dot resolution (e.g. `.iso8601`).
 fn encoder_date_strategy(o: &StructObj) -> DateEncoding {
     match o.get("dateEncodingStrategy") {
         Some(SwiftValue::Int(i)) => DateEncoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => DateEncoding::from_case(&e.case),
         _ => DateEncoding::DeferredToDate,
     }
 }
 
-/// Read a `DateDecodingStrategy` raw integer from a `JSONDecoder` struct.
+/// Read a `DateDecodingStrategy` from a `JSONDecoder` struct.
+/// Accepts both the legacy raw-integer form and the builtin-enum form.
 fn decoder_date_strategy(o: &StructObj) -> DateDecoding {
     match o.get("dateDecodingStrategy") {
         Some(SwiftValue::Int(i)) => DateDecoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => DateDecoding::from_case(&e.case),
         _ => DateDecoding::DeferredToDate,
     }
 }
@@ -301,15 +351,23 @@ fn decoder_date_strategy(o: &StructObj) -> DateDecoding {
 /// Read `outputFormatting` from a `JSONEncoder` struct.
 /// The field may be an `Int` (single flag) or an `Array` of ints (OptionSet
 /// array literal `[.prettyPrinted, .sortedKeys]` → OR of bit flags).
+/// Map an `OutputFormatting` case name to its bit position.
+fn output_formatting_case_bit(case: &str) -> u64 {
+    match case {
+        "prettyPrinted" => 1,
+        "sortedKeys" => 2,
+        _ => 0,
+    }
+}
+
 fn encoder_output_formatting(o: &StructObj) -> OutputFormatting {
     let bits: u64 = match o.get("outputFormatting") {
         Some(SwiftValue::Int(i)) => i.raw as u64,
-        Some(SwiftValue::Array(items)) => items.iter().fold(0u64, |acc, v| {
-            if let SwiftValue::Int(i) = v {
-                acc | i.raw as u64
-            } else {
-                acc
-            }
+        Some(SwiftValue::Enum(e)) => output_formatting_case_bit(&e.case),
+        Some(SwiftValue::Array(items)) => items.iter().fold(0u64, |acc, v| match v {
+            SwiftValue::Int(i) => acc | i.raw as u64,
+            SwiftValue::Enum(e) => acc | output_formatting_case_bit(&e.case),
+            _ => acc,
         }),
         _ => 0,
     };
@@ -319,34 +377,38 @@ fn encoder_output_formatting(o: &StructObj) -> OutputFormatting {
     }
 }
 
-/// Read a `KeyEncodingStrategy` raw integer from a `JSONEncoder` struct.
+/// Read a `KeyEncodingStrategy` from a `JSONEncoder` struct.
 fn encoder_key_strategy(o: &StructObj) -> KeyEncoding {
     match o.get("keyEncodingStrategy") {
         Some(SwiftValue::Int(i)) => KeyEncoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => KeyEncoding::from_case(&e.case),
         _ => KeyEncoding::UseDefaultKeys,
     }
 }
 
-/// Read a `KeyDecodingStrategy` raw integer from a `JSONDecoder` struct.
+/// Read a `KeyDecodingStrategy` from a `JSONDecoder` struct.
 fn decoder_key_strategy(o: &StructObj) -> KeyDecoding {
     match o.get("keyDecodingStrategy") {
         Some(SwiftValue::Int(i)) => KeyDecoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => KeyDecoding::from_case(&e.case),
         _ => KeyDecoding::UseDefaultKeys,
     }
 }
 
-/// Read a `DataEncodingStrategy` raw integer from a `JSONEncoder` struct.
+/// Read a `DataEncodingStrategy` from a `JSONEncoder` struct.
 fn encoder_data_strategy(o: &StructObj) -> DataEncoding {
     match o.get("dataEncodingStrategy") {
         Some(SwiftValue::Int(i)) => DataEncoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => DataEncoding::from_case(&e.case),
         _ => DataEncoding::Base64,
     }
 }
 
-/// Read a `DataDecodingStrategy` raw integer from a `JSONDecoder` struct.
+/// Read a `DataDecodingStrategy` from a `JSONDecoder` struct.
 fn decoder_data_strategy(o: &StructObj) -> DataDecoding {
     match o.get("dataDecodingStrategy") {
         Some(SwiftValue::Int(i)) => DataDecoding::from_raw(i.raw),
+        Some(SwiftValue::Enum(e)) => DataDecoding::from_case(&e.case),
         _ => DataDecoding::Base64,
     }
 }
@@ -1568,6 +1630,11 @@ mod tests {
         assert!(r.is_some());
         // Without Z, fractional form also fails.
         assert!(iso8601_parse("2001-01-01T00:00:00.500").is_none());
+        // Non-digit fractional suffix must be rejected (iter3 follow-up).
+        assert!(iso8601_parse("2001-01-01T00:00:00.abcZ").is_none());
+        assert!(iso8601_parse("2001-01-01T00:00:00.Z").is_none());
+        // Multiple fractional digits are fine.
+        assert!(iso8601_parse("2001-01-01T00:00:00.123456Z").is_some());
     }
 
     #[test]

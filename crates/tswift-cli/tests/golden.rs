@@ -576,4 +576,35 @@ fn operator_traps() {
         err.contains("Int") || err.contains("type") || err.contains("removeLast"),
         "expected type-mismatch message, got: {err}"
     );
+
+    // --- JSONDecoder.iso8601 must NOT be a valid 2-level member access ---
+    // Real Foundation exposes date strategies as `JSONDecoder.DateDecodingStrategy.iso8601`
+    // (accessed via `.iso8601` shorthand). The two-level form `JSONDecoder.iso8601` does
+    // not exist. The runtime previously registered it as a static integer — now removed.
+    let (ok, _, err) = run_source(
+        "tswift_json_decoder_iso8601_static.swift",
+        "import Foundation\nvar dec = JSONDecoder()\ndec.dateDecodingStrategy = JSONDecoder.iso8601\n",
+    );
+    assert!(
+        !ok,
+        "JSONDecoder.iso8601 (2-level) must not be a valid member access"
+    );
+    assert!(
+        err.contains("unknown") || err.contains("iso8601") || err.contains("JSONDecoder"),
+        "expected 'unknown member' error, got: {err}"
+    );
+
+    // --- JSONEncoder.secondsSince1970 must NOT be a valid 2-level member access ---
+    let (ok, _, err) = run_source(
+        "tswift_json_encoder_seconds_static.swift",
+        "import Foundation\nvar enc = JSONEncoder()\nenc.dateEncodingStrategy = JSONEncoder.secondsSince1970\n",
+    );
+    assert!(
+        !ok,
+        "JSONEncoder.secondsSince1970 (2-level) must not be a valid member access"
+    );
+    assert!(
+        err.contains("unknown") || err.contains("secondsSince1970") || err.contains("JSONEncoder"),
+        "expected 'unknown member' error, got: {err}"
+    );
 }

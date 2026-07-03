@@ -72,7 +72,7 @@ do {
 
 // 6. dataEncodingStrategy = .deferredToData → array of byte integers
 var enc4 = JSONEncoder()
-enc4.dataEncodingStrategy = JSONEncoder.deferredToData
+enc4.dataEncodingStrategy = .deferredToData
 let d6 = try enc4.encode(w5)
 print(String(data: d6, encoding: .utf8)!)
 
@@ -109,7 +109,7 @@ print(w12.id?.uuidString ?? "nil")
 
 // 9. deferredToData decode: int array → Data
 var dec7 = JSONDecoder()
-dec7.dataDecodingStrategy = JSONDecoder.deferredToData
+dec7.dataDecodingStrategy = .deferredToData
 let w13 = try dec7.decode(WithData.self, from: "{\"payload\":[72,101,108,108,111]}")
 print(w13.payload.count)
 

@@ -1,0 +1,23 @@
+https
+user
+example.com
+8080
+/path
+q=1&r=2
+frag
+https://example.com/hello%20world
+/hello%20world
+/hello world
+a=1&b=hello world
+a
+1
+b
+hello world
+https://example.com?q=hello%20world&n=1
+q=hello%20world
+q=hello world
+https://example.com#section%201
+https://example.com?flag
+/hello world
+file:///hello%20world
+nil

@@ -16,7 +16,10 @@ use std::rc::Rc;
 use crate::value::{StructObj, SwiftValue};
 
 /// Maximum fractional guard digits produced by division.
-const DIV_PRECISION: u32 = 30;
+///
+/// NSDecimal stores 38 significant digits; i128::MAX ≈ 1.7 × 10^38 gives
+/// room for a 38-digit mantissa before overflow.
+const DIV_PRECISION: u32 = 38;
 
 /// A decimal number: `mantissa * 10^exponent`, or NaN.
 #[derive(Clone, Copy, Debug)]
