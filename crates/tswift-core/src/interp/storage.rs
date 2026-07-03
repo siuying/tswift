@@ -965,6 +965,14 @@ impl<'w> Interpreter<'w> {
             return Ok(updated);
         }
 
+        // Dispatch to a registered built-in property setter (e.g. URLComponents
+        // percentEncoded* accessors that validate and transform the value).
+        if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
+            if let Some(setter_fn) = self.builtins.setter(recv, name) {
+                return setter_fn(value, new_value).map_err(Self::std_error_to_signal);
+            }
+        }
+
         let observers = self.types.struct_def(&type_name).and_then(|d| {
             d.stored
                 .iter()

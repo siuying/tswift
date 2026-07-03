@@ -11,13 +11,14 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, LabeledMethodEntry, MethodEntry, Outcome, PropertySetterFn, StdContext,
+    StdError, StdResult, StructObj, SwiftValue,
 };
 
 use crate::type_error;
 
 /// Register the URL family on `interp`.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     // ---- URL ----
     interp.register_free_fn("URL", url_init);
@@ -154,9 +155,22 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     );
     interp.register_property(
         BuiltinReceiver::URLComponents,
+        "debugDescription",
+        url_components_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::URLComponents,
         "hashValue",
         url_components_hash_value,
     );
+    // Percent-encoded getters.
+    for (name, getter) in URL_COMPONENTS_ENCODED_GETTERS {
+        interp.register_property(BuiltinReceiver::URLComponents, name, *getter);
+    }
+    // Percent-encoded setters: validate encoding, then store decoded value.
+    for (name, setter) in URL_COMPONENTS_ENCODED_SETTERS {
+        interp.register_property_setter(BuiltinReceiver::URLComponents, name, *setter);
+    }
 }
 
 fn url_hash_value(recv: SwiftValue) -> StdResult {
@@ -259,6 +273,469 @@ fn url_components_description(recv: SwiftValue) -> StdResult {
         _ => Ok(SwiftValue::Str(String::new().into())),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Percent-encoded component accessors
+// ---------------------------------------------------------------------------
+
+/// Helper: return `percent_encode_path` of the stored (decoded) path.
+fn url_components_percent_encoded_path(recv: SwiftValue) -> StdResult {
+    let path = comp_str(&recv, "path").unwrap_or_default();
+    Ok(SwiftValue::Str(percent_encode_path(&path)))
+}
+
+/// Helper: encode the stored (decoded) optional string with `f`, or return Nil.
+fn encode_opt_comp(recv: &SwiftValue, field: &str, f: impl Fn(&str) -> String) -> StdResult {
+    match comp_str(recv, field) {
+        Some(s) => Ok(SwiftValue::Str(f(&s))),
+        None => Ok(SwiftValue::Nil),
+    }
+}
+
+fn url_components_percent_encoded_query(recv: SwiftValue) -> StdResult {
+    encode_opt_comp(&recv, "query", percent_encode_query)
+}
+fn url_components_percent_encoded_fragment(recv: SwiftValue) -> StdResult {
+    encode_opt_comp(&recv, "fragment", percent_encode_query)
+}
+fn url_components_percent_encoded_user(recv: SwiftValue) -> StdResult {
+    encode_opt_comp(&recv, "user", percent_encode_userinfo)
+}
+fn url_components_percent_encoded_password(recv: SwiftValue) -> StdResult {
+    encode_opt_comp(&recv, "password", percent_encode_userinfo)
+}
+/// `percentEncodedHost` getter.
+///
+/// When `encodedHost` was used to set a verbatim encoded form, that form is
+/// stored in the private `"_encodedHost"` field and returned here.  Otherwise
+/// the canonical (decoded) host is returned as-is — for ASCII-only hosts
+/// percent-encoding/decoding is a no-op, so the canonical form equals the
+/// percent-encoded form.
+fn url_components_percent_encoded_host(recv: SwiftValue) -> StdResult {
+    // Prefer the verbatim stored form when an encodedHost override is present
+    // (stored as SwiftValue::Str). A Nil entry means the override was cleared.
+    if let Some(SwiftValue::Str(s)) = comp_field(&recv, "_encodedHost") {
+        return Ok(SwiftValue::Str(s.clone()));
+    }
+    Ok(comp_field(&recv, "host")
+        .cloned()
+        .unwrap_or(SwiftValue::Nil))
+}
+
+/// `encodedHost` getter — same storage as `percentEncodedHost`.
+fn url_components_encoded_host(recv: SwiftValue) -> StdResult {
+    url_components_percent_encoded_host(recv)
+}
+
+/// `percentEncodedQueryItems` — parse the stored decoded query, then
+/// percent-encode each name and value with the query-item charset.
+fn url_components_percent_encoded_query_items(recv: SwiftValue) -> StdResult {
+    let Some(query) = comp_str(&recv, "query") else {
+        return Ok(SwiftValue::Nil);
+    };
+    if query.is_empty() {
+        return Ok(SwiftValue::Nil);
+    }
+    // NOTE: splitting on '&' is correct for the common case but fails when
+    // the stored (decoded) query has a literal '&' inside a name or value
+    // (which would have been %26-encoded in the original URL). This is a
+    // known limitation documented in notes.md.
+    let items: Vec<SwiftValue> = query
+        .split('&')
+        .map(|pair| match pair.split_once('=') {
+            Some((k, v)) => url_query_item_value(
+                percent_encode_query_item(k),
+                Some(percent_encode_query_item(v)),
+            ),
+            None => url_query_item_value(percent_encode_query_item(pair), None),
+        })
+        .collect();
+    Ok(SwiftValue::Array(Rc::new(items)))
+}
+
+// ---------------------------------------------------------------------------
+// Percent-encoded component setters
+// ---------------------------------------------------------------------------
+
+/// Emit the Foundation-style fatal-error for an illegally encoded component.
+#[inline]
+fn invalid_chars_trap(prop: &str) -> StdError {
+    StdError::Error(tswift_core::EvalError::Trap(format!(
+        "Attempting to set {prop} with invalid characters"
+    )))
+}
+
+/// Validate that `s` is a legally percent-encoded string for the given
+/// component.  A byte is accepted when it either:
+/// - is a `%` followed immediately by exactly two ASCII hex digits, OR
+/// - passes `is_allowed(byte)` — i.e. the byte belongs to the RFC 3986
+///   character set for that component (as implemented by Foundation's
+///   `CharacterSet.url*Allowed`).
+///
+/// Anything else — including an unescaped space, `#`, or any control byte —
+/// triggers a `fatalError` trap matching Foundation's message.
+fn validate_encoded_component(
+    s: &str,
+    prop: &str,
+    is_allowed: fn(u8) -> bool,
+) -> Result<(), StdError> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'%' {
+            let hi = bytes.get(i + 1).copied().map(|b| (b as char).to_digit(16));
+            let lo = bytes.get(i + 2).copied().map(|b| (b as char).to_digit(16));
+            if !matches!((hi, lo), (Some(Some(_)), Some(Some(_)))) {
+                return Err(invalid_chars_trap(prop));
+            }
+            i += 3;
+        } else if is_allowed(b) {
+            i += 1;
+        } else {
+            return Err(invalid_chars_trap(prop));
+        }
+    }
+    Ok(())
+}
+
+// ---- Per-component allowed-byte predicates (mirror Foundation CharacterSet) ---
+//
+// Ground-truthed against `CharacterSet.url*Allowed` on macOS Swift 6.3.2:
+//   path:     !$&'()*+,-./0-9:;=@A-Z_a-z~
+//   query:    !$&'()*+,-./0-9:;=?@A-Z_a-z~   (adds '?')
+//   fragment: same as query
+//   user:     !$&'()*+,-.0-9;=A-Z_a-z~       (no '/', ':', '@')
+//   password: same as user
+//   host:     !$&'()*+,-.0-9:;=A-Z[]_a-z~   (no '/', '?', '@'; adds '[', ']', ':')
+
+#[inline]
+fn is_allowed_path(b: u8) -> bool {
+    matches!(b,
+        b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b','
+        | b'-' | b'.' | b'/'
+        | b'0'..=b'9'
+        | b':' | b';' | b'='
+        | b'@'
+        | b'A'..=b'Z'
+        | b'_'
+        | b'a'..=b'z'
+        | b'~'
+    )
+}
+
+#[inline]
+fn is_allowed_query(b: u8) -> bool {
+    // query adds '?' to path
+    b == b'?' || is_allowed_path(b)
+}
+
+// fragment uses the same set as query
+#[inline]
+fn is_allowed_fragment(b: u8) -> bool {
+    is_allowed_query(b)
+}
+
+#[inline]
+fn is_allowed_userinfo(b: u8) -> bool {
+    // user/password: no '/', ':', '@'
+    matches!(b,
+        b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b','
+        | b'-' | b'.'
+        | b'0'..=b'9'
+        | b';' | b'='
+        | b'A'..=b'Z'
+        | b'_'
+        | b'a'..=b'z'
+        | b'~'
+    )
+}
+
+#[inline]
+fn is_allowed_host(b: u8) -> bool {
+    // host: no '/', '?', '@'; adds '[', ']', ':'
+    matches!(b,
+        b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b','
+        | b'-' | b'.'
+        | b'0'..=b'9'
+        | b':' | b';' | b'='
+        | b'A'..=b'Z'
+        | b'[' | b']'
+        | b'_'
+        | b'a'..=b'z'
+        | b'~'
+    )
+}
+
+/// Query-item **name** charset: `urlQueryAllowed` minus `&` and `=`.
+#[inline]
+fn is_allowed_query_item_name(b: u8) -> bool {
+    // Exclude '&' (item separator) and '=' (key=value separator) from query set
+    !matches!(b, b'&' | b'=') && is_allowed_query(b)
+}
+
+/// Query-item **value** charset: full `urlQueryAllowed` (Foundation permits
+/// unescaped `&` and `=` in values — the caller is trusted to encode if needed).
+#[inline]
+fn is_allowed_query_item_value(b: u8) -> bool {
+    is_allowed_query(b)
+}
+
+/// Helper: build an updated `URLComponents` struct with `field` set to `value`.
+fn comp_set_field(
+    recv: SwiftValue,
+    field: &str,
+    value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    let SwiftValue::Struct(obj) = recv else {
+        return Err(crate::type_error("expected URLComponents"));
+    };
+    let mut obj = (*obj).clone();
+    obj.set(field, value);
+    Ok(SwiftValue::Struct(Rc::new(obj)))
+}
+
+/// Setter for `percentEncodedPath`: validate against path allowed set, then
+/// store the DECODED path in the `"path"` field.
+fn set_percent_encoded_path(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    let SwiftValue::Str(s) = &new_value else {
+        return Err(crate::type_error("percentEncodedPath must be a String"));
+    };
+    validate_encoded_component(s, "percentEncodedPath", is_allowed_path)?;
+    comp_set_field(recv, "path", SwiftValue::Str(percent_decode(s)))
+}
+
+/// Setter for `percentEncodedQuery`.
+fn set_percent_encoded_query(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_field(recv, "query", SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "percentEncodedQuery", is_allowed_query)?;
+            comp_set_field(recv, "query", SwiftValue::Str(percent_decode(s)))
+        }
+        _ => Err(crate::type_error("percentEncodedQuery must be String?")),
+    }
+}
+
+/// Setter for `percentEncodedFragment`.
+fn set_percent_encoded_fragment(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_field(recv, "fragment", SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "percentEncodedFragment", is_allowed_fragment)?;
+            comp_set_field(recv, "fragment", SwiftValue::Str(percent_decode(s)))
+        }
+        _ => Err(crate::type_error("percentEncodedFragment must be String?")),
+    }
+}
+
+/// Setter for `percentEncodedUser`.
+fn set_percent_encoded_user(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_field(recv, "user", SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "percentEncodedUser", is_allowed_userinfo)?;
+            comp_set_field(recv, "user", SwiftValue::Str(percent_decode(s)))
+        }
+        _ => Err(crate::type_error("percentEncodedUser must be String?")),
+    }
+}
+
+/// Setter for `percentEncodedPassword`.
+fn set_percent_encoded_password(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_field(recv, "password", SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "percentEncodedPassword", is_allowed_userinfo)?;
+            comp_set_field(recv, "password", SwiftValue::Str(percent_decode(s)))
+        }
+        _ => Err(crate::type_error("percentEncodedPassword must be String?")),
+    }
+}
+
+/// Helper: set `"host"` to `host_val` and clear the `"_encodedHost"` override.
+fn comp_set_host_canonical(recv: SwiftValue, host_val: SwiftValue) -> Result<SwiftValue, StdError> {
+    let SwiftValue::Struct(obj) = recv else {
+        return Err(crate::type_error("expected URLComponents"));
+    };
+    let mut obj = (*obj).clone();
+    obj.set("host", host_val);
+    // Clear any verbatim encodedHost override so getters return the
+    // canonical form from now on.
+    obj.set("_encodedHost", SwiftValue::Nil);
+    Ok(SwiftValue::Struct(Rc::new(obj)))
+}
+
+/// Setter for `host` (plain decoded).
+///
+/// Registered so that `c.host = "…"` also clears the `_encodedHost` override
+/// that may have been set by `encodedHost`.
+fn set_host(recv: SwiftValue, new_value: SwiftValue) -> Result<SwiftValue, StdError> {
+    match new_value {
+        SwiftValue::Nil => comp_set_host_canonical(recv, SwiftValue::Nil),
+        SwiftValue::Str(_) => comp_set_host_canonical(recv, new_value),
+        _ => Err(crate::type_error("host must be String?")),
+    }
+}
+
+/// Setter for `percentEncodedHost`.
+///
+/// Foundation decodes the input and stores the canonical (decoded) form;
+/// both `host` and `percentEncodedHost` then return the decoded string.
+/// The `_encodedHost` override is cleared (no verbatim storage).
+fn set_percent_encoded_host(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_host_canonical(recv, SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "percentEncodedHost", is_allowed_host)?;
+            // Decode and store canonical; clear verbatim override.
+            let decoded = percent_decode(s);
+            comp_set_host_canonical(recv, SwiftValue::Str(decoded))
+        }
+        _ => Err(crate::type_error("percentEncodedHost must be String?")),
+    }
+}
+
+/// Setter for `encodedHost`.
+///
+/// Stores the verbatim encoded string in `_encodedHost` (returned by
+/// `encodedHost` and `percentEncodedHost` getters) while the decoded form
+/// goes into `host`.  Assigning `host` or `percentEncodedHost` later clears
+/// the override and reverts to canonical behaviour.
+fn set_encoded_host(recv: SwiftValue, new_value: SwiftValue) -> Result<SwiftValue, StdError> {
+    match &new_value {
+        SwiftValue::Nil => comp_set_host_canonical(recv, SwiftValue::Nil),
+        SwiftValue::Str(s) => {
+            validate_encoded_component(s, "encodedHost", is_allowed_host)?;
+            let verbatim = s.clone();
+            let decoded = percent_decode(s);
+            // Store decoded host + verbatim override.
+            let SwiftValue::Struct(obj) = recv else {
+                return Err(crate::type_error("expected URLComponents"));
+            };
+            let mut obj = (*obj).clone();
+            obj.set("host", SwiftValue::Str(decoded));
+            obj.set("_encodedHost", SwiftValue::Str(verbatim));
+            Ok(SwiftValue::Struct(Rc::new(obj)))
+        }
+        _ => Err(crate::type_error("encodedHost must be String?")),
+    }
+}
+
+/// Setter for `percentEncodedQueryItems`.
+/// Each item's name and value are treated as already-encoded; they are decoded
+/// and assembled into the canonical `query` field.
+///
+/// Validation:
+/// - Name: `urlQueryAllowed` minus `&` and `=` (structural separators).
+/// - Value: full `urlQueryAllowed` (Foundation permits unescaped `&`/`=` in
+///   values; the caller is responsible for encoding them if needed).
+fn set_percent_encoded_query_items(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    match new_value {
+        SwiftValue::Nil => comp_set_field(recv, "query", SwiftValue::Nil),
+        SwiftValue::Array(items) => {
+            let mut parts: Vec<String> = Vec::with_capacity(items.len());
+            for item in items.iter() {
+                let SwiftValue::Struct(obj) = item else {
+                    return Err(crate::type_error(
+                        "percentEncodedQueryItems items must be URLQueryItem",
+                    ));
+                };
+                let name_enc = match obj.get("name") {
+                    Some(SwiftValue::Str(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                validate_encoded_component(
+                    &name_enc,
+                    "percentEncodedQueryItems",
+                    is_allowed_query_item_name,
+                )?;
+                let decoded_name = percent_decode(&name_enc);
+                match obj.get("value") {
+                    Some(SwiftValue::Str(v)) => {
+                        validate_encoded_component(
+                            v,
+                            "percentEncodedQueryItems",
+                            is_allowed_query_item_value,
+                        )?;
+                        let decoded_value = percent_decode(v);
+                        parts.push(format!("{decoded_name}={decoded_value}"));
+                    }
+                    Some(SwiftValue::Nil) | None => {
+                        parts.push(decoded_name);
+                    }
+                    _ => {
+                        return Err(crate::type_error("URLQueryItem value must be String?"));
+                    }
+                }
+            }
+            let query = if parts.is_empty() {
+                SwiftValue::Nil
+            } else {
+                SwiftValue::Str(parts.join("&"))
+            };
+            comp_set_field(recv, "query", query)
+        }
+        _ => Err(crate::type_error(
+            "percentEncodedQueryItems must be [URLQueryItem]?",
+        )),
+    }
+}
+
+const URL_COMPONENTS_ENCODED_SETTERS: &[(&str, PropertySetterFn)] = &[
+    // Plain field setters that need side-effects (clearing _encodedHost).
+    ("host", set_host),
+    // Percent-encoded setters.
+    ("percentEncodedPath", set_percent_encoded_path),
+    ("percentEncodedQuery", set_percent_encoded_query),
+    ("percentEncodedFragment", set_percent_encoded_fragment),
+    ("percentEncodedUser", set_percent_encoded_user),
+    ("percentEncodedPassword", set_percent_encoded_password),
+    ("percentEncodedHost", set_percent_encoded_host),
+    ("encodedHost", set_encoded_host),
+    ("percentEncodedQueryItems", set_percent_encoded_query_items),
+];
+
+const URL_COMPONENTS_ENCODED_GETTERS: &[(&str, tswift_core::PropertyFn)] = &[
+    ("percentEncodedPath", url_components_percent_encoded_path),
+    ("percentEncodedQuery", url_components_percent_encoded_query),
+    (
+        "percentEncodedFragment",
+        url_components_percent_encoded_fragment,
+    ),
+    ("percentEncodedUser", url_components_percent_encoded_user),
+    (
+        "percentEncodedPassword",
+        url_components_percent_encoded_password,
+    ),
+    ("percentEncodedHost", url_components_percent_encoded_host),
+    ("encodedHost", url_components_encoded_host),
+    (
+        "percentEncodedQueryItems",
+        url_components_percent_encoded_query_items,
+    ),
+];
 
 // ===========================================================================
 // URL value model
@@ -506,7 +983,7 @@ fn file_extension(name: &str) -> Option<(&str, &str)> {
 
 /// Decode `%XX` escapes in a URL component (best-effort; invalid escapes are
 /// left intact).
-fn percent_decode(input: &str) -> String {
+pub(crate) fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -708,6 +1185,142 @@ fn url_deleting_path_extension(
 }
 
 // ---- Path manipulation helpers -------------------------------------------
+
+/// Percent-encode a query string or fragment (RFC 3986 query charset).
+/// Allowed: unreserved, sub-delims, ':', '@', '/', '?', '='
+/// Encodes: space, '"', '#', '%', '<', '>', '[', '\\', ']', '^', '`', '{', '|', '}'
+/// (Matches Foundation's percentEncodedQuery/percentEncodedFragment behaviour.)
+fn percent_encode_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\'' // apostrophe
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b':'
+            | b'@'
+            | b'/'
+            | b'?'
+            | b'=' => out.push(b as char),
+            other => {
+                out.push('%');
+                out.push(
+                    char::from_digit((other >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((other & 0xf) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Percent-encode a userinfo component (user or password).
+/// Allowed: unreserved, sub-delims (including '&' and '='), ':'
+/// Does NOT allow '/', '?', '@' (which query allows).
+fn percent_encode_userinfo(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\'' // apostrophe
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b'='
+            | b':' => out.push(b as char),
+            other => {
+                out.push('%');
+                out.push(
+                    char::from_digit((other >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((other & 0xf) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Percent-encode a single query-item name or value.
+/// Same as query charset but additionally encodes '&' and '='.
+fn percent_encode_query_item(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 2);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'!'
+            | b'$'
+            | b'\'' // apostrophe
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b':'
+            | b'@'
+            | b'/'
+            | b'?' => out.push(b as char),
+            other => {
+                out.push('%');
+                out.push(
+                    char::from_digit((other >> 4) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                out.push(
+                    char::from_digit((other & 0xf) as u32, 16)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+            }
+        }
+    }
+    out
+}
 
 /// Percent-encode characters that must be encoded in a URL path segment.
 /// Encodes everything except unreserved characters and `/`.
@@ -1113,22 +1726,39 @@ fn url_query_item_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 // ===========================================================================
 
 fn url_components_value(parsed: &Parsed) -> SwiftValue {
+    // Store all text components in their **percent-decoded** form so that
+    // the plain getters (`.path`, `.query`, …) return the user-visible decoded
+    // string and the percent-encoded getters re-encode on demand.
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URLComponents".into(),
         fields: vec![
             ("scheme".into(), opt_str(parsed.scheme.clone())),
-            ("user".into(), opt_str(parsed.user.clone())),
-            ("password".into(), opt_str(parsed.password.clone())),
+            (
+                "user".into(),
+                opt_str(parsed.user.as_deref().map(percent_decode)),
+            ),
+            (
+                "password".into(),
+                opt_str(parsed.password.as_deref().map(percent_decode)),
+            ),
+            // Host is stored as-is (ASCII hosts need no decoding; IDNA is
+            // out of scope).
             ("host".into(), opt_str(parsed.host.clone())),
             (
                 "port".into(),
                 parsed.port.map(SwiftValue::int).unwrap_or(SwiftValue::Nil),
             ),
-            ("path".into(), SwiftValue::Str(parsed.path.clone())),
+            ("path".into(), SwiftValue::Str(percent_decode(&parsed.path))),
             // `query` is the canonical query store; `queryItems` is a read-only
             // property derived from it (avoids the two drifting out of sync).
-            ("query".into(), opt_str(parsed.query.clone())),
-            ("fragment".into(), opt_str(parsed.fragment.clone())),
+            (
+                "query".into(),
+                opt_str(parsed.query.as_deref().map(percent_decode)),
+            ),
+            (
+                "fragment".into(),
+                opt_str(parsed.fragment.as_deref().map(percent_decode)),
+            ),
         ],
     }))
 }
@@ -1164,7 +1794,13 @@ fn url_components_query_items(recv: SwiftValue) -> StdResult {
     Ok(query_items_from(comp_str(&recv, "query").as_deref()))
 }
 
-/// Build a `[URLQueryItem]?` from a raw query string.
+/// Build a `[URLQueryItem]?` from a **decoded** query string.
+///
+/// The stored query field is already decoded (see [`url_components_value`]),
+/// so splitting on `&`/`=` and returning items as-is (no additional
+/// `percent_decode` needed) is correct for the common case. A literal `&` or
+/// `=` inside a name or value — which would have been `%26`/`%3D`-encoded in
+/// the source URL — is a known limitation documented in notes.md.
 fn query_items_from(query: Option<&str>) -> SwiftValue {
     let Some(query) = query else {
         return SwiftValue::Nil;
@@ -1172,12 +1808,11 @@ fn query_items_from(query: Option<&str>) -> SwiftValue {
     if query.is_empty() {
         return SwiftValue::Nil;
     }
-    // Query item names/values are exposed percent-decoded, like Foundation.
     let items: Vec<SwiftValue> = query
         .split('&')
         .map(|pair| match pair.split_once('=') {
-            Some((k, v)) => url_query_item_value(percent_decode(k), Some(percent_decode(v))),
-            None => url_query_item_value(percent_decode(pair), None),
+            Some((k, v)) => url_query_item_value(k.to_string(), Some(v.to_string())),
+            None => url_query_item_value(pair.to_string(), None),
         })
         .collect();
     SwiftValue::Array(Rc::new(items))
@@ -1199,23 +1834,44 @@ fn comp_str(value: &SwiftValue, name: &str) -> Option<String> {
 }
 
 /// Assemble the URL string from the current component fields.
+///
+/// The stored fields hold **decoded** strings (see [`url_components_value`]),
+/// so each text component must be re-encoded with the appropriate RFC 3986
+/// character set before being placed into the URL.
 fn components_to_string(value: &SwiftValue) -> String {
-    let host = comp_str(value, "host");
-    let user = comp_str(value, "user");
+    let raw_user = comp_str(value, "user");
+    let raw_password = comp_str(value, "password");
+    let raw_path = comp_str(value, "path").unwrap_or_default();
+    let raw_query = comp_str(value, "query");
+    let raw_fragment = comp_str(value, "fragment");
+
+    // Host in the URL string:
+    // - If `_encodedHost` is set (via the `encodedHost` setter), use it verbatim
+    //   so Foundation's IDNA / verbatim-encoding semantics are preserved.
+    // - Otherwise encode the decoded `host` field with the host allowed charset.
+    let decoded_host = comp_str(value, "host");
+    // Use the verbatim `_encodedHost` string only when it is non-empty; when
+    // the field is absent or Nil (override cleared) fall back to re-encoding
+    // the decoded host.
+    let url_host = match comp_field(value, "_encodedHost") {
+        Some(SwiftValue::Str(s)) if !s.is_empty() => Some(s.clone()),
+        _ => decoded_host.as_deref().map(|h| h.to_owned()), // ASCII host: no re-encoding
+    };
+
     let parsed = Parsed {
         scheme: comp_str(value, "scheme"),
         // Emit an authority whenever a host or user is set.
-        authority: host.is_some() || user.is_some(),
-        user,
-        password: comp_str(value, "password"),
-        host,
+        authority: decoded_host.is_some() || raw_user.is_some(),
+        user: raw_user.as_deref().map(percent_encode_userinfo),
+        password: raw_password.as_deref().map(percent_encode_userinfo),
+        host: url_host,
         port: match comp_field(value, "port") {
             Some(SwiftValue::Int(i)) => Some(i.raw),
             _ => None,
         },
-        path: comp_str(value, "path").unwrap_or_default(),
-        query: comp_str(value, "query"),
-        fragment: comp_str(value, "fragment"),
+        path: percent_encode_path(&raw_path),
+        query: raw_query.as_deref().map(percent_encode_query),
+        fragment: raw_fragment.as_deref().map(percent_encode_query),
     };
     rebuild_with_path(&parsed, &parsed.path)
 }

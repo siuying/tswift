@@ -406,6 +406,17 @@ pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
 
+/// A built-in computed-property **setter** for a registered builtin type.
+///
+/// Arguments:
+/// - `recv`: the current struct value (URLComponents, etc.).
+/// - `new_value`: the right-hand side being assigned.
+///
+/// Returns the mutated struct on success, or a [`StdError`] (including a
+/// `Trap` for invalid input such as an illegally percent-encoded string).
+pub type PropertySetterFn =
+    fn(recv: SwiftValue, new_value: SwiftValue) -> Result<SwiftValue, StdError>;
+
 /// A computed-property intrinsic that needs the standard-library context
 /// (`Date.timeIntervalSinceNow`, for example, needs the current clock).
 pub type ContextualPropertyFn = fn(&mut dyn StdContext, SwiftValue) -> StdResult;

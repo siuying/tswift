@@ -1,0 +1,33 @@
+/a b
+/a%20b
+https://h/a%20b
+q=hello world
+q=hello%20world
+https://h?q=hello%20world
+frag ment
+frag%20ment
+https://h/#frag%20ment
+user name
+user%20name
+pass word
+pass%20word
+//user%20name:pass%20word@host.com/
+hello world
+foo bar
+hello%20world
+foo%20bar
+hello world=foo bar
+hello%20world=foo%20bar
+https://h?hello%20world=foo%20bar
+example.com
+example.com
+example.com
+example.com
+ex%61mple.com
+ex%61mple.com
+https://ex%61mple.com/
+https://example.com/
+other.com
+other.com
+nil
+nil

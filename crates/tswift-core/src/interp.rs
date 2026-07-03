@@ -16,7 +16,8 @@ use crate::fragment_cache::FragmentCache;
 use crate::ops;
 use crate::stdlib::{
     materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn,
-    LabeledMethodEntry, MethodEntry, PropertyFn, StaticFn, StdContext, StdError, StructMethodFn,
+    LabeledMethodEntry, MethodEntry, PropertyFn, PropertySetterFn, StaticFn, StdContext, StdError,
+    StructMethodFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -531,6 +532,8 @@ struct BuiltinMembers {
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
     contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
     static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
+    /// Built-in computed-property setters (validate + mutate the receiver).
+    setters: HashMap<(BuiltinReceiver, String), PropertySetterFn>,
 }
 
 impl BuiltinMembers {
@@ -561,6 +564,9 @@ impl BuiltinMembers {
     fn add_static_method(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
         self.static_methods.insert((recv, name.to_string()), f);
     }
+    fn add_setter(&mut self, recv: BuiltinReceiver, name: &str, f: PropertySetterFn) {
+        self.setters.insert((recv, name.to_string()), f);
+    }
 
     fn intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<MethodEntry> {
         self.intrinsics.get(&(recv, name.to_string())).copied()
@@ -588,6 +594,9 @@ impl BuiltinMembers {
     }
     fn static_method(&self, recv: BuiltinReceiver, name: &str) -> Option<StaticFn> {
         self.static_methods.get(&(recv, name.to_string())).copied()
+    }
+    fn setter(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertySetterFn> {
+        self.setters.get(&(recv, name.to_string())).copied()
     }
 
     /// Every registered member as a `"Receiver.name"` string, for the
@@ -1028,6 +1037,20 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.builtins.add_property(recv, name, f);
+    }
+
+    /// Register a computed-property **setter** on a builtin receiver type.
+    ///
+    /// When the interpreter sees `recv.name = value` for a struct whose type
+    /// matches `recv`, the setter is called with `(current_struct, new_value)`
+    /// and the returned struct replaces the binding.
+    pub fn register_property_setter(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: PropertySetterFn,
+    ) {
+        self.builtins.add_setter(recv, name, f);
     }
 
     /// Register a context-aware computed-property intrinsic on a builtin type.

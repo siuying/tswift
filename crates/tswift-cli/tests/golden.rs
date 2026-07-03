@@ -440,4 +440,66 @@ fn operator_traps() {
         err.contains("%") || err.contains("truncatingRemainder") || err.contains("Double"),
         "expected % -not-applicable-to-Double message, got: {err}"
     );
+
+    // --- URLComponents.percentEncodedQuery = "%ZZ": invalid percent-encoding traps ---
+    let (ok, _, err) = run_source(
+        "tswift_urlcomp_bad_percent.swift",
+        "import Foundation\nvar c = URLComponents()\nc.percentEncodedQuery = \"%ZZ\"\n",
+    );
+    assert!(
+        !ok,
+        "invalid percent-encoding in percentEncodedQuery must trap"
+    );
+    assert!(
+        err.contains("invalid characters") || err.contains("percentEncodedQuery"),
+        "expected invalid-characters message, got: {err}"
+    );
+
+    // --- URLComponents.percentEncodedPath = "%GG": invalid encoding traps ---
+    let (ok, _, err) = run_source(
+        "tswift_urlcomp_bad_path_percent.swift",
+        "import Foundation\nvar c = URLComponents()\nc.percentEncodedPath = \"%GG\"\n",
+    );
+    assert!(
+        !ok,
+        "invalid percent-encoding in percentEncodedPath must trap"
+    );
+    assert!(
+        err.contains("invalid characters") || err.contains("percentEncodedPath"),
+        "expected invalid-characters message, got: {err}"
+    );
+
+    // --- URLComponents.percentEncodedPath = "/a b": unescaped space (not in
+    //     urlPathAllowed) must trap, same as Foundation ---
+    let (ok, _, err) = run_source(
+        "tswift_urlcomp_space_in_path.swift",
+        "import Foundation\nvar c = URLComponents()\nc.percentEncodedPath = \"/a b\"\n",
+    );
+    assert!(!ok, "unescaped space in percentEncodedPath must trap");
+    assert!(
+        err.contains("invalid characters") || err.contains("percentEncodedPath"),
+        "expected invalid-characters message, got: {err}"
+    );
+
+    // --- URLComponents.percentEncodedQuery = "q=a b": unescaped space traps ---
+    let (ok, _, err) = run_source(
+        "tswift_urlcomp_space_in_query.swift",
+        "import Foundation\nvar c = URLComponents()\nc.percentEncodedQuery = \"q=a b\"\n",
+    );
+    assert!(!ok, "unescaped space in percentEncodedQuery must trap");
+    assert!(
+        err.contains("invalid characters") || err.contains("percentEncodedQuery"),
+        "expected invalid-characters message, got: {err}"
+    );
+
+    // --- URLComponents.percentEncodedHost = "host name": unescaped space traps ---
+    let (ok, _, err) = run_source(
+        "tswift_urlcomp_space_in_host.swift",
+        "import Foundation\nvar c = URLComponents()\nc.percentEncodedHost = \"host name\"\n",
+    );
+    assert!(!ok, "unescaped space in percentEncodedHost must trap");
+    assert!(
+        err.contains("invalid characters") || err.contains("percentEncodedHost"),
+        "expected invalid-characters message, got: {err}"
+    );
 }

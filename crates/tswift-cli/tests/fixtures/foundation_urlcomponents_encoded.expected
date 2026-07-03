@@ -1,0 +1,25 @@
+/a b/c d
+/a%20b/c%20d
+q=a b&x=c d
+q=a%20b&x=c%20d
+frag ment
+frag%20ment
+user name
+user%20name
+pass word
+pass%20word
+example.com
+example.com
+example.com
+name%20here val%20here
+key value
+name here val here
+key value
+https://host.com/path?q=1#frag
+/a b
+q=hello world
+frag end
+https://h/a%20b?q=hello%20world#frag%20end
+/a%20b
+q=hello%20world
+https://example.com/a%20b?q=hello%20world
