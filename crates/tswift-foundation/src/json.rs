@@ -58,6 +58,17 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_static_value("JSONDecoder", "secondsSince1970", SwiftValue::int(1));
     interp.register_static_value("JSONDecoder", "millisecondsSince1970", SwiftValue::int(2));
     interp.register_static_value("JSONDecoder", "iso8601", SwiftValue::int(3));
+
+    // `JSONEncoder.OutputFormatting` OptionSet bit-flags.
+    // Bit 0 (1) = prettyPrinted, Bit 1 (2) = sortedKeys.
+    interp.register_static_value("JSONEncoder", "prettyPrinted", SwiftValue::int(1));
+    interp.register_static_value("JSONEncoder", "sortedKeys", SwiftValue::int(2));
+
+    // `JSONEncoder.KeyEncodingStrategy` raw values (1 = convertToSnakeCase).
+    interp.register_static_value("JSONEncoder", "convertToSnakeCase", SwiftValue::int(1));
+
+    // `JSONDecoder.KeyDecodingStrategy` raw values (1 = convertFromSnakeCase).
+    interp.register_static_value("JSONDecoder", "convertFromSnakeCase", SwiftValue::int(1));
 }
 
 /// Returns the member keys exposed by this module (for coverage tracking).
@@ -65,10 +76,13 @@ pub fn registered_keys() -> Vec<String> {
     vec![
         "JSONDecoder.decode".to_string(),
         "JSONDecoder.dateDecodingStrategy".to_string(),
+        "JSONDecoder.keyDecodingStrategy".to_string(),
         "JSONDecoder.init".to_string(),
         "JSONEncoder.dateEncodingStrategy".to_string(),
         "JSONEncoder.encode".to_string(),
         "JSONEncoder.init".to_string(),
+        "JSONEncoder.keyEncodingStrategy".to_string(),
+        "JSONEncoder.outputFormatting".to_string(),
     ]
 }
 

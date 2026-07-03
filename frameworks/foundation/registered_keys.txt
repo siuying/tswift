@@ -160,9 +160,12 @@ IndexSet.update
 JSONDecoder.dateDecodingStrategy
 JSONDecoder.decode
 JSONDecoder.init
+JSONDecoder.keyDecodingStrategy
 JSONEncoder.dateEncodingStrategy
 JSONEncoder.encode
 JSONEncoder.init
+JSONEncoder.keyEncodingStrategy
+JSONEncoder.outputFormatting
 Measurement.convert
 Measurement.converted
 Measurement.debugDescription

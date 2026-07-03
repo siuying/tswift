@@ -1,0 +1,10 @@
+{
+  "x" : 1,
+  "y" : 2
+}
+{"active":true,"name":"test","value":42}
+{
+  "active" : false,
+  "name" : "alpha",
+  "value" : 7
+}

@@ -30,15 +30,32 @@ impl Json {
     }
 }
 
+/// Output-formatting options for `JSONEncoder`, mirroring Swift's
+/// `JSONEncoder.OutputFormatting` OptionSet.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct OutputFormatting {
+    /// Indent with 2 spaces and use `" : "` between keys and values.
+    pub pretty_printed: bool,
+    /// Sort object keys lexicographically at every nesting level.
+    pub sorted_keys: bool,
+}
+
 /// Serialize a JSON tree to a compact string, matching `JSONEncoder`'s default
 /// (no whitespace, keys in insertion order).
 pub fn to_string(value: &Json) -> String {
+    to_string_fmt(value, &OutputFormatting::default())
+}
+
+/// Serialize a JSON tree respecting the given output-formatting options.
+pub fn to_string_fmt(value: &Json, fmt: &OutputFormatting) -> String {
     let mut out = String::new();
-    write_value(&mut out, value);
+    write_value_fmt(&mut out, value, fmt, 0);
     out
 }
 
-fn write_value(out: &mut String, value: &Json) {
+/// Write a JSON value with optional pretty-printing and/or key sorting.
+/// `depth` tracks the current nesting depth for indentation.
+fn write_value_fmt(out: &mut String, value: &Json, fmt: &OutputFormatting, depth: usize) {
     match value {
         Json::Null => out.push_str("null"),
         Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -51,26 +68,70 @@ fn write_value(out: &mut String, value: &Json) {
         Json::Str(s) => write_string(out, s),
         Json::Array(items) => {
             out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
+            if fmt.pretty_printed && !items.is_empty() {
+                for (i, item) in items.iter().enumerate() {
+                    out.push('\n');
+                    push_indent(out, depth + 1);
+                    write_value_fmt(out, item, fmt, depth + 1);
+                    if i + 1 < items.len() {
+                        out.push(',');
+                    }
                 }
-                write_value(out, item);
+                out.push('\n');
+                push_indent(out, depth);
+            } else {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_value_fmt(out, item, fmt, depth + 1);
+                }
             }
             out.push(']');
         }
         Json::Object(entries) => {
             out.push('{');
-            for (i, (k, v)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
+            // Collect references so we can sort without cloning.
+            let ordered: Vec<(&str, &Json)> = if fmt.sorted_keys {
+                let mut v: Vec<(&str, &Json)> =
+                    entries.iter().map(|(k, v)| (k.as_str(), v)).collect();
+                v.sort_by_key(|(k, _)| *k);
+                v
+            } else {
+                entries.iter().map(|(k, v)| (k.as_str(), v)).collect()
+            };
+            if fmt.pretty_printed && !ordered.is_empty() {
+                for (i, (k, v)) in ordered.iter().enumerate() {
+                    out.push('\n');
+                    push_indent(out, depth + 1);
+                    write_string(out, k);
+                    out.push_str(" : ");
+                    write_value_fmt(out, v, fmt, depth + 1);
+                    if i + 1 < ordered.len() {
+                        out.push(',');
+                    }
                 }
-                write_string(out, k);
-                out.push(':');
-                write_value(out, v);
+                out.push('\n');
+                push_indent(out, depth);
+            } else {
+                for (i, (k, v)) in ordered.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_string(out, k);
+                    out.push(':');
+                    write_value_fmt(out, v, fmt, depth);
+                }
             }
             out.push('}');
         }
+    }
+}
+
+/// Push `depth * 2` spaces of indentation.
+fn push_indent(out: &mut String, depth: usize) {
+    for _ in 0..depth {
+        out.push_str("  ");
     }
 }
 

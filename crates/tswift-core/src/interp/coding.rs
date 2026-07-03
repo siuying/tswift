@@ -6,7 +6,7 @@ use std::rc::Rc;
 use tswift_frontend::{Node, TypeRepr};
 
 use super::{decode_element_type, metatype_name, EvalError, Interpreter, Signal};
-use crate::json::Json;
+use crate::json::{Json, OutputFormatting};
 use crate::value::{EnumObj, StructObj, SwiftValue};
 
 /// `timeIntervalSinceReferenceDate` → Unix epoch offset (seconds).
@@ -62,6 +62,49 @@ impl DateDecoding {
             2 => Self::MillisecondsSince1970,
             3 => Self::Iso8601,
             _ => Self::DeferredToDate,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output-formatting and key-strategy enums
+// ---------------------------------------------------------------------------
+
+/// Mirrors `JSONEncoder.KeyEncodingStrategy` (raw ints registered in
+/// `tswift-foundation::json`).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum KeyEncoding {
+    /// Default: use the property name as-is.
+    #[default]
+    UseDefaultKeys = 0,
+    /// Convert camelCase property names to snake_case JSON keys.
+    ConvertToSnakeCase = 1,
+}
+
+impl KeyEncoding {
+    fn from_raw(raw: i128) -> Self {
+        match raw {
+            1 => Self::ConvertToSnakeCase,
+            _ => Self::UseDefaultKeys,
+        }
+    }
+}
+
+/// Mirrors `JSONDecoder.KeyDecodingStrategy`.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum KeyDecoding {
+    /// Default: use the JSON key as-is.
+    #[default]
+    UseDefaultKeys = 0,
+    /// Treat JSON keys as snake_case and convert to camelCase field names.
+    ConvertFromSnakeCase = 1,
+}
+
+impl KeyDecoding {
+    fn from_raw(raw: i128) -> Self {
+        match raw {
+            1 => Self::ConvertFromSnakeCase,
+            _ => Self::UseDefaultKeys,
         }
     }
 }
@@ -212,6 +255,134 @@ fn decoder_date_strategy(o: &StructObj) -> DateDecoding {
     }
 }
 
+/// Read `outputFormatting` from a `JSONEncoder` struct.
+/// The field may be an `Int` (single flag) or an `Array` of ints (OptionSet
+/// array literal `[.prettyPrinted, .sortedKeys]` → OR of bit flags).
+fn encoder_output_formatting(o: &StructObj) -> OutputFormatting {
+    let bits: u64 = match o.get("outputFormatting") {
+        Some(SwiftValue::Int(i)) => i.raw as u64,
+        Some(SwiftValue::Array(items)) => items.iter().fold(0u64, |acc, v| {
+            if let SwiftValue::Int(i) = v {
+                acc | i.raw as u64
+            } else {
+                acc
+            }
+        }),
+        _ => 0,
+    };
+    OutputFormatting {
+        pretty_printed: (bits & 1) != 0,
+        sorted_keys: (bits & 2) != 0,
+    }
+}
+
+/// Read a `KeyEncodingStrategy` raw integer from a `JSONEncoder` struct.
+fn encoder_key_strategy(o: &StructObj) -> KeyEncoding {
+    match o.get("keyEncodingStrategy") {
+        Some(SwiftValue::Int(i)) => KeyEncoding::from_raw(i.raw),
+        _ => KeyEncoding::UseDefaultKeys,
+    }
+}
+
+/// Read a `KeyDecodingStrategy` raw integer from a `JSONDecoder` struct.
+fn decoder_key_strategy(o: &StructObj) -> KeyDecoding {
+    match o.get("keyDecodingStrategy") {
+        Some(SwiftValue::Int(i)) => KeyDecoding::from_raw(i.raw),
+        _ => KeyDecoding::UseDefaultKeys,
+    }
+}
+
+/// Convert a camelCase identifier to snake_case, implementing Apple's
+/// `_convertToSnakeCase` algorithm from swift-foundation's JSONEncoder.
+///
+/// Rules (applied left to right over the inner characters — after stripping
+/// preserved leading / trailing underscores):
+///
+/// 1. **Non-uppercase → uppercase boundary**: any character that is *not*
+///    uppercase (a lowercase letter, a digit, or any other non-letter)
+///    immediately followed by an uppercase letter inserts a `_` before that
+///    uppercase letter.
+///    `oneTwoThree` → `one_two_three`; `address1Line2` → `address1_line2`;
+///    `a1B` → `a1_b`.
+///
+/// 2. **Uppercase-run boundary**: inside a run of consecutive uppercase
+///    letters, if position `i` is uppercase *and* `i+1` is a **lowercase**
+///    letter, insert a `_` before position `i` (split before the last
+///    uppercase of the run).
+///    `URLAddress` → `url_address`; `URLValue` → `url_value`;
+///    `imageURL` → `image_url` (no rule 2 break because `URL` is at the end).
+///
+/// * Leading and trailing underscores are preserved unchanged.
+pub(super) fn to_snake_case(s: &str) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+
+    // Preserve leading underscores.
+    let leading = chars.iter().take_while(|&&c| c == '_').count();
+    // Preserve trailing underscores.
+    let trailing = chars.iter().rev().take_while(|&&c| c == '_').count();
+
+    let inner_end = n.saturating_sub(trailing);
+    if leading >= inner_end {
+        // All underscores or empty inner section — return as-is.
+        return s.to_string();
+    }
+
+    let inner = &chars[leading..inner_end];
+    let m = inner.len();
+
+    // Mark positions where a word boundary occurs *before* that position.
+    let mut breaks = vec![false; m];
+    for i in 1..m {
+        let prev = inner[i - 1];
+        let curr = inner[i];
+        // Rule 1: any non-uppercase char followed by an uppercase char.
+        // Using `!is_uppercase` (rather than `is_lowercase`) means digits and
+        // other non-letter chars also trigger a break, e.g. `1L` in
+        // `address1Line2` → `address1_line2`.
+        if !prev.is_uppercase() && curr.is_uppercase() {
+            breaks[i] = true;
+        } else if i + 1 < m
+            && prev.is_uppercase()
+            && curr.is_uppercase()
+            && inner[i + 1].is_lowercase()
+        {
+            // Rule 2: within an uppercase run, break before the last uppercase
+            // when it is immediately followed by a lowercase letter.
+            // e.g. `L`→`A` in `URLAd…` where `A` is followed by `d`.
+            breaks[i] = true;
+        }
+    }
+
+    let mut result = String::with_capacity(s.len() + 4);
+    for _ in 0..leading {
+        result.push('_');
+    }
+
+    let mut word_start = 0;
+    for i in 1..=m {
+        if i == m || breaks[i] {
+            let word: String = inner[word_start..i]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            if word_start > 0 {
+                result.push('_');
+            }
+            result.push_str(&word);
+            word_start = i;
+        }
+    }
+
+    for _ in 0..trailing {
+        result.push('_');
+    }
+    result
+}
+
 // ---------------------------------------------------------------------------
 // Method dispatch hook
 // ---------------------------------------------------------------------------
@@ -232,13 +403,15 @@ impl<'w> Interpreter<'w> {
         // `JSONEncoder().encode(value)` → a JSON `Data` (UTF-8 bytes).
         if o.type_name == "JSONEncoder" && method == "encode" {
             let date_enc = encoder_date_strategy(o);
+            let output_fmt = encoder_output_formatting(o);
+            let key_enc = encoder_key_strategy(o);
             let args = self.eval_args(arg_nodes)?;
             let value = args
                 .first()
                 .map(|a| a.value.clone())
                 .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
-            let json = self.json_encode(&value, date_enc)?;
-            let json_str = crate::json::to_string(&json);
+            let json = self.json_encode(&value, date_enc, key_enc)?;
+            let json_str = crate::json::to_string_fmt(&json, &output_fmt);
             let bytes: Vec<SwiftValue> = json_str
                 .bytes()
                 .map(|b| SwiftValue::int(b as i128))
@@ -252,6 +425,7 @@ impl<'w> Interpreter<'w> {
         // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
         if o.type_name == "JSONDecoder" && method == "decode" {
             let date_dec = decoder_date_strategy(o);
+            let key_dec = decoder_key_strategy(o);
             let type_name = arg_nodes
                 .first()
                 .and_then(metatype_name)
@@ -302,13 +476,20 @@ impl<'w> Interpreter<'w> {
             };
             let json = crate::json::parse(&text)
                 .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
-            return Ok(Some(self.json_decode(&type_name, &json, date_dec)?));
+            return Ok(Some(
+                self.json_decode(&type_name, &json, date_dec, key_dec)?,
+            ));
         }
         Ok(None)
     }
 
     /// Serialize a `Codable` value to its `JSONEncoder` representation.
-    fn json_encode(&self, value: &SwiftValue, date_enc: DateEncoding) -> Result<Json, Signal> {
+    fn json_encode(
+        &self,
+        value: &SwiftValue,
+        date_enc: DateEncoding,
+        key_enc: KeyEncoding,
+    ) -> Result<Json, Signal> {
         // `Date` is encoded according to the strategy before falling into the
         // general struct branch (which would expand the internal fields).
         if let Some(ref_secs) = date_ref_seconds(value) {
@@ -344,16 +525,23 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Array(items) => Json::Array(
                 items
                     .iter()
-                    .map(|v| self.json_encode(v, date_enc))
+                    .map(|v| self.json_encode(v, date_enc, key_enc))
                     .collect::<Result<_, _>>()?,
             ),
             SwiftValue::Struct(o) => {
                 // Encode fields in declaration order — the parser always
                 // produces them in the same sequence, so output is stable.
+                // Apply key-encoding strategy (e.g. convertToSnakeCase).
                 let entries: Vec<(String, Json)> = o
                     .fields
                     .iter()
-                    .map(|(k, v)| Ok((k.clone(), self.json_encode(v, date_enc)?)))
+                    .map(|(k, v)| {
+                        let key = match key_enc {
+                            KeyEncoding::ConvertToSnakeCase => to_snake_case(k),
+                            KeyEncoding::UseDefaultKeys => k.clone(),
+                        };
+                        Ok((key, self.json_encode(v, date_enc, key_enc)?))
+                    })
                     .collect::<Result<_, Signal>>()?;
                 Json::Object(entries)
             }
@@ -368,7 +556,7 @@ impl<'w> Interpreter<'w> {
                             SwiftValue::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        Ok((key, self.json_encode(v, date_enc)?))
+                        Ok((key, self.json_encode(v, date_enc, key_enc)?))
                     })
                     .collect::<Result<_, Signal>>()?;
                 entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -383,7 +571,7 @@ impl<'w> Interpreter<'w> {
                     .and_then(|d| d.cases.iter().find(|c| c.name == e.case))
                     .and_then(|c| c.raw.clone());
                 match raw {
-                    Some(r) => self.json_encode(&r, date_enc)?,
+                    Some(r) => self.json_encode(&r, date_enc, key_enc)?,
                     None if e.payload.is_empty() => Json::Str(e.case.clone()),
                     None => {
                         return Err(EvalError::Type(format!(
@@ -411,6 +599,7 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         json: &Json,
         date_dec: DateDecoding,
+        key_dec: KeyDecoding,
     ) -> Result<SwiftValue, Signal> {
         // `Date` decoding: apply the chosen strategy.
         if type_name == "Date" {
@@ -443,8 +632,21 @@ impl<'w> Interpreter<'w> {
                     let is_optional = full_ty
                         .map(|t| TypeRepr::parse(t).is_optional())
                         .unwrap_or(false);
-                    let v = match json.get(&p.name) {
-                        Some(j) => self.json_decode_typed(full_ty, &p.name, j, date_dec)?,
+                    // For `convertFromSnakeCase`, look up the snake_case form of
+                    // the field name in the JSON object when the canonical name
+                    // is absent.  This makes both hand-written snake_case JSON
+                    // and round-trips through `convertToSnakeCase` decodable.
+                    let json_val = json.get(&p.name).or_else(|| {
+                        if key_dec == KeyDecoding::ConvertFromSnakeCase {
+                            json.get(&to_snake_case(&p.name))
+                        } else {
+                            None
+                        }
+                    });
+                    let v = match json_val {
+                        Some(j) => {
+                            self.json_decode_typed(full_ty, &p.name, j, date_dec, key_dec)?
+                        }
                         None if is_optional => SwiftValue::Nil,
                         None => {
                             return Err(Signal::Throw(SwiftValue::Str(format!(
@@ -535,6 +737,7 @@ impl<'w> Interpreter<'w> {
         field: &str,
         json: &Json,
         date_dec: DateDecoding,
+        key_dec: KeyDecoding,
     ) -> Result<SwiftValue, Signal> {
         let Some(full) = ty else {
             return Ok(self.json_value(json));
@@ -546,7 +749,7 @@ impl<'w> Interpreter<'w> {
                 return Ok(SwiftValue::Nil);
             }
             let inner_ty = repr.unwrap_optional().text();
-            return self.json_decode_typed(Some(inner_ty), field, json, date_dec);
+            return self.json_decode_typed(Some(inner_ty), field, json, date_dec, key_dec);
         }
         // `Date` type: use the strategy.
         if full.trim() == "Date" {
@@ -614,7 +817,7 @@ impl<'w> Interpreter<'w> {
         // uniformly regardless of whether its element type is registered.
         if full.trim_start().starts_with('[') {
             return match json {
-                Json::Array(_) => self.json_decode_field(inner, full, json, date_dec),
+                Json::Array(_) => self.json_decode_field(inner, full, json, date_dec, key_dec),
                 other => Err(Signal::Throw(SwiftValue::Str(format!(
                     "DecodingError.typeMismatch: expected array for '{}', got {}",
                     field,
@@ -624,7 +827,7 @@ impl<'w> Interpreter<'w> {
         }
         // Named struct/enum (non-array): delegate to field decoder.
         if self.types.is_struct(inner) || self.types.is_enum(inner) {
-            return self.json_decode_field(inner, full, json, date_dec);
+            return self.json_decode_field(inner, full, json, date_dec, key_dec);
         }
         Ok(self.json_value(json))
     }
@@ -638,6 +841,7 @@ impl<'w> Interpreter<'w> {
         full: &str,
         json: &Json,
         date_dec: DateDecoding,
+        key_dec: KeyDecoding,
     ) -> Result<SwiftValue, Signal> {
         match json {
             // `nil` only for an optional type; a non-optional field receiving
@@ -659,11 +863,13 @@ impl<'w> Interpreter<'w> {
                 Ok(SwiftValue::Array(Rc::new(
                     items
                         .iter()
-                        .map(|j| self.json_decode_typed(Some(inner), "element", j, date_dec))
+                        .map(|j| {
+                            self.json_decode_typed(Some(inner), "element", j, date_dec, key_dec)
+                        })
                         .collect::<Result<Vec<_>, _>>()?,
                 )))
             }
-            _ => self.json_decode(inner, json, date_dec),
+            _ => self.json_decode(inner, json, date_dec, key_dec),
         }
     }
 
@@ -798,5 +1004,68 @@ mod tests {
         assert_eq!(unix * 1000.0, 978_307_200_000.0);
         // iso8601
         assert_eq!(iso8601_format(ref_secs), "2001-01-01T00:00:00Z");
+    }
+
+    // -----------------------------------------------------------------------
+    // to_snake_case — Apple's _convertToSnakeCase algorithm
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snake_case_basic_camel_words() {
+        assert_eq!(to_snake_case("oneTwoThree"), "one_two_three");
+    }
+
+    #[test]
+    fn snake_case_trailing_acronym() {
+        // Acronym at the end of a word: no lowercase follows, so the entire
+        // run is lowercased as one word.
+        assert_eq!(to_snake_case("imageURL"), "image_url");
+    }
+
+    #[test]
+    fn snake_case_leading_acronym_before_word() {
+        // Uppercase run followed by a lowercase-starting word splits before
+        // the last uppercase of the run.
+        assert_eq!(to_snake_case("URLValue"), "url_value");
+    }
+
+    #[test]
+    fn snake_case_leading_acronym_before_uppercase_word() {
+        // `URLAddress`: U,R,L (run), then A followed by lowercase `d`.
+        // Rule 2 fires before `A` → split = `URL` + `Address`.
+        assert_eq!(to_snake_case("URLAddress"), "url_address");
+    }
+
+    #[test]
+    fn snake_case_digit_boundary() {
+        // A digit is non-uppercase, so it triggers a word break when followed
+        // by an uppercase letter (rule 1 with `!prev.is_uppercase()`).
+        assert_eq!(to_snake_case("address1Line2"), "address1_line2");
+    }
+
+    #[test]
+    fn snake_case_digit_then_uppercase_simple() {
+        assert_eq!(to_snake_case("a1B"), "a1_b");
+    }
+
+    #[test]
+    fn snake_case_leading_underscore_preserved() {
+        assert_eq!(to_snake_case("_leading"), "_leading");
+    }
+
+    #[test]
+    fn snake_case_trailing_underscore_preserved() {
+        assert_eq!(to_snake_case("trailing_"), "trailing_");
+    }
+
+    #[test]
+    fn snake_case_already_snake_unchanged() {
+        assert_eq!(to_snake_case("already_snake"), "already_snake");
+    }
+
+    #[test]
+    fn snake_case_single_letter() {
+        assert_eq!(to_snake_case("A"), "a");
+        assert_eq!(to_snake_case("a"), "a");
     }
 }
