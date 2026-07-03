@@ -409,6 +409,96 @@ fn small_collection_traps() {
         err.contains("out of bounds"),
         "expected out-of-bounds message, got: {err}"
     );
+
+    // --- Set.subscript(endIndex): using endIndex as a subscript traps ---
+    let (ok, _, err) = run_source(
+        "tswift_set_subscript_endindex.swift",
+        "var s: Set<Int> = [42]\nlet ei = s.endIndex\nprint(s[ei])\n",
+    );
+    assert!(!ok, "Set.subscript(endIndex) must trap");
+    assert!(
+        err.contains("out of range") || err.contains("endIndex"),
+        "expected out-of-range message, got: {err}"
+    );
+
+    // --- Set stale-index detection: subscript after remove(at:) traps ---
+    let (ok, _, err) = run_source(
+        "tswift_set_stale_index.swift",
+        "var s: Set<Int> = [1, 2]\n\
+         let old = s.startIndex\n\
+         s.remove(at: old)\n\
+         print(s[old])\n",
+    );
+    assert!(!ok, "stale Set.Index after mutation must trap");
+    assert!(
+        err.contains("mutated") || err.contains("invalid"),
+        "expected mutation-detection message, got: {err}"
+    );
+
+    // --- Set stale-index remove(at:) twice traps on second call ---
+    let (ok, _, err) = run_source(
+        "tswift_set_stale_remove_at.swift",
+        "var s: Set<Int> = [1, 2]\n\
+         let old = s.startIndex\n\
+         s.remove(at: old)\n\
+         s.remove(at: old)\n",
+    );
+    assert!(!ok, "second remove(at:) with stale Set.Index must trap");
+    assert!(
+        err.contains("mutated") || err.contains("invalid"),
+        "expected mutation-detection message, got: {err}"
+    );
+
+    // --- Dictionary.subscript(endIndex): using endIndex as a subscript traps ---
+    let (ok, _, err) = run_source(
+        "tswift_dict_subscript_endindex.swift",
+        "var d: [String: Int] = [\"a\": 1]\nlet ei = d.endIndex\nprint(d[ei])\n",
+    );
+    assert!(!ok, "Dictionary.subscript(endIndex) must trap");
+    assert!(
+        err.contains("out of range") || err.contains("endIndex"),
+        "expected out-of-range message, got: {err}"
+    );
+
+    // --- Dictionary stale-index: subscript after remove(at:) traps ---
+    let (ok, _, err) = run_source(
+        "tswift_dict_stale_index.swift",
+        "var d: [String: Int] = [\"a\": 1, \"b\": 2]\n\
+         let old = d.startIndex\n\
+         d.remove(at: old)\n\
+         print(d[old])\n",
+    );
+    assert!(!ok, "stale Dictionary.Index after mutation must trap");
+    assert!(
+        err.contains("mutated") || err.contains("invalid"),
+        "expected mutation-detection message, got: {err}"
+    );
+
+    // --- Set.index(after:) at endIndex traps ---
+    let (ok, _, err) = run_source(
+        "tswift_set_index_after_end.swift",
+        "var s: Set<Int> = [42]\n\
+         let ei = s.endIndex\n\
+         let _ = s.index(after: ei)\n",
+    );
+    assert!(!ok, "Set.index(after: endIndex) must trap");
+    assert!(
+        err.contains("endIndex") || err.contains("out of range") || err.contains("past"),
+        "expected past-endIndex message, got: {err}"
+    );
+
+    // --- formIndex(after:) at endIndex traps ---
+    let (ok, _, err) = run_source(
+        "tswift_set_formindex_after_end.swift",
+        "var s: Set<Int> = [42]\n\
+         var idx = s.endIndex\n\
+         s.formIndex(after: &idx)\n",
+    );
+    assert!(!ok, "Set.formIndex(after: endIndex) must trap");
+    assert!(
+        err.contains("endIndex") || err.contains("out of range") || err.contains("past"),
+        "expected past-endIndex message, got: {err}"
+    );
 }
 
 /// Operator trap / type-error cases that exit non-zero.

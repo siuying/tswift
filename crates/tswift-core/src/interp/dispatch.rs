@@ -829,12 +829,50 @@ impl<'w> Interpreter<'w> {
     ) -> Result<Option<SwiftValue>, Signal> {
         let mut evaluated_args = None;
 
+        // `formIndex(after: &i)` on Set and Dictionary: the labeled-intrinsic
+        // mechanism strips inout places from arguments, so write-back of the
+        // index variable is impossible through the normal path.  We intercept
+        // this call *before* labeled dispatch, reuse `index(after:)` to compute
+        // the new index, and write it back through the `&i` place ourselves.
+        if method == "formIndex" && matches!(base_value, SwiftValue::Set(_) | SwiftValue::Dict(_)) {
+            if let Some(kind) = BuiltinReceiver::of(base_value) {
+                let raw_args = self.eval_args(arg_nodes)?;
+                if let Some(after_arg) = raw_args
+                    .iter()
+                    .find(|a| a.label.as_deref() == Some("after"))
+                {
+                    if let Some(idx_place) = after_arg.place.clone() {
+                        // Delegate to index(after:) to compute the next index.
+                        let index_args = vec![Arg {
+                            label: Some("after".to_string()),
+                            value: after_arg.value.clone(),
+                        }];
+                        if let Some(entry) = self.builtins.labeled_intrinsic(kind, "index") {
+                            let outcome = (entry.func)(self, base_value.clone(), index_args);
+                            match outcome {
+                                Ok(Some(o)) => {
+                                    self.write_place(&idx_place, o.result)?;
+                                    return Ok(Some(SwiftValue::Void));
+                                }
+                                Ok(None) => {} // fall through
+                                Err(e) => return Err(Self::std_error_to_signal(e)),
+                            }
+                        }
+                    }
+                }
+                evaluated_args = Some(raw_args);
+            }
+        }
+
         // Label-aware stdlib overloads (layer 1a): selected APIs need argument
         // labels to choose between overloads without leaking that policy into the
         // interpreter dispatcher.
         if let Some(kind) = BuiltinReceiver::of(base_value) {
             if self.builtins.has_labeled_intrinsic(kind, method) {
-                let args = self.eval_args(arg_nodes)?;
+                let args = match evaluated_args.take() {
+                    Some(a) => a,
+                    None => self.eval_args(arg_nodes)?,
+                };
                 let labeled: Vec<Arg> = args.iter().map(Arg::from).collect();
                 let place = self.resolve_place(base);
                 if let Some(result) =

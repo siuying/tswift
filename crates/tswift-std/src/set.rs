@@ -7,8 +7,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    BuiltinReceiver, EvalError, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult,
-    SwiftValue,
+    Arg, BuiltinReceiver, EvalError, Interpreter, LabeledMethodEntry, MethodEntry, Outcome,
+    StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
 
 /// Register the `Set` intrinsics of this slice.
@@ -19,6 +19,25 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "capacity", capacity);
     interp.register_property(s, "hashValue", hash_value);
     interp.register_property(s, "description", description);
+    interp.register_property(s, "startIndex", start_index);
+    interp.register_property(s, "endIndex", end_index);
+
+    interp.register_labeled_intrinsic(
+        s,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_labeled,
+        },
+    );
+    interp.register_labeled_intrinsic(
+        s,
+        "formIndex",
+        LabeledMethodEntry {
+            mutating: true,
+            func: form_index_labeled,
+        },
+    );
 
     let mut mutating = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -31,7 +50,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
         );
     };
     mutating("insert", insert);
-    mutating("remove", remove);
+    mutating("remove", remove); // remove(_:) by value
     mutating("update", update);
     mutating("formUnion", form_union);
     mutating("formIntersection", form_intersection);
@@ -61,6 +80,96 @@ pub fn install(interp: &mut Interpreter<'_>) {
     pure("isStrictSubset", is_strict_subset);
     pure("isStrictSuperset", is_strict_superset);
     pure("isDisjoint", is_disjoint);
+    pure("firstIndex", first_index_of);
+    pure("makeIterator", make_iterator);
+
+    // `next()` pops the first element; must be mutating so the shrunk set is
+    // written back to the iterator variable.
+    interp.register_intrinsic(
+        s,
+        "next",
+        MethodEntry {
+            mutating: true,
+            func: next,
+        },
+    );
+
+    // `remove(at:)` is label-aware: the argument has label "at".
+    interp.register_labeled_intrinsic(
+        s,
+        "remove",
+        LabeledMethodEntry {
+            mutating: true,
+            func: remove_labeled,
+        },
+    );
+}
+
+// ---- Set.Index ------------------------------------------------------------
+
+/// Construct an opaque `Set.Index` anchored to the element currently at
+/// `offset` in `items`.
+///
+/// The `_anchor` field holds the element at that position (or `Void` for an
+/// end-of-collection sentinel).  When the index is later used, the stored
+/// anchor is compared against the live element at the same offset; a mismatch
+/// means the collection was mutated and the index is stale — we trap.
+pub(crate) fn make_set_index(offset: usize, items: &[SwiftValue]) -> SwiftValue {
+    let anchor = items.get(offset).cloned().unwrap_or(SwiftValue::Void);
+    SwiftValue::Struct(std::rc::Rc::new(StructObj {
+        type_name: "Set.Index".into(),
+        fields: vec![
+            ("_offset".into(), SwiftValue::int(offset as i128)),
+            ("_anchor".into(), anchor),
+        ],
+    }))
+}
+
+/// Extract the positional offset from a `Set.Index` value, and validate it
+/// against the live element slice to detect stale (post-mutation) indices.
+///
+/// Returns the offset on success.  Traps if the anchor no longer matches the
+/// element at that position (collection was mutated), or if the offset is at
+/// or past the end (caller receives an out-of-range error appropriate for
+/// subscript use).
+pub(crate) fn check_set_index(items: &[SwiftValue], v: &SwiftValue) -> Result<usize, StdError> {
+    let obj = match v {
+        SwiftValue::Struct(o) if o.type_name == "Set.Index" => o,
+        _ => return Err(type_err("expected a Set.Index".into())),
+    };
+    let offset = match obj.get("_offset") {
+        Some(SwiftValue::Int(i)) if i.raw >= 0 => i.raw as usize,
+        _ => return Err(type_err("invalid Set.Index".into())),
+    };
+    if offset >= items.len() {
+        return Err(StdError::Error(EvalError::Trap(
+            "Set.Index is at or past endIndex".into(),
+        )));
+    }
+    // Anchor check — detects stale indices after mutation.
+    if let Some(anchor) = obj.get("_anchor") {
+        if *anchor != SwiftValue::Void && *anchor != items[offset] {
+            return Err(StdError::Error(EvalError::Trap(
+                "invalid Set.Index: collection was mutated after this index was created".into(),
+            )));
+        }
+    }
+    Ok(offset)
+}
+
+/// Extract just the positional offset from a `Set.Index`, without validity
+/// checking.  Used only where stale detection is not needed (e.g. computing a
+/// next-index from a just-created index).
+pub(crate) fn set_index_offset(v: &SwiftValue) -> Option<usize> {
+    match v {
+        SwiftValue::Struct(obj) if obj.type_name == "Set.Index" => {
+            obj.get("_offset").and_then(|f| match f {
+                SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn elements(recv: &SwiftValue) -> Result<Vec<SwiftValue>, StdError> {
@@ -160,6 +269,158 @@ fn hash_value(recv: SwiftValue) -> StdResult {
 /// (Swift guarantees `capacity >= count`; exact reserve sizing is not modelled).
 fn capacity(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(elements(&recv)?.len() as i128))
+}
+
+// ---- index properties -----------------------------------------------------
+
+/// `Set.startIndex` — an opaque index to the first element (anchored), or an
+/// end-sentinel when the set is empty.
+fn start_index(recv: SwiftValue) -> StdResult {
+    let items = elements(&recv)?;
+    Ok(make_set_index(0, &items))
+}
+
+/// `Set.endIndex` — an opaque one-past-the-end sentinel (anchor = Void).
+fn end_index(recv: SwiftValue) -> StdResult {
+    let items = elements(&recv)?;
+    Ok(make_set_index(items.len(), &items))
+}
+
+/// `Set.index` — label-aware dispatch:
+/// - `index(after: i)` → advance by one (traps at `endIndex`)
+/// - `index(of: e)`    → returns `Set.Index?`, `nil` when absent
+///
+/// Also used as the back-end for `formIndex(after:)` in `dispatch.rs`.
+pub(crate) fn index_labeled(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let items = elements(&recv)?;
+
+    // index(after: i)
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("after")) {
+        let offset = set_index_offset(&arg.value)
+            .ok_or_else(|| type_err("index(after:) expects a Set.Index".into()))?;
+        let count = items.len();
+        if offset >= count {
+            return Err(StdError::Error(EvalError::Trap(
+                "Set.index(after:): index is at or past endIndex".into(),
+            )));
+        }
+        return Ok(Some(Outcome {
+            result: make_set_index(offset + 1, &items),
+            receiver: recv,
+        }));
+    }
+
+    // index(of: e)
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("of")) {
+        let result = match items.iter().position(|x| *x == arg.value) {
+            Some(i) => make_set_index(i, &items),
+            None => SwiftValue::Nil,
+        };
+        return Ok(Some(Outcome {
+            result,
+            receiver: recv,
+        }));
+    }
+
+    Ok(None)
+}
+
+/// `Set.formIndex(after:)` — registered as a labeled intrinsic so the call
+/// resolves through the stdlib dispatcher.  Actual inout write-back of the
+/// index argument is handled by the interpreter's `formIndex` special-case in
+/// `dispatch.rs`, which calls `index_labeled` with `after:` and writes the
+/// result back to the caller's `&i` place.  This function exists so the
+/// builtin registry answers `has_labeled_intrinsic(Set, "formIndex") == true`
+/// (needed for the special-case gate in dispatch).
+fn form_index_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    // Delegate to index(after:) — the new index is the result.
+    index_labeled(c, recv, args)
+}
+
+/// `Set.firstIndex(of:)` — returns the opaque `Set.Index` (anchored) for an
+/// element, or `nil` when absent. Overrides the generic `Sequence.firstIndex`
+/// (which returns an `Int` position) with the correct `Set.Index?` return type.
+fn first_index_of(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let items = elements(&recv)?;
+    let needle = args
+        .first()
+        .cloned()
+        .ok_or_else(|| type_err("firstIndex(of:) expects an element".into()))?;
+    let result = match items.iter().position(|x| *x == needle) {
+        Some(i) => make_set_index(i, &items),
+        None => SwiftValue::Nil,
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `Set.remove(at:)` — remove and return the element at the given `Set.Index`.
+/// Traps if the index is stale (collection mutated) or out of bounds.
+fn remove_at_index(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    let idx_val = args
+        .first()
+        .ok_or_else(|| type_err("remove(at:) expects a Set.Index".into()))?;
+    let idx = check_set_index(&items, idx_val)?;
+    let removed = items.remove(idx);
+    Ok(Outcome {
+        result: removed,
+        receiver: SwiftValue::Set(std::rc::Rc::new(items)),
+    })
+}
+
+/// `Set.remove` — label-aware dispatch:
+/// - `remove(at: Set.Index)` → remove by opaque index, return the element
+/// - `remove(_:)`           → remove by value, return element or nil
+fn remove_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    // remove(at: Set.Index)
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("at")) {
+        let plain = vec![arg.value.clone()];
+        return Ok(Some(remove_at_index(c, recv, plain)?));
+    }
+    // remove(_:) — remove by value (fall through to positional intrinsic)
+    Ok(None)
+}
+
+/// `Set.makeIterator()` — for-in over `Set` is driven by
+/// `materialize_builtin_sequence` (which already works). Registering this
+/// no-op gives honest coverage credit and lets callers chain
+/// `.makeIterator()` explicitly.
+fn make_iterator(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    Ok(Outcome {
+        result: recv.clone(),
+        receiver: recv,
+    })
+}
+
+/// `Set.next()` — pop and return the first element as the iterator's next
+/// element, or `nil` when the set is exhausted.  Mirrors `popFirst()` in
+/// value-semantic terms (the mutated set becomes the new receiver).
+fn next(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let mut items = elements(&recv)?;
+    let result = if items.is_empty() {
+        SwiftValue::Nil
+    } else {
+        items.remove(0)
+    };
+    Ok(Outcome {
+        result,
+        receiver: SwiftValue::Set(std::rc::Rc::new(items)),
+    })
 }
 
 // ---- membership mutation ---------------------------------------------------
@@ -542,5 +803,77 @@ mod tests {
         let fu = form_union(&mut m, s(&[1]), vec![s(&[2])]).unwrap();
         assert_eq!(fu.result, SwiftValue::Void);
         assert_eq!(sorted_ints(fu.receiver), vec![1, 2]);
+    }
+
+    #[test]
+    fn set_index_round_trip() {
+        let mut m = M;
+        // startIndex on a single-element set is offset 0, anchored to the element.
+        let single = s(&[42]);
+        let items42 = vec![SwiftValue::int(42)];
+        let si0 = make_set_index(0, &items42); // anchored
+        let si1 = make_set_index(1, &items42); // end sentinel (anchor = Void)
+        assert_eq!(start_index(single.clone()).unwrap(), si0);
+        assert_eq!(end_index(single.clone()).unwrap(), si1);
+
+        // index(after: startIndex) == endIndex for a single-element set.
+        let after_out = index_labeled(
+            &mut m,
+            single.clone(),
+            vec![Arg {
+                label: Some("after".to_string()),
+                value: si0.clone(),
+            }],
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(after_out.result, si1);
+
+        // index(after: endIndex) traps.
+        assert!(index_labeled(
+            &mut m,
+            single.clone(),
+            vec![Arg {
+                label: Some("after".to_string()),
+                value: si1.clone(),
+            }],
+        )
+        .is_err());
+
+        // firstIndex(of:) returns Some (anchored) for present, nil for absent.
+        let found = first_index_of(&mut m, single.clone(), vec![SwiftValue::int(42)]).unwrap();
+        assert_eq!(found.result, si0);
+        let absent = first_index_of(&mut m, single.clone(), vec![SwiftValue::int(99)]).unwrap();
+        assert_eq!(absent.result, SwiftValue::Nil);
+
+        // remove(at:) with valid anchored index returns the element.
+        let rm_out = remove_at_index(&mut m, single.clone(), vec![si0.clone()]).unwrap();
+        assert_eq!(rm_out.result, SwiftValue::int(42));
+        assert!(matches!(rm_out.receiver, SwiftValue::Set(p) if p.is_empty()));
+
+        // remove(at: endIndex) traps — offset >= len.
+        assert!(remove_at_index(&mut m, single.clone(), vec![si1.clone()]).is_err());
+
+        // Stale-index detection: after removing the element, using the old index traps.
+        let mut two = s(&[10, 20]);
+        let two_items = vec![SwiftValue::int(10), SwiftValue::int(20)];
+        let old_start = make_set_index(0, &two_items); // anchored to 10
+                                                       // Remove at startIndex — sets now holds [20].
+        let rm2 = remove_at_index(&mut m, two.clone(), vec![old_start.clone()]).unwrap();
+        assert_eq!(rm2.result, SwiftValue::int(10));
+        two = rm2.receiver; // mutated set: [20]
+                            // Now the element at offset 0 is 20, but old_start has anchor=10 → trap.
+        assert!(
+            remove_at_index(&mut m, two, vec![old_start]).is_err(),
+            "using stale index after mutation must trap"
+        );
+
+        // next() pops first element.
+        let nx = next(&mut m, single.clone(), vec![]).unwrap();
+        assert_eq!(nx.result, SwiftValue::int(42));
+        assert!(matches!(nx.receiver, SwiftValue::Set(p) if p.is_empty()));
+        // next() on empty set returns nil.
+        let nx2 = next(&mut m, s(&[]), vec![]).unwrap();
+        assert_eq!(nx2.result, SwiftValue::Nil);
     }
 }

@@ -5069,6 +5069,24 @@ fn push_active_branch(node: Node<'static>, out: &mut Vec<Node<'static>>) {
 /// argument references (`$0`, `$1`, …) and return the greatest index found.
 /// Only text inside `\(…)` is considered, so a literal `"$1"` outside an
 /// interpolation is ignored.
+/// Extract and range-check the `_offset` field from a `Set.Index` or
+/// `Dictionary.Index` struct.  Does NOT check the anchor — callers that need
+/// stale-index detection must do that separately.
+fn read_opaque_index(type_name: &str, idx: &SwiftValue, len: usize) -> Result<usize, Signal> {
+    let obj = match idx {
+        SwiftValue::Struct(o) if o.type_name == type_name => o,
+        _ => return Err(EvalError::Type(format!("expected a {type_name}")).into()),
+    };
+    let offset = match obj.get("_offset") {
+        Some(SwiftValue::Int(i)) if i.raw >= 0 => i.raw as usize,
+        _ => return Err(trap(format!("invalid {type_name}: bad _offset"))),
+    };
+    if offset >= len {
+        return Err(trap(format!("{type_name} out of range (endIndex)")));
+    }
+    Ok(offset)
+}
+
 fn subscript_index(indices: &[SwiftValue]) -> Result<usize, Signal> {
     match indices.first() {
         Some(SwiftValue::Int(i)) if i.raw >= 0 => Ok(i.raw as usize),

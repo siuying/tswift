@@ -10,8 +10,8 @@ use crate::stdlib::{collection_range_bounds, BuiltinReceiver};
 use crate::value::{ClassObj, IntValue, IntWidth, SwiftValue};
 
 use super::{
-    clone_params, subscript_index, trap, CallArg, ClosureDef, Eval, EvalError, Interpreter, Place,
-    Signal,
+    clone_params, read_opaque_index, subscript_index, trap, CallArg, ClosureDef, Eval, EvalError,
+    Interpreter, Place, Signal,
 };
 
 impl<'w> Interpreter<'w> {
@@ -650,6 +650,31 @@ impl<'w> Interpreter<'w> {
                     .cloned()
                     .ok_or_else(|| trap(format!("index {i} out of range")))
             }
+            // `dict[Dictionary.Index]` → the `(key: K, value: V)` labeled tuple at
+            // that position.  Checked before the key-based path so the opaque
+            // index type does not accidentally match as a plain key.
+            // Anchor validation catches stale indices produced before a mutation.
+            SwiftValue::Dict(pairs)
+                if matches!(indices,
+                    [SwiftValue::Struct(obj)] if obj.type_name == "Dictionary.Index") =>
+            {
+                let offset = read_opaque_index("Dictionary.Index", &indices[0], pairs.len())?;
+                // Anchor check: key at this offset must match the stored anchor.
+                if let SwiftValue::Struct(obj) = &indices[0] {
+                    if let Some(anchor) = obj.get("_anchor") {
+                        if !matches!(anchor, SwiftValue::Void) && *anchor != pairs[offset].0 {
+                            return Err(trap(
+                                "invalid Dictionary.Index: collection was mutated after this index was created".into(),
+                            ));
+                        }
+                    }
+                }
+                let (k, v) = &pairs[offset];
+                Ok(SwiftValue::tuple_labeled(
+                    vec![k.clone(), v.clone()],
+                    vec![Some("key".to_string()), Some("value".to_string())],
+                ))
+            }
             // `dict[key]` → the value, or `nil` when absent. `dict[key, default:]`
             // returns the default instead of `nil` when the key is missing.
             SwiftValue::Dict(pairs) => {
@@ -661,6 +686,25 @@ impl<'w> Interpreter<'w> {
                     .find(|(k, _)| k == key)
                     .map(|(_, v)| v.clone())
                     .unwrap_or_else(|| indices.get(1).cloned().unwrap_or(SwiftValue::Nil)))
+            }
+            // `set[Set.Index]` → the element at that position.
+            // Anchor validation catches stale indices produced before a mutation.
+            SwiftValue::Set(items)
+                if matches!(indices,
+                    [SwiftValue::Struct(obj)] if obj.type_name == "Set.Index") =>
+            {
+                let offset = read_opaque_index("Set.Index", &indices[0], items.len())?;
+                // Anchor check: element at this offset must match the stored anchor.
+                if let SwiftValue::Struct(obj) = &indices[0] {
+                    if let Some(anchor) = obj.get("_anchor") {
+                        if !matches!(anchor, SwiftValue::Void) && *anchor != items[offset] {
+                            return Err(trap(
+                                "invalid Set.Index: collection was mutated after this index was created".into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(items[offset].clone())
             }
             SwiftValue::Str(s) => {
                 // `s[stringIndex]` — subscript by an opaque `String.Index` struct.
