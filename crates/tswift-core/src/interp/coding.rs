@@ -567,6 +567,24 @@ impl<'w> Interpreter<'w> {
                 }
                 return Err(EvalError::Type("cannot encode malformed UUID value".into()).into());
             }
+            // `IndexPath` encodes as `{"indexes":[...]}` matching Foundation.
+            if o.type_name == "IndexPath" {
+                let indexes = match o.get("_indexes") {
+                    Some(SwiftValue::Array(items)) => items
+                        .iter()
+                        .map(|v| match v {
+                            SwiftValue::Int(i) => Ok(Json::Int(i.raw as i64)),
+                            other => Err(EvalError::Type(format!(
+                                "IndexPath contains non-Int value: {}",
+                                other.type_name()
+                            ))
+                            .into()),
+                        })
+                        .collect::<Result<Vec<_>, Signal>>()?,
+                    _ => vec![],
+                };
+                return Ok(Json::Object(vec![("indexes".into(), Json::Array(indexes))]));
+            }
             // `Data` is encoded according to the data strategy.
             if o.type_name == "Data" {
                 let bytes = data_bytes_from_value(value)
@@ -694,6 +712,17 @@ impl<'w> Interpreter<'w> {
         // `Date` decoding: apply the chosen strategy.
         if type_name == "Date" {
             return self.json_decode_date(json, date_dec);
+        }
+        // `IndexPath` decodes from `{"indexes":[...]}` matching Foundation.
+        if type_name == "IndexPath" {
+            return self.json_decode_typed(
+                Some(type_name),
+                "value",
+                json,
+                date_dec,
+                key_dec,
+                data_dec,
+            );
         }
         // A `Codable` enum decodes from its raw value, or — for a payload-free
         // case — its bare case name. A case with associated values never matches
@@ -868,6 +897,52 @@ impl<'w> Interpreter<'w> {
                 }))),
                 other => Err(Signal::Throw(SwiftValue::Str(format!(
                     "DecodingError.typeMismatch: expected String for URL '{}', got {}",
+                    field,
+                    json_kind_name(other)
+                )))),
+            };
+        }
+        // `IndexPath` decodes from `{"indexes":[...]}` matching Foundation.
+        // `{}` → keyNotFound; non-object → typeMismatch; wrong array element → typeMismatch.
+        if full.trim() == "IndexPath" {
+            return match json {
+                Json::Object(_) => {
+                    let arr = match json.get("indexes") {
+                        Some(Json::Array(arr)) => arr,
+                        Some(other) => {
+                            return Err(Signal::Throw(SwiftValue::Str(format!(
+                                "DecodingError.typeMismatch: \
+                                 expected Array<Any> for IndexPath 'indexes', got {}",
+                                json_kind_name(other)
+                            ))))
+                        }
+                        None => {
+                            return Err(Signal::Throw(SwiftValue::Str(
+                                "DecodingError.keyNotFound: \
+                                 No value associated with key 'indexes' \
+                                 in IndexPath"
+                                    .into(),
+                            )))
+                        }
+                    };
+                    let items = arr
+                        .iter()
+                        .map(|j| match j {
+                            Json::Int(i) => Ok(SwiftValue::int(*i as i128)),
+                            other => Err(Signal::Throw(SwiftValue::Str(format!(
+                                "DecodingError.typeMismatch: \
+                                 expected Int in IndexPath 'indexes', got {}",
+                                json_kind_name(other)
+                            )))),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(SwiftValue::Struct(Rc::new(StructObj {
+                        type_name: "IndexPath".into(),
+                        fields: vec![("_indexes".into(), SwiftValue::Array(Rc::new(items)))],
+                    })))
+                }
+                other => Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: expected JSON object for IndexPath '{}', got {}",
                     field,
                     json_kind_name(other)
                 )))),

@@ -271,12 +271,23 @@ impl<'w> Interpreter<'w> {
     /// value's type provides one; otherwise fall back to the plain rendering.
     pub(super) fn render_description(&mut self, value: &SwiftValue) -> String {
         let described = match value {
-            SwiftValue::Struct(o) => self
-                .types
-                .struct_def(&o.type_name)
-                .is_some_and(|d| d.computed.contains_key("description"))
-                .then(|| self.read_struct_member(value, "description").ok())
-                .flatten(),
+            SwiftValue::Struct(o) => {
+                // User-defined computed `description` takes priority.
+                let user_desc = self
+                    .types
+                    .struct_def(&o.type_name)
+                    .is_some_and(|d| d.computed.contains_key("description"))
+                    .then(|| self.read_struct_member(value, "description").ok())
+                    .flatten();
+                // Fall back to a registered builtin property `description`.
+                if user_desc.is_none() {
+                    let kind = crate::stdlib::BuiltinReceiver::of(value);
+                    kind.and_then(|k| self.builtins.property(k, "description"))
+                        .and_then(|f| f(value.clone()).ok())
+                } else {
+                    user_desc
+                }
+            }
             SwiftValue::Object(o) => {
                 let cn = o.borrow().class_name.clone();
                 self.class_computed_getter(&cn, "description")

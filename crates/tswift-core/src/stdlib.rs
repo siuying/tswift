@@ -491,6 +491,14 @@ pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue
                 .collect(),
         ),
         SwiftValue::Set(items) => Some(items.as_ref().clone()),
+        // `IndexPath` — iterate as Int elements (stored in `_indexes`).
+        SwiftValue::Struct(obj) if obj.type_name == "IndexPath" => {
+            if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                Some(items.as_ref().clone())
+            } else {
+                None
+            }
+        }
         // `IndexSet` — iterate as ascending Int elements (stored in `_values`).
         SwiftValue::Struct(obj) if obj.type_name == "IndexSet" => {
             if let Some(SwiftValue::Array(items)) = obj.get("_values") {

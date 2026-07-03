@@ -79,6 +79,12 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
                 inclusive: inc2,
             },
         ) => range_binary(op, (*lo, *hi, *inclusive), (*lo2, *hi2, *inc2)),
+        // `UUID` is `Comparable` (since macOS 13): compare by canonical uuidString bytes.
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "UUID" && b.type_name == "UUID" =>
+        {
+            uuid_binary(op, a, b)
+        }
         // `IndexPath` is `Comparable`: compare its element list lexicographically.
         (SwiftValue::Struct(a), SwiftValue::Struct(b))
             if a.type_name == "String.Index" && b.type_name == "String.Index" =>
@@ -323,8 +329,19 @@ fn string_index_binary(
     }
 }
 
+fn index_path_value(indexes: Vec<i128>) -> SwiftValue {
+    let items = indexes.into_iter().map(SwiftValue::int).collect();
+    SwiftValue::Struct(std::rc::Rc::new(crate::value::StructObj {
+        type_name: "IndexPath".into(),
+        fields: vec![(
+            "_indexes".into(),
+            SwiftValue::Array(std::rc::Rc::new(items)),
+        )],
+    }))
+}
+
 /// Lexicographic comparison of two `IndexPath` values (Foundation builtins
-/// backed by an `_indexes` array). Supports `==`/`!=` and the ordering ops.
+/// backed by an `_indexes` array). Supports `==`/`!=`, ordering ops, and `+`.
 fn index_path_binary(
     op: &str,
     a: &std::rc::Rc<crate::value::StructObj>,
@@ -352,7 +369,43 @@ fn index_path_binary(
         "<=" => ord != Ordering::Greater,
         ">" => ord == Ordering::Greater,
         ">=" => ord != Ordering::Less,
+        "+" => {
+            let mut combined = la;
+            combined.extend(lb);
+            return Ok(index_path_value(combined));
+        }
         _ => return Err(format!("operator `{op}` cannot apply to IndexPath")),
+    };
+    Ok(SwiftValue::Bool(res))
+}
+
+fn uuid_string(o: &std::rc::Rc<crate::value::StructObj>) -> &str {
+    match o.get("uuidString") {
+        Some(SwiftValue::Str(s)) => s.as_str(),
+        _ => "",
+    }
+}
+
+/// Compare two `UUID` values by their canonical uppercase `uuidString`.
+/// Foundation compares the underlying 16 bytes; since the canonical string is
+/// uppercase hex with fixed dashes, lexicographic string comparison produces
+/// the same order.
+fn uuid_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let (sa, sb) = (uuid_string(a), uuid_string(b));
+    let ord = sa.cmp(sb);
+    use std::cmp::Ordering;
+    let res = match op {
+        "==" => ord == Ordering::Equal,
+        "!=" => ord != Ordering::Equal,
+        "<" => ord == Ordering::Less,
+        "<=" => ord != Ordering::Greater,
+        ">" => ord == Ordering::Greater,
+        ">=" => ord != Ordering::Less,
+        _ => return Err(format!("operator `{op}` cannot apply to UUID")),
     };
     Ok(SwiftValue::Bool(res))
 }

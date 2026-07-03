@@ -373,6 +373,28 @@ impl<'w> Interpreter<'w> {
         // mutable, the index parameters, and the `newValue` binding.
         if let SwiftValue::Struct(obj) = &container {
             let type_name = obj.type_name.clone();
+            // `IndexPath[i] = n` — copy-on-write update of the `_indexes` field.
+            if type_name == "IndexPath" {
+                if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                    let i = subscript_index(indices)?;
+                    if i >= items.len() {
+                        return Err(trap(format!("IndexPath index {i} out of range")));
+                    }
+                    let SwiftValue::Int(_) = &value else {
+                        return Err(trap(format!(
+                            "IndexPath subscript requires an Int value, got {}",
+                            value.type_name()
+                        )));
+                    };
+                    let mut new_items = items.as_ref().clone();
+                    new_items[i] = value;
+                    let mut new_obj = (**obj).clone();
+                    if let Some(slot) = new_obj.fields.iter_mut().find(|(k, _)| k == "_indexes") {
+                        slot.1 = SwiftValue::Array(StdRc::new(new_items));
+                    }
+                    return Ok(SwiftValue::Struct(StdRc::new(new_obj)));
+                }
+            }
             // `Data[i] = byte` — copy-on-write update of the `_bytes` field.
             // Validates: index in bounds AND value is a UInt8 (Int in 0..=255).
             if type_name == "Data" {
@@ -696,8 +718,39 @@ impl<'w> Interpreter<'w> {
                 let type_name = obj.type_name.clone();
                 // `IndexPath[i]` reads its `i`th element (a Foundation builtin
                 // backed by a `_indexes` array, with no user `subscript`).
+                // `IndexPath[lo..<hi]` returns a sub-IndexPath.
                 if type_name == "IndexPath" {
                     if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                        // Range subscript: `ip[lo..<hi]` or `ip[lo...hi]`
+                        if let [SwiftValue::Range { lo, hi, inclusive }] = indices {
+                            let end = if *inclusive {
+                                (*hi as usize).saturating_add(1)
+                            } else {
+                                *hi as usize
+                            };
+                            let start = *lo as usize;
+                            if start > items.len() || end > items.len() || start > end {
+                                return Err(trap(format!(
+                                    "IndexPath range {start}..{end} out of range"
+                                )));
+                            }
+                            let sub: Vec<SwiftValue> = items[start..end].to_vec();
+                            let sub_ints: Vec<i128> = sub
+                                .iter()
+                                .filter_map(|v| match v {
+                                    SwiftValue::Int(i) => Some(i.raw),
+                                    _ => None,
+                                })
+                                .collect();
+                            let sub_items = sub_ints.into_iter().map(SwiftValue::int).collect();
+                            return Ok(SwiftValue::Struct(StdRc::new(crate::value::StructObj {
+                                type_name: "IndexPath".into(),
+                                fields: vec![(
+                                    "_indexes".into(),
+                                    SwiftValue::Array(StdRc::new(sub_items)),
+                                )],
+                            })));
+                        }
                         let i = subscript_index(indices)?;
                         return items
                             .get(i)

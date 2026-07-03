@@ -202,12 +202,45 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "hashValue",
         index_path_hash_value,
     );
-    interp.register_intrinsic(
+    interp.register_property(
         BuiltinReceiver::IndexPath,
-        "dropLast",
+        "description",
+        index_path_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::IndexPath,
+        "debugDescription",
+        index_path_description,
+    );
+    for (name, mutating, func) in [
+        ("dropLast", false, index_path_drop_last as IntrinsicFn),
+        ("makeIterator", false, index_path_make_iterator),
+        ("compare", false, index_path_compare),
+        ("==", false, index_path_equal),
+    ] {
+        interp.register_intrinsic(
+            BuiltinReceiver::IndexPath,
+            name,
+            MethodEntry { mutating, func },
+        );
+    }
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::IndexPath,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_path_index_labeled,
+        },
+    );
+
+    // Register UUID `<` so it appears in coverage keys; actual comparison
+    // is handled by ops::binary via uuid_binary.
+    interp.register_intrinsic(
+        BuiltinReceiver::UUID,
+        "<",
         MethodEntry {
             mutating: false,
-            func: index_path_drop_last,
+            func: uuid_less_than,
         },
     );
 
@@ -1718,6 +1751,126 @@ fn index_path_appending(
     }
     Ok(Outcome {
         result: index_path_value(indexes),
+        receiver: recv,
+    })
+}
+
+/// `IndexPath.description` / `debugDescription` — format `[1, 2, 3]`.
+fn index_path_description(recv: SwiftValue) -> StdResult {
+    let indexes = index_path_indexes(&recv)?;
+    let inner: Vec<String> = indexes.iter().map(|i| i.to_string()).collect();
+    Ok(SwiftValue::Str(format!("[{}]", inner.join(", ")).into()))
+}
+
+/// `IndexPath.makeIterator()` — returns self; for-in uses
+/// `materialize_builtin_sequence` which handles IndexPath structs.
+fn index_path_make_iterator(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("IndexPath.makeIterator expects no arguments"));
+    }
+    let result = recv.clone();
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `IndexPath.compare(_:) -> ComparisonResult` — lexicographic comparison.
+fn index_path_compare(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexPath.compare expects one IndexPath"));
+    }
+    let lhs = index_path_indexes(&recv)?;
+    let rhs = index_path_indexes(&args[0])?;
+    let case = match lhs.cmp(&rhs) {
+        std::cmp::Ordering::Less => "orderedAscending",
+        std::cmp::Ordering::Greater => "orderedDescending",
+        std::cmp::Ordering::Equal => "orderedSame",
+    };
+    Ok(Outcome {
+        result: comparison_result(case),
+        receiver: recv,
+    })
+}
+
+/// `IndexPath.==` — registered for coverage key; actual equality uses struct ==.
+fn index_path_equal(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexPath.== expects one IndexPath"));
+    }
+    let lhs = index_path_indexes(&recv)?;
+    let rhs = index_path_indexes(&args[0])?;
+    Ok(Outcome {
+        result: SwiftValue::Bool(lhs == rhs),
+        receiver: recv,
+    })
+}
+
+/// `IndexPath.index(after:)` / `IndexPath.index(before:)` — labeled method.
+fn index_path_index_labeled(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None); // wrong arity — let other overloads try
+    };
+    let idx = int_arg(&arg.value, "IndexPath.index")?;
+    let result = match arg.label.as_deref() {
+        Some("after") => SwiftValue::int(idx + 1),
+        Some("before") => {
+            if idx == 0 {
+                return Err(type_error(
+                    "IndexPath.index(before:): index 0 has no predecessor",
+                ));
+            }
+            SwiftValue::int(idx - 1)
+        }
+        _ => return Ok(None), // unrecognised label — fall through
+    };
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+/// `UUID.<` — registered for coverage; actual comparison goes through ops::binary.
+fn uuid_less_than(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("UUID.< expects one UUID"));
+    }
+    let lhs = match &recv {
+        SwiftValue::Struct(obj) if obj.type_name == "UUID" => match obj.get("uuidString") {
+            Some(SwiftValue::Str(s)) => s.clone(),
+            _ => return Err(type_error("malformed UUID value")),
+        },
+        _ => return Err(type_error("UUID.< expects UUID receiver")),
+    };
+    let rhs = match &args[0] {
+        SwiftValue::Struct(obj) if obj.type_name == "UUID" => match obj.get("uuidString") {
+            Some(SwiftValue::Str(s)) => s.clone(),
+            _ => return Err(type_error("malformed UUID argument")),
+        },
+        _ => return Err(type_error("UUID.< expects UUID argument")),
+    };
+    Ok(Outcome {
+        result: SwiftValue::Bool(lhs < rhs),
         receiver: recv,
     })
 }
