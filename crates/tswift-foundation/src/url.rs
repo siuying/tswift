@@ -11,8 +11,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj,
-    SwiftValue,
+    Arg, BuiltinReceiver, LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, StructObj, SwiftValue,
 };
 
 use crate::type_error;
@@ -46,6 +46,8 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("relativePath", url_path),
         ("baseURL", url_base_url),
         ("hasDirectoryPath", url_has_directory_path),
+        ("standardized", url_standardized),
+        ("absoluteURL", url_absolute_url),
     ] {
         interp.register_property(BuiltinReceiver::URL, name, f);
     }
@@ -72,6 +74,15 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
             true,
             url_delete_last_path_component,
         ),
+        ("appendPathExtension", true, url_append_path_extension),
+        ("deletePathExtension", true, url_delete_path_extension),
+        ("standardize", true, url_standardize),
+        (
+            "resolvingSymlinksInPath",
+            false,
+            url_resolving_symlinks_in_path,
+        ),
+        ("resolveSymlinksInPath", true, url_resolve_symlinks_in_path),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::URL,
@@ -79,6 +90,25 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
             MethodEntry { mutating, func: f },
         );
     }
+
+    // `appending(path:)` / `appending(component:)` — label-sensitive
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::URL,
+        "appending",
+        LabeledMethodEntry {
+            mutating: false,
+            func: url_appending_labeled,
+        },
+    );
+    // `append(path:)` / `append(component:)` — mutating, label-sensitive
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::URL,
+        "append",
+        LabeledMethodEntry {
+            mutating: true,
+            func: url_append_labeled,
+        },
+    );
 
     // ---- URLQueryItem ----
     interp.register_free_fn("URLQueryItem", url_query_item_init);
@@ -677,6 +707,358 @@ fn url_deleting_path_extension(
     })
 }
 
+// ---- Path manipulation helpers -------------------------------------------
+
+/// Percent-encode characters that must be encoded in a URL path segment.
+/// Encodes everything except unreserved characters and `/`.
+fn percent_encode_path(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            // unreserved
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            // sub-delims allowed in path
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\'' // apostrophe
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b'='
+            // path separator
+            | b'/'
+            // pchar extras
+            | b':'
+            | b'@' => out.push(b as char),
+            other => {
+                out.push('%');
+                out.push(char::from_digit((other >> 4) as u32, 16).unwrap().to_ascii_uppercase());
+                out.push(char::from_digit((other & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+            }
+        }
+    }
+    out
+}
+
+/// Percent-encode a single path component (no `/` allowed through).
+fn percent_encode_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\'' // apostrophe
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b'='
+            | b':'
+            | b'@' => out.push(b as char),
+            other => {
+                out.push('%');
+                out.push(char::from_digit((other >> 4) as u32, 16).unwrap().to_ascii_uppercase());
+                out.push(char::from_digit((other & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+            }
+        }
+    }
+    out
+}
+
+/// Resolve `.` and `..` segments lexically, matching Foundation `standardized`.
+///
+/// Rules:
+/// - `.` segments are dropped.
+/// - `..` pops the last **non-empty** segment (so double-slash runs are
+///   skipped over when searching for what to pop).
+/// - For absolute paths (leading `/`) `..` is clamped at the root: if there
+///   is no non-empty segment to pop the `..` is silently discarded.
+/// - For relative paths a `..` that cannot be resolved is kept as-is.
+/// - Double slashes are **preserved** — Foundation `standardized` does not
+///   collapse `//`; only `.`/`..` are affected.
+fn standardize_path(path: &str) -> String {
+    let is_absolute = path.starts_with('/');
+    // Collect all raw split segments (empty strings represent the gaps that
+    // produce double slashes on join).
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "." => {} // self-reference: discard
+            ".." => {
+                // Find the rightmost non-empty segment to pop.
+                if let Some(pos) = out.iter().rposition(|s| !s.is_empty()) {
+                    out.remove(pos);
+                } else if !is_absolute {
+                    // Relative path with nothing to resolve: keep the `..`.
+                    out.push("..");
+                }
+                // Absolute: clamped — discard the `..`.
+            }
+            other => out.push(other),
+        }
+    }
+    let result = out.join("/");
+    // For absolute paths whose every segment was discarded (e.g. `/.` or
+    // `/..`), `out` ends up as `[""]` whose join is `""`.  The minimum
+    // canonical absolute path is `/`.
+    if is_absolute && result.is_empty() {
+        "/".to_string()
+    } else {
+        result
+    }
+}
+
+// ---- appending(path:) / appending(component:) ----------------------------
+
+/// Helper: apply `appending(path:)` or `appending(component:)` semantics.
+///
+/// - `path:` label: the argument is a possibly-multi-segment path string.
+///   A leading `/` does **not** replace the existing path — it is stripped
+///   and the remainder is joined.  An empty argument (or all-slashes)
+///   appends a trailing slash per Foundation semantics.
+/// - `component:` label: the argument is a single opaque component;
+///   all characters including `/` are percent-encoded and the result is
+///   joined.
+fn do_appending(recv: &SwiftValue, arg: &Arg) -> Result<SwiftValue, StdError> {
+    let SwiftValue::Str(val) = &arg.value else {
+        return Err(type_error(
+            "URL.appending(path:/component:) expects a String",
+        ));
+    };
+    let parsed = parse_url(&url_string(recv)?);
+    let new_path = match arg.label.as_deref() {
+        Some("component") => {
+            // Single component — percent-encode everything including `/`, always join.
+            join_path(&parsed.path, &percent_encode_component(val))
+        }
+        // `path:` or unrecognised label — treat as multi-segment path.
+        _ => {
+            // Strip exactly ONE leading slash: Foundation `appending(path:)`
+            // does not let a leading '/' replace the existing path, but a
+            // second slash (e.g. `//other`) must be preserved so that
+            // `appending(path: "//other")` on `/dir` yields `/dir//other`.
+            let stripped = val.strip_prefix('/').unwrap_or(val);
+            if stripped.is_empty() {
+                // Empty arg (or a single '/') → append trailing slash.
+                if parsed.path.ends_with('/') {
+                    parsed.path.clone()
+                } else {
+                    format!("{}/", parsed.path)
+                }
+            } else {
+                join_path(&parsed.path, &percent_encode_path(stripped))
+            }
+        }
+    };
+    Ok(url_value(rebuild_with_path(&parsed, &new_path)))
+}
+
+/// Label-aware `appending(path:)` / `appending(component:)` — non-mutating.
+fn url_appending_labeled(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None); // wrong arity — fall through
+    };
+    if !matches!(
+        arg.label.as_deref(),
+        Some("path") | Some("component") | None
+    ) {
+        return Ok(None);
+    }
+    let result = do_appending(&recv, arg)?;
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+/// Label-aware `append(path:)` / `append(component:)` — mutating.
+fn url_append_labeled(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None);
+    };
+    if !matches!(
+        arg.label.as_deref(),
+        Some("path") | Some("component") | None
+    ) {
+        return Ok(None);
+    }
+    let updated = do_appending(&recv, arg)?;
+    Ok(Some(Outcome {
+        result: SwiftValue::Void,
+        receiver: updated,
+    }))
+}
+
+// ---- appendPathExtension / deletePathExtension ---------------------------
+
+/// Mutating `appendPathExtension(_:)` — mirrors the existing non-mutating
+/// `appendingPathExtension` but writes back to the receiver.
+fn url_append_path_extension(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [SwiftValue::Str(ext)] = args.as_slice() else {
+        return Err(type_error(
+            "URL.appendPathExtension(_:) expects exactly one String argument",
+        ));
+    };
+    if ext.is_empty() {
+        // Empty extension is a no-op per Foundation.
+        return Ok(Outcome {
+            result: SwiftValue::Void,
+            receiver: recv,
+        });
+    }
+    let parsed = parse_url(&url_string(&recv)?);
+    let new_path = format!("{}.{}", parsed.path.trim_end_matches('/'), ext);
+    let updated = url_value(rebuild_with_path(&parsed, &new_path));
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: updated,
+    })
+}
+
+/// Mutating `deletePathExtension()` — mirrors `deletingPathExtension`.
+fn url_delete_path_extension(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("URL.deletePathExtension() takes no arguments"));
+    }
+    let parsed = parse_url(&url_string(&recv)?);
+    let path = &parsed.path;
+    let new_path = match path.rsplit_once('/') {
+        Some((head, last)) => match file_extension(last) {
+            Some((stem, _)) => format!("{head}/{stem}"),
+            None => path.clone(),
+        },
+        None => match file_extension(path) {
+            Some((stem, _)) => stem.to_string(),
+            None => path.clone(),
+        },
+    };
+    let updated = url_value(rebuild_with_path(&parsed, &new_path));
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: updated,
+    })
+}
+
+// ---- standardized / standardize() ----------------------------------------
+
+/// Read-only `standardized` property.
+fn url_standardized(recv: SwiftValue) -> StdResult {
+    let parsed = parse_url(&url_string(&recv)?);
+    let new_path = standardize_path(&parsed.path);
+    Ok(url_value(rebuild_with_path(&parsed, &new_path)))
+}
+
+/// Mutating `standardize()`.
+fn url_standardize(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("URL.standardize() takes no arguments"));
+    }
+    let parsed = parse_url(&url_string(&recv)?);
+    let new_path = standardize_path(&parsed.path);
+    let updated = url_value(rebuild_with_path(&parsed, &new_path));
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: updated,
+    })
+}
+
+// ---- absoluteURL ---------------------------------------------------------
+
+/// `absoluteURL` — since we only model absolute URLs, returns self.
+fn url_absolute_url(recv: SwiftValue) -> StdResult {
+    Ok(recv)
+}
+
+// ---- resolvingSymlinksInPath / resolveSymlinksInPath ---------------------
+
+/// Lexical symlink resolution for `URL.resolvingSymlinksInPath()`.
+///
+/// For paths that do not exist on disk (the common case in a pure-Rust
+/// interpreter with no filesystem access) Foundation documents that only
+/// `.` and `..` are resolved — the same behaviour as `standardized`.
+/// No `/private` prefix stripping is performed here because that mapping
+/// is a real-filesystem operation (readlink on macOS expands `/tmp` to
+/// `/private/tmp`); without a real symlink to resolve the path is left
+/// verbatim after standardization.
+fn resolve_symlinks(recv: &SwiftValue) -> Result<SwiftValue, StdError> {
+    let s = url_string(recv)?;
+    let parsed = parse_url(&s);
+    let new_path = standardize_path(&parsed.path);
+    Ok(url_value(rebuild_with_path(&parsed, &new_path)))
+}
+
+fn url_resolving_symlinks_in_path(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error(
+            "URL.resolvingSymlinksInPath() takes no arguments",
+        ));
+    }
+    let result = resolve_symlinks(&recv)?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn url_resolve_symlinks_in_path(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("URL.resolveSymlinksInPath() takes no arguments"));
+    }
+    let updated = resolve_symlinks(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: updated,
+    })
+}
+
 // ===========================================================================
 // URLQueryItem
 // ===========================================================================
@@ -929,6 +1311,25 @@ mod tests {
         assert_eq!(file_extension(".bashrc"), None);
         assert_eq!(file_extension("a."), None);
         assert_eq!(file_extension("plain"), None);
+    }
+
+    #[test]
+    fn standardize_path_resolves_dot_and_dotdot() {
+        assert_eq!(standardize_path("/a/b/../c"), "/a/c");
+        assert_eq!(standardize_path("/a/./b"), "/a/b");
+        // double slashes are PRESERVED
+        assert_eq!(standardize_path("/a//b"), "/a//b");
+        // '..' clamped at root for absolute paths
+        assert_eq!(standardize_path("/../../a"), "/a");
+        // '..' at root must yield '/', never an empty string
+        assert_eq!(standardize_path("/.."), "/");
+        assert_eq!(standardize_path("/../.."), "/");
+        // '.' at root is also '/' not ''
+        assert_eq!(standardize_path("/."), "/");
+        // relative path keeps unresolvable '..'
+        assert_eq!(standardize_path("../a"), "../a");
+        // trailing slash preserved
+        assert_eq!(standardize_path("/a/b/../"), "/a/");
     }
 
     #[test]
