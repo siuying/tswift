@@ -558,6 +558,20 @@ impl<'w> Interpreter<'w> {
                     .unwrap_or_else(|| indices.get(1).cloned().unwrap_or(SwiftValue::Nil)))
             }
             SwiftValue::Str(s) => {
+                // `s[stringIndex]` — subscript by an opaque `String.Index` struct.
+                if let [SwiftValue::Struct(obj)] = indices {
+                    if obj.type_name == "String.Index" {
+                        let offset = match obj.get("_offset") {
+                            Some(SwiftValue::Int(i)) if i.raw >= 0 => i.raw as usize,
+                            _ => return Err(trap("invalid String.Index".into())),
+                        };
+                        return crate::graphemes(s)
+                            .into_iter()
+                            .nth(offset)
+                            .map(SwiftValue::Str)
+                            .ok_or_else(|| trap(format!("String.Index {offset} out of range")));
+                    }
+                }
                 let i = subscript_index(indices)?;
                 // Index by extended grapheme cluster (Swift `Character`), so
                 // string indexing agrees with `count` and iteration.

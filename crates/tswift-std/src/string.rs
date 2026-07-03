@@ -15,8 +15,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    BuiltinReceiver, Captures, EvalError, IntValue, IntWidth, Interpreter, MethodEntry, Outcome,
-    Regex, StdContext, StdError, StdResult, SwiftValue,
+    Arg, BuiltinReceiver, Captures, EvalError, IntValue, IntWidth, Interpreter, LabeledMethodEntry,
+    MethodEntry, Outcome, Regex, StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
 
 /// Register the `String` intrinsics of this slice.
@@ -46,6 +46,36 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "utf8", utf8_view);
     interp.register_property(s, "utf16", utf16_view);
     interp.register_property(s, "unicodeScalars", unicode_scalars_view);
+    interp.register_property(s, "startIndex", start_index);
+    interp.register_property(s, "endIndex", end_index);
+
+    // `index` is label-aware so we can distinguish index(after:), index(before:),
+    // index(_:offsetBy:), and index(_:offsetBy:limitedBy:).
+    interp.register_labeled_intrinsic(
+        s,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_labeled,
+        },
+    );
+    // `distance(from:to:)` and `insert`/`remove` family.
+    interp.register_labeled_intrinsic(
+        s,
+        "distance",
+        LabeledMethodEntry {
+            mutating: false,
+            func: distance_labeled,
+        },
+    );
+    interp.register_labeled_intrinsic(
+        s,
+        "insert",
+        LabeledMethodEntry {
+            mutating: true,
+            func: insert_labeled,
+        },
+    );
 
     let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
@@ -94,6 +124,30 @@ pub fn install(interp: &mut Interpreter<'_>) {
         MethodEntry {
             mutating: true,
             func: reserve_capacity,
+        },
+    );
+    interp.register_intrinsic(
+        s,
+        "remove",
+        MethodEntry {
+            mutating: true,
+            func: remove_at,
+        },
+    );
+    interp.register_intrinsic(
+        s,
+        "removeSubrange",
+        MethodEntry {
+            mutating: true,
+            func: remove_subrange,
+        },
+    );
+    interp.register_intrinsic(
+        s,
+        "replaceSubrange",
+        MethodEntry {
+            mutating: true,
+            func: replace_subrange,
         },
     );
 }
@@ -439,6 +493,320 @@ fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValu
     val(SwiftValue::Void, SwiftValue::Str(s))
 }
 
+// ---- String.Index ----------------------------------------------------------
+
+/// Construct an opaque `String.Index` value from a grapheme-cluster offset.
+///
+/// The index is stored as a `Struct` so it is not accidentally confused with an
+/// integer and so that binary operators (`==`, `..<`, …) in ops.rs can
+/// recognize it by type name and apply correct semantics.
+fn make_index(offset: usize) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "String.Index".into(),
+        fields: vec![("_offset".into(), SwiftValue::int(offset as i128))],
+    }))
+}
+
+/// Extract the grapheme-cluster offset from a `String.Index` value.
+fn index_offset(v: &SwiftValue) -> Option<usize> {
+    match v {
+        SwiftValue::Struct(obj) if obj.type_name == "String.Index" => {
+            obj.get("_offset").and_then(|f| match f {
+                SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `String.startIndex` — the `String.Index` of the first grapheme cluster.
+fn start_index(_recv: SwiftValue) -> StdResult {
+    Ok(make_index(0))
+}
+
+/// `String.endIndex` — the `String.Index` one past the last grapheme cluster.
+fn end_index(recv: SwiftValue) -> StdResult {
+    let count = graphemes(&str_of(&recv)?).len();
+    Ok(make_index(count))
+}
+
+/// `String.index` — label-aware dispatch over four overloads:
+/// - `index(after:)` — advance by one grapheme cluster
+/// - `index(before:)` — retreat by one grapheme cluster
+/// - `index(_:offsetBy:)` — advance by `n` grapheme clusters (traps OOB)
+/// - `index(_:offsetBy:limitedBy:)` — advance clamped to a limit, or `nil`
+fn index_labeled(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let count = graphemes(&str_of(&recv)?).len();
+    let trap_oob = |what: &str, offset: usize| -> StdError {
+        StdError::Error(EvalError::Trap(format!(
+            "String.{what}: index {offset} out of range [0, {count}]"
+        )))
+    };
+
+    // index(after: i) — one arg labeled "after"
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("after")) {
+        let offset = index_offset(&arg.value)
+            .ok_or_else(|| type_err("index(after:) expects a String.Index".into()))?;
+        if offset >= count {
+            return Err(trap_oob("index(after:)", offset));
+        }
+        return Ok(Some(Outcome {
+            result: make_index(offset + 1),
+            receiver: recv,
+        }));
+    }
+
+    // index(before: i) — one arg labeled "before"
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("before")) {
+        let offset = index_offset(&arg.value)
+            .ok_or_else(|| type_err("index(before:) expects a String.Index".into()))?;
+        if offset > count {
+            return Err(trap_oob("index(before:)", offset));
+        }
+        if offset == 0 {
+            return Err(StdError::Error(EvalError::Trap(
+                "String.index(before:): cannot retreat before startIndex".into(),
+            )));
+        }
+        return Ok(Some(Outcome {
+            result: make_index(offset - 1),
+            receiver: recv,
+        }));
+    }
+
+    // index(_:offsetBy:) or index(_:offsetBy:limitedBy:)
+    let offset_arg = args.iter().find(|a| a.label.as_deref() == Some("offsetBy"));
+    if let Some(off_arg) = offset_arg {
+        // The base index is the first positional argument.
+        let base_idx = args
+            .iter()
+            .find(|a| a.label.is_none())
+            .ok_or_else(|| type_err("index(_:offsetBy:) expects a base String.Index".into()))?;
+        let base = index_offset(&base_idx.value)
+            .ok_or_else(|| type_err("index(_:offsetBy:) base must be a String.Index".into()))?;
+        // Trap if the base index itself is past endIndex.
+        if base > count {
+            return Err(trap_oob("index(_:offsetBy:) base", base));
+        }
+        let n = match &off_arg.value {
+            SwiftValue::Int(i) => i.raw,
+            _ => return Err(type_err("index(_:offsetBy:) offset must be an Int".into())),
+        };
+        let new_offset = base as i128 + n;
+
+        // index(_:offsetBy:limitedBy:)
+        if let Some(limit_arg) = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("limitedBy"))
+        {
+            let limit = index_offset(&limit_arg.value).ok_or_else(|| {
+                type_err("index(_:offsetBy:limitedBy:) limit must be a String.Index".into())
+            })?;
+            let limit = limit as i128;
+            // Passed the limit? Return nil.
+            let passed = if n >= 0 {
+                new_offset > limit
+            } else {
+                new_offset < limit
+            };
+            if passed {
+                return Ok(Some(Outcome {
+                    result: SwiftValue::Nil,
+                    receiver: recv,
+                }));
+            }
+            if new_offset < 0 || new_offset as usize > count {
+                return Err(trap_oob(
+                    "index(_:offsetBy:limitedBy:)",
+                    new_offset as usize,
+                ));
+            }
+            return Ok(Some(Outcome {
+                result: make_index(new_offset as usize),
+                receiver: recv,
+            }));
+        }
+
+        // Plain index(_:offsetBy:)
+        if new_offset < 0 || new_offset as usize > count {
+            return Err(trap_oob(
+                "index(_:offsetBy:)",
+                new_offset.unsigned_abs() as usize,
+            ));
+        }
+        return Ok(Some(Outcome {
+            result: make_index(new_offset as usize),
+            receiver: recv,
+        }));
+    }
+
+    // No label matched — fall through to the plain positional intrinsic (none
+    // registered for "index" on String, so this returns None and the call fails).
+    Ok(None)
+}
+
+/// `String.distance(from:to:)` — number of grapheme clusters between two indices.
+fn distance_labeled(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let from_arg = args.iter().find(|a| a.label.as_deref() == Some("from"));
+    let to_arg = args.iter().find(|a| a.label.as_deref() == Some("to"));
+    let (Some(from_arg), Some(to_arg)) = (from_arg, to_arg) else {
+        return Ok(None); // Fall through if labels don't match.
+    };
+    let count = graphemes(&str_of(&recv)?).len();
+    let from = index_offset(&from_arg.value)
+        .ok_or_else(|| type_err("distance(from:to:) expects String.Index arguments".into()))?;
+    let to = index_offset(&to_arg.value)
+        .ok_or_else(|| type_err("distance(from:to:) expects String.Index arguments".into()))?;
+    // Both indices must be within [0, count]; past-endIndex indices trap.
+    if from > count {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "String.distance(from:to:): 'from' index {from} out of range [0, {count}]"
+        ))));
+    }
+    if to > count {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "String.distance(from:to:): 'to' index {to} out of range [0, {count}]"
+        ))));
+    }
+    Ok(Some(Outcome {
+        result: SwiftValue::int(to as i128 - from as i128),
+        receiver: recv,
+    }))
+}
+
+/// `String.insert(_:at:)` and `String.insert(contentsOf:at:)` — label-aware.
+fn insert_labeled(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let at_arg = args.iter().find(|a| a.label.as_deref() == Some("at"));
+    let Some(at_arg) = at_arg else {
+        return Ok(None);
+    };
+    let offset = index_offset(&at_arg.value)
+        .ok_or_else(|| type_err("insert(at:) expects a String.Index".into()))?;
+    let mut grapheme_vec = graphemes(&str_of(&recv)?);
+    let count = grapheme_vec.len();
+    if offset > count {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "String.insert: index {offset} out of range [0, {count}]"
+        ))));
+    }
+
+    // insert(contentsOf:at:) — the first arg is labeled "contentsOf"
+    if let Some(contents_arg) = args
+        .iter()
+        .find(|a| a.label.as_deref() == Some("contentsOf"))
+    {
+        let extra = str_of(&contents_arg.value)
+            .map_err(|_| type_err("insert(contentsOf:at:) expects a String".into()))?;
+        let extra_graphemes = graphemes(&extra);
+        for (i, g) in extra_graphemes.into_iter().enumerate() {
+            grapheme_vec.insert(offset + i, g);
+        }
+        let new_str = SwiftValue::Str(grapheme_vec.concat());
+        return Ok(Some(Outcome {
+            result: SwiftValue::Void,
+            receiver: new_str,
+        }));
+    }
+
+    // insert(_:at:) — the first positional arg is the Character
+    let char_arg = args
+        .iter()
+        .find(|a| a.label.is_none())
+        .ok_or_else(|| type_err("insert(_:at:) expects a Character".into()))?;
+    let ch = str_of(&char_arg.value)
+        .map_err(|_| type_err("insert(_:at:) expects a Character".into()))?;
+    // Swift's `Character` is exactly one grapheme cluster; trap otherwise.
+    let ch_clusters = graphemes(&ch);
+    if ch_clusters.len() != 1 {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "insert(_:at:): argument must be exactly one Character (grapheme cluster), \
+             got {} clusters",
+            ch_clusters.len()
+        ))));
+    }
+    grapheme_vec.insert(offset, ch_clusters.into_iter().next().unwrap());
+    let new_str = SwiftValue::Str(grapheme_vec.concat());
+    Ok(Some(Outcome {
+        result: SwiftValue::Void,
+        receiver: new_str,
+    }))
+}
+
+/// `String.remove(at:)` — remove and return the grapheme cluster at `index`.
+fn remove_at(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let at = args
+        .iter()
+        .find_map(index_offset)
+        .ok_or_else(|| type_err("remove(at:) expects a String.Index argument".into()))?;
+    let mut grapheme_vec = graphemes(&str_of(&recv)?);
+    let count = grapheme_vec.len();
+    if at >= count {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "String.remove(at:): index {at} out of range [0, {count})"
+        ))));
+    }
+    let removed = grapheme_vec.remove(at);
+    Ok(Outcome {
+        result: SwiftValue::Str(removed),
+        receiver: SwiftValue::Str(grapheme_vec.concat()),
+    })
+}
+
+/// `String.removeSubrange(_:)` — remove the grapheme clusters in a range.
+fn remove_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let range = args
+        .iter()
+        .find(|a| matches!(a, SwiftValue::Range { .. }))
+        .ok_or_else(|| type_err("removeSubrange expects a Range".into()))?;
+    let mut grapheme_vec = graphemes(&str_of(&recv)?);
+    let count = grapheme_vec.len();
+    let (start, end) = tswift_core::collection_range_bounds(range, count, "removeSubrange")
+        .map_err(StdError::Error)?;
+    grapheme_vec.drain(start..end);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Str(grapheme_vec.concat()),
+    })
+}
+
+/// `String.replaceSubrange(_:with:)` — replace a range with another string.
+fn replace_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let range = args
+        .iter()
+        .find(|a| matches!(a, SwiftValue::Range { .. }))
+        .ok_or_else(|| type_err("replaceSubrange expects a Range".into()))?;
+    let replacement = args
+        .iter()
+        .find_map(|a| match a {
+            SwiftValue::Str(s) => Some(s.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| type_err("replaceSubrange(_:with:) expects a String replacement".into()))?;
+    let mut grapheme_vec = graphemes(&str_of(&recv)?);
+    let count = grapheme_vec.len();
+    let (start, end) = tswift_core::collection_range_bounds(range, count, "replaceSubrange")
+        .map_err(StdError::Error)?;
+    let replacement_graphemes = graphemes(&replacement);
+    grapheme_vec.splice(start..end, replacement_graphemes);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: SwiftValue::Str(grapheme_vec.concat()),
+    })
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 type Outcomes = Result<Outcome, StdError>;
@@ -757,6 +1125,193 @@ mod tests {
                 .unwrap()
                 .result,
             s("#-#-#")
+        );
+    }
+
+    // ---- String.Index helpers -----------------------------------------------
+
+    fn idx(offset: usize) -> SwiftValue {
+        make_index(offset)
+    }
+
+    fn arg_labeled(label: &str, value: SwiftValue) -> Arg {
+        Arg {
+            label: Some(label.to_string()),
+            value,
+        }
+    }
+
+    fn arg_pos(value: SwiftValue) -> Arg {
+        Arg { label: None, value }
+    }
+
+    fn is_trap(e: &StdError) -> bool {
+        matches!(e, StdError::Error(EvalError::Trap(_)))
+    }
+
+    #[test]
+    fn string_index_properties() {
+        assert_eq!(start_index(s("hello")).unwrap(), idx(0));
+        assert_eq!(end_index(s("hello")).unwrap(), idx(5));
+        assert_eq!(end_index(s("")).unwrap(), idx(0));
+        // Multi-byte: "café" has 4 grapheme clusters.
+        assert_eq!(end_index(s("cafe\u{301}")).unwrap(), idx(4));
+    }
+
+    #[test]
+    fn index_after_steps_one_cluster() {
+        let mut m = M;
+        // index(after: startIndex) on "hello" → offset 1
+        let result = index_labeled(&mut m, s("hello"), vec![arg_labeled("after", idx(0))])
+            .unwrap()
+            .unwrap()
+            .result;
+        assert_eq!(result, idx(1));
+        // Family emoji counts as one cluster — after startIndex = endIndex.
+        let fam = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+        let result = index_labeled(&mut m, s(fam), vec![arg_labeled("after", idx(0))])
+            .unwrap()
+            .unwrap()
+            .result;
+        assert_eq!(result, idx(1)); // One cluster, so after(0) = 1 = endIndex.
+    }
+
+    #[test]
+    fn index_after_past_end_traps() {
+        let mut m = M;
+        // "hello" has 5 clusters; index(after: endIndex=5) must trap.
+        let err =
+            index_labeled(&mut m, s("hello"), vec![arg_labeled("after", idx(5))]).unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn index_before_at_start_traps() {
+        let mut m = M;
+        let err =
+            index_labeled(&mut m, s("hello"), vec![arg_labeled("before", idx(0))]).unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn index_before_past_end_traps() {
+        let mut m = M;
+        // index(before: 99) on a 5-cluster string must trap (base out of range).
+        let err =
+            index_labeled(&mut m, s("hello"), vec![arg_labeled("before", idx(99))]).unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn index_offset_by_base_oob_traps() {
+        let mut m = M;
+        // base index 99 is past endIndex of "hello" (count=5) → trap.
+        let err = index_labeled(
+            &mut m,
+            s("hello"),
+            vec![
+                arg_pos(idx(99)),
+                arg_labeled("offsetBy", SwiftValue::int(0)),
+            ],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn index_offset_by_result_oob_traps() {
+        let mut m = M;
+        // base=2 + offsetBy=10 → result 12 > 5 → trap.
+        let err = index_labeled(
+            &mut m,
+            s("hello"),
+            vec![
+                arg_pos(idx(2)),
+                arg_labeled("offsetBy", SwiftValue::int(10)),
+            ],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn index_offset_by_negative_oob_traps() {
+        let mut m = M;
+        // base=1 + offsetBy=-5 → result -4 → trap.
+        let err = index_labeled(
+            &mut m,
+            s("hello"),
+            vec![
+                arg_pos(idx(1)),
+                arg_labeled("offsetBy", SwiftValue::int(-5)),
+            ],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+    }
+
+    #[test]
+    fn distance_oob_traps() {
+        let mut m = M;
+        // 'from' index 99 is past endIndex of "hello" → trap.
+        let err = distance_labeled(
+            &mut m,
+            s("hello"),
+            vec![arg_labeled("from", idx(99)), arg_labeled("to", idx(0))],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+        // 'to' index past end also traps.
+        let err2 = distance_labeled(
+            &mut m,
+            s("hello"),
+            vec![arg_labeled("from", idx(0)), arg_labeled("to", idx(99))],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err2), "expected trap, got {err2:?}");
+    }
+
+    #[test]
+    fn insert_character_not_exactly_one_cluster_traps() {
+        let mut m = M;
+        // Two-grapheme string "ab" is not a valid Character.
+        let err = insert_labeled(
+            &mut m,
+            s("hello"),
+            vec![arg_pos(s("ab")), arg_labeled("at", idx(0))],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err), "expected trap, got {err:?}");
+        // Empty string is also not a valid Character.
+        let err2 = insert_labeled(
+            &mut m,
+            s("hello"),
+            vec![arg_pos(s("")), arg_labeled("at", idx(0))],
+        )
+        .unwrap_err();
+        assert!(is_trap(&err2), "expected trap, got {err2:?}");
+    }
+
+    #[test]
+    fn replace_subrange_requires_string_replacement() {
+        let mut m = M;
+        // Passing an Int instead of a String replacement must error.
+        let err = replace_subrange(
+            &mut m,
+            s("hello"),
+            vec![
+                SwiftValue::Range {
+                    lo: 0,
+                    hi: 2,
+                    inclusive: false,
+                },
+                SwiftValue::int(42),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, StdError::Error(EvalError::Type(_))),
+            "expected type error, got {err:?}"
         );
     }
 }

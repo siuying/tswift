@@ -37,6 +37,11 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         ) => range_binary(op, (*lo, *hi, *inclusive), (*lo2, *hi2, *inc2)),
         // `IndexPath` is `Comparable`: compare its element list lexicographically.
         (SwiftValue::Struct(a), SwiftValue::Struct(b))
+            if a.type_name == "String.Index" && b.type_name == "String.Index" =>
+        {
+            string_index_binary(op, a, b)
+        }
+        (SwiftValue::Struct(a), SwiftValue::Struct(b))
             if a.type_name == "IndexPath" && b.type_name == "IndexPath" =>
         {
             index_path_binary(op, a, b)
@@ -216,6 +221,47 @@ fn str_binary(op: &str, a: &str, b: &str) -> Result<SwiftValue, String> {
         ">" => Ok(SwiftValue::Bool(a > b)),
         ">=" => Ok(SwiftValue::Bool(a >= b)),
         _ => Err(format!("unknown string operator `{op}`")),
+    }
+}
+
+/// Extract the grapheme-cluster offset stored in a `String.Index` struct.
+fn string_index_offset(obj: &crate::value::StructObj) -> i128 {
+    obj.get("_offset")
+        .and_then(|v| match v {
+            SwiftValue::Int(i) => Some(i.raw),
+            _ => None,
+        })
+        .unwrap_or(0)
+}
+
+/// Comparison and range-formation operators for `String.Index`.
+/// `..<` and `...` produce `Range` values whose bounds are the grapheme offsets,
+/// so existing string range-subscript logic works unchanged.
+fn string_index_binary(
+    op: &str,
+    a: &std::rc::Rc<crate::value::StructObj>,
+    b: &std::rc::Rc<crate::value::StructObj>,
+) -> Result<SwiftValue, String> {
+    let lo = string_index_offset(a);
+    let hi = string_index_offset(b);
+    match op {
+        "..<" => Ok(SwiftValue::Range {
+            lo,
+            hi,
+            inclusive: false,
+        }),
+        "..." => Ok(SwiftValue::Range {
+            lo,
+            hi,
+            inclusive: true,
+        }),
+        "==" => Ok(SwiftValue::Bool(lo == hi)),
+        "!=" => Ok(SwiftValue::Bool(lo != hi)),
+        "<" => Ok(SwiftValue::Bool(lo < hi)),
+        "<=" => Ok(SwiftValue::Bool(lo <= hi)),
+        ">" => Ok(SwiftValue::Bool(lo > hi)),
+        ">=" => Ok(SwiftValue::Bool(lo >= hi)),
+        _ => Err(format!("operator `{op}` cannot apply to String.Index")),
     }
 }
 
