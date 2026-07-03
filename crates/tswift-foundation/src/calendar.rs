@@ -9,8 +9,9 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, Interpreter, IntrinsicFn, LabeledMethodEntry, MethodEntry, Outcome,
-    PropertyFn, StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, Interpreter, IntrinsicFn, LabeledIntrinsicFn,
+    LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, StdContext, StdError, StdResult,
+    StructObj, SwiftValue,
 };
 
 use crate::{
@@ -42,6 +43,20 @@ pub(crate) const CALENDAR_COMPONENTS: &[&str] = &[
 pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_builtin_enum("Calendar.Component", CALENDAR_COMPONENTS);
     interp.register_builtin_enum("Calendar.Identifier", &["gregorian"]);
+    interp.register_builtin_enum(
+        "Calendar.MatchingPolicy",
+        &[
+            "nextTime",
+            "nextTimePreservingSmallerComponents",
+            "previousTimePreservingSmallerComponents",
+            "strict",
+        ],
+    );
+    interp.register_builtin_enum("Calendar.SearchDirection", &["forward", "backward"]);
+    interp.register_builtin_enum(
+        "ComparisonResult",
+        &["orderedAscending", "orderedSame", "orderedDescending"],
+    );
 
     interp.register_free_fn("Calendar", calendar_init);
     interp.register_static(BuiltinReceiver::Calendar, "current", calendar_current);
@@ -81,6 +96,18 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "minimumDaysInFirstWeek",
         minimum_days_in_first_week,
     );
+    interp.register_property(BuiltinReceiver::Calendar, "locale", calendar_locale);
+    interp.register_property(BuiltinReceiver::Calendar, "timeZone", calendar_time_zone);
+    interp.register_property(
+        BuiltinReceiver::Calendar,
+        "description",
+        calendar_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::Calendar,
+        "debugDescription",
+        calendar_description,
+    );
 
     for (name, mutating, func) in [
         (
@@ -95,6 +122,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("isDateInToday", false, calendar_is_date_in_today),
         ("isDateInYesterday", false, calendar_is_date_in_yesterday),
         ("isDateInTomorrow", false, calendar_is_date_in_tomorrow),
+        ("compare", false, calendar_compare),
+        ("minimumRange", false, calendar_minimum_range),
+        ("maximumRange", false, calendar_maximum_range),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::Calendar,
@@ -113,6 +143,21 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: calendar_date,
         },
     );
+    for (name, func) in [
+        ("dateInterval", calendar_dateinterval as LabeledIntrinsicFn),
+        ("range", calendar_range_of),
+        ("ordinality", calendar_ordinality),
+        ("nextDate", calendar_next_date),
+    ] {
+        interp.register_labeled_intrinsic(
+            BuiltinReceiver::Calendar,
+            name,
+            LabeledMethodEntry {
+                mutating: false,
+                func,
+            },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -718,6 +763,526 @@ fn calendar_is_date_in_tomorrow(
         result: SwiftValue::Bool(day == today + 1),
         receiver: recv,
     })
+}
+
+// ---------------------------------------------------------------------------
+// New calendar properties
+// ---------------------------------------------------------------------------
+
+fn calendar_locale(recv: SwiftValue) -> StdResult {
+    calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "Locale".into(),
+        fields: vec![("identifier".into(), SwiftValue::Str("en_US_POSIX".into()))],
+    })))
+}
+
+fn calendar_time_zone(recv: SwiftValue) -> StdResult {
+    calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "TimeZone".into(),
+        fields: vec![("identifier".into(), SwiftValue::Str("UTC".into()))],
+    })))
+}
+
+fn calendar_description(recv: SwiftValue) -> StdResult {
+    let id = calendar_identifier_value(&recv)?;
+    Ok(SwiftValue::Str(format!("{id} Calendar").into()))
+}
+
+// ---------------------------------------------------------------------------
+// compare(_:to:toGranularity:)
+// ---------------------------------------------------------------------------
+
+/// Truncate a `Civil` value to the given granularity level, returning the
+/// y/m/d/h/min/s tuple with sub-granularity fields zeroed (or set to their
+/// minimum valid values).
+fn truncate_civil(c: &Civil, granularity: &str) -> (i64, i64, i64, i64, i64, i64) {
+    match granularity {
+        "era" | "year" => (c.year, 1, 1, 0, 0, 0),
+        "month" => (c.year, c.month, 1, 0, 0, 0),
+        "day" => (c.year, c.month, c.day, 0, 0, 0),
+        "hour" => (c.year, c.month, c.day, c.hour, 0, 0),
+        "minute" => (c.year, c.month, c.day, c.hour, c.minute, 0),
+        // second / nanosecond: include up through seconds
+        _ => (c.year, c.month, c.day, c.hour, c.minute, c.second),
+    }
+}
+
+fn comparison_result_value(case: &str) -> SwiftValue {
+    SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: "ComparisonResult".into(),
+        case: case.into(),
+        payload: Vec::new(),
+    }))
+}
+
+/// `Calendar.compare(_:to:toGranularity:) -> ComparisonResult`.
+///
+/// Truncates both dates to the given `Calendar.Component` granularity and
+/// returns `.orderedAscending`, `.orderedSame`, or `.orderedDescending`.
+fn calendar_compare(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let (date1, date2, component) = match args.as_slice() {
+        [d1, d2, c] => (d1, d2, c),
+        _ => {
+            return Err(type_error(
+                "Calendar.compare(_:to:toGranularity:) expects three arguments",
+            ))
+        }
+    };
+    let gran = calendar_component_name(component)?;
+    let c1 = decompose(date_seconds(date1)?);
+    let c2 = decompose(date_seconds(date2)?);
+    let (y1, m1, d1, h1, min1, s1) = truncate_civil(&c1, &gran);
+    let (y2, m2, d2, h2, min2, s2) = truncate_civil(&c2, &gran);
+    let t1 = ref_seconds_from_ymdhms(y1, m1, d1, h1, min1, s1);
+    let t2 = ref_seconds_from_ymdhms(y2, m2, d2, h2, min2, s2);
+    let case = if t1 < t2 {
+        "orderedAscending"
+    } else if t1 > t2 {
+        "orderedDescending"
+    } else {
+        "orderedSame"
+    };
+    Ok(Outcome {
+        result: comparison_result_value(case),
+        receiver: recv,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// dateInterval(of:for:)
+// ---------------------------------------------------------------------------
+
+/// Build a `DateInterval` struct value with `start: Date` and `duration: Double`.
+fn date_interval_value(start: f64, duration: f64) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "DateInterval".into(),
+        fields: vec![
+            ("start".into(), date_value(start)),
+            ("duration".into(), SwiftValue::Double(duration)),
+        ],
+    }))
+}
+
+/// `Calendar.dateInterval(of:for:) -> DateInterval?`.
+///
+/// Returns the `DateInterval` for the calendar unit containing `date`.
+/// Supported components: `.day`, `.month`, `.year`, `.weekOfYear`, `.hour`.
+/// Returns `nil` for unsupported components.
+fn calendar_dateinterval(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    // Only handle the `dateInterval(of:for:)` variant.
+    let (component_val, date_val) = match labels.as_slice() {
+        [Some("of"), Some("for")] => (&args[0].value, &args[1].value),
+        _ => return Ok(None),
+    };
+    let gran = calendar_component_name(component_val)?;
+    let ref_secs = date_seconds(date_val)?;
+    let unix = ref_secs + REFERENCE_DATE_UNIX_OFFSET;
+    let (day_num, secs_in_day) = floor_div_day(unix);
+    let civil = decompose(ref_secs);
+
+    let result = match gran.as_str() {
+        "day" => {
+            // start = midnight of this day; duration = 86400 seconds.
+            let start_unix = day_num as f64 * SECONDS_PER_DAY;
+            let start = start_unix - REFERENCE_DATE_UNIX_OFFSET;
+            Some(date_interval_value(start, SECONDS_PER_DAY))
+        }
+        "month" => {
+            let start = ref_seconds_from_ymdhms(civil.year, civil.month, 1, 0, 0, 0);
+            let duration = days_in_month(civil.year, civil.month) as f64 * SECONDS_PER_DAY;
+            Some(date_interval_value(start, duration))
+        }
+        "year" => {
+            let start = ref_seconds_from_ymdhms(civil.year, 1, 1, 0, 0, 0);
+            let days = if is_leap_year(civil.year) { 366 } else { 365 };
+            let duration = days as f64 * SECONDS_PER_DAY;
+            Some(date_interval_value(start, duration))
+        }
+        "weekOfYear" | "weekOfMonth" => {
+            // For en_US Gregorian (firstWeekday = Sunday = 1),
+            // the week starts on the most-recent Sunday.
+            // weekday: 1=Sun, 2=Mon, ..., 7=Sat → days_back = weekday - 1.
+            let days_back = civil.weekday - 1;
+            let week_start_unix = (day_num - days_back) as f64 * SECONDS_PER_DAY;
+            let start = week_start_unix - REFERENCE_DATE_UNIX_OFFSET;
+            let duration = 7.0 * SECONDS_PER_DAY;
+            Some(date_interval_value(start, duration))
+        }
+        "hour" => {
+            let start =
+                ref_seconds_from_ymdhms(civil.year, civil.month, civil.day, civil.hour, 0, 0);
+            Some(date_interval_value(start, 3600.0))
+        }
+        _ => None, // unsupported component → return nil
+    };
+
+    // Suppress unused-variable warning in the day-interval path.
+    let _ = secs_in_day;
+
+    Ok(Some(Outcome {
+        result: result.unwrap_or(SwiftValue::Nil),
+        receiver: recv,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// range(of:in:for:)
+// ---------------------------------------------------------------------------
+
+/// `Calendar.range(of:in:for:) -> Range<Int>?`.
+///
+/// Returns the `Range<Int>` of valid values for the smaller component within
+/// the larger component that contains `date`.
+fn calendar_range_of(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    let (smaller_val, larger_val, date_val) = match labels.as_slice() {
+        [Some("of"), Some("in"), Some("for")] => (&args[0].value, &args[1].value, &args[2].value),
+        _ => return Ok(None),
+    };
+    let smaller = calendar_component_name(smaller_val)?;
+    let larger = calendar_component_name(larger_val)?;
+    let civil = decompose(date_seconds(date_val)?);
+
+    let range = range_of_in(&civil, &smaller, &larger);
+    Ok(Some(Outcome {
+        result: match range {
+            Some((lo, hi)) => SwiftValue::Range {
+                lo: lo as i128,
+                hi: hi as i128,
+                inclusive: false,
+            },
+            None => SwiftValue::Nil,
+        },
+        receiver: recv,
+    }))
+}
+
+/// Return `Some((lo, hi))` for the valid range of `smaller` within `larger`
+/// as determined by `civil`. `hi` is exclusive (past-the-end).
+fn range_of_in(civil: &Civil, smaller: &str, larger: &str) -> Option<(i64, i64)> {
+    match (smaller, larger) {
+        ("day", "month") => {
+            let dim = days_in_month(civil.year, civil.month);
+            Some((1, dim + 1))
+        }
+        ("day", "year") => {
+            let days = if is_leap_year(civil.year) { 366 } else { 365 };
+            Some((1, days + 1))
+        }
+        ("month", "year") => Some((1, 13)),
+        ("hour", "day") => Some((0, 24)),
+        ("minute", "hour") => Some((0, 60)),
+        ("second", "minute") => Some((0, 60)),
+        ("nanosecond", "second") => Some((0, 1_000_000_000)),
+        ("weekday", "weekOfYear") | ("weekday", "weekOfMonth") => Some((1, 8)),
+        ("weekOfYear", "year") => {
+            // ISO-8601 can reach week 53; Gregorian typically 52-53.
+            // Report max possible (53 weeks = 1..<54) as an honest upper bound.
+            Some((1, 54))
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// minimumRange(of:) / maximumRange(of:)
+// ---------------------------------------------------------------------------
+
+/// Gregorian constants for the smallest range a component can occupy in any
+/// month/year/etc. (`minimumRange`) or the largest (`maximumRange`).
+fn gregorian_range(component: &str, minimum: bool) -> Option<(i64, i64)> {
+    // (lo, hi_exclusive)
+    let pair = match component {
+        "day" => {
+            if minimum {
+                (1, 29) // February non-leap: 28 days
+            } else {
+                (1, 32) // January / March / … : 31 days
+            }
+        }
+        "month" => (1, 13),  // always 12 months
+        "hour" => (0, 24),   // always 24 hours
+        "minute" => (0, 60), // always 60 minutes
+        "second" => (0, 60), // ignoring leap seconds
+        "nanosecond" => (0, 1_000_000_000),
+        "weekday" => (1, 8), // Sun=1 … Sat=7
+        "weekOfYear" => {
+            if minimum {
+                (1, 53) // some years have only 52 weeks
+            } else {
+                (1, 54) // some years reach week 53
+            }
+        }
+        "weekOfMonth" => {
+            if minimum {
+                (1, 5)
+            } else {
+                (1, 7)
+            }
+        }
+        "quarter" => (1, 5), // 4 quarters
+        "era" => (0, 2),     // BC (0) and AD (1)
+        _ => return None,
+    };
+    Some(pair)
+}
+
+/// `Calendar.minimumRange(of:) -> Range<Int>?`
+fn calendar_minimum_range(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [component] = args.as_slice() else {
+        return Err(type_error(
+            "Calendar.minimumRange(of:) expects one argument",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let result = match gregorian_range(&name, true) {
+        Some((lo, hi)) => SwiftValue::Range {
+            lo: lo as i128,
+            hi: hi as i128,
+            inclusive: false,
+        },
+        None => SwiftValue::Nil,
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `Calendar.maximumRange(of:) -> Range<Int>?`
+fn calendar_maximum_range(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let [component] = args.as_slice() else {
+        return Err(type_error(
+            "Calendar.maximumRange(of:) expects one argument",
+        ));
+    };
+    let name = calendar_component_name(component)?;
+    let result = match gregorian_range(&name, false) {
+        Some((lo, hi)) => SwiftValue::Range {
+            lo: lo as i128,
+            hi: hi as i128,
+            inclusive: false,
+        },
+        None => SwiftValue::Nil,
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// ordinality(of:in:for:)
+// ---------------------------------------------------------------------------
+
+/// `Calendar.ordinality(of:in:for:) -> Int?`.
+///
+/// Returns the 1-based ordinal of `smaller` within `larger` for `date`.
+fn calendar_ordinality(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    let (smaller_val, larger_val, date_val) = match labels.as_slice() {
+        [Some("of"), Some("in"), Some("for")] => (&args[0].value, &args[1].value, &args[2].value),
+        _ => return Ok(None),
+    };
+    let smaller = calendar_component_name(smaller_val)?;
+    let larger = calendar_component_name(larger_val)?;
+    let civil = decompose(date_seconds(date_val)?);
+
+    let ordinal: Option<i64> = match (smaller.as_str(), larger.as_str()) {
+        ("day", "year") => Some(
+            days_from_civil(civil.year, civil.month, civil.day) - days_from_civil(civil.year, 1, 1)
+                + 1,
+        ),
+        ("day", "month") => Some(civil.day),
+        ("month", "year") => Some(civil.month),
+        ("weekday", "weekOfYear") | ("weekday", "weekOfMonth") => Some(civil.weekday),
+        ("hour", "day") => Some(civil.hour + 1),
+        ("minute", "hour") => Some(civil.minute + 1),
+        ("second", "minute") => Some(civil.second + 1),
+        ("weekOfYear", "year") => {
+            let day_of_year = days_from_civil(civil.year, civil.month, civil.day)
+                - days_from_civil(civil.year, 1, 1)
+                + 1;
+            Some((day_of_year - 1) / 7 + 1)
+        }
+        _ => None,
+    };
+
+    Ok(Some(Outcome {
+        result: ordinal
+            .map(|o| SwiftValue::int(o as i128))
+            .unwrap_or(SwiftValue::Nil),
+        receiver: recv,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// nextDate(after:matching:matchingPolicy:)
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when all non-nil component fields of `matching` are satisfied
+/// by the decomposed date `c`.
+fn matches_components(c: &Civil, matching: &Rc<StructObj>) -> bool {
+    let check = |field: &str, actual: i64| -> bool {
+        match component_int(matching, field) {
+            Some(expected) => expected == actual,
+            None => true, // field not specified → always matches
+        }
+    };
+    check("year", c.year)
+        && check("month", c.month)
+        && check("day", c.day)
+        && check("hour", c.hour)
+        && check("minute", c.minute)
+        && check("second", c.second)
+        && check("weekday", c.weekday)
+}
+
+/// Whether `matching` specifies any time-of-day component (hour/minute/
+/// second/nanosecond).
+fn has_time_match_components(matching: &Rc<StructObj>) -> bool {
+    ["hour", "minute", "second", "nanosecond"]
+        .iter()
+        .any(|f| component_int(matching, f).is_some())
+}
+
+/// Whether `matching` specifies any date-level component (weekday, day, month,
+/// year, weekOfYear, …).
+fn has_date_match_components(matching: &Rc<StructObj>) -> bool {
+    [
+        "year",
+        "month",
+        "day",
+        "weekday",
+        "weekdayOrdinal",
+        "weekOfYear",
+        "weekOfMonth",
+        "quarter",
+    ]
+    .iter()
+    .any(|f| component_int(matching, f).is_some())
+}
+
+/// `Calendar.nextDate(after:matching:matchingPolicy:) -> Date?`.
+///
+/// Finds the chronologically first date strictly after `after` whose
+/// decomposition satisfies every specified component of `matching`.
+///
+/// **Supported policy**: `.nextTime` only. Other policies return an error
+/// (honest subset — see notes.md).
+///
+/// **Foundation semantics for date-only matching** (e.g. `weekday:`): when no
+/// time components are specified, unspecified smaller components default to
+/// their minimum (0), so the result is snapped to midnight of the matching
+/// day, not the time-of-day from `after`.
+fn calendar_next_date(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    let (after_val, matching_val, policy_val) = match labels.as_slice() {
+        [Some("after"), Some("matching"), Some("matchingPolicy")] => {
+            (&args[0].value, &args[1].value, &args[2].value)
+        }
+        _ => return Ok(None),
+    };
+
+    // Policy guard: only .nextTime is implemented.
+    let policy = calendar_component_name(policy_val)?;
+    if policy != "nextTime" {
+        return Err(type_error(format!(
+            "Calendar.nextDate: matchingPolicy .{policy} is not supported; \
+             only .nextTime is implemented in this runtime"
+        )));
+    }
+
+    let after = date_seconds(after_val)?;
+    let obj = date_components_struct(matching_val)?;
+
+    let has_date = has_date_match_components(obj);
+    let has_time = has_time_match_components(obj);
+
+    let result = if has_date && !has_time {
+        // Date-only matching (e.g. weekday:, day:, month:).
+        //
+        // Foundation's .nextTime semantics: unspecified smaller components
+        // (hour, minute, second) default to their minimum (0), so the result
+        // is always midnight UTC of the first matching day strictly after `after`.
+        let unix_after = after + REFERENCE_DATE_UNIX_OFFSET;
+        let (after_day, _) = floor_div_day(unix_after);
+        // Start from midnight of the next calendar day (always > after).
+        let mut day = after_day + 1;
+        let mut found = SwiftValue::Nil;
+        for _ in 0..400 {
+            let midnight_ref = (day as f64 * SECONDS_PER_DAY) - REFERENCE_DATE_UNIX_OFFSET;
+            let civil = decompose(midnight_ref);
+            if matches_components(&civil, obj) {
+                found = date_value(midnight_ref);
+                break;
+            }
+            day += 1;
+        }
+        found
+    } else if !has_date {
+        // Time-only matching (e.g. hour:, minute:): step 1 second.
+        let mut t = after + 1.0;
+        let mut found = SwiftValue::Nil;
+        for _ in 0..(2 * 86_400usize) {
+            let civil = decompose(t);
+            if matches_components(&civil, obj) {
+                found = date_value(t);
+                break;
+            }
+            t += 1.0;
+        }
+        found
+    } else {
+        // Mixed date+time: step 1 second, cap at 35 days.
+        let mut t = after + 1.0;
+        let mut found = SwiftValue::Nil;
+        for _ in 0..(35 * 86_400usize) {
+            let civil = decompose(t);
+            if matches_components(&civil, obj) {
+                found = date_value(t);
+                break;
+            }
+            t += 1.0;
+        }
+        found
+    };
+
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
 }
 
 #[cfg(test)]
