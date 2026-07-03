@@ -299,11 +299,8 @@ fn sub_index_labeled(
             let limit = index_offset(&limit_arg.value).ok_or_else(|| {
                 type_err("index(_:offsetBy:limitedBy:) limit must be String.Index".into())
             })? as i128;
-            let passed = if n >= 0 {
-                new_off > limit
-            } else {
-                new_off < limit
-            };
+            // n == 0 means "don't move" so the limit never applies.
+            let passed = (n > 0 && new_off > limit) || (n < 0 && new_off < limit);
             if passed {
                 return Ok(Some(Outcome {
                     result: SwiftValue::Nil,

@@ -667,11 +667,8 @@ fn index_labeled(
             })?;
             let limit = limit as i128;
             // Passed the limit? Return nil.
-            let passed = if n >= 0 {
-                new_offset > limit
-            } else {
-                new_offset < limit
-            };
+            // n == 0 means "don't move" so the limit never applies.
+            let passed = (n > 0 && new_offset > limit) || (n < 0 && new_offset < limit);
             if passed {
                 return Ok(Some(Outcome {
                     result: SwiftValue::Nil,
