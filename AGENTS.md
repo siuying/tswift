@@ -35,14 +35,13 @@ per section), use the **`stdlib-coverage`** skill.
 
 ## Agent skills
 
-### Subagent
+### Agent
 
-If running Pi Agent, when user request subagent, use the skill (`/subagent`).
-If running Codex/Claude Code, when user request Pi subagent, use the skill (`/pi-subagent`).
+If using Paseo, use `/paseo` skill to find subagents orchestration skill.
 
 ### Autoloop
 
-When user request autoloop, survey, plan and confirm first before enter the loop.
+When user request `autoloop`, read `.agents/skills/autoloop/SKILL.md` for details.
 
 ### Issue tracker & triage
 
