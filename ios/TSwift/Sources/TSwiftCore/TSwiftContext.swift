@@ -11,6 +11,10 @@ public final class TSwiftContext {
     /// context, without exposing the raw pointer to external consumers.
     package let handle: OpaquePointer
 
+    /// Retains the registered HTTP handler box while the native side holds a
+    /// borrowed pointer to it (see `TSwiftHTTP.swift`). Internal on purpose.
+    var httpHandlerBox: AnyObject?
+
     public init() {
         guard let handle = tswift_context_new() else {
             fatalError("tswift_context_new returned null")

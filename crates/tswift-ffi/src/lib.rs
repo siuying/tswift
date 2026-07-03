@@ -8,11 +8,14 @@
 //! All `unsafe` for the FFI lives in this crate, preserving ADR-0001's
 //! FFI-only-unsafe rule.
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, c_void, CStr, CString};
 
+mod http;
 mod run;
 mod swiftui;
 mod util;
+
+pub use http::{tswift_http_respond, TswiftHttpHandler};
 
 /// The lifespan-owning VM handle handed to C as an opaque pointer — the native
 /// analogue of QuickJS's `JSContext`. Owns the reclaimable interpreter bundle
@@ -22,11 +25,17 @@ pub struct Context {
     /// The live SwiftUI render session (T3), if one has been compiled. Owns its
     /// interpreter bundle and is reclaimed on recompile or `Context` free.
     swiftui: Option<swiftui::SwiftUiSession>,
+    /// The host-registered HTTP handler backing `URLSession` in scripts run
+    /// through this context (see `src/http.rs`); `None` means no network.
+    http: Option<http::HostHttpHandler>,
 }
 
 impl Context {
     fn new() -> Self {
-        Context { swiftui: None }
+        Context {
+            swiftui: None,
+            http: None,
+        }
     }
 }
 
@@ -94,7 +103,7 @@ pub unsafe extern "C" fn tswift_string_free(s: *mut c_char) {
 /// `s` must be either null or a valid, NUL-terminated C string pointer that
 /// stays alive for the entire lifetime `'a` of the returned borrow (not merely
 /// the duration of this call). Callers must not let the borrow outlive `s`.
-unsafe fn borrow_str<'a>(s: *const c_char) -> Option<&'a str> {
+pub(crate) unsafe fn borrow_str<'a>(s: *const c_char) -> Option<&'a str> {
     if s.is_null() {
         return None;
     }
@@ -122,13 +131,34 @@ fn arg_error_json(message: &str) -> String {
 /// the caller and must be freed once with [`tswift_string_free`].
 #[no_mangle]
 pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) -> *mut c_char {
-    if ctx.is_null() {
+    let Some(ctx) = ctx.as_mut() else {
         return into_json_ptr(arg_error_json("null context"));
-    }
+    };
     let Some(source) = borrow_str(source) else {
         return into_json_ptr(arg_error_json("source is null or not valid UTF-8"));
     };
-    into_json_ptr(run::run_impl(source))
+    into_json_ptr(run::run_impl(source, ctx.http))
+}
+
+/// Register `handler` (with its opaque `userdata`) as the HTTP transport for
+/// scripts run through `ctx` (`URLSession` support). Pass a null handler to
+/// remove it. See `src/http.rs` and the header for the JSON contract; the
+/// handler must call [`tswift_http_respond`] synchronously.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `handler` (when
+/// non-null) must remain callable, and `userdata` valid, until the handler is
+/// replaced/removed or the context is freed.
+#[no_mangle]
+pub unsafe extern "C" fn tswift_set_http_handler(
+    ctx: *mut Context,
+    handler: Option<TswiftHttpHandler>,
+    userdata: *mut c_void,
+) {
+    let Some(ctx) = ctx.as_mut() else {
+        return;
+    };
+    ctx.http = handler.map(|handler| http::HostHttpHandler { handler, userdata });
 }
 
 /// Compile a SwiftUI program through `ctx`, render its root view, and start a
@@ -218,6 +248,39 @@ mod tests {
             tswift_swiftui_dispatch;
         let _diagnostics: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_diagnostics;
         let _string_free: unsafe extern "C" fn(*mut c_char) = tswift_string_free;
+        let _set_http: unsafe extern "C" fn(*mut Context, Option<TswiftHttpHandler>, *mut c_void) =
+            tswift_set_http_handler;
+        let _respond: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_http_respond;
+    }
+
+    #[test]
+    fn run_with_http_handler_serves_urlsession_scripts() {
+        unsafe extern "C" fn handler(
+            _userdata: *mut c_void,
+            _request_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            // "aGVsbG8=" is "hello".
+            let response = CString::new(
+                r#"{"status": 200, "headers": [["Content-Type", "text/plain"]], "bodyBase64": "aGVsbG8="}"#,
+            )
+            .unwrap();
+            tswift_http_respond(call, response.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        unsafe { tswift_set_http_handler(ctx, Some(handler), std::ptr::null_mut()) };
+        let source = CString::new(
+            "import Foundation\n\
+             let (data, resp) = try await URLSession.shared.data(from: URL(string: \"https://x.example/\")!)\n\
+             print((resp as! HTTPURLResponse).statusCode)\n\
+             print(String(data: data, encoding: .utf8) ?? \"nil\")\n",
+        )
+        .unwrap();
+        let out = unsafe { tswift_run(ctx, source.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("200\\nhello"), "unexpected result: {json}");
     }
 
     #[test]

@@ -35,6 +35,31 @@ void tswift_context_free(TSwiftContext *ctx);
 /* Compile and run `source`, returning an owned result-JSON string. */
 char *tswift_run(TSwiftContext *ctx, const char *source);
 
+/* ---- Host HTTP transport (URLSession support) --------------------------- */
+
+/* The handler behind script `URLSession` requests. Receives the request as a
+ * JSON string (`{"url","method","timeoutSeconds","headers":[[k,v]...],
+ * "bodyBase64"?}`) plus an opaque in-flight `call` token, and MUST call
+ * tswift_http_respond(call, response_json) exactly once BEFORE returning (it
+ * may block internally, e.g. a semaphore around a real URLSession task).
+ * Response JSON: `{"status","headers":[[k,v]...],"bodyBase64"?}` on success,
+ * or `{"error":"<URLError.Code case>","message"?}` on transport failure. */
+typedef void (*tswift_http_handler)(void *userdata,
+                                    const char *request_json,
+                                    void *call);
+
+/* Register `handler` as the HTTP transport for scripts run through `ctx`;
+ * `userdata` is passed through verbatim. NULL removes the handler (scripts
+ * then see URLSession as unavailable). The handler must stay callable, and
+ * `userdata` valid, until removed or the context is freed. */
+void tswift_set_http_handler(TSwiftContext *ctx,
+                             tswift_http_handler handler,
+                             void *userdata);
+
+/* Deliver the response for an in-flight handler call. Copies `response_json`
+ * immediately; valid only during the handler invocation that received `call`. */
+void tswift_http_respond(void *call, const char *response_json);
+
 /* ---- TSwiftUI: stateful render session --------------------------------- */
 
 /* Compile a SwiftUI program and start a live render session, returning owned

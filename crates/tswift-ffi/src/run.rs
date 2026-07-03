@@ -13,7 +13,8 @@ use crate::util::{elapsed_ms, now_ms};
 const BACKEND: &str = "ffi";
 
 /// Compile and run `source`, returning the result JSON (string body, owned).
-pub(crate) fn run_impl(source: &str) -> String {
+/// A registered host HTTP handler becomes the run's `URLSession` transport.
+pub(crate) fn run_impl(source: &str, http: Option<crate::http::HostHttpHandler>) -> String {
     let started = now_ms();
 
     let analysis = match Analysis::analyze(source, "main.swift") {
@@ -69,6 +70,9 @@ pub(crate) fn run_impl(source: &str) -> String {
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
     interp.set_filename("main.swift");
+    if let Some(handler) = http {
+        interp.set_http_transport(Box::new(handler));
+    }
 
     // SAFETY: `interp.run` requires `&'static Analysis` (ADR-0003). `analysis`
     // is declared before `interp`, so it outlives `interp` and is dropped after
