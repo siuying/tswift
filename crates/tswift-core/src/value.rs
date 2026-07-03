@@ -158,6 +158,14 @@ pub enum SwiftValue {
     Tuple(Vec<SwiftValue>, Vec<Option<String>>),
     /// An array `[a, b, ...]` (used today for variadic parameter packs).
     Array(Rc<Vec<SwiftValue>>),
+    /// An ArraySlice view: an element window `[start, end)` into a base `Array`.
+    /// Indices are **base-relative** — the same coordinate space as the parent
+    /// array — so `a[i..<j].startIndex == i`.
+    ArraySlice {
+        base: Rc<Vec<SwiftValue>>,
+        start: usize,
+        end: usize,
+    },
     /// A dictionary `[k: v, ...]`. Stored as insertion-ordered key/value pairs
     /// (linear lookup) under an `Rc` for copy-on-write value semantics. Swift
     /// dictionaries are unordered, so callers must not rely on iteration order.
@@ -321,6 +329,7 @@ impl SwiftValue {
             SwiftValue::Substring { .. } => "Substring".into(),
             SwiftValue::Tuple(..) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
+            SwiftValue::ArraySlice { .. } => "ArraySlice".into(),
             SwiftValue::Dict(_) => "Dictionary".into(),
             SwiftValue::Set(_) => "Set".into(),
             SwiftValue::Range { .. } => "Range".into(),
@@ -381,6 +390,20 @@ impl PartialEq for SwiftValue {
             // Tuple labels are type metadata, not value: compare elements only.
             (Tuple(a, _), Tuple(b, _)) => a == b,
             (Array(a), Array(b)) => a == b,
+            // ArraySlice equality: compare elements in the slice window.
+            (
+                ArraySlice {
+                    base: b1,
+                    start: s1,
+                    end: e1,
+                },
+                ArraySlice {
+                    base: b2,
+                    start: s2,
+                    end: e2,
+                },
+            ) => b1[*s1..*e1] == b2[*s2..*e2],
+            // NOTE: ArraySlice vs Array is NOT equal (distinct types, strict separation).
             // Dictionaries are equal as unordered key/value sets.
             (Dict(a), Dict(b)) => {
                 a.len() == b.len()
@@ -445,6 +468,16 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Array(items) => {
                 write!(f, "[")?;
                 for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            SwiftValue::ArraySlice { base, start, end } => {
+                write!(f, "[")?;
+                for (i, item) in base[*start..*end].iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }

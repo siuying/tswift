@@ -26,6 +26,8 @@ sequence_types = [
 # the value collections (Set/Dictionary/Range equality added in ops.rs).
 [core_members]
 Array = ["+", "+=", "=="]
+ArraySlice = ["=="]
+ContiguousArray = ["=="]
 Int = [
   "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
   "==", "!=", "<", "<=", ">", ">=",

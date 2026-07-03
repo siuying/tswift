@@ -10,9 +10,15 @@ use tswift_core::{
 
 /// Register the `Array` intrinsics of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
+    install_for(interp, BuiltinReceiver::Array);
+}
+
+/// Register Array intrinsics for the given receiver.
+/// Used by `ContiguousArray` to dual-register the same member set.
+pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
     let mutating = |interp: &mut Interpreter<'_>, name: &str, func: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
-            BuiltinReceiver::Array,
+            recv,
             name,
             MethodEntry {
                 mutating: true,
@@ -22,7 +28,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     };
     let nonmutating = |interp: &mut Interpreter<'_>, name: &str, func: tswift_core::IntrinsicFn| {
         interp.register_intrinsic(
-            BuiltinReceiver::Array,
+            recv,
             name,
             MethodEntry {
                 mutating: false,
@@ -33,7 +39,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     let label_aware =
         |interp: &mut Interpreter<'_>, name: &str, func: tswift_core::LabeledIntrinsicFn| {
             interp.register_labeled_intrinsic(
-                BuiltinReceiver::Array,
+                recv,
                 name,
                 LabeledMethodEntry {
                     mutating: true,
@@ -57,16 +63,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
     nonmutating(interp, "distance", distance);
     nonmutating(interp, "index", index);
 
-    interp.register_property(BuiltinReceiver::Array, "count", count);
-    interp.register_property(BuiltinReceiver::Array, "isEmpty", is_empty);
-    interp.register_property(BuiltinReceiver::Array, "first", first);
-    interp.register_property(BuiltinReceiver::Array, "last", last);
-    interp.register_property(BuiltinReceiver::Array, "startIndex", start_index);
-    interp.register_property(BuiltinReceiver::Array, "endIndex", end_index);
-    interp.register_property(BuiltinReceiver::Array, "capacity", count);
-    interp.register_property(BuiltinReceiver::Array, "description", description);
-    interp.register_property(BuiltinReceiver::Array, "debugDescription", description);
-    interp.register_property(BuiltinReceiver::Array, "hashValue", hash_value);
+    interp.register_property(recv, "count", count);
+    interp.register_property(recv, "isEmpty", is_empty);
+    interp.register_property(recv, "first", first);
+    interp.register_property(recv, "last", last);
+    interp.register_property(recv, "startIndex", start_index);
+    interp.register_property(recv, "endIndex", end_index);
+    interp.register_property(recv, "capacity", count);
+    interp.register_property(recv, "description", description);
+    interp.register_property(recv, "debugDescription", description);
+    interp.register_property(recv, "hashValue", hash_value);
 }
 
 /// Unwrap an array receiver into its backing `Rc<Vec>`.
@@ -581,6 +587,11 @@ fn hash_value(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(stable_hash(&recv) as i64 as i128))
 }
 
+/// Compute a stable hash for an ArraySlice (exposed for `arrayslice` module).
+pub fn slice_stable_hash(value: &SwiftValue) -> u64 {
+    stable_hash(value)
+}
+
 fn stable_hash(value: &SwiftValue) -> u64 {
     fn mix(mut hash: u64, value: u64) -> u64 {
         hash ^= value;
@@ -597,6 +608,9 @@ fn stable_hash(value: &SwiftValue) -> u64 {
         SwiftValue::Str(s) => s.bytes().fold(0x40, |h, b| mix(h, b as u64)),
         SwiftValue::Tuple(items, _) => items.iter().fold(0x50, |h, v| mix(h, stable_hash(v))),
         SwiftValue::Array(items) => items.iter().fold(0x60, |h, v| mix(h, stable_hash(v))),
+        SwiftValue::ArraySlice { base, start, end } => base[*start..*end]
+            .iter()
+            .fold(0x60, |h, v| mix(h, stable_hash(v))),
         SwiftValue::Dict(pairs) => pairs.iter().fold(0x70, |h, (k, v)| {
             mix(mix(h, stable_hash(k)), stable_hash(v))
         }),

@@ -471,6 +471,28 @@ impl<'w> Interpreter<'w> {
             return Ok(SwiftValue::Dict(StdRc::new(new_pairs)));
         }
         let idx = subscript_index(&[index_value])?;
+        // `ArraySlice[i] = v` — detach (copy base slice) then mutate.
+        if let SwiftValue::ArraySlice {
+            base,
+            start: sl_start,
+            end: sl_end,
+        } = &container
+        {
+            if idx < *sl_start || idx >= *sl_end {
+                return Err(trap(format!(
+                    "index {idx} out of ArraySlice [{sl_start},{sl_end})"
+                )));
+            }
+            let mut new_base = base[*sl_start..*sl_end].to_vec();
+            let local = idx - *sl_start;
+            new_base[local] = value;
+            let new_count = new_base.len();
+            return Ok(SwiftValue::ArraySlice {
+                base: StdRc::new(new_base),
+                start: 0,
+                end: new_count,
+            });
+        }
         let SwiftValue::Array(items) = &container else {
             return Err(EvalError::Type("subscript assignment requires an array".into()).into());
         };
@@ -526,7 +548,29 @@ impl<'w> Interpreter<'w> {
                 SwiftValue::Array(items) => {
                     let range = SwiftValue::Range { lo, hi, inclusive };
                     let (start, end) = collection_range_bounds(&range, items.len(), "subscript")?;
-                    return Ok(SwiftValue::Array(Rc::new(items[start..end].to_vec())));
+                    return Ok(SwiftValue::ArraySlice {
+                        base: Rc::clone(items),
+                        start,
+                        end,
+                    });
+                }
+                SwiftValue::ArraySlice {
+                    base,
+                    start: sl_start,
+                    end: sl_end,
+                } => {
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (lo_c, hi_c) = collection_range_bounds(&range, base.len(), "subscript")?;
+                    if lo_c < *sl_start || hi_c > *sl_end {
+                        return Err(trap(format!(
+                            "ArraySlice subscript [{lo_c},{hi_c}) out of slice [{sl_start},{sl_end})"
+                        )));
+                    }
+                    return Ok(SwiftValue::ArraySlice {
+                        base: Rc::clone(base),
+                        start: lo_c,
+                        end: hi_c,
+                    });
                 }
                 SwiftValue::Str(s) => {
                     let chars = crate::graphemes(s);
@@ -565,6 +609,22 @@ impl<'w> Interpreter<'w> {
                 let i = subscript_index(indices)?;
                 items
                     .get(i)
+                    .cloned()
+                    .ok_or_else(|| trap(format!("index {i} out of range")))
+            }
+            // `slice[i]` — subscript an ArraySlice by a base-relative index.
+            SwiftValue::ArraySlice {
+                base,
+                start: sl_start,
+                end: sl_end,
+            } => {
+                let i = subscript_index(indices)?;
+                if i < *sl_start || i >= *sl_end {
+                    return Err(trap(format!(
+                        "index {i} out of ArraySlice [{sl_start},{sl_end})"
+                    )));
+                }
+                base.get(i)
                     .cloned()
                     .ok_or_else(|| trap(format!("index {i} out of range")))
             }

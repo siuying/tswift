@@ -46,6 +46,25 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
             str_binary(op, &a, b)
         }
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
+        // ArraySlice equality: compare element windows.
+        (
+            SwiftValue::ArraySlice {
+                base: b1,
+                start: s1,
+                end: e1,
+            },
+            SwiftValue::ArraySlice {
+                base: b2,
+                start: s2,
+                end: e2,
+            },
+        ) => {
+            let a = std::rc::Rc::new(b1[*s1..*e1].to_vec());
+            let b = std::rc::Rc::new(b2[*s2..*e2].to_vec());
+            array_binary(op, &a, &b)
+        }
+        // NOTE: ArraySlice == Array is intentionally NOT supported here;
+        // these are distinct types (strict separation, like Substring/String).
         // Tuples compare element-wise (`==`/`!=`) and lexicographically
         // (`<`/`<=`/`>`/`>=`), as Swift defines for tuples of comparable
         // elements.

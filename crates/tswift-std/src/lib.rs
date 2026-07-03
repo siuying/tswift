@@ -10,7 +10,9 @@
 //! [`install`] wires every builtin into an [`Interpreter`] in one call.
 
 mod array;
+mod arrayslice;
 mod bool;
+mod contiguousarray;
 mod dictionary;
 mod free;
 mod optional;
@@ -27,6 +29,8 @@ use tswift_core::Interpreter;
 pub fn install(interp: &mut Interpreter<'_>) {
     free::install(interp);
     array::install(interp);
+    arrayslice::install(interp);
+    contiguousarray::install(interp);
     bool::install(interp);
     dictionary::install(interp);
     scalar::install(interp);

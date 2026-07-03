@@ -4062,6 +4062,7 @@ impl<'w> Interpreter<'w> {
         t.insert("Set", Self::ctor_set);
         t.insert("Dictionary", Self::ctor_dictionary);
         t.insert("ContiguousArray", Self::ctor_conversion);
+        t.insert("ArraySlice", Self::ctor_conversion);
         t.insert("CollectionOfOne", Self::ctor_conversion);
         // Scalar conversion initializers (one argument each).
         for name in [
@@ -4343,6 +4344,15 @@ impl<'w> Interpreter<'w> {
             "ContiguousArray" => {
                 Ok(materialize_sequence(value).map(|v| SwiftValue::Array(StdRc::new(v))))
             }
+            // `ArraySlice(seq)` is an array in this model (promotes to a full slice).
+            "ArraySlice" => Ok(materialize_sequence(value).map(|v| {
+                let count = v.len();
+                SwiftValue::ArraySlice {
+                    base: StdRc::new(v),
+                    start: 0,
+                    end: count,
+                }
+            })),
             // `CollectionOfOne(x)` is a one-element array.
             "CollectionOfOne" => Ok(Some(SwiftValue::Array(StdRc::new(vec![value.clone()])))),
             _ => Ok(None),
@@ -4898,6 +4908,7 @@ fn is_builtin_iterable(value: &SwiftValue) -> bool {
     match value {
         SwiftValue::Range { .. }
         | SwiftValue::Array(_)
+        | SwiftValue::ArraySlice { .. }
         | SwiftValue::Str(_)
         | SwiftValue::Substring { .. }
         | SwiftValue::Dict(_)

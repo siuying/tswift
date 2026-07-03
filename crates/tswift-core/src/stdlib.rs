@@ -174,6 +174,12 @@ pub enum BuiltinReceiver {
     /// A `Substring` value (represented identically to `String` at runtime;
     /// registered separately so `Substring.*` keys appear in the registry).
     Substring,
+    /// A `ArraySlice` view: a window `[start, end)` into a base `Array`.
+    /// Indices are base-relative, matching Swift semantics.
+    ArraySlice,
+    /// `ContiguousArray` — semantically an `Array` in this runtime;
+    /// registered separately so `ContiguousArray.*` keys appear in the registry.
+    ContiguousArray,
 }
 
 impl BuiltinReceiver {
@@ -206,6 +212,8 @@ impl BuiltinReceiver {
             BuiltinReceiver::NumberFormatter => "NumberFormatter",
             BuiltinReceiver::Measurement => "Measurement",
             BuiltinReceiver::Substring => "Substring",
+            BuiltinReceiver::ArraySlice => "ArraySlice",
+            BuiltinReceiver::ContiguousArray => "ContiguousArray",
         }
     }
 
@@ -238,6 +246,8 @@ impl BuiltinReceiver {
             "NumberFormatter" => BuiltinReceiver::NumberFormatter,
             "Measurement" => BuiltinReceiver::Measurement,
             "Substring" => BuiltinReceiver::Substring,
+            "ArraySlice" => BuiltinReceiver::ArraySlice,
+            "ContiguousArray" => BuiltinReceiver::ContiguousArray,
             _ => return None,
         })
     }
@@ -250,6 +260,7 @@ impl BuiltinReceiver {
             SwiftValue::Set(_) => BuiltinReceiver::Set,
             SwiftValue::Str(_) => BuiltinReceiver::String,
             SwiftValue::Substring { .. } => BuiltinReceiver::Substring,
+            SwiftValue::ArraySlice { .. } => BuiltinReceiver::ArraySlice,
             SwiftValue::Int(_) => BuiltinReceiver::Int,
             SwiftValue::Double(_) => BuiltinReceiver::Double,
             SwiftValue::Bool(_) => BuiltinReceiver::Bool,
@@ -400,6 +411,7 @@ pub struct LabeledMethodEntry {
 pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
     match value {
         SwiftValue::Array(items) => Some(items.as_ref().clone()),
+        SwiftValue::ArraySlice { base, start, end } => Some(base[*start..*end].to_vec()),
         SwiftValue::Range { lo, hi, inclusive } => {
             let end = if *inclusive { *hi + 1 } else { *hi };
             Some((*lo..end).map(SwiftValue::int).collect())
