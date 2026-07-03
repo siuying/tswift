@@ -10,6 +10,7 @@ mod decimal;
 mod formatter;
 mod json;
 mod measurement;
+mod network;
 mod numberformatter;
 mod plist;
 mod url;
@@ -28,6 +29,7 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 /// Register every currently-supported Foundation builtin into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
+    network::install(interp);
     calendar::install(interp);
     datestyle::install(interp);
     formatter::install(interp);
@@ -1054,7 +1056,7 @@ fn date_components_date(recv: SwiftValue) -> StdResult {
     Ok(date_value(seconds))
 }
 
-fn data_value(bytes: Vec<u8>) -> SwiftValue {
+pub(crate) fn data_value(bytes: Vec<u8>) -> SwiftValue {
     let elements = bytes
         .into_iter()
         .map(|b| SwiftValue::int(i128::from(b)))
@@ -1065,7 +1067,7 @@ fn data_value(bytes: Vec<u8>) -> SwiftValue {
     }))
 }
 
-fn data_bytes(value: &SwiftValue) -> Result<Vec<u8>, StdError> {
+pub(crate) fn data_bytes(value: &SwiftValue) -> Result<Vec<u8>, StdError> {
     let SwiftValue::Struct(obj) = value else {
         return Err(type_error(format!(
             "expected Data, got {}",

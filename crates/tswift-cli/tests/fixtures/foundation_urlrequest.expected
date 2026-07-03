@@ -1,0 +1,31 @@
+https://api.example.com/v1/items?page=2
+GET
+60.0
+true
+true
+POST
+2
+30.0
+application/json
+gzip,br
+nil
+1
+5.0
+https://example.com/files/report.pdf
+application/pdf
+1024
+nil
+report.pdf
+200
+application/json
+128
+application/json; charset=utf-8
+2
+no error
+not found
+service unavailable
+true
+-1001
+-1000
+-1009
+caught -1003

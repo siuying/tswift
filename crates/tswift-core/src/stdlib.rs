@@ -163,6 +163,10 @@ pub enum BuiltinReceiver {
     URL,
     URLComponents,
     URLQueryItem,
+    URLRequest,
+    URLResponse,
+    HTTPURLResponse,
+    URLError,
     Date,
     DateComponents,
     Calendar,
@@ -218,6 +222,10 @@ impl BuiltinReceiver {
             BuiltinReceiver::URL => "URL",
             BuiltinReceiver::URLComponents => "URLComponents",
             BuiltinReceiver::URLQueryItem => "URLQueryItem",
+            BuiltinReceiver::URLRequest => "URLRequest",
+            BuiltinReceiver::URLResponse => "URLResponse",
+            BuiltinReceiver::HTTPURLResponse => "HTTPURLResponse",
+            BuiltinReceiver::URLError => "URLError",
             BuiltinReceiver::Date => "Date",
             BuiltinReceiver::DateComponents => "DateComponents",
             BuiltinReceiver::Calendar => "Calendar",
@@ -257,6 +265,10 @@ impl BuiltinReceiver {
             "URL" => BuiltinReceiver::URL,
             "URLComponents" => BuiltinReceiver::URLComponents,
             "URLQueryItem" => BuiltinReceiver::URLQueryItem,
+            "URLRequest" => BuiltinReceiver::URLRequest,
+            "URLResponse" => BuiltinReceiver::URLResponse,
+            "HTTPURLResponse" => BuiltinReceiver::HTTPURLResponse,
+            "URLError" => BuiltinReceiver::URLError,
             "Date" => BuiltinReceiver::Date,
             "DateComponents" => BuiltinReceiver::DateComponents,
             "Calendar" => BuiltinReceiver::Calendar,
@@ -305,6 +317,14 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "URLQueryItem" => {
                 BuiltinReceiver::URLQueryItem
             }
+            SwiftValue::Struct(obj) if obj.type_name == "URLRequest" => BuiltinReceiver::URLRequest,
+            SwiftValue::Struct(obj) if obj.type_name == "URLResponse" => {
+                BuiltinReceiver::URLResponse
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "HTTPURLResponse" => {
+                BuiltinReceiver::HTTPURLResponse
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "URLError" => BuiltinReceiver::URLError,
             SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
             SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {
                 BuiltinReceiver::DateComponents

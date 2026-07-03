@@ -872,14 +872,14 @@ fn parse_url(input: &str) -> Parsed {
     p
 }
 
-fn url_value(string: String) -> SwiftValue {
+pub(crate) fn url_value(string: String) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URL".into(),
         fields: vec![("_string".into(), SwiftValue::Str(string))],
     }))
 }
 
-fn url_string(value: &SwiftValue) -> Result<String, StdError> {
+pub(crate) fn url_string(value: &SwiftValue) -> Result<String, StdError> {
     let SwiftValue::Struct(obj) = value else {
         return Err(type_error(format!(
             "expected URL, got {}",
