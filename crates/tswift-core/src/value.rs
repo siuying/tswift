@@ -8,6 +8,8 @@ use std::cell::RefCell;
 use std::fmt;
 use std::rc::{Rc, Weak};
 
+use tswift_frontend::TypeRepr;
+
 use crate::regex::Regex;
 
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
@@ -474,6 +476,110 @@ fn escape_string_for_collection(s: &str, f: &mut fmt::Formatter<'_>) -> fmt::Res
     Ok(())
 }
 
+/// String form of a value rendered as a *collection element*: the same debug
+/// shape [`fmt_element`] produces (strings quoted/escaped), but as an owned
+/// `String`.
+fn element_debug_string(v: &SwiftValue) -> String {
+    struct E<'a>(&'a SwiftValue);
+    impl fmt::Display for E<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt_element(self.0, f)
+        }
+    }
+    E(v).to_string()
+}
+
+/// Whether `ty` mentions an optional anywhere in its element structure (the
+/// type itself, an array element, or a dictionary key/value, recursively).
+fn type_contains_optional(ty: &TypeRepr) -> bool {
+    if ty.is_optional() {
+        return true;
+    }
+    if let Some(el) = ty.array_element() {
+        return type_contains_optional(el);
+    }
+    if let Some((k, v)) = ty.dictionary() {
+        return type_contains_optional(k) || type_contains_optional(v);
+    }
+    false
+}
+
+/// Debug-render `value` under its static type `ty`, threading optionality so a
+/// present optional shows as `Optional(<debug>)` and an absent one as `nil` —
+/// the fidelity Swift's `Array`/`Dictionary` `description` provides but this
+/// runtime's flattened value model erases. Recurses into nested collections
+/// through the `TypeRepr` element accessors.
+fn render_typed(value: &SwiftValue, ty: &TypeRepr) -> String {
+    if ty.is_optional() {
+        return match value {
+            SwiftValue::Nil => "nil".to_string(),
+            other => format!("Optional({})", render_typed(other, ty.unwrap_optional())),
+        };
+    }
+    if let Some(elem) = ty.array_element() {
+        let join = |items: &[SwiftValue]| {
+            items
+                .iter()
+                .map(|v| render_typed(v, elem))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return match value {
+            SwiftValue::Array(a) => format!("[{}]", join(&a[..])),
+            SwiftValue::Set(s) => format!("[{}]", join(&s[..])),
+            SwiftValue::ArraySlice { base, start, end } => {
+                format!("[{}]", join(&base[*start..*end]))
+            }
+            // Type/value shape mismatch: fall back to the value's own form.
+            other => element_debug_string(other),
+        };
+    }
+    if let Some((kty, vty)) = ty.dictionary() {
+        if let SwiftValue::Dict(pairs) = value {
+            if pairs.is_empty() {
+                return "[:]".to_string();
+            }
+            let inner = pairs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", render_typed(k, kty), render_typed(v, vty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("[{inner}]");
+        }
+        return element_debug_string(value);
+    }
+    element_debug_string(value)
+}
+
+/// Optional-aware rendering of a value for `print`/`debugPrint`.
+///
+/// Returns `Some(rendered)` only when the static type `ty` carries optionality
+/// the flattened value model erased — either a top-level optional (`x: String?`
+/// → `Optional("x")` / `nil`) or a collection whose element structure contains
+/// an optional (`[Optional("x"), nil]`). Every other value returns `None`, so
+/// the caller keeps today's exact output (no regression for non-optional
+/// collections or plain scalars).
+pub fn describe_typed(value: &SwiftValue, ty: &TypeRepr) -> Option<String> {
+    if !type_contains_optional(ty) {
+        return None;
+    }
+    // Only intervene for values we can render faithfully from `ty`: a top-level
+    // optional (any wrapped value) or a collection. Anything else keeps its
+    // normal rendering.
+    let applies = ty.is_optional()
+        || matches!(
+            value,
+            SwiftValue::Array(_)
+                | SwiftValue::ArraySlice { .. }
+                | SwiftValue::Set(_)
+                | SwiftValue::Dict(_)
+        );
+    if !applies {
+        return None;
+    }
+    Some(render_typed(value, ty))
+}
+
 /// Render a value as a *collection element* — strings/substrings get quoted
 /// and their contents escaped (Swift `debugDescription` semantics); other
 /// types use their normal `Display`.
@@ -800,6 +906,41 @@ mod tests {
     /// Helper: wrap a single value in an Array and Display it.
     fn element_display(v: &SwiftValue) -> String {
         format!("{}", SwiftValue::Array(std::rc::Rc::new(vec![v.clone()])))
+    }
+
+    #[test]
+    fn describe_typed_threads_optional_elements() {
+        let arr = SwiftValue::Array(Rc::new(vec![SwiftValue::Str("x".into()), SwiftValue::Nil]));
+        // Optional element type → present shows `Optional(..)`, absent `nil`.
+        assert_eq!(
+            describe_typed(&arr, &TypeRepr::parse("[String?]")).as_deref(),
+            Some("[Optional(\"x\"), nil]")
+        );
+        // Non-optional element type → no intervention (caller keeps Display).
+        assert_eq!(describe_typed(&arr, &TypeRepr::parse("[String]")), None);
+        // Top-level optional scalar: present wraps, absent is `nil`.
+        assert_eq!(
+            describe_typed(&SwiftValue::Str("x".into()), &TypeRepr::parse("String?")).as_deref(),
+            Some("Optional(\"x\")")
+        );
+        assert_eq!(
+            describe_typed(&SwiftValue::Nil, &TypeRepr::parse("String?")).as_deref(),
+            Some("nil")
+        );
+        // A non-optional scalar under a non-optional type is untouched.
+        assert_eq!(
+            describe_typed(&SwiftValue::Str("x".into()), &TypeRepr::parse("String")),
+            None
+        );
+        // Dictionary with optional values.
+        let dict = SwiftValue::Dict(Rc::new(vec![(
+            SwiftValue::Str("a".into()),
+            SwiftValue::int(1),
+        )]));
+        assert_eq!(
+            describe_typed(&dict, &TypeRepr::parse("[String: Int?]")).as_deref(),
+            Some("[\"a\": Optional(1)]")
+        );
     }
 
     #[test]

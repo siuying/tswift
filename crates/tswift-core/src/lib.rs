@@ -31,7 +31,8 @@ pub use stdlib::{
     StdError, StdResult, StructMethodFn,
 };
 pub use value::{
-    format_double, format_double_json, EnumObj, IntValue, IntWidth, StructObj, SwiftValue,
+    describe_typed, format_double, format_double_json, EnumObj, IntValue, IntWidth, StructObj,
+    SwiftValue,
 };
 
 /// Returns `true` when `s` is a non-empty string that contains no ASCII

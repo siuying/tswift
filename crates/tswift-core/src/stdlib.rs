@@ -103,6 +103,28 @@ pub trait StdContext {
         value.to_string()
     }
 
+    /// Optional-aware rendering of `value` for `print`/`debugPrint`, given the
+    /// argument's statically-recovered type spelling (`static_type`). Returns
+    /// `Some` only when `value` is a collection whose element type is optional
+    /// (the one case the flattened value model renders wrong); `None` means
+    /// "use the normal rendering". The default never intervenes; the
+    /// interpreter overrides it.
+    fn describe_optional_collection(
+        &mut self,
+        _value: &SwiftValue,
+        _static_type: Option<&str>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// The statically-recovered types of the arguments of the free function
+    /// currently executing, aligned to its `Vec<Arg>`. `print`/`debugPrint`
+    /// consult this to render optional-typed collections. The default is empty
+    /// (no type information); the interpreter overrides it.
+    fn pending_arg_types(&mut self) -> Vec<Option<String>> {
+        Vec::new()
+    }
+
     /// Whether `a < b` under `Comparable`. The default handles only the scalar
     /// values; the interpreter overrides it to also consult a type's static
     /// `<` operator. `None` means the values are not comparable.

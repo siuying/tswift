@@ -63,8 +63,17 @@ pub fn install(interp: &mut Interpreter<'_>) {
 
 /// `print(_:separator:terminator:)` — display each item, default `" "`/`"\n"`.
 fn print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    let (items, sep, term) = output_parts(args, " ", "\n");
-    let rendered: Vec<String> = items.iter().map(|v| ctx.display(v)).collect();
+    let types = ctx.pending_arg_types();
+    let (items, sep, term) = output_parts(args, types, " ", "\n");
+    let rendered: Vec<String> = items
+        .iter()
+        .map(
+            |(v, ty)| match ctx.describe_optional_collection(v, ty.as_deref()) {
+                Some(s) => s,
+                None => ctx.display(v),
+            },
+        )
+        .collect();
     let line = rendered.join(&sep);
     let _ = write!(ctx.out(), "{line}{term}");
     Ok(SwiftValue::Void)
@@ -73,12 +82,18 @@ fn print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// `debugPrint(_:separator:terminator:)` — like `print` but each item uses its
 /// debug representation (strings are quoted, nesting is preserved).
 fn debug_print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    let (items, sep, term) = output_parts(args, " ", "\n");
-    let line = items
+    let types = ctx.pending_arg_types();
+    let (items, sep, term) = output_parts(args, types, " ", "\n");
+    let rendered: Vec<String> = items
         .iter()
-        .map(debug_format)
-        .collect::<Vec<_>>()
-        .join(&sep);
+        .map(
+            |(v, ty)| match ctx.describe_optional_collection(v, ty.as_deref()) {
+                Some(s) => s,
+                None => debug_format(v),
+            },
+        )
+        .collect();
+    let line = rendered.join(&sep);
     let _ = write!(ctx.out(), "{line}{term}");
     Ok(SwiftValue::Void)
 }
@@ -112,20 +127,24 @@ fn dump(ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
 }
 
 /// Split output args into `(items, separator, terminator)`, honouring the
-/// `separator:`/`terminator:` labels.
+/// `separator:`/`terminator:` labels. Each retained item carries its
+/// statically-recovered type (from `types`, aligned to `args` by position) so
+/// the caller can render optional-typed collections faithfully.
 fn output_parts(
     args: Vec<Arg>,
+    types: Vec<Option<String>>,
     def_sep: &str,
     def_term: &str,
-) -> (Vec<SwiftValue>, String, String) {
+) -> (Vec<(SwiftValue, Option<String>)>, String, String) {
     let mut items = Vec::new();
     let mut sep = def_sep.to_string();
     let mut term = def_term.to_string();
-    for arg in args {
+    for (i, arg) in args.into_iter().enumerate() {
+        let ty = types.get(i).cloned().flatten();
         match arg.label.as_deref() {
             Some("separator") => sep = arg.value.to_string(),
             Some("terminator") => term = arg.value.to_string(),
-            _ => items.push(arg.value),
+            _ => items.push((arg.value, ty)),
         }
     }
     (items, sep, term)

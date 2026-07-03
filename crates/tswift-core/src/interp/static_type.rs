@@ -7,7 +7,7 @@
 //! cast targets — degrading gracefully to `None` (today's behavior) whenever the
 //! static type is unrecoverable.
 
-use tswift_frontend::{Node, NodeKind};
+use tswift_frontend::{Node, NodeKind, TypeRepr};
 
 use super::Interpreter;
 use crate::value::SwiftValue;
@@ -18,10 +18,6 @@ impl<'w> Interpreter<'w> {
     ///
     /// This is type-level metadata only: it is never used for coercion, and a
     /// `None` result means "fall back to the value-directed behavior".
-    ///
-    /// Wired into the describe and dispatch seams by the stages that build on
-    /// this foundation; exercised by unit tests until then.
-    #[allow(dead_code)]
     pub(super) fn static_type_of(&self, expr: &Node<'static>) -> Option<String> {
         match expr.kind() {
             // Identifier → the referenced binding's written annotation.
@@ -62,7 +58,97 @@ impl<'w> Interpreter<'w> {
                     Some(target)
                 }
             }
+            // Array/dictionary literal → a type synthesized from the elements'
+            // shape (Stage 2a). Only the optionality bit is meaningful; the
+            // element base is a placeholder `T` and must never be used for
+            // coercion.
+            NodeKind::ArrayLiteral | NodeKind::DictLiteral => self.synthesize_literal_type(expr),
             _ => None,
+        }
+    }
+
+    /// Best-effort static type for an array/dictionary literal, capturing only
+    /// whether elements are optional (`[T?]`, `[T: T?]`, nested `[[T?]]`). An
+    /// element is optional when it is a `nil` literal, an `Optional(x)`
+    /// construction, an identifier whose declared type is optional, an `as?`
+    /// cast, or a nested literal that is itself optional-bearing.
+    ///
+    /// Returns `None` when no optionality is detected — there is nothing to
+    /// recover, so the describe path keeps its current behavior.
+    fn synthesize_literal_type(&self, node: &Node<'static>) -> Option<String> {
+        match node.kind() {
+            NodeKind::ArrayLiteral => {
+                let elem = self.synthesize_element_type(node.children())?;
+                Some(format!("[{elem}]"))
+            }
+            NodeKind::DictLiteral => {
+                // Dict children are a flat key, value, key, value, … sequence;
+                // synthesize from the value positions (odd indices). Keys are
+                // assumed non-optional (`T`).
+                let values = node
+                    .children()
+                    .enumerate()
+                    .filter(|(i, _)| i % 2 == 1)
+                    .map(|(_, c)| c);
+                let val = self.synthesize_element_type(values)?;
+                Some(format!("[T: {val}]"))
+            }
+            _ => None,
+        }
+    }
+
+    /// The synthesized element type for a homogeneous run of literal element
+    /// expressions: `T?` when any element is optional, a nested literal's
+    /// synthesized type when elements are themselves collections, or `None`
+    /// when no optionality is present anywhere.
+    fn synthesize_element_type(
+        &self,
+        elems: impl Iterator<Item = Node<'static>>,
+    ) -> Option<String> {
+        let mut optional = false;
+        let mut nested: Option<String> = None;
+        for e in elems {
+            match e.kind() {
+                NodeKind::ArrayLiteral | NodeKind::DictLiteral => {
+                    if nested.is_none() {
+                        nested = self.synthesize_literal_type(&e);
+                    }
+                }
+                _ => {
+                    if self.element_is_optional(&e) {
+                        optional = true;
+                    }
+                }
+            }
+        }
+        match nested {
+            Some(inner) => Some(if optional { format!("{inner}?") } else { inner }),
+            None if optional => Some("T?".to_string()),
+            None => None,
+        }
+    }
+
+    /// Whether a single literal-element expression is statically optional.
+    fn element_is_optional(&self, e: &Node<'static>) -> bool {
+        match e.kind() {
+            NodeKind::NilLiteral => true,
+            // `Optional(x)` construction.
+            NodeKind::CallExpr => {
+                e.children()
+                    .next()
+                    .filter(|c| c.kind() == NodeKind::IdentExpr)
+                    .and_then(|c| c.text())
+                    .as_deref()
+                    == Some("Optional")
+            }
+            NodeKind::IdentExpr => e
+                .text()
+                .and_then(|name| self.env.declared_type_of(&name))
+                .is_some_and(|t| TypeRepr::parse(&t).is_optional()),
+            NodeKind::CastExpr => self
+                .static_type_of(e)
+                .is_some_and(|t| TypeRepr::parse(&t).is_optional()),
+            _ => false,
         }
     }
 }

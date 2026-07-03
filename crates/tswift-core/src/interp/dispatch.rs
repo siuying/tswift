@@ -619,6 +619,15 @@ impl<'w> Interpreter<'w> {
 
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.globals.free_fn(&name).map(|e| e.f) {
+                // Recover each argument's static type so `print`/`debugPrint`
+                // can render optional-typed collections faithfully. Alignment
+                // holds only when no autoclosure/pack reshaped the arg list.
+                if args.len() == arg_nodes.len() {
+                    self.pending_arg_types =
+                        arg_nodes.iter().map(|n| self.static_type_of(n)).collect();
+                } else {
+                    self.pending_arg_types = Vec::new();
+                }
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }

@@ -1,0 +1,19 @@
+[Optional("x"), nil]
+[Optional("x"), nil]
+[Optional("x"), nil]
+[Optional(1), nil]
+[Optional(2.5), nil]
+[Optional(true), nil]
+[[Optional("x"), nil]]
+["a": nil]
+[1: Optional("x")]
+[Optional("x"), nil]
+[Optional("x"), nil]
+[Optional(1), nil] | [1, 2]
+Optional("x")
+nil
+Optional("x")
+Optional("x")!
+["x"]
+[1, 2, 3]
+plain

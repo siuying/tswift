@@ -228,7 +228,6 @@ struct FuncDef {
     /// Type-level metadata only, used to recover static optionality at call
     /// sites via [`Interpreter::static_type_of`]. Consumed by the type-directed
     /// printing/dispatch stages that build on this foundation.
-    #[allow(dead_code)]
     return_type: Option<String>,
 }
 
@@ -901,6 +900,12 @@ pub struct Interpreter<'w> {
     /// Replaces the per-evaluation `Box::leak`: a repeated fragment is analyzed
     /// once, and the whole cache is reclaimed when the interpreter drops.
     fragment_cache: FragmentCache,
+    /// Statically-recovered types of the arguments of the free-function call
+    /// currently being dispatched, aligned to the `Vec<Arg>` handed to the
+    /// intrinsic. Set just before the call (see `dispatch.rs`) and consumed by
+    /// `print`/`debugPrint` via [`StdContext::pending_arg_types`] to render
+    /// optional-typed collections faithfully. Empty for every other call.
+    pending_arg_types: Vec<Option<String>>,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -965,6 +970,7 @@ impl<'w> Interpreter<'w> {
             rng_state: initial_rng_seed(),
             type_hint: Vec::new(),
             fragment_cache: FragmentCache::default(),
+            pending_arg_types: Vec::new(),
         }
     }
 
@@ -1556,7 +1562,16 @@ impl<'w> Interpreter<'w> {
             }
             None => SwiftValue::Void,
         };
-        let declared_type = decl_annotation_type(node).map(Rc::from);
+        // Prefer the written annotation; otherwise synthesize a best-effort
+        // static type from the initializer (literal shape or a call's return
+        // type) so optional-aware printing works for un-annotated bindings
+        // like `let a = [Optional("x"), nil]`. Metadata only — never coercion.
+        let declared_type = match decl_annotation_type(node) {
+            Some(ty) => Some(Rc::from(ty)),
+            None => init_expr
+                .and_then(|init| self.static_type_of(&init))
+                .map(Rc::from),
+        };
         self.env.declare_typed(&name, value, mutable, declared_type);
         Ok(SwiftValue::Void)
     }
@@ -4555,6 +4570,19 @@ impl StdContext for Interpreter<'_> {
         self.render_description(value)
     }
 
+    fn describe_optional_collection(
+        &mut self,
+        value: &SwiftValue,
+        static_type: Option<&str>,
+    ) -> Option<String> {
+        let repr = TypeRepr::parse(static_type?);
+        crate::describe_typed(value, &repr)
+    }
+
+    fn pending_arg_types(&mut self) -> Vec<Option<String>> {
+        std::mem::take(&mut self.pending_arg_types)
+    }
+
     fn random_u64(&mut self) -> u64 {
         self.next_random()
     }
@@ -5364,6 +5392,42 @@ mod tests {
             assert_eq!(interp.static_type_of(&ident_u), None);
         });
     }
+
+    #[test]
+    fn static_type_of_synthesizes_optional_literal_shape() {
+        let src = concat!(
+            "let a = [Optional(\"x\"), nil]\n",
+            "let b = [[Optional(\"x\"), nil]]\n",
+            "let c = [\"k\": Optional(1), \"j\": nil]\n",
+            "let d = [1, 2, 3]\n",
+        );
+        with_interp(src, |interp, root| {
+            let lit = |name: &str| {
+                let decl = find_node(root, &|n| {
+                    n.kind() == NodeKind::LetDecl && n.decl_name().as_deref() == Some(name)
+                })
+                .expect("decl");
+                let e = find_node(decl, &|n| {
+                    matches!(n.kind(), NodeKind::ArrayLiteral | NodeKind::DictLiteral)
+                })
+                .expect("literal");
+                interp.static_type_of(&e)
+            };
+            assert_eq!(lit("a").as_deref(), Some("[T?]"));
+            assert_eq!(lit("b").as_deref(), Some("[[T?]]"));
+            assert_eq!(lit("c").as_deref(), Some("[T: T?]"));
+            // A non-optional literal yields no synthesized type.
+            assert_eq!(lit("d"), None);
+            // Un-annotated bindings record the synthesized type.
+            assert_eq!(interp.env.declared_type_of("a").as_deref(), Some("[T?]"));
+            assert_eq!(interp.env.declared_type_of("d"), None);
+        });
+    }
+
+    // End-to-end `print`/`debugPrint` output for optional-typed collections is
+    // covered by the CLI golden fixture `optional_collection_printing.swift`
+    // (core's in-crate test `print` is a minimal native stub that bypasses the
+    // free-fn StdContext seam, so it cannot exercise the typed describe path).
 
     #[test]
     fn builtin_collection_and_conversion_ctors_still_resolve() {
