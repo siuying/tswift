@@ -6,18 +6,16 @@
 //! (`Int`/`Double`/`Bool`/`String`) have no other `map`, so registering it there
 //! is unambiguous; `nil` itself dispatches as the `Optional` receiver.
 //!
-//! **Known dispatch limitation** — `take()` and `debugDescription` are NOT
-//! registered because both would require knowing the *declared* type of the
-//! receiver variable at call time:
-//!
-//! * A present `Optional<Int>` is stored as `SwiftValue::Int(n)` at runtime,
-//!   indistinguishable from a plain `Int`.  Routing `take()` to an Optional
-//!   implementation via wrapped-kind registration would allow `var x = 1;
-//!   x.take()` (non-optional) to silently corrupt `x` to `nil`.
-//! * The `Binding` struct in `env.rs` stores only the current value and
-//!   mutability flag — no declared type.  Declared-type-aware dispatch would
-//!   require storing the type annotation in every binding and threading it
-//!   through ~20 `env.declare()` call sites — deferred to a future slice.
+//! **Declared-type-aware members** — `take()` is registered on the `Optional`
+//! receiver but is reached *only* through declared-type-aware dispatch in
+//! `interp/dispatch.rs`: a present `Optional<Int>` is stored as
+//! `SwiftValue::Int(n)`, indistinguishable from a plain `Int`, so routing by
+//! wrapped-kind alone would let `var x = 1; x.take()` corrupt a non-optional to
+//! `nil`. Instead the dispatcher recovers the receiver's static optionality
+//! (Stage 1 `static_type_of`) and only then consults this `Optional` entry.
+//! `debugDescription` is likewise type-directed but rendered in core via the
+//! Stage 2 `describe_typed` helper (a bare `PropertyFn` cannot see the declared
+//! type), so it has no entry here.
 //!
 //! Known gap: a present `Optional<[T]>` is an `Array` receiver, where `map`
 //! means `Sequence.map`; the two are indistinguishable in this value model, so
@@ -45,9 +43,32 @@ pub fn install(interp: &mut Interpreter<'_>) {
         // follows the interpreter's optional-member semantics on `Nil`.)
         interp.register_property(kind, "unsafelyUnwrapped", unsafely_unwrapped);
     }
-    // NOTE: `take()` and `debugDescription` are intentionally NOT registered.
-    // See module-level doc comment for the full rationale (declared-type-aware
-    // dispatch is required but not yet implemented).
+    // `take()` — mutating: returns the current optional and resets it to `nil`.
+    // Registered on the `Optional` receiver only; the dispatcher routes here
+    // exclusively when the receiver's static type is optional (see module doc).
+    interp.register_intrinsic(
+        BuiltinReceiver::Optional,
+        "take",
+        MethodEntry {
+            mutating: true,
+            func: take,
+        },
+    );
+}
+
+/// `Optional.take()` — returns the wrapped optional (the flattened value, or
+/// `nil`) and writes `nil` back to the receiver's storage. The mutating
+/// write-back and immutable-`let` diagnosis are handled by the caller's
+/// `apply_method_outcome`/`write_place` machinery via the returned receiver.
+fn take(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    Ok(Outcome {
+        result: recv,
+        receiver: SwiftValue::Nil,
+    })
 }
 
 /// `Optional.unsafelyUnwrapped` — the wrapped value of a present optional.
@@ -141,5 +162,19 @@ mod tests {
             .unwrap()
             .result;
         assert_eq!(out, SwiftValue::Nil);
+    }
+
+    #[test]
+    fn take_returns_present_value_and_resets_receiver_to_nil() {
+        let mut c = Doubler;
+        // Present: result is the wrapped value, receiver becomes nil (written
+        // back by the caller's mutating machinery).
+        let out = take(&mut c, SwiftValue::int(5), Vec::new()).unwrap();
+        assert_eq!(out.result, SwiftValue::int(5));
+        assert_eq!(out.receiver, SwiftValue::Nil);
+        // Absent: result stays nil, receiver stays nil.
+        let out = take(&mut c, SwiftValue::Nil, Vec::new()).unwrap();
+        assert_eq!(out.result, SwiftValue::Nil);
+        assert_eq!(out.receiver, SwiftValue::Nil);
     }
 }

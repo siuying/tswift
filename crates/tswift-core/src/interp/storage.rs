@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::rc::Rc as StdRc;
 
-use tswift_frontend::{Node, NodeKind};
+use tswift_frontend::{Node, NodeKind, TypeRepr};
 
 use crate::env::BindError;
 use crate::ops;
@@ -1614,6 +1614,28 @@ impl<'w> Interpreter<'w> {
         }
 
         let value = self.eval(&base)?;
+
+        // Declared-type-aware `Optional.debugDescription` (#242): a present
+        // optional is stored flattened as its wrapped value, so this member
+        // would otherwise read through to the wrapped type. When the receiver's
+        // static type is optional, render `Optional(<debug>)` for a present
+        // value and `"nil"` for an absent one, reusing the Stage 2 typed
+        // describe helper. Reached before the `Nil` short-circuit so an absent
+        // optional yields `"nil"` rather than nil-propagating.
+        //
+        // Excluded: optional-chained receivers (`s?.debugDescription`), where
+        // Swift reads `debugDescription` on the *wrapped* type; letting it fall
+        // through gives those wrapped-type semantics.
+        if member == "debugDescription" && !node.is_optional_chain() {
+            if let Some(ty) = self.static_type_of(&base) {
+                let repr = TypeRepr::parse(&ty);
+                if repr.is_optional() {
+                    let s = crate::describe_typed(&value, &repr).unwrap_or_else(|| "nil".into());
+                    return Ok(SwiftValue::Str(s));
+                }
+            }
+        }
+
         // Optional chaining: a nil base short-circuits the whole access to nil.
         if matches!(value, SwiftValue::Nil) {
             return Ok(SwiftValue::Nil);

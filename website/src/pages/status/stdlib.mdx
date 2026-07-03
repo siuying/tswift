@@ -43,7 +43,7 @@ exercised by a passing golden fixture.
 | 🟡 | `Bool` | 9 / 13 | `!`, `toggle`, `init(String)` failable, `random` |
 | 🟡 🛡️ | `String` | 29 / 53 | `String.Index` with grapheme-cluster stepping, slicing, `insert`/`remove`/`replaceSubrange` — hardened vs Apple `StringIndex` tests |
 | 🟡 🛡️ | `Substring` | 19 / 33 | Real view type (base + range), base-relative indices, detach-on-mutate — hardened vs Apple `Substring` tests |
-| 🟡 | `Optional<Wrapped>` | 10 / 15 | Binding, chaining, coalescing, `Optional(x)` init, `some`/`none` patterns |
+| 🟡 | `Optional<Wrapped>` | 12 / 15 | Binding, chaining, coalescing, `Optional(x)` init, `some`/`none` patterns, `take()`, `debugDescription` |
 | 🟡 🛡️ | `Range` | 15 / 21 | For-in, `contains`, `clamped`, `overlaps` — hardened vs Apple range tests |
 | 🟡 🛡️ | `ClosedRange` | 15 / 21 | Traps on inverted bounds (`1...0`) like real Swift |
 
@@ -104,10 +104,17 @@ exercised by a passing golden fixture.
 
 Documented honestly rather than papered over:
 
+- **`Optional.take()` on a subscript element** — `a[0].take()` (for `a: [T?]`)
+  falls through to wrapped-type dispatch instead of returning the element and
+  niling the slot: the mutating write-back addresses storage by string field
+  path, which cannot express a subscript index. Identifier and struct/class-
+  field receivers (`opt.take()`, `box.field.take()`) work fully.
+- **Printing a method call's optional result** — `print(x.take())` prints `5`
+  rather than Swift's `Optional(5)`: method-call return types are not
+  recovered by static typing (user-function calls like `print(f())` render
+  `Optional(...)` correctly via their declared return type).
 - **Fitzpatrick skin-tone modifiers** — grapheme segmenter treats
   emoji + modifier as two Characters (ZWJ families work correctly).
-- `Optional.take()` / `.debugDescription` on present optionals need
-  declared-type-aware dispatch (deferred).
 
 ---
 

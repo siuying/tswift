@@ -25,7 +25,8 @@ impl<'w> Interpreter<'w> {
                 let name = expr.text()?;
                 self.env.declared_type_of(&name).map(|t| t.to_string())
             }
-            // Call to a user function → its declared return type. Method calls
+            // Call to a user function → its declared return type; a construction
+            // of a user nominal type (`Box(...)`) → that type name. Method calls
             // and builtins are not resolved here (graceful `None`).
             NodeKind::CallExpr => {
                 let callee = expr.children().next()?;
@@ -35,7 +36,31 @@ impl<'w> Interpreter<'w> {
                 let name = callee.text()?;
                 match self.env.get(&name) {
                     Some(SwiftValue::Function(id)) => self.funcs[id].return_type.clone(),
+                    _ if self.types.is_nominal(&name) => Some(name),
                     _ => None,
+                }
+            }
+            // `container.field` → the field's written type, resolved through the
+            // container's static type. Enables optional dispatch/printing on
+            // struct/class fields (`box.field.take()`).
+            NodeKind::MemberExpr => {
+                let base = expr.children().next()?;
+                let field = expr.text()?;
+                let container_ty = self.static_type_of(&base)?;
+                let base_name = TypeRepr::parse(&container_ty).strip_optionals().text();
+                self.field_declared_type(base_name, &field)
+            }
+            // `collection[i]` → the element type of the container's declared
+            // type (`[T?]` → `T?`, `[K: V?]` → `V?`).
+            NodeKind::SubscriptExpr => {
+                let base = expr.children().next()?;
+                let container_ty = self.static_type_of(&base)?;
+                let repr = TypeRepr::parse(&container_ty);
+                let repr = repr.strip_optionals();
+                if let Some(el) = repr.array_element() {
+                    Some(el.text().to_string())
+                } else {
+                    repr.dictionary().map(|(_, v)| v.text().to_string())
                 }
             }
             // `expr as T` / `expr as? T` / `expr as! T` → the cast target. `as?`
@@ -126,6 +151,22 @@ impl<'w> Interpreter<'w> {
             None if optional => Some("T?".to_string()),
             None => None,
         }
+    }
+
+    /// Whether the receiver expression `base` has an optional *static* type —
+    /// the gate for declared-type-aware `Optional` dispatch (`take()`,
+    /// `debugDescription`). Degrades to `false` when the type is unrecoverable,
+    /// so ordinary wrapped-type dispatch (and optional chaining) is untouched.
+    pub(super) fn receiver_is_static_optional(&self, base: &Node<'static>) -> bool {
+        self.static_type_of(base)
+            .is_some_and(|t| TypeRepr::parse(&t).is_optional())
+    }
+
+    /// The written type of stored field `field` on a user struct or class named
+    /// `type_name` (walking the superclass chain for classes). `None` for an
+    /// unknown type/field or a computed property (no written stored type).
+    fn field_declared_type(&self, type_name: &str, field: &str) -> Option<String> {
+        self.types.field_declared_type(type_name, field)
     }
 
     /// Whether a single literal-element expression is statically optional.

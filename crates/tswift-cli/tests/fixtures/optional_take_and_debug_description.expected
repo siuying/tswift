@@ -1,0 +1,18 @@
+Optional(5) nil
+nil nil
+Optional("hi") nil nil
+Optional("x")
+nil
+Optional(7)
+value: Optional(7)
+Optional(7) nil
+Optional(3) nil
+Optional("hi") nil
+Optional(5)
+nil
+"x"
+3
+6
+5
+9
+nil

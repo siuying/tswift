@@ -40,6 +40,10 @@ pub(crate) const INOUT: u32 = 1 << 30;
 /// co-occur — `weak` appears only on a property decl, this only on a `CastExpr`
 /// — so one bit serves both across disjoint node kinds.
 pub(crate) const OPTIONAL_CAST: u32 = WEAK;
+/// `expr?.member` optional chaining, tagged on the `MemberExpr` node. Its own
+/// bit (only ever set on a `MemberExpr`, which carries no decl modifiers), and
+/// deliberately absent from `FLAG_NAMES` so `tswift dump` output is unchanged.
+pub(crate) const OPTIONAL_CHAIN: u32 = 1 << 21;
 
 /// The decl-modifier bits paired with their Swift keyword, for decoding a mask
 /// back into names (`Node::modifier_names`, the `tswift dump` format).
@@ -104,6 +108,8 @@ pub(crate) fn modifier_bits(modifiers: &[String]) -> u32 {
             // Parameter flags: `T...` variadic and `inout`.
             "variadic" => VARIADIC,
             "inout" => INOUT,
+            // `expr?.member` optional-chaining marker on a `MemberExpr`.
+            "optional-chain" => OPTIONAL_CHAIN,
             _ => 0,
         };
     }

@@ -1187,6 +1187,40 @@ impl<'w> Interpreter<'w> {
 
         let base_value = self.eval(&base)?;
 
+        // Declared-type-aware `Optional` dispatch (#242): a present `Optional<T>`
+        // is stored flattened as `T`, so `opt.take()` would otherwise dispatch
+        // to `T`'s receiver. When the receiver's *static* type is optional and
+        // the member is `take`, route to the `Optional` receiver intrinsic —
+        // recovering the optionality the value model erased. Reached before the
+        // `Nil` short-circuit so `take()` on an absent optional still runs (and
+        // a `let` receiver is diagnosed as immutable through the write-back).
+        //
+        // Excluded: optional-chained receivers (`x?.take()`) — Swift looks
+        // `take` up on the *wrapped* type there, which is a member-lookup
+        // failure; letting it fall through reproduces that. Also required is a
+        // writable lvalue `place`: `take()` is mutating, so a subscript element
+        // (`a[0].take()`, no string-path place) or an rvalue must fall through
+        // rather than silently return a value without nil-ing the storage.
+        // Every other member falls through, so `opt?.count`, `opt.map { }`,
+        // etc. are untouched.
+        if method == "take"
+            && !member.is_optional_chain()
+            && self.receiver_is_static_optional(&base)
+        {
+            if let Some(place) = self.resolve_place(&base) {
+                if let Some(entry) = self.builtins.intrinsic(BuiltinReceiver::Optional, &method) {
+                    let args = self.eval_args(arg_nodes)?;
+                    let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                    return match (entry.func)(self, base_value, plain) {
+                        Ok(outcome) => {
+                            self.apply_method_outcome(outcome, entry.mutating, Some(place))
+                        }
+                        Err(err) => Err(Self::std_error_to_signal(err)),
+                    };
+                }
+            }
+        }
+
         // An optional-chained method call on an absent base (`none?.f()`)
         // nil-propagates. Type-qualified and implicit-member bases were
         // handled above, so a Nil here is a real absent value.

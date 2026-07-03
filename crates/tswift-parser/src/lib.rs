@@ -2951,6 +2951,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
+        // Set when an `?.` was just consumed, so the `MemberExpr` the following
+        // `.` builds is tagged as optional-chained. The `?` is otherwise
+        // dropped, but the runtime needs to distinguish `x?.take()` (member
+        // lookup on the wrapped type) from `x.take()` (Optional dispatch).
+        let mut optional_chain_pending = false;
         loop {
             match self.peek().kind {
                 // A user-declared postfix operator (`90.0°`), hugging its
@@ -3042,9 +3047,12 @@ impl<'a> Parser<'a> {
                     self.ast.append_child(node, expr);
                     expr = node;
                 }
-                // Optional chaining `expr?.member`: drop the `?`, let `.` handle it.
+                // Optional chaining `expr?.member`: drop the `?`, let `.` handle
+                // it, but remember the chain so the resulting `MemberExpr` is
+                // tagged (see `optional_chain_pending`).
                 TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
                     self.bump();
+                    optional_chain_pending = true;
                 }
                 // Optional-chained call `f?(args)` / subscript `a?[i]`: the `?`
                 // must hug both its expression and the `(`/`[` (Swift's
@@ -3178,6 +3186,10 @@ impl<'a> Parser<'a> {
                         self.ast
                             .add(NodeKind::MemberExpr, Some(name.text), dot.line, dot.col);
                     self.ast.append_child(member, expr);
+                    if optional_chain_pending {
+                        self.ast.add_modifier(member, "optional-chain");
+                        optional_chain_pending = false;
+                    }
                     expr = member;
                 }
                 _ => break,
@@ -4095,11 +4107,17 @@ mod tests {
         let init = first_stmt(&ast).children().nth(1).unwrap();
         assert_eq!(init.kind(), NodeKind::PostfixExpr);
         assert_eq!(init.text(), Some("!"));
-        // Optional chaining `a?.b` parses as member access on `a`.
+        // Optional chaining `a?.b` parses as member access on `a`, tagged with
+        // the `optional-chain` modifier so the runtime can distinguish it from
+        // a plain `a.b` (which carries no such modifier).
         let ast = ast_of("let w = a?.b");
         let chain = first_stmt(&ast).children().nth(1).unwrap();
         assert_eq!(chain.kind(), NodeKind::MemberExpr);
         assert_eq!(chain.text(), Some("b"));
+        assert!(chain.modifiers().iter().any(|m| m == "optional-chain"));
+        let ast = ast_of("let w = a.b");
+        let plain = first_stmt(&ast).children().nth(1).unwrap();
+        assert!(!plain.modifiers().iter().any(|m| m == "optional-chain"));
     }
 
     #[test]

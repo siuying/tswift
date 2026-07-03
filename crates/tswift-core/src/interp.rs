@@ -402,6 +402,27 @@ impl TypeTable {
     fn class_def(&self, name: &str) -> Option<&ClassDef> {
         self.classes.get(name)
     }
+    /// The written type of stored `field` on struct/class `type_name`, walking
+    /// the superclass chain for classes. `None` for an unknown type/field or a
+    /// field declared without an explicit type annotation.
+    fn field_declared_type(&self, type_name: &str, field: &str) -> Option<String> {
+        if let Some(def) = self.structs.get(type_name) {
+            return def
+                .stored
+                .iter()
+                .find(|p| p.name == field)
+                .and_then(|p| p.ty.clone());
+        }
+        let mut current = Some(type_name.to_string());
+        while let Some(cls) = current {
+            let def = self.classes.get(&cls)?;
+            if let Some(p) = def.stored.iter().find(|p| p.name == field) {
+                return p.ty.clone();
+            }
+            current = def.superclass.clone();
+        }
+        None
+    }
     fn struct_def_mut(&mut self, name: &str) -> Option<&mut StructDef> {
         self.structs.get_mut(name)
     }

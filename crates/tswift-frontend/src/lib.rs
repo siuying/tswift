@@ -244,6 +244,14 @@ impl<'a> Node<'a> {
         self.modifiers() & decode::OPTIONAL_CAST != 0
     }
 
+    /// For a `MemberExpr`, whether it was written with optional chaining
+    /// (`base?.member`). The parser drops the `?` but tags the node so the
+    /// runtime can distinguish `x?.take()` (member lookup on the wrapped type)
+    /// from `x.take()` (declared-type-aware `Optional` dispatch).
+    pub fn is_optional_chain(&self) -> bool {
+        self.modifiers() & decode::OPTIONAL_CHAIN != 0
+    }
+
     /// For a `break`/`continue` statement, its target loop label, if any.
     pub fn jump_label(&self) -> Option<String> {
         self.text()

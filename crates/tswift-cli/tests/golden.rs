@@ -698,3 +698,96 @@ fn operator_traps() {
         "expected 'unknown member' error, got: {err}"
     );
 }
+
+/// `Optional.take()` is mutating: a `let` receiver must be diagnosed as
+/// immutable, and calling it on a present optional resets the variable to nil
+/// (declared-type-aware dispatch, #242).
+#[test]
+fn optional_take_dispatch() {
+    // A `let` optional receiver for take() is an illegal mutation.
+    let (ok, _, err) = run_source(
+        "tswift_take_let_receiver.swift",
+        "let x: Int? = 5\nlet _ = x.take()\n",
+    );
+    assert!(
+        !ok,
+        "take() on a `let` optional must be an immutable-mutation error"
+    );
+    assert!(
+        err.contains("let") || err.contains("immutable") || err.contains("cannot assign"),
+        "expected immutable-`let` diagnostic, got: {err}"
+    );
+
+    // On a `var`, take() returns the present value and leaves the variable nil.
+    let (ok, out, err) = run_source(
+        "tswift_take_var_receiver.swift",
+        "var x: Int? = 5\nlet t: Int? = x.take()\nprint(t.debugDescription, x.debugDescription)\n",
+    );
+    assert!(ok, "take() on a `var` optional must succeed; stderr: {err}");
+    assert_eq!(out, "Optional(5) nil\n");
+
+    // take() does not exist on a non-optional receiver (no static optionality
+    // to recover), so it must not silently corrupt a plain value.
+    let (ok, _, err) = run_source(
+        "tswift_take_non_optional.swift",
+        "var x = 5\nlet _ = x.take()\n",
+    );
+    assert!(!ok, "take() on a non-optional must not resolve");
+    assert!(
+        err.contains("take") || err.contains("Int"),
+        "expected unresolved-member error, got: {err}"
+    );
+
+    // Optional chaining (`x?.take()`) must NOT route to Optional: Swift looks
+    // `take` up on the wrapped `Int` (a member-lookup failure). We reproduce
+    // that by falling through to wrapped-type dispatch.
+    let (ok, _, err) = run_source(
+        "tswift_take_optional_chain.swift",
+        "var x: Int? = 5\nlet _ = x?.take()\n",
+    );
+    assert!(
+        !ok,
+        "x?.take() must diagnose as a wrapped-type member lookup"
+    );
+    assert!(
+        err.contains("take") || err.contains("Int"),
+        "expected wrapped-type member-lookup error, got: {err}"
+    );
+
+    // Documented divergence: take() on a subscript element falls through
+    // (subscript places have no string write-back path), so it errors as a
+    // wrapped-type member lookup rather than niling the slot. See stdlib.mdx.
+    let (ok, _, err) = run_source(
+        "tswift_take_subscript.swift",
+        "var a: [Int?] = [5]\nlet _ = a[0].take()\n",
+    );
+    assert!(
+        !ok,
+        "a[0].take() currently falls through (documented divergence)"
+    );
+    assert!(
+        err.contains("take") || err.contains("Int"),
+        "expected fall-through member-lookup error, got: {err}"
+    );
+
+    // A struct-field receiver DOES route (declared field type recovered) and
+    // nils the stored slot.
+    let (ok, out, err) = run_source(
+        "tswift_take_struct_field.swift",
+        "struct Box { var v: Int? }\nvar b = Box(v: 7)\nlet t: Int? = b.v.take()\n\
+         print(t.debugDescription, b.v.debugDescription)\n",
+    );
+    assert!(ok, "struct-field take() must route; stderr: {err}");
+    assert_eq!(out, "Optional(7) nil\n");
+
+    // A `let` struct-field receiver is still an immutable-mutation error.
+    let (ok, _, err) = run_source(
+        "tswift_take_struct_field_let.swift",
+        "struct Box { var v: Int? }\nlet b = Box(v: 7)\nlet _ = b.v.take()\n",
+    );
+    assert!(!ok, "take() on a `let` struct field must be immutable");
+    assert!(
+        err.contains("let") || err.contains("immutable") || err.contains("cannot assign"),
+        "expected immutable diagnostic, got: {err}"
+    );
+}

@@ -222,6 +222,7 @@ Int.unsafelyUnwrapped
 Int.words
 Optional.flatMap
 Optional.map
+Optional.take
 Optional.unsafelyUnwrapped
 Range.clamped
 Range.contains
