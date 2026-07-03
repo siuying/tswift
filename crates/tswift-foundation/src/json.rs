@@ -1,6 +1,24 @@
-//! JSON-coding support for Foundation: `String.Encoding` statics and
-//! `String(data:encoding:)` initializer so fixtures can convert encoded `Data`
-//! back to a printable string.
+//! JSON-coding support for Foundation: `String.Encoding` statics,
+//! `String(data:encoding:)` initializer, and date-strategy static values for
+//! `JSONEncoder.DateEncodingStrategy` / `JSONDecoder.DateDecodingStrategy`.
+//!
+//! ## Date strategy resolution
+//!
+//! In real Swift, the strategy enums are nested types
+//! (`JSONEncoder.DateEncodingStrategy`). The runtime interpreter resolves
+//! static values via two-level `Type.member` paths; three-level chaining
+//! (`Type.Nested.member`) is not yet supported in the static-lookup path.
+//! We therefore register strategy constants directly on the encoder/decoder
+//! type:
+//!
+//! * `JSONEncoder.deferredToDate` / `JSONEncoder.secondsSince1970` /
+//!   `JSONEncoder.millisecondsSince1970` / `JSONEncoder.iso8601` → integer raw
+//!   values (0–3) read by `tswift-core::interp::coding::DateEncoding`.
+//! * Analogous `JSONDecoder.*` constants for the decode side.
+//!
+//! Fixture code uses `JSONEncoder.secondsSince1970` (explicit 2-level) rather
+//! than `.secondsSince1970` (leading-dot) to avoid ambiguity between the
+//! encoder and decoder namespaces.
 
 use tswift_core::{Arg, BuiltinParam, Interpreter, StdContext, StdError, StdResult, SwiftValue};
 
@@ -27,13 +45,28 @@ pub fn install(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("encoding", "String.Encoding"),
         ],
     );
+
+    // `JSONEncoder` date-encoding strategy constants.
+    // Raw values (0–3) match `DateEncoding` discriminants in coding.rs.
+    interp.register_static_value("JSONEncoder", "deferredToDate", SwiftValue::int(0));
+    interp.register_static_value("JSONEncoder", "secondsSince1970", SwiftValue::int(1));
+    interp.register_static_value("JSONEncoder", "millisecondsSince1970", SwiftValue::int(2));
+    interp.register_static_value("JSONEncoder", "iso8601", SwiftValue::int(3));
+
+    // `JSONDecoder` date-decoding strategy constants (same raw values).
+    interp.register_static_value("JSONDecoder", "deferredToDate", SwiftValue::int(0));
+    interp.register_static_value("JSONDecoder", "secondsSince1970", SwiftValue::int(1));
+    interp.register_static_value("JSONDecoder", "millisecondsSince1970", SwiftValue::int(2));
+    interp.register_static_value("JSONDecoder", "iso8601", SwiftValue::int(3));
 }
 
 /// Returns the member keys exposed by this module (for coverage tracking).
 pub fn registered_keys() -> Vec<String> {
     vec![
         "JSONDecoder.decode".to_string(),
+        "JSONDecoder.dateDecodingStrategy".to_string(),
         "JSONDecoder.init".to_string(),
+        "JSONEncoder.dateEncodingStrategy".to_string(),
         "JSONEncoder.encode".to_string(),
         "JSONEncoder.init".to_string(),
     ]
@@ -102,7 +135,9 @@ mod tests {
         let keys = registered_keys();
         assert!(keys.contains(&"JSONEncoder.init".to_string()));
         assert!(keys.contains(&"JSONEncoder.encode".to_string()));
+        assert!(keys.contains(&"JSONEncoder.dateEncodingStrategy".to_string()));
         assert!(keys.contains(&"JSONDecoder.init".to_string()));
         assert!(keys.contains(&"JSONDecoder.decode".to_string()));
+        assert!(keys.contains(&"JSONDecoder.dateDecodingStrategy".to_string()));
     }
 }

@@ -1,0 +1,14 @@
+ref
+86400.0
+s70
+86400.0
+ms70
+86400.0
+iso
+86400.0
+iso8601 malformed throws
+frac
+86400.0
+iso8601 missing Z throws
+iso8601 Feb 31 throws
+iso8601 non-leap Feb 29 throws

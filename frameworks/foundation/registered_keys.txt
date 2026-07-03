@@ -157,8 +157,10 @@ IndexSet.removeAll
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update
+JSONDecoder.dateDecodingStrategy
 JSONDecoder.decode
 JSONDecoder.init
+JSONEncoder.dateEncodingStrategy
 JSONEncoder.encode
 JSONEncoder.init
 Measurement.convert
