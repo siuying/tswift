@@ -187,8 +187,12 @@ IndexPath.hashValue
 IndexPath.init
 IndexPath.isEmpty
 IndexPath.startIndex
+IndexSet.==
 IndexSet.contains
 IndexSet.count
+IndexSet.debugDescription
+IndexSet.description
+IndexSet.filteredIndexSet
 IndexSet.first
 IndexSet.formIntersection
 IndexSet.formSymmetricDifference
@@ -201,10 +205,14 @@ IndexSet.integerGreaterThanOrEqualTo
 IndexSet.integerLessThan
 IndexSet.integerLessThanOrEqualTo
 IndexSet.intersection
+IndexSet.intersects
 IndexSet.isEmpty
 IndexSet.last
+IndexSet.makeIterator
+IndexSet.rangeView
 IndexSet.remove
 IndexSet.removeAll
+IndexSet.shift
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update

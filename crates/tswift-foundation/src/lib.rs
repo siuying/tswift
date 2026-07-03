@@ -182,6 +182,17 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::IndexSet, "first", index_set_first);
     interp.register_property(BuiltinReceiver::IndexSet, "last", index_set_last);
     interp.register_property(BuiltinReceiver::IndexSet, "hashValue", index_set_hash_value);
+    interp.register_property(
+        BuiltinReceiver::IndexSet,
+        "description",
+        index_set_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::IndexSet,
+        "debugDescription",
+        index_set_description,
+    );
+    interp.register_property(BuiltinReceiver::IndexSet, "rangeView", index_set_range_view);
     interp.register_intrinsic(
         BuiltinReceiver::IndexSet,
         "contains",
@@ -222,7 +233,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: index_set_update,
         },
     );
-    let non_mutating: [(&str, IntrinsicFn); 7] = [
+    let non_mutating: [(&str, IntrinsicFn); 11] = [
         ("union", index_set_union),
         ("intersection", index_set_intersection),
         ("symmetricDifference", index_set_symmetric_difference),
@@ -230,6 +241,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("integerLessThan", index_set_integer_less_than),
         ("integerGreaterThanOrEqualTo", index_set_integer_ge),
         ("integerLessThanOrEqualTo", index_set_integer_le),
+        ("==", index_set_equal),
+        ("intersects", index_set_intersects),
+        ("makeIterator", index_set_make_iterator),
+        ("filteredIndexSet", index_set_filtered),
     ];
     for (name, func) in non_mutating {
         interp.register_intrinsic(
@@ -241,13 +256,14 @@ pub fn install(interp: &mut Interpreter<'_>) {
             },
         );
     }
-    let mutating: [(&str, IntrinsicFn); 3] = [
+    let mutating: [(&str, IntrinsicFn); 4] = [
         ("formUnion", index_set_form_union),
         ("formIntersection", index_set_form_intersection),
         (
             "formSymmetricDifference",
             index_set_form_symmetric_difference,
         ),
+        ("shift", index_set_shift),
     ];
     for (name, func) in mutating {
         interp.register_intrinsic(
@@ -1834,6 +1850,158 @@ fn index_set_integer_le(
     Ok(Outcome {
         result,
         receiver: recv,
+    })
+}
+
+/// `description` / `debugDescription` — matches swift-corelibs-foundation:
+/// `"\(count) indexes"` unconditionally (even `1 indexes`).
+fn index_set_description(recv: SwiftValue) -> StdResult {
+    let count = index_set_values(&recv)?.len();
+    Ok(SwiftValue::Str(format!("{count} indexes")))
+}
+
+/// `rangeView` property — Array of maximal contiguous `Range<Int>` values.
+fn index_set_range_view(recv: SwiftValue) -> StdResult {
+    let values = index_set_values(&recv)?;
+    let mut ranges: Vec<SwiftValue> = Vec::new();
+    let mut iter = values.iter().copied();
+    if let Some(mut start) = iter.next() {
+        let mut end = start + 1;
+        for v in iter {
+            if v == end {
+                end += 1;
+            } else {
+                ranges.push(SwiftValue::Range {
+                    lo: start,
+                    hi: end,
+                    inclusive: false,
+                });
+                start = v;
+                end = v + 1;
+            }
+        }
+        ranges.push(SwiftValue::Range {
+            lo: start,
+            hi: end,
+            inclusive: false,
+        });
+    }
+    Ok(SwiftValue::Array(Rc::new(ranges)))
+}
+
+/// `==` — equality operator (registered so it appears in registered_keys).
+/// Struct equality already works through PartialEq; this provides the key.
+fn index_set_equal(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.== expects one IndexSet"));
+    }
+    let lhs = index_set_values(&recv)?;
+    let rhs = index_set_values(&args[0])?;
+    Ok(Outcome {
+        result: SwiftValue::Bool(lhs == rhs),
+        receiver: recv,
+    })
+}
+
+/// `intersects(integersIn:)` — true if any member falls in `range`.
+fn index_set_intersects(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.intersects expects one Range<Int>"));
+    }
+    let range_ints = ints_in_range(&args[0], "IndexSet.intersects(integersIn:)")?;
+    let values = index_set_values(&recv)?;
+    let found = range_ints.iter().any(|i| values.contains(i));
+    Ok(Outcome {
+        result: SwiftValue::Bool(found),
+        receiver: recv,
+    })
+}
+
+/// `makeIterator()` — returns the IndexSet itself; for-in uses
+/// `materialize_builtin_sequence` which handles IndexSet structs.
+fn index_set_make_iterator(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("IndexSet.makeIterator expects no arguments"));
+    }
+    let result = recv.clone();
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `filteredIndexSet(includeInteger:)` — filter members with a closure.
+fn index_set_filtered(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("IndexSet.filteredIndexSet expects one closure"));
+    }
+    let id = match &args[0] {
+        SwiftValue::Closure(id) => *id,
+        _ => {
+            return Err(type_error(
+                "IndexSet.filteredIndexSet expects a closure argument",
+            ))
+        }
+    };
+    let values = index_set_values(&recv)?;
+    let mut result: BTreeSet<i128> = BTreeSet::new();
+    for v in values {
+        if ctx
+            .call_closure(id, vec![SwiftValue::int(v)])?
+            .as_bool()
+            .unwrap_or(false)
+        {
+            result.insert(v);
+        }
+    }
+    Ok(Outcome {
+        result: index_set_value(result),
+        receiver: recv,
+    })
+}
+
+/// `shift(startingAt:by:)` — elements >= `start` are shifted by `delta`.
+/// Negative delta may produce collisions with existing elements; Foundation
+/// removes colliding indices (it does NOT crash for negative delta). We
+/// simply rebuild the BTreeSet with all shifted values, letting insertion
+/// order resolve duplicates (last write wins via BTreeSet semantics, but
+/// since we process in order the shifted value simply lands in the set).
+fn index_set_shift(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 2 {
+        return Err(type_error(
+            "IndexSet.shift expects (startingAt:, by:) arguments",
+        ));
+    }
+    let start = int_arg(&args[0], "IndexSet.shift startingAt")?;
+    let delta = int_arg(&args[1], "IndexSet.shift by")?;
+    let values = index_set_values(&recv)?;
+    let result: BTreeSet<i128> = values
+        .into_iter()
+        .map(|v| if v >= start { v + delta } else { v })
+        .collect();
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: index_set_value(result),
     })
 }
 

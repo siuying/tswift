@@ -855,14 +855,26 @@ impl<'w> Interpreter<'w> {
                     None => self.eval_args(arg_nodes)?,
                 };
                 // `IndexPath`/`IndexSet` intrinsics take positional arguments.
-                // The sole exception is `IndexSet.update(with:)`, whose one
-                // argument is labelled `with:` (and requires that label).
+                // Exceptions: a handful of IndexSet methods are label-sensitive.
                 if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
                     let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
-                    let labels_valid = args.iter().all(|arg| match arg.label.as_deref() {
-                        Some("with") => is_update,
-                        Some(_) => false,
-                        None => !is_update,
+                    // Methods that carry specific argument labels:
+                    let is_intersects = kind == BuiltinReceiver::IndexSet && method == "intersects";
+                    let is_shift = kind == BuiltinReceiver::IndexSet && method == "shift";
+                    let is_filtered =
+                        kind == BuiltinReceiver::IndexSet && method == "filteredIndexSet";
+                    let labels_valid = args.iter().enumerate().all(|(i, arg)| {
+                        match arg.label.as_deref() {
+                            Some("with") => is_update,
+                            Some("integersIn") => is_intersects,
+                            Some("startingAt") => is_shift && i == 0,
+                            Some("by") => is_shift && i == 1,
+                            Some("includeInteger") => is_filtered,
+                            Some(_) => false,
+                            // Trailing-closure syntax passes filteredIndexSet's
+                            // closure without a label; allow unlabeled for it.
+                            None => !is_update && !is_intersects && !is_shift,
+                        }
                     });
                     if !labels_valid {
                         return Err(EvalError::Type(format!(
