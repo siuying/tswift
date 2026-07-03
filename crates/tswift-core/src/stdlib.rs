@@ -180,6 +180,18 @@ pub enum BuiltinReceiver {
     /// `ContiguousArray` — semantically an `Array` in this runtime;
     /// registered separately so `ContiguousArray.*` keys appear in the registry.
     ContiguousArray,
+    /// `ClosedRange` — inclusive `a...b` range; represented as
+    /// `SwiftValue::Range { inclusive: true }` at runtime.
+    ClosedRange,
+    /// `ReversedCollection` — lazy reversed view over a base collection;
+    /// represented as a `Struct { type_name: "ReversedCollection" }`.
+    ReversedCollection,
+    /// `CollectionOfOne` — a single-element collection;
+    /// represented as a `Struct { type_name: "CollectionOfOne" }`.
+    CollectionOfOne,
+    /// `EmptyCollection` — an always-empty typed collection;
+    /// represented as a `Struct { type_name: "EmptyCollection" }`.
+    EmptyCollection,
 }
 
 impl BuiltinReceiver {
@@ -214,6 +226,10 @@ impl BuiltinReceiver {
             BuiltinReceiver::Substring => "Substring",
             BuiltinReceiver::ArraySlice => "ArraySlice",
             BuiltinReceiver::ContiguousArray => "ContiguousArray",
+            BuiltinReceiver::ClosedRange => "ClosedRange",
+            BuiltinReceiver::ReversedCollection => "ReversedCollection",
+            BuiltinReceiver::CollectionOfOne => "CollectionOfOne",
+            BuiltinReceiver::EmptyCollection => "EmptyCollection",
         }
     }
 
@@ -248,6 +264,10 @@ impl BuiltinReceiver {
             "Substring" => BuiltinReceiver::Substring,
             "ArraySlice" => BuiltinReceiver::ArraySlice,
             "ContiguousArray" => BuiltinReceiver::ContiguousArray,
+            "ClosedRange" => BuiltinReceiver::ClosedRange,
+            "ReversedCollection" => BuiltinReceiver::ReversedCollection,
+            "CollectionOfOne" => BuiltinReceiver::CollectionOfOne,
+            "EmptyCollection" => BuiltinReceiver::EmptyCollection,
             _ => return None,
         })
     }
@@ -264,6 +284,9 @@ impl BuiltinReceiver {
             SwiftValue::Int(_) => BuiltinReceiver::Int,
             SwiftValue::Double(_) => BuiltinReceiver::Double,
             SwiftValue::Bool(_) => BuiltinReceiver::Bool,
+            SwiftValue::Range {
+                inclusive: true, ..
+            } => BuiltinReceiver::ClosedRange,
             SwiftValue::Range { .. } => BuiltinReceiver::Range,
             SwiftValue::Nil => BuiltinReceiver::Optional,
             SwiftValue::Struct(obj) if obj.type_name == "Data" => BuiltinReceiver::Data,
@@ -294,6 +317,15 @@ impl BuiltinReceiver {
             }
             SwiftValue::Struct(obj) if obj.type_name == "Measurement" => {
                 BuiltinReceiver::Measurement
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "ReversedCollection" => {
+                BuiltinReceiver::ReversedCollection
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "CollectionOfOne" => {
+                BuiltinReceiver::CollectionOfOne
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "EmptyCollection" => {
+                BuiltinReceiver::EmptyCollection
             }
             _ => return None,
         })
@@ -448,6 +480,22 @@ pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue
                 None
             }
         }
+        // ReversedCollection — iterate the base in reverse order.
+        SwiftValue::Struct(obj) if obj.type_name == "ReversedCollection" => {
+            if let Some(SwiftValue::Array(items)) = obj.get("_base") {
+                let mut v = items.as_ref().clone();
+                v.reverse();
+                Some(v)
+            } else {
+                None
+            }
+        }
+        // CollectionOfOne — single element.
+        SwiftValue::Struct(obj) if obj.type_name == "CollectionOfOne" => {
+            obj.get("_element").map(|e| vec![e.clone()])
+        }
+        // EmptyCollection — no elements.
+        SwiftValue::Struct(obj) if obj.type_name == "EmptyCollection" => Some(vec![]),
         _ => None,
     }
 }

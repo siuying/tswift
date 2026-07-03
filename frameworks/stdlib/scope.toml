@@ -38,6 +38,9 @@ Bool = ["&&", "||", "=="]
 Set = ["=="]
 Dictionary = ["=="]
 Range = ["=="]
+ClosedRange = ["==", "<"]
+ReversedCollection = ["==", "<"]
+EmptyCollection = ["=="]
 Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue"]
 # Floating-point type constants resolved directly by the interpreter
 # (interp/storage.rs `double_type_constant`), plus the `+`/`+=`/`==` operators

@@ -254,9 +254,8 @@ fn extreme(
 
 // ---- shape transforms ------------------------------------------------------
 
-fn reversed(_c: &mut dyn StdContext, mut items: Vec<SwiftValue>, _a: Vec<Arg>) -> StdResult {
-    items.reverse();
-    Ok(array(items))
+fn reversed(_c: &mut dyn StdContext, items: Vec<SwiftValue>, _a: Vec<Arg>) -> StdResult {
+    Ok(crate::reversedcollection::make_reversed_collection(items))
 }
 
 fn enumerated(_c: &mut dyn StdContext, items: Vec<SwiftValue>, _a: Vec<Arg>) -> StdResult {
@@ -622,7 +621,7 @@ mod tests {
         let mut c = Calc;
         assert_eq!(
             reversed(&mut c, ints(&[1, 2, 3]), vec![]).unwrap(),
-            array(ints(&[3, 2, 1]))
+            crate::reversedcollection::make_reversed_collection(ints(&[1, 2, 3]))
         );
         assert_eq!(
             prefix(

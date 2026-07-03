@@ -352,3 +352,61 @@ fn harness_detects_mismatch() {
     let actual = run_cli(&swift);
     assert_ne!(actual, "this is not the expected output\n");
 }
+
+/// Trap-path tests for new stdlib collection types.
+/// These exit with a non-zero status, so they cannot use the golden-fixture
+/// harness (which asserts success). Inline `run_source` is used instead.
+#[test]
+fn small_collection_traps() {
+    // --- ClosedRange: lowerBound > upperBound traps ---
+    let (ok, _, err) = run_source(
+        "tswift_closedrange_inverted.swift",
+        "let _ = 5...1\nprint(\"no trap\")\n",
+    );
+    assert!(!ok, "inverted ClosedRange must trap");
+    assert!(
+        err.contains("upperBound < lowerBound") || err.contains("ClosedRange(5...1)"),
+        "expected bound-order message, got: {err}"
+    );
+
+    // --- CollectionOfOne: subscript[0] succeeds ---
+    let (ok, out, _) = run_source(
+        "tswift_coo_subscript_ok.swift",
+        "let c = CollectionOfOne(99)\nprint(c[0])\n",
+    );
+    assert!(ok, "CollectionOfOne[0] must succeed");
+    assert_eq!(out.trim(), "99");
+
+    // --- CollectionOfOne: subscript[1] traps ---
+    let (ok, _, err) = run_source(
+        "tswift_coo_subscript_oob.swift",
+        "let c = CollectionOfOne(99)\nprint(c[1])\n",
+    );
+    assert!(!ok, "CollectionOfOne[1] must trap");
+    assert!(
+        err.contains("out of range"),
+        "expected out-of-range message, got: {err}"
+    );
+
+    // --- CollectionOfOne: negative subscript traps (subscript_index returns "negative index") ---
+    let (ok, _, err) = run_source(
+        "tswift_coo_subscript_neg.swift",
+        "let c = CollectionOfOne(99)\nprint(c[-1])\n",
+    );
+    assert!(!ok, "CollectionOfOne[-1] must trap");
+    assert!(
+        err.contains("negative index") || err.contains("out of range"),
+        "expected index-error message, got: {err}"
+    );
+
+    // --- ReversedCollection.distance: out-of-bounds `from` traps ---
+    let (ok, _, err) = run_source(
+        "tswift_rc_distance_oob.swift",
+        "let r = [1, 2, 3].reversed()\nprint(r.distance(from: 5, to: 2))\n",
+    );
+    assert!(!ok, "ReversedCollection.distance OOB must trap");
+    assert!(
+        err.contains("out of bounds"),
+        "expected out-of-bounds message, got: {err}"
+    );
+}

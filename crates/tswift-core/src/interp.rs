@@ -4064,6 +4064,7 @@ impl<'w> Interpreter<'w> {
         t.insert("ContiguousArray", Self::ctor_conversion);
         t.insert("ArraySlice", Self::ctor_conversion);
         t.insert("CollectionOfOne", Self::ctor_conversion);
+        t.insert("EmptyCollection", Self::ctor_empty_collection);
         // Scalar conversion initializers (one argument each).
         for name in [
             "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32",
@@ -4131,6 +4132,18 @@ impl<'w> Interpreter<'w> {
             return Ok(Some(SwiftValue::Dict(Rc::new(Vec::new()))));
         }
         interp.build_dictionary(args)
+    }
+
+    /// `EmptyCollection<T>()` — zero-argument ctor returning the empty-collection struct.
+    fn ctor_empty_collection(
+        _interp: &mut Interpreter,
+        _name: &str,
+        _args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        Ok(Some(SwiftValue::Struct(StdRc::new(StructObj {
+            type_name: "EmptyCollection".into(),
+            fields: vec![],
+        }))))
     }
 
     /// Single-argument scalar/sequence conversion initializers (integer widths,
@@ -4353,8 +4366,11 @@ impl<'w> Interpreter<'w> {
                     end: count,
                 }
             })),
-            // `CollectionOfOne(x)` is a one-element array.
-            "CollectionOfOne" => Ok(Some(SwiftValue::Array(StdRc::new(vec![value.clone()])))),
+            // `CollectionOfOne(x)` wraps a single element.
+            "CollectionOfOne" => Ok(Some(SwiftValue::Struct(StdRc::new(StructObj {
+                type_name: "CollectionOfOne".into(),
+                fields: vec![("_element".into(), value.clone())],
+            })))),
             _ => Ok(None),
         }
     }
@@ -4915,6 +4931,15 @@ fn is_builtin_iterable(value: &SwiftValue) -> bool {
         | SwiftValue::Set(_) => true,
         // `Data` iterates as its byte elements.
         SwiftValue::Struct(obj) if obj.type_name == "Data" => true,
+        // Small collection types.
+        SwiftValue::Struct(obj)
+            if matches!(
+                obj.type_name.as_str(),
+                "ReversedCollection" | "CollectionOfOne" | "EmptyCollection"
+            ) =>
+        {
+            true
+        }
         _ => false,
     }
 }

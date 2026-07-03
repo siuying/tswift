@@ -715,6 +715,19 @@ impl<'w> Interpreter<'w> {
                             .ok_or_else(|| trap(format!("index {i} out of range")));
                     }
                 }
+                // `CollectionOfOne[i]` — index 0 returns the element; anything else traps.
+                if type_name == "CollectionOfOne" {
+                    let i = subscript_index(indices)?;
+                    if i != 0 {
+                        return Err(trap(format!(
+                            "CollectionOfOne index {i} out of range: valid index is 0"
+                        )));
+                    }
+                    return obj
+                        .get("_element")
+                        .cloned()
+                        .ok_or_else(|| trap("CollectionOfOne missing _element".into()));
+                }
                 // Select the overload whose arity matches the index count.
                 let getter = self.types.struct_def(&type_name).and_then(|d| {
                     d.subscripts

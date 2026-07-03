@@ -166,11 +166,19 @@ fn int_binary(op: &str, a: IntValue, b: IntValue) -> Result<SwiftValue, String> 
             })
         }
         "..." => {
+            if a.raw > b.raw {
+                return Err(format!(
+                    "Cannot form Range with upperBound < lowerBound: \
+                     ClosedRange({lo}...{hi}) requires {lo} <= {hi}",
+                    lo = a.raw,
+                    hi = b.raw,
+                ));
+            }
             return Ok(SwiftValue::Range {
                 lo: a.raw,
                 hi: b.raw,
                 inclusive: true,
-            })
+            });
         }
         _ => {}
     }

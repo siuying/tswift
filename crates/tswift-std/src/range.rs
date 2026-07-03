@@ -7,49 +7,43 @@ use tswift_core::{
 
 /// Register the range intrinsics of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
-    interp.register_property(BuiltinReceiver::Range, "lowerBound", lower_bound);
-    interp.register_property(BuiltinReceiver::Range, "upperBound", upper_bound);
-    interp.register_property(BuiltinReceiver::Range, "count", count);
-    interp.register_property(BuiltinReceiver::Range, "isEmpty", is_empty);
-    interp.register_property(BuiltinReceiver::Range, "description", description);
-    interp.register_property(BuiltinReceiver::Range, "debugDescription", description);
-    interp.register_property(BuiltinReceiver::Range, "startIndex", lower_bound);
-    interp.register_property(BuiltinReceiver::Range, "endIndex", upper_bound);
-    interp.register_property(BuiltinReceiver::Range, "indices", indices);
-    interp.register_property(BuiltinReceiver::Range, "hashValue", hash_value);
+    install_for(interp, BuiltinReceiver::Range);
+    install_for(interp, BuiltinReceiver::ClosedRange);
+}
 
-    interp.register_intrinsic(
-        BuiltinReceiver::Range,
-        "contains",
-        MethodEntry {
-            mutating: false,
-            func: contains,
-        },
-    );
-    interp.register_intrinsic(
-        BuiltinReceiver::Range,
-        "clamped",
-        MethodEntry {
-            mutating: false,
-            func: clamped,
-        },
-    );
-    interp.register_intrinsic(
-        BuiltinReceiver::Range,
-        "overlaps",
-        MethodEntry {
-            mutating: false,
-            func: overlaps,
-        },
-    );
-    interp.register_intrinsic(
-        BuiltinReceiver::Range,
-        "distance",
-        MethodEntry {
-            mutating: false,
-            func: distance,
-        },
-    );
+/// Register range intrinsics for the given receiver (Range or ClosedRange).
+pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
+    let nm = |interp: &mut Interpreter<'_>, name: &str, func: tswift_core::IntrinsicFn| {
+        interp.register_intrinsic(
+            recv,
+            name,
+            MethodEntry {
+                mutating: false,
+                func,
+            },
+        );
+    };
+
+    interp.register_property(recv, "lowerBound", lower_bound);
+    interp.register_property(recv, "upperBound", upper_bound);
+    interp.register_property(recv, "count", count);
+    interp.register_property(recv, "isEmpty", is_empty);
+    interp.register_property(recv, "description", description);
+    interp.register_property(recv, "debugDescription", description);
+    interp.register_property(recv, "startIndex", lower_bound);
+    interp.register_property(recv, "endIndex", upper_bound);
+    interp.register_property(recv, "indices", indices);
+    interp.register_property(recv, "hashValue", hash_value);
+    interp.register_property(recv, "first", first);
+    interp.register_property(recv, "last", last);
+    interp.register_property(recv, "min", range_min);
+    interp.register_property(recv, "max", range_max);
+
+    nm(interp, "contains", contains);
+    nm(interp, "clamped", clamped);
+    nm(interp, "overlaps", overlaps);
+    nm(interp, "distance", distance);
+    nm(interp, "index", index);
 }
 
 /// Decompose a range value into `(lo, hi, inclusive)`.
@@ -187,6 +181,71 @@ fn overlaps(
     let inside = lo < end && olo < oend && lo < oend && olo < end;
     Ok(Outcome {
         result: SwiftValue::Bool(inside),
+        receiver: recv,
+    })
+}
+
+/// `Range.first` — lowest element, or nil for an empty range.
+fn first(v: SwiftValue) -> StdResult {
+    let (lo, hi, inclusive) = parts(&v)?;
+    if element_count(lo, hi, inclusive) == 0 {
+        Ok(SwiftValue::Nil)
+    } else {
+        Ok(SwiftValue::int(lo))
+    }
+}
+
+/// `Range.last` / `ClosedRange.last` — highest element, or nil for an empty range.
+fn last(v: SwiftValue) -> StdResult {
+    let (lo, hi, inclusive) = parts(&v)?;
+    let cnt = element_count(lo, hi, inclusive);
+    if cnt == 0 {
+        Ok(SwiftValue::Nil)
+    } else if inclusive {
+        Ok(SwiftValue::int(hi))
+    } else {
+        Ok(SwiftValue::int(hi - 1))
+    }
+}
+
+/// `Range.min()` — same as `first` for integer ranges.
+fn range_min(v: SwiftValue) -> StdResult {
+    first(v)
+}
+
+/// `Range.max()` — same as `last` for integer ranges.
+fn range_max(v: SwiftValue) -> StdResult {
+    last(v)
+}
+
+/// `Range.index(_:offsetBy:)` / `ClosedRange.index(_:offsetBy:)` — advance an integer index.
+fn index(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let (lo, hi, inclusive) = parts(&recv)?;
+    let end = if inclusive { hi + 1 } else { hi };
+    let base = match args.first() {
+        Some(SwiftValue::Int(i)) => i.raw,
+        _ => {
+            return Err(StdError::Error(EvalError::Type(
+                "index(_:offsetBy:) expects integer base index".into(),
+            )))
+        }
+    };
+    let offset = match args.get(1) {
+        Some(SwiftValue::Int(i)) => i.raw,
+        _ => 0,
+    };
+    let result = base + offset;
+    if result < lo || result > end {
+        return Err(StdError::Error(EvalError::Trap(
+            "index out of range".into(),
+        )));
+    }
+    Ok(Outcome {
+        result: SwiftValue::int(result),
         receiver: recv,
     })
 }

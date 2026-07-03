@@ -17,9 +17,11 @@ mod dictionary;
 mod free;
 mod optional;
 mod range;
+mod reversedcollection;
 mod scalar;
 mod sequence;
 mod set;
+mod smallcollections;
 mod string;
 mod substring;
 
@@ -36,8 +38,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
     scalar::install(interp);
     range::install(interp);
     optional::install(interp);
+    reversedcollection::install(interp);
     sequence::install(interp);
     set::install(interp);
+    smallcollections::install(interp);
     string::install(interp);
     substring::install(interp);
 }
