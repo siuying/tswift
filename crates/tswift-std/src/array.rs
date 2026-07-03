@@ -318,20 +318,44 @@ fn remove_at(
     })
 }
 
-/// `Array.removeLast()` — remove and return the final element.
+/// `Array.removeLast()` / `Array.removeLast(_ k: Int)` — remove the last
+/// element(s). With no argument, removes and returns the final element.
+/// With an integer argument, removes that many elements from the end (void).
 fn remove_last(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
-    _a: Vec<SwiftValue>,
+    args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
-    let removed = Rc::make_mut(&mut v)
-        .pop()
-        .ok_or_else(|| StdError::Error(EvalError::Trap("removeLast on empty array".into())))?;
-    Ok(Outcome {
-        result: removed,
-        receiver: SwiftValue::Array(v),
-    })
+    match args.first() {
+        Some(SwiftValue::Int(k)) => {
+            let k = k.raw as usize;
+            let len = v.len();
+            if k > len {
+                return Err(StdError::Error(EvalError::Trap(format!(
+                    "removeLast({k}) exceeds array count ({len})"
+                ))));
+            }
+            Rc::make_mut(&mut v).truncate(len - k);
+            Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: SwiftValue::Array(v),
+            })
+        }
+        Some(other) => Err(StdError::Error(EvalError::Type(format!(
+            "removeLast(_:) expects an Int argument, got {}",
+            other.type_name()
+        )))),
+        None => {
+            let removed = Rc::make_mut(&mut v).pop().ok_or_else(|| {
+                StdError::Error(EvalError::Trap("removeLast on empty array".into()))
+            })?;
+            Ok(Outcome {
+                result: removed,
+                receiver: SwiftValue::Array(v),
+            })
+        }
+    }
 }
 
 /// `Array.popLast()` — remove and return the last element as `Optional`, or `nil` if empty.
@@ -366,23 +390,47 @@ fn pop_first(
     })
 }
 
-/// `Array.removeFirst()` — remove and return the first element.
+/// `Array.removeFirst()` / `Array.removeFirst(_ k: Int)` — remove the first
+/// element(s). With no argument, removes and returns the first element.
+/// With an integer argument, removes that many elements from the front (void).
 fn remove_first(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
-    _a: Vec<SwiftValue>,
+    args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let mut v = items(recv)?;
-    if v.is_empty() {
-        return Err(StdError::Error(EvalError::Trap(
-            "removeFirst on empty array".into(),
-        )));
+    match args.first() {
+        Some(SwiftValue::Int(k)) => {
+            let k = k.raw as usize;
+            let len = v.len();
+            if k > len {
+                return Err(StdError::Error(EvalError::Trap(format!(
+                    "removeFirst({k}) exceeds array count ({len})"
+                ))));
+            }
+            Rc::make_mut(&mut v).drain(0..k);
+            Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: SwiftValue::Array(v),
+            })
+        }
+        Some(other) => Err(StdError::Error(EvalError::Type(format!(
+            "removeFirst(_:) expects an Int argument, got {}",
+            other.type_name()
+        )))),
+        None => {
+            if v.is_empty() {
+                return Err(StdError::Error(EvalError::Trap(
+                    "removeFirst on empty array".into(),
+                )));
+            }
+            let removed = Rc::make_mut(&mut v).remove(0);
+            Ok(Outcome {
+                result: removed,
+                receiver: SwiftValue::Array(v),
+            })
+        }
     }
-    let removed = Rc::make_mut(&mut v).remove(0);
-    Ok(Outcome {
-        result: removed,
-        receiver: SwiftValue::Array(v),
-    })
 }
 
 /// `Array.removeAll(keepingCapacity:)` empties the array; the
@@ -855,5 +903,77 @@ mod tests {
         let mut ctx = MockCtx { sink: Vec::new() };
         let err = append(&mut ctx, SwiftValue::int(1), vec![SwiftValue::int(2)]).unwrap_err();
         assert!(matches!(err, StdError::Error(_)));
+    }
+
+    fn arr(xs: &[i128]) -> SwiftValue {
+        SwiftValue::Array(Rc::new(xs.iter().map(|&x| SwiftValue::int(x)).collect()))
+    }
+
+    #[test]
+    fn remove_first_non_int_arg_is_type_error() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        // Bool argument — must be a Type error, not silent no-arg behaviour.
+        let err =
+            remove_first(&mut ctx, arr(&[1, 2, 3]), vec![SwiftValue::Bool(true)]).unwrap_err();
+        assert!(
+            matches!(err, StdError::Error(EvalError::Type(_))),
+            "expected Type error, got {err:?}"
+        );
+        // String argument
+        let err =
+            remove_first(&mut ctx, arr(&[1, 2, 3]), vec![SwiftValue::Str("2".into())]).unwrap_err();
+        assert!(matches!(err, StdError::Error(EvalError::Type(_))));
+        // Double argument
+        let err =
+            remove_first(&mut ctx, arr(&[1, 2, 3]), vec![SwiftValue::Double(2.0)]).unwrap_err();
+        assert!(matches!(err, StdError::Error(EvalError::Type(_))));
+    }
+
+    #[test]
+    fn remove_last_non_int_arg_is_type_error() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        // Bool argument
+        let err =
+            remove_last(&mut ctx, arr(&[1, 2, 3]), vec![SwiftValue::Bool(false)]).unwrap_err();
+        assert!(
+            matches!(err, StdError::Error(EvalError::Type(_))),
+            "expected Type error, got {err:?}"
+        );
+        // String argument
+        let err =
+            remove_last(&mut ctx, arr(&[1, 2, 3]), vec![SwiftValue::Str("1".into())]).unwrap_err();
+        assert!(matches!(err, StdError::Error(EvalError::Type(_))));
+    }
+
+    #[test]
+    fn remove_first_int_arg_removes_n_elements() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let out = remove_first(&mut ctx, arr(&[1, 2, 3, 4, 5]), vec![SwiftValue::int(2)]).unwrap();
+        assert_eq!(out.result, SwiftValue::Void);
+        assert_eq!(out.receiver, arr(&[3, 4, 5]));
+    }
+
+    #[test]
+    fn remove_last_int_arg_removes_n_elements() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let out = remove_last(&mut ctx, arr(&[1, 2, 3, 4, 5]), vec![SwiftValue::int(2)]).unwrap();
+        assert_eq!(out.result, SwiftValue::Void);
+        assert_eq!(out.receiver, arr(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn remove_first_no_arg_returns_element() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let out = remove_first(&mut ctx, arr(&[10, 20, 30]), vec![]).unwrap();
+        assert_eq!(out.result, SwiftValue::int(10));
+        assert_eq!(out.receiver, arr(&[20, 30]));
+    }
+
+    #[test]
+    fn remove_last_no_arg_returns_element() {
+        let mut ctx = MockCtx { sink: Vec::new() };
+        let out = remove_last(&mut ctx, arr(&[10, 20, 30]), vec![]).unwrap();
+        assert_eq!(out.result, SwiftValue::int(30));
+        assert_eq!(out.receiver, arr(&[10, 20]));
     }
 }

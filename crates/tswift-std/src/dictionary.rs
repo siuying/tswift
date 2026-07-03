@@ -423,7 +423,7 @@ mod tests {
     fn description_renders_pairs() {
         assert_eq!(
             description(dict(&[("a", 1), ("b", 2)])).unwrap(),
-            SwiftValue::Str("[a: 1, b: 2]".into())
+            SwiftValue::Str("[\"a\": 1, \"b\": 2]".into())
         );
         assert_eq!(
             description(SwiftValue::Dict(Rc::new(Vec::new()))).unwrap(),

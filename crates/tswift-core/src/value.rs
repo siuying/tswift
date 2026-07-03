@@ -439,6 +439,62 @@ impl PartialEq for SwiftValue {
     }
 }
 
+/// Escape a string for display inside a Swift collection.
+///
+/// Rules (matches Swift's `debugDescription` / collection-element semantics):
+/// - `\` → `\\`
+/// - `"` → `\"`
+/// - NUL  (U+00) → `\0`
+/// - TAB  (U+09) → `\t`
+/// - LF   (U+0A) → `\n`
+/// - CR   (U+0D) → `\r`
+/// - Other C0 control chars (U+01-U+08, U+0B-U+0C, U+0E-U+1F) and DEL (U+7F)
+///   → `\u{XX}` with lowercase two-digit minimum hex.
+/// All other chars are written as-is (including multibyte UTF-8).
+fn escape_string_for_collection(s: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    for ch in s.chars() {
+        match ch {
+            '\\' => write!(f, "\\\\")?,
+            '"' => write!(f, "\\\"")?,
+            '\0' => write!(f, "\\0")?,
+            '\t' => write!(f, "\\t")?,
+            '\n' => write!(f, "\\n")?,
+            '\r' => write!(f, "\\r")?,
+            c if (c as u32) <= 0x08
+                || c as u32 == 0x0B
+                || c as u32 == 0x0C
+                || (0x0E..=0x1F).contains(&(c as u32))
+                || c as u32 == 0x7F =>
+            {
+                write!(f, "\\u{{{:02X}}}", c as u32)?
+            }
+            c => write!(f, "{c}")?,
+        }
+    }
+    Ok(())
+}
+
+/// Render a value as a *collection element* — strings/substrings get quoted
+/// and their contents escaped (Swift `debugDescription` semantics); other
+/// types use their normal `Display`.
+fn fmt_element(v: &SwiftValue, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match v {
+        SwiftValue::Str(s) => {
+            write!(f, "\"")?;
+            escape_string_for_collection(s, f)?;
+            write!(f, "\"")
+        }
+        SwiftValue::Substring { base, start, end } => {
+            let gs = crate::graphemes(base);
+            let text = gs[*start..*end].concat();
+            write!(f, "\"")?;
+            escape_string_for_collection(&text, f)?;
+            write!(f, "\"")
+        }
+        other => write!(f, "{other}"),
+    }
+}
+
 impl fmt::Display for SwiftValue {
     /// Renders a value the way Swift's `print` would for these scalar cases.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -461,7 +517,7 @@ impl fmt::Display for SwiftValue {
                     if let Some(Some(label)) = labels.get(i) {
                         write!(f, "{label}: ")?;
                     }
-                    write!(f, "{item}")?;
+                    fmt_element(item, f)?;
                 }
                 write!(f, ")")
             }
@@ -471,7 +527,7 @@ impl fmt::Display for SwiftValue {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{item}")?;
+                    fmt_element(item, f)?;
                 }
                 write!(f, "]")
             }
@@ -481,7 +537,7 @@ impl fmt::Display for SwiftValue {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{item}")?;
+                    fmt_element(item, f)?;
                 }
                 write!(f, "]")
             }
@@ -494,7 +550,9 @@ impl fmt::Display for SwiftValue {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{k}: {v}")?;
+                    fmt_element(k, f)?;
+                    write!(f, ": ")?;
+                    fmt_element(v, f)?;
                 }
                 write!(f, "]")
             }
@@ -504,7 +562,7 @@ impl fmt::Display for SwiftValue {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{item}")?;
+                    fmt_element(item, f)?;
                 }
                 write!(f, "]")
             }
@@ -623,5 +681,71 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Helper: wrap a single value in an Array and Display it.
+    fn element_display(v: &SwiftValue) -> String {
+        format!("{}", SwiftValue::Array(std::rc::Rc::new(vec![v.clone()])))
+    }
+
+    #[test]
+    fn string_escaping_in_collections() {
+        // Double-quote inside string
+        assert_eq!(
+            element_display(&SwiftValue::Str(r#"a"b"#.into())),
+            r#"["a\"b"]"#
+        );
+        // Backslash inside string
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\\b".into())),
+            r#"["a\\b"]"#
+        );
+        // Newline
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\nb".into())),
+            r#"["a\nb"]"#
+        );
+        // Tab
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\tb".into())),
+            r#"["a\tb"]"#
+        );
+        // Carriage return
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\rb".into())),
+            r#"["a\rb"]"#
+        );
+        // NUL
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\0b".into())),
+            r#"["a\0b"]"#
+        );
+        // Control char U+01
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\x01b".into())),
+            "[\"a\\u{01}b\"]"
+        );
+        // Control char U+0B (vertical tab) — uppercase hex
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\x0Bb".into())),
+            "[\"a\\u{0B}b\"]"
+        );
+        // DEL U+7F — uppercase hex
+        assert_eq!(
+            element_display(&SwiftValue::Str("a\x7Fb".into())),
+            "[\"a\\u{7F}b\"]"
+        );
+        // Normal ASCII — no escaping
+        assert_eq!(
+            element_display(&SwiftValue::Str("hello".into())),
+            r#"["hello"]"#
+        );
+        // Unicode (U+00E9 = 'é') — non-ASCII printable, no escaping needed
+        assert_eq!(
+            element_display(&SwiftValue::Str("caf\u{00E9}".into())),
+            "[\"caf\u{00e9}\"]"
+        );
+        // Empty string
+        assert_eq!(element_display(&SwiftValue::Str(String::new())), r#"[""]"#);
     }
 }

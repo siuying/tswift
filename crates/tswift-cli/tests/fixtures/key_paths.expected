@@ -2,8 +2,8 @@ Ada
 London
 40
 Paris
-[a, b, c]
-[a, c]
+["a", "b", "c"]
+["a", "c"]
 12.0
 7
 [2, 5]

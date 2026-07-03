@@ -6447,7 +6447,7 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
             "protocol Shape { var area: Int { get } }\nstruct Square: Shape { let s: Int; var area: Int { s*s } }\nstruct Circle: Shape { let r: Int; var area: Int { 3*r*r } }\nextension Shape { func describe() -> String { return \"area=\\(area)\" } }\nlet shapes: [any Shape] = [Square(s: 2), Circle(r: 3)]\nprint(shapes.map { $0.area })\nprint(shapes.map { $0.describe() })\n",
         )
         .unwrap();
-        assert_eq!(out, "[4, 27]\n[area=4, area=27]\n");
+        assert_eq!(out, "[4, 27]\n[\"area=4\", \"area=27\"]\n");
     }
 
     #[test]

@@ -518,4 +518,62 @@ fn operator_traps() {
         err.contains("unknown") || err.contains("xml") || err.contains("PropertyListEncoder"),
         "expected 'unknown member' error, got: {err}"
     );
+
+    // --- removeFirst(Bool): non-Int arg must be a type error, not silent no-arg ---
+    let (ok, out, err) = run_source(
+        "tswift_remove_first_bool.swift",
+        "var a = [1, 2, 3]\na.removeFirst(true)\nprint(a)\n",
+    );
+    assert!(
+        !ok,
+        "removeFirst(Bool) must be a type error, not silently remove one element"
+    );
+    assert!(
+        err.contains("Int") || err.contains("type") || err.contains("removeFirst"),
+        "expected type-mismatch message, got: {err}"
+    );
+    assert!(
+        !out.contains("[2, 3]"),
+        "removeFirst(Bool) must not silently remove the first element (got: {out})"
+    );
+
+    // --- removeLast(Bool): non-Int arg must be a type error ---
+    let (ok, out, err) = run_source(
+        "tswift_remove_last_bool.swift",
+        "var a = [1, 2, 3]\na.removeLast(false)\nprint(a)\n",
+    );
+    assert!(
+        !ok,
+        "removeLast(Bool) must be a type error, not silently remove one element"
+    );
+    assert!(
+        err.contains("Int") || err.contains("type") || err.contains("removeLast"),
+        "expected type-mismatch message, got: {err}"
+    );
+    assert!(
+        !out.contains("[1, 2]"),
+        "removeLast(Bool) must not silently remove the last element (got: {out})"
+    );
+
+    // --- removeFirst("x"): String arg also errors ---
+    let (ok, _, err) = run_source(
+        "tswift_remove_first_str.swift",
+        "var a = [1, 2, 3]\na.removeFirst(\"x\")\nprint(a)\n",
+    );
+    assert!(!ok, "removeFirst(String) must be a type error");
+    assert!(
+        err.contains("Int") || err.contains("type") || err.contains("removeFirst"),
+        "expected type-mismatch message, got: {err}"
+    );
+
+    // --- removeLast(3.0): Double arg also errors ---
+    let (ok, _, err) = run_source(
+        "tswift_remove_last_double.swift",
+        "var a = [1, 2, 3]\na.removeLast(3.0)\nprint(a)\n",
+    );
+    assert!(!ok, "removeLast(Double) must be a type error");
+    assert!(
+        err.contains("Int") || err.contains("type") || err.contains("removeLast"),
+        "expected type-mismatch message, got: {err}"
+    );
 }

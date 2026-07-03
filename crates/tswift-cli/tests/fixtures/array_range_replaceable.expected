@@ -9,6 +9,6 @@
 [1, 2, 9]
 []
 [1, 2, 3]
-[x, a, b]
+["x", "a", "b"]
 evaluated contentsOf
 [0, 7, 8]

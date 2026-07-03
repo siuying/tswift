@@ -7,13 +7,13 @@ true
 3
 true
 true
-[clubs, hearts, spades]
+["clubs", "hearts", "spades"]
 true
 true
 true
 true
 true
-[small, medium(9), large(1, 1)]
+["small", "medium(9)", "large(1, 1)"]
 true
 true
 true

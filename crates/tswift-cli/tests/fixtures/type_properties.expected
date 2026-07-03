@@ -2,6 +2,6 @@
 count
 7
 0
-[a, b, c]
+["a", "b", "c"]
 3
 true

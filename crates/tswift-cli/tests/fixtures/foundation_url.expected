@@ -8,7 +8,7 @@ q=1&x=2
 frag
 file.txt
 txt
-[/, path, to, file.txt]
+["/", "path", "to", "file.txt"]
 https://user:pass@example.com:8080/path/to/file.txt?q=1&x=2#frag
 false
 true
