@@ -4892,14 +4892,16 @@ fn literal_syntax_kind(node: &Node) -> Option<NodeKind> {
 /// (so a `for await` over it can use the eager path rather than the async
 /// iterator protocol).
 fn is_builtin_iterable(value: &SwiftValue) -> bool {
-    matches!(
-        value,
+    match value {
         SwiftValue::Range { .. }
-            | SwiftValue::Array(_)
-            | SwiftValue::Str(_)
-            | SwiftValue::Dict(_)
-            | SwiftValue::Set(_)
-    )
+        | SwiftValue::Array(_)
+        | SwiftValue::Str(_)
+        | SwiftValue::Dict(_)
+        | SwiftValue::Set(_) => true,
+        // `Data` iterates as its byte elements.
+        SwiftValue::Struct(obj) if obj.type_name == "Data" => true,
+        _ => false,
+    }
 }
 
 /// Deduplicate elements preserving first-seen order (set construction).

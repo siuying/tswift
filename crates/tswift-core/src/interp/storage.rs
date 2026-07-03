@@ -373,6 +373,39 @@ impl<'w> Interpreter<'w> {
         // mutable, the index parameters, and the `newValue` binding.
         if let SwiftValue::Struct(obj) = &container {
             let type_name = obj.type_name.clone();
+            // `Data[i] = byte` — copy-on-write update of the `_bytes` field.
+            // Validates: index in bounds AND value is a UInt8 (Int in 0..=255).
+            if type_name == "Data" {
+                if let Some(SwiftValue::Array(items)) = obj.get("_bytes") {
+                    let i = subscript_index(indices)?;
+                    if i >= items.len() {
+                        return Err(trap(format!("Data index {i} out of range")));
+                    }
+                    // Reject non-Int and out-of-range values before writing.
+                    match &value {
+                        SwiftValue::Int(v) if (0..=255).contains(&v.raw) => {}
+                        SwiftValue::Int(v) => {
+                            return Err(trap(format!(
+                                "byte value {} is not in the valid range 0...255",
+                                v.raw
+                            )));
+                        }
+                        other => {
+                            return Err(trap(format!(
+                                "Data subscript requires a UInt8 value, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    }
+                    let mut new_items = items.as_ref().clone();
+                    new_items[i] = value;
+                    let mut new_obj = (**obj).clone();
+                    if let Some(slot) = new_obj.fields.iter_mut().find(|(k, _)| k == "_bytes") {
+                        slot.1 = SwiftValue::Array(StdRc::new(new_items));
+                    }
+                    return Ok(SwiftValue::Struct(StdRc::new(new_obj)));
+                }
+            }
             let selected = self.types.struct_def(&type_name).and_then(|d| {
                 d.subscripts
                     .iter()
@@ -540,6 +573,16 @@ impl<'w> Interpreter<'w> {
                 // backed by a `_indexes` array, with no user `subscript`).
                 if type_name == "IndexPath" {
                     if let Some(SwiftValue::Array(items)) = obj.get("_indexes") {
+                        let i = subscript_index(indices)?;
+                        return items
+                            .get(i)
+                            .cloned()
+                            .ok_or_else(|| trap(format!("index {i} out of range")));
+                    }
+                }
+                // `Data[i]` reads the i-th byte (UInt8) from `_bytes`.
+                if type_name == "Data" {
+                    if let Some(SwiftValue::Array(items)) = obj.get("_bytes") {
                         let i = subscript_index(indices)?;
                         return items
                             .get(i)

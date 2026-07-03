@@ -15,8 +15,8 @@ mod url;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, MethodEntry, Outcome,
-    StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, LabeledMethodEntry,
+    MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
 
 const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
@@ -111,9 +111,23 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("base64EncodedData", false, data_base64_encoded_data),
         ("subdata", false, data_subdata),
         ("removeAll", true, data_remove_all),
+        ("replaceSubrange", true, data_replace_subrange),
+        ("reserveCapacity", true, data_reserve_capacity),
+        ("resetBytes", true, data_reset_bytes),
+        ("range", false, data_range_of),
+        ("makeIterator", false, data_make_iterator),
     ] {
         interp.register_intrinsic(BuiltinReceiver::Data, name, MethodEntry { mutating, func });
     }
+    // `index(after:)` and `index(before:)` are label-sensitive overloads.
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::Data,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: data_index_labeled,
+        },
+    );
 
     interp.register_free_fn("UUID", uuid_init);
     interp.register_property(BuiltinReceiver::UUID, "uuidString", uuid_string);
@@ -954,6 +968,188 @@ fn data_append(
     Ok(Outcome {
         result: SwiftValue::Void,
         receiver,
+    })
+}
+
+/// `Data.replaceSubrange(_:with:)` — splice replacement bytes (from `Data` or
+/// `[UInt8]`) into the receiver, shifting bytes as needed.
+fn data_replace_subrange(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut bytes = data_bytes(&recv)?;
+    let [range_val, replacement_val] = args.as_slice() else {
+        return Err(type_error(
+            "replaceSubrange(_:with:) expects a Range<Int> and replacement bytes",
+        ));
+    };
+    let (start, end) = match range_val {
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive { hi + 1 } else { *hi };
+            if *lo < 0 || end < *lo || end as usize > bytes.len() {
+                return Err(type_error("replaceSubrange(_:with:) range out of bounds"));
+            }
+            (*lo as usize, end as usize)
+        }
+        _ => return Err(type_error("replaceSubrange(_:with:) expects a Range<Int>")),
+    };
+    let replacement = match replacement_val {
+        SwiftValue::Struct(obj) if obj.type_name == "Data" => data_bytes(replacement_val)?,
+        SwiftValue::Array(items) => items
+            .iter()
+            .map(byte_from_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => {
+            return Err(type_error(
+                "replaceSubrange(_:with:) replacement must be Data or [UInt8]",
+            ))
+        }
+    };
+    bytes.splice(start..end, replacement);
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: data_value(bytes),
+    })
+}
+
+/// `Data.reserveCapacity(_:)` — no-op; the interpreter's `Vec<u8>` already
+/// grows on demand and there is no benefit in pre-allocating from Swift.
+fn data_reserve_capacity(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    // Require exactly one non-negative Int argument.
+    let [cap] = args.as_slice() else {
+        return Err(type_error(
+            "reserveCapacity(_:) requires exactly one Int argument",
+        ));
+    };
+    match cap {
+        SwiftValue::Int(i) if i.raw >= 0 => {}
+        SwiftValue::Int(i) => {
+            return Err(type_error(format!(
+                "reserveCapacity(_:) requires a non-negative Int, got {}",
+                i.raw
+            )))
+        }
+        other => {
+            return Err(type_error(format!(
+                "reserveCapacity(_:) expects Int, got {}",
+                other.type_name()
+            )))
+        }
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `Data.resetBytes(in:)` — zero all bytes in `range`.
+fn data_reset_bytes(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let mut bytes = data_bytes(&recv)?;
+    let [range_val] = args.as_slice() else {
+        return Err(type_error(
+            "resetBytes(in:) expects one Range<Int> argument",
+        ));
+    };
+    let (start, end) = match range_val {
+        SwiftValue::Range { lo, hi, inclusive } => {
+            let end = if *inclusive { hi + 1 } else { *hi };
+            if *lo < 0 || end < *lo || end as usize > bytes.len() {
+                return Err(type_error("resetBytes(in:) range out of bounds"));
+            }
+            (*lo as usize, end as usize)
+        }
+        _ => return Err(type_error("resetBytes(in:) expects a Range<Int>")),
+    };
+    for b in &mut bytes[start..end] {
+        *b = 0;
+    }
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: data_value(bytes),
+    })
+}
+
+/// `Data.range(of:)` — find the first occurrence of `needle` in the receiver.
+/// Returns `Range<Int>?`; `nil` when absent or when `needle` is empty (matching
+/// Swift's Foundation behaviour).
+fn data_range_of(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let haystack = data_bytes(&recv)?;
+    let [needle_val] = args.as_slice() else {
+        return Err(type_error("range(of:) expects one Data argument"));
+    };
+    let needle = data_bytes(needle_val)?;
+    // Swift returns nil for an empty needle.
+    let result = if needle.is_empty() {
+        SwiftValue::Nil
+    } else {
+        haystack
+            .windows(needle.len())
+            .position(|w| w == needle.as_slice())
+            .map(|pos| SwiftValue::Range {
+                lo: pos as i128,
+                hi: (pos + needle.len()) as i128,
+                inclusive: false,
+            })
+            .unwrap_or(SwiftValue::Nil)
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `Data.index(after:)` and `Data.index(before:)` — label-aware dispatch.
+/// `Data.Index` is `Int`, so these are trivially `i + 1` / `i - 1`.
+fn data_index_labeled(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None); // wrong arity — let other overloads try
+    };
+    let i = match &arg.value {
+        SwiftValue::Int(i) => i.raw,
+        _ => return Err(type_error("index(after:)/index(before:) expects Int")),
+    };
+    let result = match arg.label.as_deref() {
+        Some("after") => SwiftValue::int(i + 1),
+        Some("before") => SwiftValue::int(i - 1),
+        _ => return Ok(None), // unrecognised label — fall through
+    };
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+/// `Data.makeIterator()` — returns the data itself (Data is its own iterator
+/// over bytes; the for-in machinery uses `materialize_builtin_sequence`).
+fn data_make_iterator(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !args.is_empty() {
+        return Err(type_error("makeIterator() takes no arguments"));
+    }
+    let result = recv.clone();
+    Ok(Outcome {
+        result,
+        receiver: recv,
     })
 }
 

@@ -255,6 +255,48 @@ fn index_value_edge_cases() {
     assert_eq!(out, "-1\ntrue false true\n");
 }
 
+/// `Data` subscript and byte-validation edge cases that abort the run.
+#[test]
+fn data_edge_cases() {
+    // Subscript get out of bounds traps.
+    let (ok, _, err) = run_source(
+        "tswift_data_oob_get.swift",
+        "import Foundation\nprint(Data([1, 2, 3])[5])\n",
+    );
+    assert!(!ok, "OOB Data get must trap");
+    assert!(err.contains("out of range"), "stderr: {err}");
+
+    // Subscript set out of bounds traps.
+    let (ok, _, err) = run_source(
+        "tswift_data_oob_set.swift",
+        "import Foundation\nvar d = Data([1, 2, 3])\nd[9] = 42\n",
+    );
+    assert!(!ok, "OOB Data set must trap");
+    assert!(err.contains("out of range"), "stderr: {err}");
+
+    // Assigning an out-of-range Int (999) to a Data subscript traps.
+    let (ok, _, err) = run_source(
+        "tswift_data_bad_byte_int.swift",
+        "import Foundation\nvar d = Data([1, 2, 3])\nd[0] = 999\n",
+    );
+    assert!(!ok, "out-of-range byte must trap");
+    assert!(
+        err.contains("0...255") || err.contains("out of range") || err.contains("valid range"),
+        "stderr: {err}",
+    );
+
+    // Assigning a Bool to a Data subscript traps with a type message.
+    let (ok, _, err) = run_source(
+        "tswift_data_bad_byte_bool.swift",
+        "import Foundation\nvar d = Data([1, 2, 3])\nd[0] = true\n",
+    );
+    assert!(!ok, "Bool assigned to Data subscript must trap");
+    assert!(
+        err.contains("UInt8") || err.contains("Bool") || err.contains("byte"),
+        "stderr: {err}",
+    );
+}
+
 /// `#error("…")` is a compile error: the CLI must exit non-zero, print an
 /// `error:` diagnostic, and never execute the program body.
 #[test]

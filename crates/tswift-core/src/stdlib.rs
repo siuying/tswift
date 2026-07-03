@@ -416,6 +416,14 @@ pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue
                 .collect(),
         ),
         SwiftValue::Set(items) => Some(items.as_ref().clone()),
+        // `Data` — iterate as UInt8 elements (stored in `_bytes`).
+        SwiftValue::Struct(obj) if obj.type_name == "Data" => {
+            if let Some(SwiftValue::Array(items)) = obj.get("_bytes") {
+                Some(items.as_ref().clone())
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }

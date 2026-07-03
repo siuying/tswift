@@ -42,11 +42,17 @@ Data.description
 Data.endIndex
 Data.first
 Data.hashValue
+Data.index
 Data.indices
 Data.init
 Data.isEmpty
 Data.last
+Data.makeIterator
+Data.range
 Data.removeAll
+Data.replaceSubrange
+Data.reserveCapacity
+Data.resetBytes
 Data.startIndex
 Data.subdata
 Date.addTimeInterval
