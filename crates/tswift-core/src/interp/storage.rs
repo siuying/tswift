@@ -532,7 +532,30 @@ impl<'w> Interpreter<'w> {
                     let chars = crate::graphemes(s);
                     let range = SwiftValue::Range { lo, hi, inclusive };
                     let (start, end) = collection_range_bounds(&range, chars.len(), "subscript")?;
-                    return Ok(SwiftValue::Str(chars[start..end].concat()));
+                    return Ok(SwiftValue::Substring {
+                        base: Rc::new(s.clone()),
+                        start,
+                        end,
+                    });
+                }
+                SwiftValue::Substring {
+                    base,
+                    start: sub_start,
+                    end: sub_end,
+                } => {
+                    let chars = crate::graphemes(base);
+                    let range = SwiftValue::Range { lo, hi, inclusive };
+                    let (lo_c, hi_c) = collection_range_bounds(&range, chars.len(), "subscript")?;
+                    if lo_c < *sub_start || hi_c > *sub_end {
+                        return Err(trap(format!(
+                            "Substring subscript [{lo_c},{hi_c}) out of slice [{sub_start},{sub_end})"
+                        )));
+                    }
+                    return Ok(SwiftValue::Substring {
+                        base: Rc::clone(base),
+                        start: lo_c,
+                        end: hi_c,
+                    });
                 }
                 _ => {}
             }
@@ -580,6 +603,34 @@ impl<'w> Interpreter<'w> {
                     .nth(i)
                     .map(SwiftValue::Str)
                     .ok_or_else(|| trap(format!("string index {i} out of range")))
+            }
+            SwiftValue::Substring {
+                base,
+                start: sub_start,
+                end: sub_end,
+            } => {
+                // `sub[stringIndex]` — subscript a Substring by a String.Index.
+                if let [SwiftValue::Struct(obj)] = indices {
+                    if obj.type_name == "String.Index" {
+                        let offset = match obj.get("_offset") {
+                            Some(SwiftValue::Int(i)) if i.raw >= 0 => i.raw as usize,
+                            _ => return Err(trap("invalid String.Index".into())),
+                        };
+                        if offset < *sub_start || offset >= *sub_end {
+                            return Err(trap(format!(
+                                "String.Index {offset} out of Substring range [{sub_start},{sub_end})"
+                            )));
+                        }
+                        return crate::graphemes(base)
+                            .into_iter()
+                            .nth(offset)
+                            .map(SwiftValue::Str)
+                            .ok_or_else(|| trap(format!("String.Index {offset} out of range")));
+                    }
+                }
+                Err(trap(
+                    "Substring only supports String.Index or Range<String.Index> subscripts".into(),
+                ))
             }
             SwiftValue::Struct(obj) => {
                 let type_name = obj.type_name.clone();
@@ -1452,6 +1503,12 @@ impl<'w> Interpreter<'w> {
             // Array `count`/`isEmpty` are served by the property registry (S4).
             (SwiftValue::Str(s), "count") => Ok(SwiftValue::int(crate::graphemes(s).len() as i128)),
             (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
+            (SwiftValue::Substring { start, end, .. }, "count") => {
+                Ok(SwiftValue::int((end - start) as i128))
+            }
+            (SwiftValue::Substring { start, end, .. }, "isEmpty") => {
+                Ok(SwiftValue::Bool(start == end))
+            }
             (SwiftValue::Tuple(items, _), idx) if idx.parse::<usize>().is_ok() => {
                 let i: usize = idx.parse().unwrap();
                 items
@@ -1560,6 +1617,12 @@ impl<'w> Interpreter<'w> {
                         Ok(SwiftValue::int(crate::graphemes(s).len() as i128))
                     }
                     (SwiftValue::Str(s), "isEmpty") => Ok(SwiftValue::Bool(s.is_empty())),
+                    (SwiftValue::Substring { start, end, .. }, "count") => {
+                        Ok(SwiftValue::int((end - start) as i128))
+                    }
+                    (SwiftValue::Substring { start, end, .. }, "isEmpty") => {
+                        Ok(SwiftValue::Bool(start == end))
+                    }
                     (SwiftValue::Tuple(items, labels), n)
                         if SwiftValue::tuple_label_index(labels, n).is_some() =>
                     {

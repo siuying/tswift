@@ -20,6 +20,31 @@ pub fn binary(op: &str, l: &SwiftValue, r: &SwiftValue) -> Result<SwiftValue, St
         (SwiftValue::Double(a), SwiftValue::Int(b)) => double_binary(op, *a, b.raw as f64),
         (SwiftValue::Bool(a), SwiftValue::Bool(b)) => bool_binary(op, *a, *b),
         (SwiftValue::Str(a), SwiftValue::Str(b)) => str_binary(op, a, b),
+        // Substring op Substring, Substring op Str, Str op Substring.
+        (
+            SwiftValue::Substring {
+                base: b1,
+                start: s1,
+                end: e1,
+            },
+            SwiftValue::Substring {
+                base: b2,
+                start: s2,
+                end: e2,
+            },
+        ) => {
+            let a = crate::graphemes(b1)[*s1..*e1].concat();
+            let b = crate::graphemes(b2)[*s2..*e2].concat();
+            str_binary(op, &a, &b)
+        }
+        (SwiftValue::Str(a), SwiftValue::Substring { base, start, end }) => {
+            let b = crate::graphemes(base)[*start..*end].concat();
+            str_binary(op, a, &b)
+        }
+        (SwiftValue::Substring { base, start, end }, SwiftValue::Str(b)) => {
+            let a = crate::graphemes(base)[*start..*end].concat();
+            str_binary(op, &a, b)
+        }
         (SwiftValue::Array(a), SwiftValue::Array(b)) => array_binary(op, a, b),
         // Tuples compare element-wise (`==`/`!=`) and lexicographically
         // (`<`/`<=`/`>`/`>=`), as Swift defines for tuples of comparable

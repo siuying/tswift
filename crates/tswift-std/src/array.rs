@@ -627,6 +627,12 @@ fn stable_hash(value: &SwiftValue) -> u64 {
         SwiftValue::Weak(obj) | SwiftValue::Unowned(obj) => obj.as_ptr() as usize as u64,
         SwiftValue::Regex(r) => r.pattern().bytes().fold(0xd0, |h, b| mix(h, b as u64)),
         SwiftValue::Metatype(name) => name.bytes().fold(0xe0, |h, b| mix(h, b as u64)),
+        // Hash a Substring by its slice text (same bucket as equal Strings).
+        SwiftValue::Substring { base, start, end } => {
+            let gs = tswift_core::graphemes(base);
+            let text = gs[*start..*end].concat();
+            text.bytes().fold(0x40, |h, b| mix(h, b as u64))
+        }
     }
 }
 

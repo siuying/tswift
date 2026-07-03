@@ -2754,6 +2754,9 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Double(_) => type_name == "Double" || type_name == "Float",
             SwiftValue::Bool(_) => type_name == "Bool",
             SwiftValue::Str(_) => type_name == "String",
+            // Substring is NOT a subtype of String in Swift; String(sub) is
+            // required for conversion.  Only the exact "Substring" name matches.
+            SwiftValue::Substring { .. } => type_name == "Substring",
             SwiftValue::Struct(s) => s.type_name == type_name,
             SwiftValue::Enum(e) => e.type_name == type_name,
             // Array cast `[Element]`: every element must match the element
@@ -4896,6 +4899,7 @@ fn is_builtin_iterable(value: &SwiftValue) -> bool {
         SwiftValue::Range { .. }
         | SwiftValue::Array(_)
         | SwiftValue::Str(_)
+        | SwiftValue::Substring { .. }
         | SwiftValue::Dict(_)
         | SwiftValue::Set(_) => true,
         // `Data` iterates as its byte elements.

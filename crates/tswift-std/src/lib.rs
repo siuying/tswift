@@ -19,6 +19,7 @@ mod scalar;
 mod sequence;
 mod set;
 mod string;
+mod substring;
 
 use tswift_core::Interpreter;
 
@@ -34,6 +35,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     sequence::install(interp);
     set::install(interp);
     string::install(interp);
+    substring::install(interp);
 }
 
 /// Every standard-library entry registered by [`install`], as coverage keys

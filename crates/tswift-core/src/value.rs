@@ -144,6 +144,14 @@ pub enum SwiftValue {
     Int(IntValue),
     Double(f64),
     Str(String),
+    /// A Substring view: an immutable grapheme-cluster window `[start, end)` into
+    /// a base `String`.  Indices on a Substring are **base-relative** — the same
+    /// coordinate space as the parent String — so `s[i..<j].startIndex == i`.
+    Substring {
+        base: Rc<String>,
+        start: usize,
+        end: usize,
+    },
     /// A tuple `(a, b, ...)`. The second vector holds an optional label per
     /// element (`(min: 1, max: 9)` → `[Some("min"), Some("max")]`); labels are
     /// type-level metadata that does not participate in equality.
@@ -310,6 +318,7 @@ impl SwiftValue {
             SwiftValue::Int(i) => i.width.type_name().into(),
             SwiftValue::Double(_) => "Double".into(),
             SwiftValue::Str(_) => "String".into(),
+            SwiftValue::Substring { .. } => "Substring".into(),
             SwiftValue::Tuple(..) => "tuple".into(),
             SwiftValue::Array(_) => "Array".into(),
             SwiftValue::Dict(_) => "Dictionary".into(),
@@ -347,6 +356,28 @@ impl PartialEq for SwiftValue {
             (Int(a), Int(b)) => a == b,
             (Double(a), Double(b)) => a == b,
             (Str(a), Str(b)) => a == b,
+            (
+                Substring {
+                    base: b1,
+                    start: s1,
+                    end: e1,
+                },
+                Substring {
+                    base: b2,
+                    start: s2,
+                    end: e2,
+                },
+            ) => {
+                let g1 = crate::graphemes(b1);
+                let g2 = crate::graphemes(b2);
+                g1[*s1..*e1].concat() == g2[*s2..*e2].concat()
+            }
+            (Str(a), Substring { base, start, end }) => {
+                *a == crate::graphemes(base)[*start..*end].concat()
+            }
+            (Substring { base, start, end }, Str(a)) => {
+                *a == crate::graphemes(base)[*start..*end].concat()
+            }
             // Tuple labels are type metadata, not value: compare elements only.
             (Tuple(a, _), Tuple(b, _)) => a == b,
             (Array(a), Array(b)) => a == b,
@@ -394,6 +425,10 @@ impl fmt::Display for SwiftValue {
             SwiftValue::Int(i) => write!(f, "{}", i.raw),
             SwiftValue::Double(d) => write!(f, "{}", format_double(*d)),
             SwiftValue::Str(s) => write!(f, "{s}"),
+            SwiftValue::Substring { base, start, end } => {
+                let gs = crate::graphemes(base);
+                write!(f, "{}", gs[*start..*end].concat())
+            }
             SwiftValue::Tuple(items, labels) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {

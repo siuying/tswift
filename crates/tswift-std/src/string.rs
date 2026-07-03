@@ -9,8 +9,9 @@
 //! is not pinned to a Unicode version, but matches Swift for common text and
 //! the emoji cases exercised here.
 //!
-//! A `Character` is modelled as a single-grapheme `String`; `Substring` shares
-//! the flattened string representation (it is a `String` value here).
+//! A `Character` is modelled as a single-grapheme `String`; `Substring` is a
+//! distinct `SwiftValue::Substring { base, start, end }` carrying its own view
+//! into a parent string (see `substring.rs` and `tswift_core::value`).
 
 use std::rc::Rc;
 
@@ -22,10 +23,12 @@ use tswift_core::{
 /// Register the `String` intrinsics of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
     let s = BuiltinReceiver::String;
-    interp.register_property(s, "count", count);
-    interp.register_property(s, "isEmpty", is_empty);
-    interp.register_property(s, "first", first);
-    interp.register_property(s, "last", last);
+    // --- Properties shared with Substring (text-extraction-based) ---
+    install_shared_text_methods(interp, s);
+
+    // --- String-only properties ---
+    interp.register_property(s, "startIndex", start_index);
+    interp.register_property(s, "endIndex", end_index);
 
     // `Character` predicate properties. A Character is a single-grapheme
     // String, so these classify the whole cluster: `isASCII` requires every
@@ -40,14 +43,6 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "isLowercase", is_lowercase);
     interp.register_property(s, "isASCII", is_ascii);
     interp.register_property(s, "isHexDigit", is_hex_digit);
-    interp.register_property(s, "description", description);
-    interp.register_property(s, "debugDescription", debug_description);
-    interp.register_property(s, "hashValue", hash_value);
-    interp.register_property(s, "utf8", utf8_view);
-    interp.register_property(s, "utf16", utf16_view);
-    interp.register_property(s, "unicodeScalars", unicode_scalars_view);
-    interp.register_property(s, "startIndex", start_index);
-    interp.register_property(s, "endIndex", end_index);
 
     // `index` is label-aware so we can distinguish index(after:), index(before:),
     // index(_:offsetBy:), and index(_:offsetBy:limitedBy:).
@@ -87,11 +82,6 @@ pub fn install(interp: &mut Interpreter<'_>) {
             },
         );
     };
-    pure("uppercased", uppercased);
-    pure("lowercased", lowercased);
-    pure("hasPrefix", has_prefix);
-    pure("hasSuffix", has_suffix);
-    pure("contains", contains);
     pure("firstMatch", first_match);
     pure("wholeMatch", whole_match);
     pure("prefixMatch", prefix_match);
@@ -99,17 +89,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     pure("replacing", replacing);
     pure("prefix", prefix);
     pure("suffix", suffix);
-    pure("split", split);
     pure("reversed", reversed);
 
-    interp.register_intrinsic(
-        s,
-        "append",
-        MethodEntry {
-            mutating: true,
-            func: append,
-        },
-    );
     interp.register_intrinsic(
         s,
         "removeAll",
@@ -152,17 +133,77 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
 }
 
+/// Register the subset of String methods whose implementations work correctly
+/// on **both** `String` (`SwiftValue::Str`) and `Substring`
+/// (`SwiftValue::Substring`) receivers via the [`str_of`] text-materialisation
+/// helper.  These methods are registered under whichever `BuiltinReceiver` the
+/// caller requests; the `substring` module calls this with
+/// `BuiltinReceiver::Substring`.
+///
+/// **Not included**: `startIndex`/`endIndex` (base-relative for Substring),
+/// `index`/`distance` (need base-relative bounds), `prefix`/`suffix` (need to
+/// return Substring views), Character predicates, regex methods, mutating
+/// remove/insert operations — all of which have Substring-specific impls.
+pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: BuiltinReceiver) {
+    // --- Properties ---
+    interp.register_property(s, "count", count);
+    interp.register_property(s, "isEmpty", is_empty);
+    interp.register_property(s, "first", first);
+    interp.register_property(s, "last", last);
+    interp.register_property(s, "description", description);
+    interp.register_property(s, "debugDescription", debug_description);
+    interp.register_property(s, "hashValue", hash_value);
+    interp.register_property(s, "utf8", utf8_view);
+    interp.register_property(s, "utf16", utf16_view);
+    interp.register_property(s, "unicodeScalars", unicode_scalars_view);
+
+    // --- Non-mutating methods ---
+    let mut pure = |name: &str, f: tswift_core::IntrinsicFn| {
+        interp.register_intrinsic(
+            s,
+            name,
+            MethodEntry {
+                mutating: false,
+                func: f,
+            },
+        );
+    };
+    pure("uppercased", uppercased);
+    pure("lowercased", lowercased);
+    pure("hasPrefix", has_prefix);
+    pure("hasSuffix", has_suffix);
+    pure("contains", contains);
+    pure("split", split);
+
+    // --- Mutating append ---
+    interp.register_intrinsic(
+        s,
+        "append",
+        MethodEntry {
+            mutating: true,
+            func: append,
+        },
+    );
+}
+
 /// Segment a string into extended grapheme clusters (Swift `Character`s).
 ///
 /// Re-exported from `tswift-core` so the interpreter's string iteration and
 /// these `String` intrinsics segment identically.
 pub use tswift_core::graphemes;
 
-fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
+/// Extract the text from a `String` or `Substring` receiver.
+///
+/// For a `Substring`, this materialises the grapheme-cluster slice into an
+/// owned `String`.  Shared by methods registered under both
+/// `BuiltinReceiver::String` and `BuiltinReceiver::Substring` (e.g.
+/// `lowercased`, `hasPrefix`, `split`, …) so they work on both types.
+pub(super) fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
     match recv {
         SwiftValue::Str(s) => Ok(s.clone()),
+        SwiftValue::Substring { base, start, end } => Ok(graphemes(base)[*start..*end].concat()),
         other => Err(type_err(format!(
-            "expected a string receiver, got {}",
+            "expected String or Substring, got {}",
             other.type_name()
         ))),
     }
@@ -402,15 +443,32 @@ fn reversed(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> O
 
 // ---- mutating --------------------------------------------------------------
 
-/// `String.append(_:)` — append a character or string in place.
+/// `String.append(_:)` / `Substring.append(_:)` — append a character or string
+/// in place.
+///
+/// When the receiver is a `Substring`, Swift's copy-on-write semantics detach
+/// the slice from its base on the first mutation: the result is an independent
+/// `Substring` with `start = 0` and a fresh backing string.  A `String`
+/// receiver is updated in place as before.
 fn append(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let was_substring = matches!(recv, SwiftValue::Substring { .. });
     let mut s = str_of(&recv)?;
     if let Some(extra) = arg_str(&args) {
         s.push_str(&extra);
     }
+    let receiver = if was_substring {
+        let n = graphemes(&s).len();
+        SwiftValue::Substring {
+            base: Rc::new(s),
+            start: 0,
+            end: n,
+        }
+    } else {
+        SwiftValue::Str(s)
+    };
     Ok(Outcome {
         result: SwiftValue::Void,
-        receiver: SwiftValue::Str(s),
+        receiver,
     })
 }
 
@@ -500,7 +558,7 @@ fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValu
 /// The index is stored as a `Struct` so it is not accidentally confused with an
 /// integer and so that binary operators (`==`, `..<`, …) in ops.rs can
 /// recognize it by type name and apply correct semantics.
-fn make_index(offset: usize) -> SwiftValue {
+pub(super) fn make_index(offset: usize) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "String.Index".into(),
         fields: vec![("_offset".into(), SwiftValue::int(offset as i128))],
@@ -508,7 +566,7 @@ fn make_index(offset: usize) -> SwiftValue {
 }
 
 /// Extract the grapheme-cluster offset from a `String.Index` value.
-fn index_offset(v: &SwiftValue) -> Option<usize> {
+pub(super) fn index_offset(v: &SwiftValue) -> Option<usize> {
     match v {
         SwiftValue::Struct(obj) if obj.type_name == "String.Index" => {
             obj.get("_offset").and_then(|f| match f {

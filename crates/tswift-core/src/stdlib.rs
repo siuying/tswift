@@ -171,6 +171,9 @@ pub enum BuiltinReceiver {
     Decimal,
     NumberFormatter,
     Measurement,
+    /// A `Substring` value (represented identically to `String` at runtime;
+    /// registered separately so `Substring.*` keys appear in the registry).
+    Substring,
 }
 
 impl BuiltinReceiver {
@@ -202,6 +205,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::Decimal => "Decimal",
             BuiltinReceiver::NumberFormatter => "NumberFormatter",
             BuiltinReceiver::Measurement => "Measurement",
+            BuiltinReceiver::Substring => "Substring",
         }
     }
 
@@ -233,6 +237,7 @@ impl BuiltinReceiver {
             "Decimal" => BuiltinReceiver::Decimal,
             "NumberFormatter" => BuiltinReceiver::NumberFormatter,
             "Measurement" => BuiltinReceiver::Measurement,
+            "Substring" => BuiltinReceiver::Substring,
             _ => return None,
         })
     }
@@ -244,6 +249,7 @@ impl BuiltinReceiver {
             SwiftValue::Dict(_) => BuiltinReceiver::Dictionary,
             SwiftValue::Set(_) => BuiltinReceiver::Set,
             SwiftValue::Str(_) => BuiltinReceiver::String,
+            SwiftValue::Substring { .. } => BuiltinReceiver::Substring,
             SwiftValue::Int(_) => BuiltinReceiver::Int,
             SwiftValue::Double(_) => BuiltinReceiver::Double,
             SwiftValue::Bool(_) => BuiltinReceiver::Bool,
@@ -402,6 +408,12 @@ pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue
             crate::graphemes(s)
                 .into_iter()
                 .map(SwiftValue::Str)
+                .collect(),
+        ),
+        SwiftValue::Substring { base, start, end } => Some(
+            crate::graphemes(base)[*start..*end]
+                .iter()
+                .map(|g| SwiftValue::Str(g.to_string()))
                 .collect(),
         ),
         SwiftValue::Dict(pairs) => Some(
