@@ -894,6 +894,9 @@ pub struct Interpreter<'w> {
     /// Replaces the per-evaluation `Box::leak`: a repeated fragment is analyzed
     /// once, and the whole cache is reclaimed when the interpreter drops.
     fragment_cache: FragmentCache,
+    /// The embedding-installed HTTP backend behind `URLSession` (see
+    /// [`crate::http`]); `None` means network access is unavailable.
+    http_transport: Option<Box<dyn crate::http::HttpTransport>>,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -958,12 +961,20 @@ impl<'w> Interpreter<'w> {
             rng_state: initial_rng_seed(),
             type_hint: Vec::new(),
             fragment_cache: FragmentCache::default(),
+            http_transport: None,
         }
     }
 
     /// Set the source file name reported by `#file`.
     pub fn set_filename(&mut self, name: &str) {
         self.filename = name.to_string();
+    }
+
+    /// Install the HTTP transport backing `URLSession` (see [`crate::http`]).
+    /// Absent a transport, `URLSession` requests report an unsupported-feature
+    /// error rather than touching the network.
+    pub fn set_http_transport(&mut self, transport: Box<dyn crate::http::HttpTransport>) {
+        self.http_transport = Some(transport);
     }
 
     /// Register a native function callable from Swift source by `name`.
@@ -4548,6 +4559,16 @@ impl StdContext for Interpreter<'_> {
 
     fn now_unix_seconds(&mut self) -> f64 {
         now_unix_seconds()
+    }
+
+    fn perform_http(
+        &mut self,
+        req: &crate::http::HttpRequest,
+    ) -> Result<crate::http::HttpResponse, crate::http::HttpError> {
+        match &mut self.http_transport {
+            Some(transport) => transport.perform(req),
+            None => Err(crate::http::HttpError::Unavailable),
+        }
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {

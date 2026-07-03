@@ -1,0 +1,16 @@
+[
+  {"method": "GET", "url": "http://127.0.0.1:8765/greeting",
+   "status": 200,
+   "headers": {"Content-Type": "text/plain; charset=utf-8", "X-Request-Id": "req-1", "Content-Length": "5"},
+   "body": "hello"},
+  {"method": "POST", "url": "http://127.0.0.1:8765/echo",
+   "status": 201,
+   "headers": {"Content-Type": "text/plain", "Content-Length": "9"},
+   "body": "echo:ping"},
+  {"method": "GET", "url": "http://127.0.0.1:8765/missing",
+   "status": 404,
+   "headers": {"Content-Type": "text/plain", "Content-Length": "9"},
+   "body": "not found"},
+  {"method": "GET", "url": "http://127.0.0.1:9/never",
+   "error": "cannotConnectToHost"}
+]

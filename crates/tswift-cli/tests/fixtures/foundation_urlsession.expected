@@ -1,0 +1,11 @@
+60.0
+604800.0
+200
+text/plain
+hello
+req-1
+201
+echo:ping
+404
+9
+caught URLError

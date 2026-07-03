@@ -47,12 +47,18 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
 }
 
 /// Run the CLI on `swift_path` and return its stdout as a `String`.
+///
+/// A sibling `<name>.http.json` route file (see `src/httpmock.rs`) is passed
+/// through `TSWIFT_HTTP_MOCK`, so `URLSession` fixtures stay deterministic
+/// and offline — still zero harness code per fixture.
 fn run_cli(swift_path: &Path) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
-        .arg("run")
-        .arg(swift_path)
-        .output()
-        .expect("failed to spawn tswift");
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tswift"));
+    cmd.arg("run").arg(swift_path);
+    let mock = swift_path.with_extension("http.json");
+    if mock.exists() {
+        cmd.env("TSWIFT_HTTP_MOCK", &mock);
+    }
+    let output = cmd.output().expect("failed to spawn tswift");
 
     assert!(
         output.status.success(),

@@ -9,6 +9,7 @@
 //! (kind, text, line, resolved type, modifiers) for inspecting how the frontend
 //! parses a construct — the fast path when adding a language feature.
 
+mod httpmock;
 mod swiftui;
 
 use std::io::{self, Write};
@@ -145,6 +146,17 @@ fn run(paths: &[String]) -> ExitCode {
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
     interp.set_filename(path);
+    // Golden fixtures (and any offline caller) script `URLSession` through a
+    // deterministic mock transport instead of the real network.
+    if let Ok(mock_path) = std::env::var("TSWIFT_HTTP_MOCK") {
+        match httpmock::load(&mock_path) {
+            Ok(transport) => interp.set_http_transport(Box::new(transport)),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     let result = interp.run(analysis);
     let _ = handle.flush();

@@ -2738,10 +2738,18 @@ impl<'a> Parser<'a> {
                 }
                 node
             }
-            // Implicit member expression `.case` (no base).
+            // Implicit member expression `.case` (no base). Keyword members
+            // (`.default`, `.self`, ...) are legal here, as after a base.
             TokenKind::Dot => {
                 self.bump();
-                let name = self.expect(TokenKind::Identifier)?;
+                let name = self.peek();
+                if !matches!(name.kind, TokenKind::Identifier | TokenKind::Keyword) {
+                    return self.error(format!(
+                        "expected a member name after '.', found {:?}",
+                        name.kind
+                    ));
+                }
+                self.bump();
                 self.ast
                     .add(NodeKind::MemberExpr, Some(name.text), t.line, t.col)
             }

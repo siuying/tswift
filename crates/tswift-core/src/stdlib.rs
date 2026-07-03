@@ -123,6 +123,17 @@ pub trait StdContext {
     fn now_unix_seconds(&mut self) -> f64 {
         0.0
     }
+
+    /// Perform an HTTP request through the embedding's configured transport
+    /// (the seam behind `URLSession`). The default reports that no transport
+    /// is available; the interpreter overrides it to delegate to the transport
+    /// installed with [`crate::Interpreter::set_http_transport`].
+    fn perform_http(
+        &mut self,
+        _req: &crate::http::HttpRequest,
+    ) -> Result<crate::http::HttpResponse, crate::http::HttpError> {
+        Err(crate::http::HttpError::Unavailable)
+    }
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).
@@ -167,6 +178,8 @@ pub enum BuiltinReceiver {
     URLResponse,
     HTTPURLResponse,
     URLError,
+    URLSession,
+    URLSessionConfiguration,
     Date,
     DateComponents,
     Calendar,
@@ -226,6 +239,8 @@ impl BuiltinReceiver {
             BuiltinReceiver::URLResponse => "URLResponse",
             BuiltinReceiver::HTTPURLResponse => "HTTPURLResponse",
             BuiltinReceiver::URLError => "URLError",
+            BuiltinReceiver::URLSession => "URLSession",
+            BuiltinReceiver::URLSessionConfiguration => "URLSessionConfiguration",
             BuiltinReceiver::Date => "Date",
             BuiltinReceiver::DateComponents => "DateComponents",
             BuiltinReceiver::Calendar => "Calendar",
@@ -269,6 +284,8 @@ impl BuiltinReceiver {
             "URLResponse" => BuiltinReceiver::URLResponse,
             "HTTPURLResponse" => BuiltinReceiver::HTTPURLResponse,
             "URLError" => BuiltinReceiver::URLError,
+            "URLSession" => BuiltinReceiver::URLSession,
+            "URLSessionConfiguration" => BuiltinReceiver::URLSessionConfiguration,
             "Date" => BuiltinReceiver::Date,
             "DateComponents" => BuiltinReceiver::DateComponents,
             "Calendar" => BuiltinReceiver::Calendar,
@@ -325,6 +342,10 @@ impl BuiltinReceiver {
                 BuiltinReceiver::HTTPURLResponse
             }
             SwiftValue::Struct(obj) if obj.type_name == "URLError" => BuiltinReceiver::URLError,
+            SwiftValue::Struct(obj) if obj.type_name == "URLSession" => BuiltinReceiver::URLSession,
+            SwiftValue::Struct(obj) if obj.type_name == "URLSessionConfiguration" => {
+                BuiltinReceiver::URLSessionConfiguration
+            }
             SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
             SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {
                 BuiltinReceiver::DateComponents

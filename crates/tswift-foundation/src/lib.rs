@@ -14,6 +14,7 @@ mod network;
 mod numberformatter;
 mod plist;
 mod url;
+mod urlsession;
 
 use std::{collections::BTreeSet, rc::Rc};
 
@@ -30,6 +31,7 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
     network::install(interp);
+    urlsession::install(interp);
     calendar::install(interp);
     datestyle::install(interp);
     formatter::install(interp);

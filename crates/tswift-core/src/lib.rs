@@ -10,6 +10,7 @@ pub mod decimal;
 mod env;
 mod fragment_cache;
 pub mod grapheme;
+pub mod http;
 mod interp;
 pub mod json;
 pub mod ops;
@@ -22,6 +23,7 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use grapheme::graphemes;
+pub use http::{HttpError, HttpRequest, HttpResponse, HttpTransport, MockHttpTransport, MockRoute};
 pub use interp::{BuiltinParam, EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
