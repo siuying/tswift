@@ -631,19 +631,133 @@ impl fmt::Display for SwiftValue {
     }
 }
 
-/// Format a `Double` the way Swift's `print` does: integral values keep a
-/// trailing `.0`, everything else uses the shortest round-tripping form.
+/// Format a `Double` the way Swift's `print` does.
+///
+/// Rules (derived empirically from Swift 6.x):
+/// 1. NaN → `"nan"`, ±∞ → `"inf"`/`"-inf"`.
+/// 2. Exact integers whose magnitude fits in 2^53 use `"N.0"` decimal form.
+/// 3. Large integers (magnitude > 2^53, always IEEE integers) use Swift-style
+///    scientific notation (`9.9e+15`).
+/// 4. Non-integers use shortest-round-trip form:
+///    - decimal when the base-10 exponent E is in `[-4, 15]`
+///    - scientific (`1e-05`, `1.5e+300`) otherwise.
 pub fn format_double(d: f64) -> String {
-    if d.is_infinite() {
-        return if d > 0.0 { "inf".into() } else { "-inf".into() };
-    }
+    fmt_double_impl(d, true)
+}
+
+/// Format a `Double` for JSON output: same as `format_double` but integers
+/// are written without the `.0` suffix (`0` not `0.0`, `42` not `42.0`),
+/// and `-0.0` is written as `-0`.
+pub fn format_double_json(d: f64) -> String {
+    fmt_double_impl(d, false)
+}
+
+/// Maximum f64 that can represent every integer exactly (2^53).
+const MAX_EXACT_INT_F64: f64 = 9_007_199_254_740_992.0;
+
+fn fmt_double_impl(d: f64, dot_zero: bool) -> String {
     if d.is_nan() {
         return "nan".into();
     }
-    if d == d.trunc() && d.abs() < 1e16 {
-        format!("{d:.1}")
+    if d.is_infinite() {
+        return if d > 0.0 { "inf".into() } else { "-inf".into() };
+    }
+    if d == 0.0 {
+        return if d.is_sign_negative() {
+            if dot_zero {
+                "-0.0".into()
+            } else {
+                "-0".into()
+            }
+        } else {
+            if dot_zero {
+                "0.0".into()
+            } else {
+                "0".into()
+            }
+        };
+    }
+    // Exact integers in [-2^53, 2^53]: decimal form, optionally with ".0".
+    if d.fract() == 0.0 && d.abs() <= MAX_EXACT_INT_F64 {
+        return if dot_zero {
+            format!("{:.0}.0", d)
+        } else {
+            format!("{:.0}", d)
+        };
+    }
+    // Get shortest round-trip scientific form from Rust's formatter.
+    // Rust {:e} produces e.g. "9.9e15", "-1.5e-10" (no + on positive exp).
+    let sci = format!("{:e}", d);
+    let e_pos = sci.find('e').unwrap();
+    let mantissa_full = &sci[..e_pos]; // may start with '-'
+    let exp: i32 = sci[e_pos + 1..].parse().unwrap();
+    let neg = d.is_sign_negative();
+    let mantissa_abs: &str = if neg {
+        &mantissa_full[1..]
     } else {
-        format!("{d}")
+        mantissa_full
+    };
+
+    if d.fract() == 0.0 {
+        // Large integer (|d| > 2^53): Swift always uses scientific.
+        fmt_sci(neg, mantissa_abs, exp)
+    } else if exp >= -4 && exp <= 15 {
+        // Non-integer in the "decimal" exponent window.
+        let digits: String = mantissa_abs
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect();
+        fmt_decimal(neg, &digits, exp)
+    } else {
+        // Non-integer outside the window: scientific.
+        fmt_sci(neg, mantissa_abs, exp)
+    }
+}
+
+/// Build Swift-style scientific notation: `[−]M.Ne+EE`.
+fn fmt_sci(neg: bool, mantissa_abs: &str, exp: i32) -> String {
+    let sign = if neg { "-" } else { "" };
+    let exp_sign = if exp >= 0 { "+" } else { "-" };
+    let exp_mag = exp.unsigned_abs();
+    // Swift uses at least two exponent digits.
+    let exp_str = if exp_mag < 10 {
+        format!("0{exp_mag}")
+    } else {
+        format!("{exp_mag}")
+    };
+    format!("{sign}{mantissa_abs}e{exp_sign}{exp_str}")
+}
+
+/// Build decimal form from significant `digits` and base-10 exponent `exp`.
+///
+/// `digits` contains the raw digit string (no sign, no dot), and
+/// `exp` is the exponent so that the number equals `0.digits... × 10^(exp+1)`
+/// (i.e., exp is the position of the most-significant digit relative to units).
+fn fmt_decimal(neg: bool, digits: &str, exp: i32) -> String {
+    let sign = if neg { "-" } else { "" };
+    // Number of digits that appear before the decimal point.
+    let int_len = (exp + 1) as usize; // exp in [-4,15], so int_len in [-3,16]; clamp ≥0 below
+
+    if exp < 0 {
+        // Value is between 0 and 1: "0.000...{digits}"
+        let leading = (-exp - 1) as usize; // zeros after the '.'
+        format!("{}0.{}{}", sign, "0".repeat(leading), digits)
+    } else {
+        // int_len digits before the decimal point; the rest after.
+        let n = digits.len();
+        if int_len >= n {
+            // All digits are in the integer part; pad with zeros if needed.
+            let trailing = int_len - n;
+            format!("{}{}{}", sign, digits, "0".repeat(trailing))
+            // Note: caller (non-integer path) always has a fractional component
+            // so this branch in practice only fires when rounding makes the
+            // mantissa exact.  We do NOT append ".0" here (that's the integer
+            // branch above).
+        } else {
+            let int_part = &digits[..int_len];
+            let frac_part = &digits[int_len..];
+            format!("{}{}.{}", sign, int_part, frac_part)
+        }
     }
 }
 

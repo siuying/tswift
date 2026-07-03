@@ -2,7 +2,7 @@
 true
 {"name":"X","members":[{"id":1,"name":"Ann","active":true}],"lead":{"id":1,"name":"Ann","active":true}}
 1 true Ann
-{"role":"admin","backup":null}
+{"role":"admin"}
 true true
 {"status":"ACTIVE"}
 true

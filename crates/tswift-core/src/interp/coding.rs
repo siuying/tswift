@@ -751,17 +751,19 @@ impl<'w> Interpreter<'w> {
                 // Encode fields in declaration order — the parser always
                 // produces them in the same sequence, so output is stable.
                 // Apply key-encoding strategy (e.g. convertToSnakeCase).
-                let entries: Vec<(String, Json)> = o
-                    .fields
-                    .iter()
-                    .map(|(k, v)| {
-                        let key = match key_enc {
-                            KeyEncoding::ConvertToSnakeCase => to_snake_case(k),
-                            KeyEncoding::UseDefaultKeys => k.clone(),
-                        };
-                        Ok((key, self.json_encode(v, date_enc, key_enc, data_enc)?))
-                    })
-                    .collect::<Result<_, Signal>>()?;
+                // Swift's JSONEncoder omits nil (Optional.none) fields entirely
+                // instead of encoding them as JSON null.
+                let mut entries: Vec<(String, Json)> = Vec::new();
+                for (k, v) in &o.fields {
+                    if matches!(v, SwiftValue::Nil) {
+                        continue; // omit nil fields
+                    }
+                    let key = match key_enc {
+                        KeyEncoding::ConvertToSnakeCase => to_snake_case(k),
+                        KeyEncoding::UseDefaultKeys => k.clone(),
+                    };
+                    entries.push((key, self.json_encode(v, date_enc, key_enc, data_enc)?));
+                }
                 Json::Object(entries)
             }
             // Dictionary encodes as a JSON object. Keys must be strings; sort

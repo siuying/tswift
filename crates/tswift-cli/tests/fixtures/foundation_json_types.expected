@@ -12,7 +12,7 @@ invalid URL throws
 2
 https://a.com
 {"id":"550E8400-E29B-41D4-A716-446655440000"}
-{"id":null}
+{}
 true
 550E8400-E29B-41D4-A716-446655440000
 5

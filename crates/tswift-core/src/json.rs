@@ -6,6 +6,7 @@
 //! JSON document into a generic [`Json`] tree that the interpreter maps back
 //! onto a struct's fields.
 
+use crate::format_double_json;
 use std::fmt::Write as _;
 
 /// A parsed JSON value.
@@ -63,7 +64,7 @@ fn write_value_fmt(out: &mut String, value: &Json, fmt: &OutputFormatting, depth
             let _ = write!(out, "{i}");
         }
         Json::Double(d) => {
-            let _ = write!(out, "{d}");
+            out.push_str(&format_double_json(*d));
         }
         Json::Str(s) => write_string(out, s),
         Json::Array(items) => {

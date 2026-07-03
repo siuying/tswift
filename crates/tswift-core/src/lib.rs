@@ -30,7 +30,9 @@ pub use stdlib::{
     LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, PropertySetterFn, StaticFn, StdContext,
     StdError, StdResult, StructMethodFn,
 };
-pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
+pub use value::{
+    format_double, format_double_json, EnumObj, IntValue, IntWidth, StructObj, SwiftValue,
+};
 
 /// Returns `true` when `s` is a non-empty string that contains no ASCII
 /// whitespace characters — the minimum validity contract of Foundation's

@@ -1,0 +1,22 @@
+{"maxVal":9223372036854775807,"minVal":-9223372036854775808}
+true
+true
+{"arr":[],"dict":{}}
+{"f":false,"t":true}
+{"present":42}
+{"inner":{"deep":{"value":42}}}
+{"arr":[1,2,3,-1,9223372036854775807,-9223372036854775808]}
+{"s":"hello\nworld"}
+{"s":"tab\there"}
+{"s":"quote\"here"}
+{"s":"back\\here"}
+{"v":1.5e-300}
+{"v":1.5e+300}
+{"v":-0}
+{"v":0.1}
+{"v":1e-05}
+{"v":9.9e+15}
+true
+true
+inf throws
+nan throws
