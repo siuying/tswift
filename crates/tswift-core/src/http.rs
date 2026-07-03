@@ -63,6 +63,78 @@ impl HttpError {
     }
 }
 
+/// Serialize a transport request as the host-boundary request JSON
+/// (`{"url","method","timeoutSeconds","headers":[[k,v]...],"bodyBase64"?}`),
+/// the shared wire contract of the FFI and wasm host transports.
+pub fn encode_request_json(req: &HttpRequest) -> String {
+    use crate::result_json::escape;
+    let mut s = format!(
+        "{{\"url\":\"{}\",\"method\":\"{}\",\"timeoutSeconds\":{},\"headers\":[",
+        escape(&req.url),
+        escape(&req.method),
+        req.timeout_seconds
+    );
+    for (i, (k, v)) in req.headers.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!("[\"{}\",\"{}\"]", escape(k), escape(v)));
+    }
+    s.push(']');
+    if let Some(body) = &req.body {
+        s.push_str(&format!(
+            ",\"bodyBase64\":\"{}\"",
+            crate::base64::encode(body)
+        ));
+    }
+    s.push('}');
+    s
+}
+
+/// Parse a host's response JSON (`{"status","headers":[[k,v]...],
+/// "bodyBase64"?}` or `{"error":"<URLError.Code case>","message"?}`) into a
+/// transport response or failure — the inverse of [`encode_request_json`]'s
+/// wire contract.
+pub fn decode_response_json(text: &str) -> Result<HttpResponse, HttpError> {
+    use crate::json::{self, Json};
+    let malformed = |m: &str| HttpError::failed("badServerResponse", m);
+    let root = json::parse(text)
+        .map_err(|e| malformed(&format!("host HTTP response is not valid JSON: {e}")))?;
+    if let Some(Json::Str(code)) = root.get("error") {
+        let message = match root.get("message") {
+            Some(Json::Str(m)) => m.clone(),
+            _ => "host HTTP handler reported a failure".to_string(),
+        };
+        return Err(HttpError::failed(code.clone(), message));
+    }
+    let status = match root.get("status") {
+        Some(Json::Int(s)) => *s,
+        _ => return Err(malformed("host HTTP response has no integer `status`")),
+    };
+    let mut headers = Vec::new();
+    if let Some(Json::Array(pairs)) = root.get("headers") {
+        for pair in pairs {
+            let Json::Array(kv) = pair else {
+                return Err(malformed("host HTTP response headers must be [k, v] pairs"));
+            };
+            let (Some(Json::Str(k)), Some(Json::Str(v))) = (kv.first(), kv.get(1)) else {
+                return Err(malformed("host HTTP response headers must be [k, v] pairs"));
+            };
+            headers.push((k.clone(), v.clone()));
+        }
+    }
+    let body = match root.get("bodyBase64") {
+        Some(Json::Str(b64)) => crate::base64::decode(b64)
+            .ok_or_else(|| malformed("host HTTP response bodyBase64 is not valid base64"))?,
+        _ => Vec::new(),
+    };
+    Ok(HttpResponse {
+        status,
+        headers,
+        body,
+    })
+}
+
 /// A synchronous HTTP backend. See the module docs for the embedding matrix.
 pub trait HttpTransport {
     /// Perform `req`, blocking until a response or failure is available.
@@ -148,6 +220,37 @@ mod tests {
             HttpError::Failed { code, .. } => assert_eq!(code, "cannotFindHost"),
             other => panic!("expected Failed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn wire_codec_round_trips_request_and_response() {
+        let req = HttpRequest {
+            url: "https://example.com/a".into(),
+            method: "POST".into(),
+            headers: vec![("Content-Type".into(), "text/plain".into())],
+            body: Some(b"hi".to_vec()),
+            timeout_seconds: 30.0,
+        };
+        let json = encode_request_json(&req);
+        let root = crate::json::parse(&json).unwrap();
+        assert_eq!(
+            root.get("url"),
+            Some(&crate::json::Json::Str("https://example.com/a".into()))
+        );
+        assert_eq!(
+            root.get("bodyBase64"),
+            Some(&crate::json::Json::Str("aGk=".into()))
+        );
+
+        let ok = decode_response_json(
+            r#"{"status": 200, "headers": [["Content-Type", "text/plain"]], "bodyBase64": "aGk="}"#,
+        )
+        .unwrap();
+        assert_eq!(ok.status, 200);
+        assert_eq!(ok.body, b"hi");
+        let err = decode_response_json(r#"{"error": "timedOut"}"#).unwrap_err();
+        assert!(matches!(err, HttpError::Failed { code, .. } if code == "timedOut"));
+        assert!(decode_response_json("not json").is_err());
     }
 
     #[test]

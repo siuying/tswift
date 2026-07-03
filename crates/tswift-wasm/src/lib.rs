@@ -130,6 +130,7 @@ fn run_swift_impl(source: &str) -> String {
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
     interp.set_filename("main.swift");
+    platform::install_http_transport(&mut interp);
 
     let run_result = interp.run(analysis);
     let run_elapsed = elapsed_ms(run_started);
@@ -163,6 +164,8 @@ fn run_swift_impl(source: &str) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod platform {
+    use tswift_core::http::{decode_response_json, encode_request_json};
+    use tswift_core::{HttpError, HttpRequest, HttpResponse, HttpTransport};
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
@@ -171,6 +174,49 @@ mod platform {
         fn performance_now() -> f64;
         #[wasm_bindgen(js_namespace = console, js_name = error)]
         fn console_error(msg: &str);
+    }
+
+    // The `URLSession` host hook. The embedding page/worker opts in by
+    // defining a **synchronous** `globalThis.tswiftHttp(requestJson) ->
+    // responseJson` (wire contract: `tswift_core::http::encode_request_json` /
+    // `decode_response_json`). Synchronous because the interpreter's transport
+    // seam is (ADR-0005): on the main thread that means a scripted/cached
+    // answer or sync XHR; a worker can bridge to async `fetch` on the main
+    // thread via `Atomics.wait` + `SharedArrayBuffer`. Absent hook → `null` →
+    // `URLSession` reports itself unavailable; a thrown hook exception becomes
+    // an error-JSON transport failure rather than a wasm trap.
+    #[wasm_bindgen(inline_js = r#"
+        export function tswift_http_call(requestJson) {
+            const hook = globalThis.tswiftHttp;
+            if (typeof hook !== "function") return null;
+            try {
+                return String(hook(requestJson));
+            } catch (e) {
+                return JSON.stringify({
+                    error: "cannotConnectToHost",
+                    message: String(e),
+                });
+            }
+        }
+    "#)]
+    extern "C" {
+        fn tswift_http_call(request_json: &str) -> Option<String>;
+    }
+
+    /// The `globalThis.tswiftHttp`-backed transport.
+    struct JsHttpTransport;
+
+    impl HttpTransport for JsHttpTransport {
+        fn perform(&mut self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
+            match tswift_http_call(&encode_request_json(req)) {
+                Some(response_json) => decode_response_json(&response_json),
+                None => Err(HttpError::Unavailable),
+            }
+        }
+    }
+
+    pub(super) fn install_http_transport(interp: &mut tswift_core::Interpreter<'_>) {
+        interp.set_http_transport(Box::new(JsHttpTransport));
     }
 
     pub(super) fn now_ms() -> f64 {
@@ -184,6 +230,10 @@ mod platform {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod platform {
+    /// Off-target (native unit tests) there is no JS host: `URLSession` stays
+    /// unavailable, matching a page that defines no `tswiftHttp` hook.
+    pub(super) fn install_http_transport(_interp: &mut tswift_core::Interpreter<'_>) {}
+
     pub(super) fn now_ms() -> f64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

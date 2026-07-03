@@ -17,9 +17,8 @@
 
 use std::ffi::{c_char, c_void, CString};
 
-use tswift_core::json::{self, Json};
-use tswift_core::result_json::escape;
-use tswift_core::{base64, HttpError, HttpRequest, HttpResponse, HttpTransport};
+use tswift_core::http::{decode_response_json, encode_request_json};
+use tswift_core::{HttpError, HttpRequest, HttpResponse, HttpTransport};
 
 /// The C handler signature: `(userdata, request_json, call)`. Must invoke
 /// `tswift_http_respond(call, response_json)` exactly once before returning.
@@ -60,7 +59,7 @@ pub unsafe extern "C" fn tswift_http_respond(call: *mut c_void, response_json: *
 
 impl HttpTransport for HostHttpHandler {
     fn perform(&mut self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
-        let request_json = encode_request(req);
+        let request_json = encode_request_json(req);
         let c_request = CString::new(request_json)
             .map_err(|_| HttpError::failed("badURL", "request contains a NUL byte"))?;
         let mut slot = ResponseSlot {
@@ -81,70 +80,8 @@ impl HttpTransport for HostHttpHandler {
                 "host HTTP handler returned without responding",
             ));
         };
-        decode_response(&response_json)
+        decode_response_json(&response_json)
     }
-}
-
-/// Serialize a transport request as the handler's request JSON.
-fn encode_request(req: &HttpRequest) -> String {
-    let mut s = format!(
-        "{{\"url\":\"{}\",\"method\":\"{}\",\"timeoutSeconds\":{},\"headers\":[",
-        escape(&req.url),
-        escape(&req.method),
-        req.timeout_seconds
-    );
-    for (i, (k, v)) in req.headers.iter().enumerate() {
-        if i > 0 {
-            s.push(',');
-        }
-        s.push_str(&format!("[\"{}\",\"{}\"]", escape(k), escape(v)));
-    }
-    s.push(']');
-    if let Some(body) = &req.body {
-        s.push_str(&format!(",\"bodyBase64\":\"{}\"", base64::encode(body)));
-    }
-    s.push('}');
-    s
-}
-
-/// Parse the handler's response JSON into a transport response or failure.
-fn decode_response(text: &str) -> Result<HttpResponse, HttpError> {
-    let malformed = |m: &str| HttpError::failed("badServerResponse", m);
-    let root = json::parse(text)
-        .map_err(|e| malformed(&format!("host HTTP response is not valid JSON: {e}")))?;
-    if let Some(Json::Str(code)) = root.get("error") {
-        let message = match root.get("message") {
-            Some(Json::Str(m)) => m.clone(),
-            _ => "host HTTP handler reported a failure".to_string(),
-        };
-        return Err(HttpError::failed(code.clone(), message));
-    }
-    let status = match root.get("status") {
-        Some(Json::Int(s)) => *s,
-        _ => return Err(malformed("host HTTP response has no integer `status`")),
-    };
-    let mut headers = Vec::new();
-    if let Some(Json::Array(pairs)) = root.get("headers") {
-        for pair in pairs {
-            let Json::Array(kv) = pair else {
-                return Err(malformed("host HTTP response headers must be [k, v] pairs"));
-            };
-            let (Some(Json::Str(k)), Some(Json::Str(v))) = (kv.first(), kv.get(1)) else {
-                return Err(malformed("host HTTP response headers must be [k, v] pairs"));
-            };
-            headers.push((k.clone(), v.clone()));
-        }
-    }
-    let body = match root.get("bodyBase64") {
-        Some(Json::Str(b64)) => base64::decode(b64)
-            .ok_or_else(|| malformed("host HTTP response bodyBase64 is not valid base64"))?,
-        _ => Vec::new(),
-    };
-    Ok(HttpResponse {
-        status,
-        headers,
-        body,
-    })
 }
 
 #[cfg(test)]
@@ -159,30 +96,6 @@ mod tests {
             body: Some(b"hi".to_vec()),
             timeout_seconds: 30.0,
         }
-    }
-
-    #[test]
-    fn encodes_request_with_base64_body() {
-        let json = encode_request(&request());
-        let root = json::parse(&json).unwrap();
-        assert_eq!(
-            root.get("url"),
-            Some(&Json::Str("https://example.com/a".into()))
-        );
-        assert_eq!(root.get("method"), Some(&Json::Str("POST".into())));
-        assert_eq!(root.get("bodyBase64"), Some(&Json::Str("aGk=".into())));
-    }
-
-    #[test]
-    fn decodes_success_and_error_responses() {
-        let ok = decode_response(
-            r#"{"status": 200, "headers": [["Content-Type", "text/plain"]], "bodyBase64": "aGk="}"#,
-        )
-        .unwrap();
-        assert_eq!(ok.status, 200);
-        assert_eq!(ok.body, b"hi");
-        let err = decode_response(r#"{"error": "timedOut"}"#).unwrap_err();
-        assert!(matches!(err, HttpError::Failed { code, .. } if code == "timedOut"));
     }
 
     #[test]
