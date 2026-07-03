@@ -15,3 +15,6 @@ examples/ios/*.xcodeproj
 apps/TSwiftPlayground/*.xcodeproj
 loop-log*.md
 docs/loop-logs/
+*.log
+notes.md
+__pycache__
