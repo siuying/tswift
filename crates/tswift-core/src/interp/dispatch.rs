@@ -1156,6 +1156,10 @@ impl<'w> Interpreter<'w> {
         if let Some(v) = self.try_json_coder_method(&base_value, &method, arg_nodes)? {
             return Ok(v);
         }
+        // `PropertyListEncoder().encode(...)` — XML plist serialiser.
+        if let Some(v) = self.try_plist_coder_method(&base_value, &method, arg_nodes)? {
+            return Ok(v);
+        }
 
         // Class instance: dynamic dispatch from the runtime class.
         if let Some(v) = self.try_class_instance_method(&base_value, &method, arg_nodes)? {

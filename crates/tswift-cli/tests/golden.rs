@@ -502,4 +502,20 @@ fn operator_traps() {
         err.contains("invalid characters") || err.contains("percentEncodedHost"),
         "expected invalid-characters message, got: {err}"
     );
+
+    // --- PropertyListEncoder.xml must NOT be a valid expression ---
+    // Real Foundation places xml/binary on PropertyListSerialization.PropertyListFormat,
+    // not on PropertyListEncoder itself. Accessing PropertyListEncoder.xml must error.
+    let (ok, _, err) = run_source(
+        "tswift_plist_encoder_xml_static.swift",
+        "import Foundation\nlet _ = PropertyListEncoder.xml\n",
+    );
+    assert!(
+        !ok,
+        "PropertyListEncoder.xml must not be a valid member access"
+    );
+    assert!(
+        err.contains("unknown") || err.contains("xml") || err.contains("PropertyListEncoder"),
+        "expected 'unknown member' error, got: {err}"
+    );
 }

@@ -4098,9 +4098,10 @@ impl<'w> Interpreter<'w> {
     /// the call falls through the rest of the dispatch ladder.
     fn builtin_ctor_table() -> BuiltinCtors {
         let mut t: HashMap<&'static str, BuiltinCtor> = HashMap::new();
-        // JSON coder markers (value-only opaque structs).
+        // JSON/plist coder markers (value-only opaque structs).
         t.insert("JSONEncoder", Self::ctor_json_coder);
         t.insert("JSONDecoder", Self::ctor_json_coder);
+        t.insert("PropertyListEncoder", Self::ctor_json_coder);
         // Generic collection constructors.
         t.insert("Array", Self::ctor_array);
         t.insert("Set", Self::ctor_set);

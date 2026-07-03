@@ -11,6 +11,7 @@ mod formatter;
 mod json;
 mod measurement;
 mod numberformatter;
+mod plist;
 mod url;
 
 use std::{collections::BTreeSet, rc::Rc};
@@ -34,6 +35,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     json::install(interp);
     numberformatter::install(interp);
     measurement::install(interp);
+    plist::install(interp);
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -395,6 +397,9 @@ pub fn registered_keys() -> Vec<String> {
     // coding machinery (not the standard registry), so their keys are injected
     // manually here so the coverage tooling counts them.
     keys.extend(json::registered_keys());
+    // PropertyListEncoder is handled by the interpreter's built-in coding
+    // machinery (same pattern as JSONEncoder); inject keys manually.
+    keys.extend(plist::registered_keys());
     // Date.FormatStyle enum cases + static values are not auto-detected by the
     // registry filter above; inject them manually.
     keys.extend(datestyle::extra_registered_keys());

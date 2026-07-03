@@ -255,6 +255,7 @@ Measurement.convert
 Measurement.converted
 Measurement.debugDescription
 Measurement.description
+Measurement.encode
 Measurement.hashValue
 Measurement.init
 Measurement.unit
@@ -269,6 +270,9 @@ NumberFormatter.number
 NumberFormatter.numberStyle
 NumberFormatter.string
 NumberFormatter.usesGroupingSeparator
+PropertyListEncoder.encode
+PropertyListEncoder.init
+PropertyListEncoder.outputFormat
 URL.absoluteString
 URL.absoluteURL
 URL.append

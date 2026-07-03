@@ -94,6 +94,8 @@ pub fn registered_keys() -> Vec<String> {
         "JSONEncoder.init".to_string(),
         "JSONEncoder.keyEncodingStrategy".to_string(),
         "JSONEncoder.outputFormatting".to_string(),
+        // Measurement.encode is handled via the JSON encoder's special-case path.
+        "Measurement.encode".to_string(),
     ]
 }
 

@@ -1,0 +1,4 @@
+{"unit":{"converter":{"coefficient":1,"constant":0},"symbol":"m"},"value":5}
+{"unit":{"converter":{"coefficient":1,"constant":273.15},"symbol":"°C"},"value":100}
+{"unit":{"converter":{"coefficient":1000,"constant":0},"symbol":"km"},"value":1000}
+{"distance":{"unit":{"converter":{"coefficient":1609.344,"constant":0},"symbol":"mi"},"value":2.5},"mass":{"unit":{"converter":{"coefficient":1,"constant":0},"symbol":"kg"},"value":70}}

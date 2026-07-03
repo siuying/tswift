@@ -544,6 +544,67 @@ impl<'w> Interpreter<'w> {
         Ok(None)
     }
 
+    /// `PropertyListEncoder().encode(value)` — produces an XML plist `Data`.
+    pub(super) fn try_plist_coder_method(
+        &mut self,
+        base_value: &SwiftValue,
+        method: &str,
+        arg_nodes: &[Node<'static>],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let SwiftValue::Struct(o) = base_value else {
+            return Ok(None);
+        };
+        if o.type_name != "PropertyListEncoder" || method != "encode" {
+            return Ok(None);
+        }
+        // outputFormat is a `PropertyListSerialization.PropertyListFormat` enum
+        // case set via `.xml` / `.binary` / `.openStep` leading-dot syntax.
+        // Real Foundation defaults to `.binary`; we default to `.xml` since
+        // binary output cannot be represented as UTF-8 Data in this runtime.
+        let fmt_case = match o.get("outputFormat") {
+            Some(SwiftValue::Enum(e))
+                if e.type_name == "PropertyListSerialization.PropertyListFormat" =>
+            {
+                e.case.clone()
+            }
+            // No outputFormat set — treat as .xml (our runtime default).
+            None => "xml".to_string(),
+            // Any other value (e.g. stale Int or wrong type) is rejected.
+            Some(other) => {
+                return Err(Signal::Throw(SwiftValue::Str(format!(
+                    "PropertyListEncoder: invalid outputFormat value: {}",
+                    other.type_name()
+                ))));
+            }
+        };
+        match fmt_case.as_str() {
+            "xml" => {}
+            "binary" => {
+                return Err(Signal::Throw(SwiftValue::Str(
+                    "PropertyListEncoder: binary plist format is not supported in this runtime"
+                        .into(),
+                )));
+            }
+            other => {
+                return Err(Signal::Throw(SwiftValue::Str(format!(
+                    "PropertyListEncoder: output format '.{other}' is not supported in this runtime",
+                ))));
+            }
+        }
+        let args = self.eval_args(arg_nodes)?;
+        let value = args
+            .first()
+            .map(|a| a.value.clone())
+            .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
+        let xml = plist_encode_xml(&value)?;
+        let bytes: Vec<SwiftValue> = xml.bytes().map(|b| SwiftValue::int(b as i128)).collect();
+        let data = SwiftValue::Struct(Rc::new(crate::value::StructObj {
+            type_name: "Data".into(),
+            fields: vec![("_bytes".into(), SwiftValue::Array(Rc::new(bytes)))],
+        }));
+        Ok(Some(data))
+    }
+
     /// Serialize a `Codable` value to its `JSONEncoder` representation.
     fn json_encode(
         &self,
@@ -584,6 +645,57 @@ impl<'w> Interpreter<'w> {
                     _ => vec![],
                 };
                 return Ok(Json::Object(vec![("indexes".into(), Json::Array(indexes))]));
+            }
+            // `Measurement<Unit>` encodes as:
+            // {"value":N,"unit":{"symbol":"s","converter":{"coefficient":C,"constant":K}}}
+            // matching Foundation's JSONEncoder output.
+            if o.type_name == "Measurement" {
+                let val = o
+                    .get("value")
+                    .ok_or_else(|| EvalError::Type("Measurement.value missing".into()))?;
+                let unit = o
+                    .get("unit")
+                    .ok_or_else(|| EvalError::Type("Measurement.unit missing".into()))?;
+                let SwiftValue::Struct(u) = unit else {
+                    return Err(EvalError::Type("Measurement.unit is not a struct".into()).into());
+                };
+                let symbol = match u.get("symbol") {
+                    Some(SwiftValue::Str(s)) => s.clone(),
+                    _ => {
+                        return Err(EvalError::Type("Measurement unit.symbol missing".into()).into())
+                    }
+                };
+                let coeff = match u.get("_coefficient") {
+                    Some(SwiftValue::Double(d)) => *d,
+                    Some(SwiftValue::Int(i)) => i.raw as f64,
+                    _ => {
+                        return Err(
+                            EvalError::Type("Measurement unit._coefficient missing".into()).into(),
+                        )
+                    }
+                };
+                let constant = match u.get("_constant") {
+                    Some(SwiftValue::Double(d)) => *d,
+                    Some(SwiftValue::Int(i)) => i.raw as f64,
+                    _ => {
+                        return Err(
+                            EvalError::Type("Measurement unit._constant missing".into()).into()
+                        )
+                    }
+                };
+                let converter = Json::Object(vec![
+                    ("coefficient".into(), Json::Double(coeff)),
+                    ("constant".into(), Json::Double(constant)),
+                ]);
+                let unit_obj = Json::Object(vec![
+                    ("converter".into(), converter),
+                    ("symbol".into(), Json::Str(symbol)),
+                ]);
+                let val_json = self.json_encode(val, date_enc, key_enc, data_enc)?;
+                return Ok(Json::Object(vec![
+                    ("value".into(), val_json),
+                    ("unit".into(), unit_obj),
+                ]));
             }
             // `Data` is encoded according to the data strategy.
             if o.type_name == "Data" {
@@ -1211,6 +1323,178 @@ fn json_kind_name(json: &Json) -> &'static str {
         Json::Array(_) => "array",
         Json::Object(_) => "object",
     }
+}
+
+// ---------------------------------------------------------------------------
+// PropertyList encoding
+// ---------------------------------------------------------------------------
+
+/// Build an XML property list document for `value`. Returns the UTF-8 string.
+pub(super) fn plist_encode_xml(value: &SwiftValue) -> Result<String, Signal> {
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"");
+    out.push_str("http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n");
+    out.push_str("<plist version=\"1.0\">\n");
+    plist_write_value(&mut out, value, 0)?;
+    out.push_str("</plist>\n");
+    Ok(out)
+}
+
+/// Write one plist value to `out` at indentation depth `depth`, appending
+/// a trailing newline. Dict/array keys are sorted alphabetically (matching
+/// Foundation's XML plist serialiser). `SwiftValue::Nil` entries inside dicts
+/// are silently omitted; top-level nil is a throw.
+fn plist_write_value(out: &mut String, value: &SwiftValue, depth: usize) -> Result<(), Signal> {
+    let tabs: String = "\t".repeat(depth);
+    match value {
+        SwiftValue::Bool(b) => {
+            out.push_str(&tabs);
+            out.push_str(if *b { "<true/>" } else { "<false/>" });
+            out.push('\n');
+        }
+        SwiftValue::Int(i) => {
+            use std::fmt::Write as _;
+            let _ = writeln!(out, "{tabs}<integer>{}</integer>", i.raw);
+        }
+        SwiftValue::Double(d) => {
+            use std::fmt::Write as _;
+            // Match Foundation's XML plist encoding for non-finite values:
+            // NaN → "nan", +∞ → "+infinity", -∞ → "-infinity".
+            let repr: std::borrow::Cow<str> = if d.is_nan() {
+                "nan".into()
+            } else if *d == f64::INFINITY {
+                "+infinity".into()
+            } else if *d == f64::NEG_INFINITY {
+                "-infinity".into()
+            } else {
+                format!("{d}").into()
+            };
+            let _ = writeln!(out, "{tabs}<real>{repr}</real>");
+        }
+        SwiftValue::Str(s) => {
+            use std::fmt::Write as _;
+            let _ = writeln!(out, "{tabs}<string>{}</string>", plist_xml_escape(s));
+        }
+        SwiftValue::Nil => {
+            // Top-level nil is not a valid plist root; dicts skip nil fields
+            // before calling this function, so reaching here is always an error.
+            return Err(Signal::Throw(SwiftValue::Str(
+                "PropertyListEncoder: cannot encode nil as a property list value".into(),
+            )));
+        }
+        SwiftValue::Array(items) => {
+            use std::fmt::Write as _;
+            if items.is_empty() {
+                let _ = writeln!(out, "{tabs}<array/>");
+            } else {
+                let _ = writeln!(out, "{tabs}<array>");
+                for item in items.iter() {
+                    plist_write_value(out, item, depth + 1)?;
+                }
+                let _ = writeln!(out, "{tabs}</array>");
+            }
+        }
+        SwiftValue::Struct(o) => {
+            // Data — encodes as base64 in a <data> element.
+            if o.type_name == "Data" {
+                let bytes: Vec<u8> = match o.get("_bytes") {
+                    Some(SwiftValue::Array(items)) => items
+                        .iter()
+                        .filter_map(|v| match v {
+                            SwiftValue::Int(i) if (0..=255).contains(&i.raw) => Some(i.raw as u8),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => vec![],
+                };
+                let b64 = crate::base64::encode(&bytes);
+                use std::fmt::Write as _;
+                let _ = writeln!(out, "{tabs}<data>");
+                let _ = writeln!(out, "{tabs}{b64}");
+                let _ = writeln!(out, "{tabs}</data>");
+                return Ok(());
+            }
+            // Date — encodes as ISO 8601 in a <date> element (second precision).
+            if let Some(ref_secs) = date_ref_seconds(value) {
+                let iso = iso8601_format(ref_secs);
+                use std::fmt::Write as _;
+                let _ = writeln!(out, "{tabs}<date>{iso}</date>");
+                return Ok(());
+            }
+            // General struct: encode all non-nil fields as a <dict>, keys
+            // sorted alphabetically to match Foundation's output.
+            let mut pairs: Vec<(&str, &SwiftValue)> =
+                o.fields.iter().map(|(k, v)| (k.as_str(), v)).collect();
+            pairs.sort_by_key(|(k, _)| *k);
+            let non_nil: Vec<_> = pairs
+                .iter()
+                .copied()
+                .filter(|(_, v)| !matches!(v, SwiftValue::Nil))
+                .collect();
+            plist_write_dict(out, &non_nil, depth, &tabs)?;
+        }
+        SwiftValue::Dict(pairs) => {
+            // Swift Dictionary — sort keys alphabetically.
+            let mut sorted: Vec<(String, &SwiftValue)> = pairs
+                .iter()
+                .filter(|(_, v)| !matches!(v, SwiftValue::Nil))
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            let kv: Vec<(&str, &SwiftValue)> =
+                sorted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+            plist_write_dict(out, &kv, depth, &tabs)?;
+        }
+        SwiftValue::Enum(e) => {
+            // Payload-free enum: encode its case name as a string.
+            use std::fmt::Write as _;
+            let _ = writeln!(out, "{tabs}<string>{}</string>", plist_xml_escape(&e.case));
+        }
+        other => {
+            return Err(Signal::Throw(SwiftValue::Str(format!(
+                "PropertyListEncoder: cannot encode value of type {}",
+                other.type_name()
+            ))));
+        }
+    }
+    Ok(())
+}
+
+/// Emit a `<dict>` element from a slice of sorted `(key, value)` pairs.
+fn plist_write_dict(
+    out: &mut String,
+    pairs: &[(&str, &SwiftValue)],
+    depth: usize,
+    tabs: &str,
+) -> Result<(), Signal> {
+    use std::fmt::Write as _;
+    if pairs.is_empty() {
+        let _ = writeln!(out, "{tabs}<dict/>");
+    } else {
+        let _ = writeln!(out, "{tabs}<dict>");
+        for (k, v) in pairs {
+            let _ = writeln!(out, "{}\t<key>{}</key>", tabs, plist_xml_escape(k));
+            plist_write_value(out, v, depth + 1)?;
+        }
+        let _ = writeln!(out, "{tabs}</dict>");
+    }
+    Ok(())
+}
+
+/// Escape XML special characters for plist string/key values.
+/// Foundation escapes `<`, `>`, `&` but does NOT escape `"` inside strings.
+fn plist_xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
