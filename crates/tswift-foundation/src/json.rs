@@ -69,15 +69,26 @@ pub fn install(interp: &mut Interpreter<'_>) {
 
     // `JSONDecoder.KeyDecodingStrategy` raw values (1 = convertFromSnakeCase).
     interp.register_static_value("JSONDecoder", "convertFromSnakeCase", SwiftValue::int(1));
+
+    // `JSONEncoder.DataEncodingStrategy` raw values.
+    // 0 = base64 (default), 1 = deferredToData (array of byte numbers).
+    interp.register_static_value("JSONEncoder", "base64", SwiftValue::int(0));
+    interp.register_static_value("JSONEncoder", "deferredToData", SwiftValue::int(1));
+
+    // `JSONDecoder.DataDecodingStrategy` raw values (mirrors encoder side).
+    interp.register_static_value("JSONDecoder", "base64", SwiftValue::int(0));
+    interp.register_static_value("JSONDecoder", "deferredToData", SwiftValue::int(1));
 }
 
 /// Returns the member keys exposed by this module (for coverage tracking).
 pub fn registered_keys() -> Vec<String> {
     vec![
         "JSONDecoder.decode".to_string(),
+        "JSONDecoder.dataDecodingStrategy".to_string(),
         "JSONDecoder.dateDecodingStrategy".to_string(),
         "JSONDecoder.keyDecodingStrategy".to_string(),
         "JSONDecoder.init".to_string(),
+        "JSONEncoder.dataEncodingStrategy".to_string(),
         "JSONEncoder.dateEncodingStrategy".to_string(),
         "JSONEncoder.encode".to_string(),
         "JSONEncoder.init".to_string(),

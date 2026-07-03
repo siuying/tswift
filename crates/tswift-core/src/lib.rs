@@ -5,6 +5,7 @@
 //! milestone covers literals, arithmetic, and `let`/`var` bindings with faithful
 //! integer-width overflow/wrap semantics.
 
+pub mod base64;
 pub mod decimal;
 mod env;
 mod fragment_cache;
@@ -30,6 +31,18 @@ pub use stdlib::{
     StdResult, StructMethodFn,
 };
 pub use value::{format_double, EnumObj, IntValue, IntWidth, StructObj, SwiftValue};
+
+/// Returns `true` when `s` is a non-empty string that contains no ASCII
+/// whitespace characters — the minimum validity contract of Foundation's
+/// `URL(string:)` failable initializer.
+///
+/// Both the URL initializer in `tswift-foundation` and the JSON `URL` decoder
+/// in `tswift-core::interp::coding` route through this function so the two
+/// remain in sync: a string that `URL(string:)` would reject as `nil` also
+/// causes `dataCorrupted` when decoded from JSON.
+pub fn is_url_string_valid(s: &str) -> bool {
+    !s.is_empty() && !s.bytes().any(|b| b.is_ascii_whitespace())
+}
 
 /// Register a minimal stdlib subset for unit tests inside this crate.
 ///

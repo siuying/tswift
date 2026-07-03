@@ -374,11 +374,14 @@ fn url_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         return Err(type_error("URL argument must be a String"));
     };
     match args[0].label.as_deref() {
-        // `URL(string:)` is failable: an empty string yields `nil`.
-        Some("string") => Ok(if raw.is_empty() {
-            SwiftValue::Nil
-        } else {
+        // `URL(string:)` is failable: returns `nil` for strings that cannot
+        // be a valid URL (empty or containing unencoded whitespace).  This
+        // validation is shared with the JSON URL decoder via
+        // `tswift_core::is_url_string_valid`.
+        Some("string") => Ok(if tswift_core::is_url_string_valid(raw) {
             url_value(raw.clone())
+        } else {
+            SwiftValue::Nil
         }),
         Some("fileURLWithPath") => {
             let path = raw.clone();

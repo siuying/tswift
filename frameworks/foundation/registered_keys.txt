@@ -157,10 +157,12 @@ IndexSet.removeAll
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update
+JSONDecoder.dataDecodingStrategy
 JSONDecoder.dateDecodingStrategy
 JSONDecoder.decode
 JSONDecoder.init
 JSONDecoder.keyDecodingStrategy
+JSONEncoder.dataEncodingStrategy
 JSONEncoder.dateEncodingStrategy
 JSONEncoder.encode
 JSONEncoder.init

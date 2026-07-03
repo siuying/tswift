@@ -1,0 +1,21 @@
+{"endpoint":"https://example.com/api"}
+https://example.com/api
+{"id":"550E8400-E29B-41D4-A716-446655440000"}
+550E8400-E29B-41D4-A716-446655440000
+invalid UUID throws
+{"payload":"SGVsbG8="}
+5
+invalid base64 throws
+{"payload":[72,101,108,108,111]}
+invalid URL throws
+{"urls":["https://a.com","https://b.com"]}
+2
+https://a.com
+{"id":"550E8400-E29B-41D4-A716-446655440000"}
+{"id":null}
+true
+550E8400-E29B-41D4-A716-446655440000
+5
+{"chunks":["SGVs","bG8="]}
+2
+3

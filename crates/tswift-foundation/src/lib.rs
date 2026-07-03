@@ -809,7 +809,7 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             return Err(type_error("Data(base64Encoded:) expects a String"));
         };
         // Failable: nil on malformed input.
-        return Ok(match base64_decode(s) {
+        return Ok(match tswift_core::base64::decode(s) {
             Some(bytes) => data_value(bytes),
             None => SwiftValue::Nil,
         });
@@ -869,9 +869,9 @@ fn data_base64_encoded_string(
     if !args.is_empty() {
         return Err(type_error("base64EncodedString() takes no arguments"));
     }
-    let encoded = base64_encode(&data_bytes(&recv)?);
+    let encoded = tswift_core::base64::encode(&data_bytes(&recv)?);
     Ok(Outcome {
-        result: SwiftValue::Str(encoded.into()),
+        result: SwiftValue::Str(encoded),
         receiver: recv,
     })
 }
@@ -885,7 +885,7 @@ fn data_base64_encoded_data(
         return Err(type_error("base64EncodedData() takes no arguments"));
     }
     // The base64 text encoded as its ASCII bytes, wrapped back into `Data`.
-    let encoded = base64_encode(&data_bytes(&recv)?);
+    let encoded = tswift_core::base64::encode(&data_bytes(&recv)?);
     Ok(Outcome {
         result: data_value(encoded.into_bytes()),
         receiver: recv,
@@ -928,77 +928,6 @@ fn data_remove_all(
         result: SwiftValue::Void,
         receiver: data_value(Vec::new()),
     })
-}
-
-const BASE64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn base64_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(BASE64_ALPHABET[(triple >> 18 & 0x3F) as usize] as char);
-        out.push(BASE64_ALPHABET[(triple >> 12 & 0x3F) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            BASE64_ALPHABET[(triple >> 6 & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            BASE64_ALPHABET[(triple & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
-}
-
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    fn val(c: u8) -> Option<u32> {
-        match c {
-            b'A'..=b'Z' => Some((c - b'A') as u32),
-            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let cleaned: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    // Empty input decodes to empty Data (matching Foundation); other lengths
-    // must be a whole number of 4-char groups.
-    if cleaned.len() % 4 != 0 {
-        return None;
-    }
-    let chunk_count = cleaned.len() / 4;
-    let mut out = Vec::with_capacity(chunk_count * 3);
-    for (chunk_index, chunk) in cleaned.chunks(4).enumerate() {
-        let pad = chunk.iter().filter(|&&c| c == b'=').count();
-        // Padding is only ever valid (1 or 2 chars) in the final chunk, and the
-        // pad must be a trailing run.
-        if pad > 0 && (chunk_index != chunk_count - 1 || pad > 2) {
-            return None;
-        }
-        if pad > 0 && chunk[4 - pad..].iter().any(|&c| c != b'=') {
-            return None;
-        }
-        let mut acc = 0u32;
-        for &c in &chunk[..4 - pad] {
-            acc = (acc << 6) | val(c)?;
-        }
-        acc <<= 6 * pad;
-        out.push((acc >> 16 & 0xFF) as u8);
-        if pad < 2 {
-            out.push((acc >> 8 & 0xFF) as u8);
-        }
-        if pad < 1 {
-            out.push((acc & 0xFF) as u8);
-        }
-    }
-    Some(out)
 }
 
 fn data_count(recv: SwiftValue) -> StdResult {
@@ -2017,21 +1946,22 @@ mod tests {
 
     #[test]
     fn base64_round_trips() {
+        use tswift_core::base64;
         for case in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
-            let encoded = base64_encode(case.as_bytes());
-            let decoded = base64_decode(&encoded).expect("decodes");
+            let encoded = base64::encode(case.as_bytes());
+            let decoded = base64::decode(&encoded).expect("decodes");
             assert_eq!(decoded, case.as_bytes(), "round-trip for {case:?}");
         }
-        assert_eq!(base64_encode(b"Hi"), "SGk=");
-        assert_eq!(base64_decode("SGk=").unwrap(), b"Hi");
+        assert_eq!(base64::encode(b"Hi"), "SGk=");
+        assert_eq!(base64::decode("SGk=").unwrap(), b"Hi");
         // Malformed inputs reject.
-        assert!(base64_decode("SGk").is_none()); // wrong length
-        assert!(base64_decode("@@@@").is_none()); // bad alphabet
-        assert!(base64_decode("====").is_none()); // all padding
-        assert!(base64_decode("AA==AAAA").is_none()); // padding before final chunk
-        assert!(base64_decode("A===").is_none()); // 3 padding chars
-                                                  // Empty decodes to empty Data, matching Foundation.
-        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+        assert!(base64::decode("SGk").is_none()); // wrong length
+        assert!(base64::decode("@@@@").is_none()); // bad alphabet
+        assert!(base64::decode("====").is_none()); // all padding
+        assert!(base64::decode("AA==AAAA").is_none()); // padding before final chunk
+        assert!(base64::decode("A===").is_none()); // 3 padding chars
+                                                   // Empty decodes to empty Data, matching Foundation.
+        assert_eq!(base64::decode("").unwrap(), Vec::<u8>::new());
     }
 
     #[test]

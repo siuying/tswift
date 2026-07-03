@@ -67,6 +67,49 @@ impl DateDecoding {
 }
 
 // ---------------------------------------------------------------------------
+// Data encoding/decoding strategy enums
+// ---------------------------------------------------------------------------
+
+/// Mirrors `JSONEncoder.DataEncodingStrategy` cases.
+/// Integer raw values match the constants registered in `tswift-foundation::json`.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum DataEncoding {
+    /// Encode `Data` as a Base64-encoded JSON string (default).
+    #[default]
+    Base64 = 0,
+    /// Encode `Data` as a JSON array of byte integers (Swift default-less fallback).
+    DeferredToData = 1,
+}
+
+impl DataEncoding {
+    fn from_raw(raw: i128) -> Self {
+        match raw {
+            1 => Self::DeferredToData,
+            _ => Self::Base64,
+        }
+    }
+}
+
+/// Mirrors `JSONDecoder.DataDecodingStrategy` cases.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+enum DataDecoding {
+    /// Decode `Data` from a Base64-encoded JSON string (default).
+    #[default]
+    Base64 = 0,
+    /// Decode `Data` from a JSON array of byte integers.
+    DeferredToData = 1,
+}
+
+impl DataDecoding {
+    fn from_raw(raw: i128) -> Self {
+        match raw {
+            1 => Self::DeferredToData,
+            _ => Self::Base64,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Output-formatting and key-strategy enums
 // ---------------------------------------------------------------------------
 
@@ -292,6 +335,22 @@ fn decoder_key_strategy(o: &StructObj) -> KeyDecoding {
     }
 }
 
+/// Read a `DataEncodingStrategy` raw integer from a `JSONEncoder` struct.
+fn encoder_data_strategy(o: &StructObj) -> DataEncoding {
+    match o.get("dataEncodingStrategy") {
+        Some(SwiftValue::Int(i)) => DataEncoding::from_raw(i.raw),
+        _ => DataEncoding::Base64,
+    }
+}
+
+/// Read a `DataDecodingStrategy` raw integer from a `JSONDecoder` struct.
+fn decoder_data_strategy(o: &StructObj) -> DataDecoding {
+    match o.get("dataDecodingStrategy") {
+        Some(SwiftValue::Int(i)) => DataDecoding::from_raw(i.raw),
+        _ => DataDecoding::Base64,
+    }
+}
+
 /// Convert a camelCase identifier to snake_case, implementing Apple's
 /// `_convertToSnakeCase` algorithm from swift-foundation's JSONEncoder.
 ///
@@ -405,12 +464,13 @@ impl<'w> Interpreter<'w> {
             let date_enc = encoder_date_strategy(o);
             let output_fmt = encoder_output_formatting(o);
             let key_enc = encoder_key_strategy(o);
+            let data_enc = encoder_data_strategy(o);
             let args = self.eval_args(arg_nodes)?;
             let value = args
                 .first()
                 .map(|a| a.value.clone())
                 .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
-            let json = self.json_encode(&value, date_enc, key_enc)?;
+            let json = self.json_encode(&value, date_enc, key_enc, data_enc)?;
             let json_str = crate::json::to_string_fmt(&json, &output_fmt);
             let bytes: Vec<SwiftValue> = json_str
                 .bytes()
@@ -426,6 +486,7 @@ impl<'w> Interpreter<'w> {
         if o.type_name == "JSONDecoder" && method == "decode" {
             let date_dec = decoder_date_strategy(o);
             let key_dec = decoder_key_strategy(o);
+            let data_dec = decoder_data_strategy(o);
             let type_name = arg_nodes
                 .first()
                 .and_then(metatype_name)
@@ -477,7 +538,7 @@ impl<'w> Interpreter<'w> {
             let json = crate::json::parse(&text)
                 .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
             return Ok(Some(
-                self.json_decode(&type_name, &json, date_dec, key_dec)?,
+                self.json_decode(&type_name, &json, date_dec, key_dec, data_dec)?,
             ));
         }
         Ok(None)
@@ -489,7 +550,35 @@ impl<'w> Interpreter<'w> {
         value: &SwiftValue,
         date_enc: DateEncoding,
         key_enc: KeyEncoding,
+        data_enc: DataEncoding,
     ) -> Result<Json, Signal> {
+        // `URL` is encoded as its `absoluteString` (a JSON string).
+        if let SwiftValue::Struct(o) = value {
+            if o.type_name == "URL" {
+                if let Some(SwiftValue::Str(s)) = o.get("_string") {
+                    return Ok(Json::Str(s.clone()));
+                }
+                return Err(EvalError::Type("cannot encode malformed URL value".into()).into());
+            }
+            // `UUID` is encoded as its `uuidString` (a JSON string).
+            if o.type_name == "UUID" {
+                if let Some(SwiftValue::Str(s)) = o.get("uuidString") {
+                    return Ok(Json::Str(s.clone()));
+                }
+                return Err(EvalError::Type("cannot encode malformed UUID value".into()).into());
+            }
+            // `Data` is encoded according to the data strategy.
+            if o.type_name == "Data" {
+                let bytes = data_bytes_from_value(value)
+                    .ok_or_else(|| EvalError::Type("cannot encode malformed Data value".into()))?;
+                return Ok(match data_enc {
+                    DataEncoding::Base64 => Json::Str(crate::base64::encode(&bytes)),
+                    DataEncoding::DeferredToData => {
+                        Json::Array(bytes.iter().map(|&b| Json::Int(b as i64)).collect())
+                    }
+                });
+            }
+        }
         // `Date` is encoded according to the strategy before falling into the
         // general struct branch (which would expand the internal fields).
         if let Some(ref_secs) = date_ref_seconds(value) {
@@ -525,7 +614,7 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Array(items) => Json::Array(
                 items
                     .iter()
-                    .map(|v| self.json_encode(v, date_enc, key_enc))
+                    .map(|v| self.json_encode(v, date_enc, key_enc, data_enc))
                     .collect::<Result<_, _>>()?,
             ),
             SwiftValue::Struct(o) => {
@@ -540,7 +629,7 @@ impl<'w> Interpreter<'w> {
                             KeyEncoding::ConvertToSnakeCase => to_snake_case(k),
                             KeyEncoding::UseDefaultKeys => k.clone(),
                         };
-                        Ok((key, self.json_encode(v, date_enc, key_enc)?))
+                        Ok((key, self.json_encode(v, date_enc, key_enc, data_enc)?))
                     })
                     .collect::<Result<_, Signal>>()?;
                 Json::Object(entries)
@@ -556,7 +645,7 @@ impl<'w> Interpreter<'w> {
                             SwiftValue::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        Ok((key, self.json_encode(v, date_enc, key_enc)?))
+                        Ok((key, self.json_encode(v, date_enc, key_enc, data_enc)?))
                     })
                     .collect::<Result<_, Signal>>()?;
                 entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -571,7 +660,7 @@ impl<'w> Interpreter<'w> {
                     .and_then(|d| d.cases.iter().find(|c| c.name == e.case))
                     .and_then(|c| c.raw.clone());
                 match raw {
-                    Some(r) => self.json_encode(&r, date_enc, key_enc)?,
+                    Some(r) => self.json_encode(&r, date_enc, key_enc, data_enc)?,
                     None if e.payload.is_empty() => Json::Str(e.case.clone()),
                     None => {
                         return Err(EvalError::Type(format!(
@@ -600,6 +689,7 @@ impl<'w> Interpreter<'w> {
         json: &Json,
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
+        data_dec: DataDecoding,
     ) -> Result<SwiftValue, Signal> {
         // `Date` decoding: apply the chosen strategy.
         if type_name == "Date" {
@@ -644,9 +734,8 @@ impl<'w> Interpreter<'w> {
                         }
                     });
                     let v = match json_val {
-                        Some(j) => {
-                            self.json_decode_typed(full_ty, &p.name, j, date_dec, key_dec)?
-                        }
+                        Some(j) => self
+                            .json_decode_typed(full_ty, &p.name, j, date_dec, key_dec, data_dec)?,
                         None if is_optional => SwiftValue::Nil,
                         None => {
                             return Err(Signal::Throw(SwiftValue::Str(format!(
@@ -738,6 +827,7 @@ impl<'w> Interpreter<'w> {
         json: &Json,
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
+        data_dec: DataDecoding,
     ) -> Result<SwiftValue, Signal> {
         let Some(full) = ty else {
             return Ok(self.json_value(json));
@@ -749,11 +839,93 @@ impl<'w> Interpreter<'w> {
                 return Ok(SwiftValue::Nil);
             }
             let inner_ty = repr.unwrap_optional().text();
-            return self.json_decode_typed(Some(inner_ty), field, json, date_dec, key_dec);
+            return self.json_decode_typed(
+                Some(inner_ty),
+                field,
+                json,
+                date_dec,
+                key_dec,
+                data_dec,
+            );
         }
         // `Date` type: use the strategy.
         if full.trim() == "Date" {
             return self.json_decode_date(json, date_dec);
+        }
+        // `URL` decodes from a JSON string (its absoluteString).
+        // Validation mirrors `URL(string:)` via `crate::is_url_string_valid`:
+        // empty strings and strings with whitespace are dataCorrupted errors.
+        if full.trim() == "URL" {
+            return match json {
+                Json::Str(s) if !crate::is_url_string_valid(s) => {
+                    Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.dataCorrupted: invalid URL string '{s}'"
+                    ))))
+                }
+                Json::Str(s) => Ok(SwiftValue::Struct(Rc::new(StructObj {
+                    type_name: "URL".into(),
+                    fields: vec![("_string".into(), SwiftValue::Str(s.clone()))],
+                }))),
+                other => Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: expected String for URL '{}', got {}",
+                    field,
+                    json_kind_name(other)
+                )))),
+            };
+        }
+        // `UUID` decodes from a JSON string; throws on malformed UUID.
+        if full.trim() == "UUID" {
+            return match json {
+                Json::Str(s) => match validate_uuid(s) {
+                    Some(canonical) => Ok(SwiftValue::Struct(Rc::new(StructObj {
+                        type_name: "UUID".into(),
+                        fields: vec![("uuidString".into(), SwiftValue::Str(canonical))],
+                    }))),
+                    None => Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.dataCorrupted: invalid UUID string '{s}'"
+                    )))),
+                },
+                other => Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: expected String for UUID '{}', got {}",
+                    field,
+                    json_kind_name(other)
+                )))),
+            };
+        }
+        // `Data` decodes according to the data-decoding strategy.
+        if full.trim() == "Data" {
+            return match (data_dec, json) {
+                (DataDecoding::Base64, Json::Str(s)) => match crate::base64::decode(s) {
+                    Some(bytes) => Ok(data_value_from_bytes(bytes)),
+                    None => Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.dataCorrupted: invalid base64 string for '{field}'"
+                    )))),
+                },
+                (DataDecoding::DeferredToData, Json::Array(items)) => {
+                    let bytes: Vec<SwiftValue> = items
+                        .iter()
+                        .map(|j| match j {
+                            Json::Int(i) if (0..=255).contains(i) => {
+                                Ok(SwiftValue::int(*i as i128))
+                            }
+                            other => Err(Signal::Throw(SwiftValue::Str(format!(
+                                "DecodingError.typeMismatch: expected byte for Data '{}', got {}",
+                                field,
+                                json_kind_name(other)
+                            )))),
+                        })
+                        .collect::<Result<_, _>>()?;
+                    Ok(SwiftValue::Struct(Rc::new(StructObj {
+                        type_name: "Data".into(),
+                        fields: vec![("_bytes".into(), SwiftValue::Array(Rc::new(bytes)))],
+                    })))
+                }
+                (_, other) => Err(Signal::Throw(SwiftValue::Str(format!(
+                    "DecodingError.typeMismatch: unexpected JSON value for Data '{}', got {}",
+                    field,
+                    json_kind_name(other)
+                )))),
+            };
         }
         // Primitive type matching.
         match full.trim() {
@@ -817,7 +989,9 @@ impl<'w> Interpreter<'w> {
         // uniformly regardless of whether its element type is registered.
         if full.trim_start().starts_with('[') {
             return match json {
-                Json::Array(_) => self.json_decode_field(inner, full, json, date_dec, key_dec),
+                Json::Array(_) => {
+                    self.json_decode_field(inner, full, json, date_dec, key_dec, data_dec)
+                }
                 other => Err(Signal::Throw(SwiftValue::Str(format!(
                     "DecodingError.typeMismatch: expected array for '{}', got {}",
                     field,
@@ -827,7 +1001,7 @@ impl<'w> Interpreter<'w> {
         }
         // Named struct/enum (non-array): delegate to field decoder.
         if self.types.is_struct(inner) || self.types.is_enum(inner) {
-            return self.json_decode_field(inner, full, json, date_dec, key_dec);
+            return self.json_decode_field(inner, full, json, date_dec, key_dec, data_dec);
         }
         Ok(self.json_value(json))
     }
@@ -842,6 +1016,7 @@ impl<'w> Interpreter<'w> {
         json: &Json,
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
+        data_dec: DataDecoding,
     ) -> Result<SwiftValue, Signal> {
         match json {
             // `nil` only for an optional type; a non-optional field receiving
@@ -864,12 +1039,19 @@ impl<'w> Interpreter<'w> {
                     items
                         .iter()
                         .map(|j| {
-                            self.json_decode_typed(Some(inner), "element", j, date_dec, key_dec)
+                            self.json_decode_typed(
+                                Some(inner),
+                                "element",
+                                j,
+                                date_dec,
+                                key_dec,
+                                data_dec,
+                            )
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 )))
             }
-            _ => self.json_decode(inner, json, date_dec, key_dec),
+            _ => self.json_decode(inner, json, date_dec, key_dec, data_dec),
         }
     }
 
@@ -893,6 +1075,54 @@ impl<'w> Interpreter<'w> {
             })),
         }
     }
+}
+
+/// Build a `Data` struct from raw bytes.
+fn data_value_from_bytes(bytes: Vec<u8>) -> SwiftValue {
+    let elements: Vec<SwiftValue> = bytes
+        .into_iter()
+        .map(|b| SwiftValue::int(i128::from(b)))
+        .collect();
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "Data".into(),
+        fields: vec![("_bytes".into(), SwiftValue::Array(Rc::new(elements)))],
+    }))
+}
+
+/// Extract bytes from a `Data` struct value (returns `None` if malformed).
+fn data_bytes_from_value(value: &SwiftValue) -> Option<Vec<u8>> {
+    if let SwiftValue::Struct(o) = value {
+        if o.type_name == "Data" {
+            if let Some(SwiftValue::Array(items)) = o.get("_bytes") {
+                return items
+                    .iter()
+                    .map(|v| match v {
+                        SwiftValue::Int(i) if (0..=255).contains(&i.raw) => Some(i.raw as u8),
+                        _ => None,
+                    })
+                    .collect();
+            }
+        }
+    }
+    None
+}
+
+/// Validate a UUID string and return its canonical uppercase form, or `None`.
+fn validate_uuid(raw: &str) -> Option<String> {
+    let upper = raw.to_ascii_uppercase();
+    let bytes = upper.as_bytes();
+    let dash_positions = [8usize, 13, 18, 23];
+    if bytes.len() != 36 || dash_positions.iter().any(|&i| bytes[i] != b'-') {
+        return None;
+    }
+    if bytes
+        .iter()
+        .enumerate()
+        .any(|(i, b)| !dash_positions.contains(&i) && !b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(upper)
 }
 
 /// A human-readable name for a JSON value's kind, used in `typeMismatch` error
