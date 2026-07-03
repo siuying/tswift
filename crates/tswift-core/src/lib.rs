@@ -12,7 +12,7 @@ mod fragment_cache;
 pub mod grapheme;
 mod interp;
 pub mod json;
-mod ops;
+pub mod ops;
 pub mod regex;
 pub mod result_json;
 mod stdlib;

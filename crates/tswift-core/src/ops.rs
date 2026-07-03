@@ -248,7 +248,13 @@ fn double_binary(op: &str, a: f64, b: f64) -> Result<SwiftValue, String> {
         "-" => Ok(SwiftValue::Double(a - b)),
         "*" => Ok(SwiftValue::Double(a * b)),
         "/" => Ok(SwiftValue::Double(a / b)),
-        "%" => Ok(SwiftValue::Double(a % b)),
+        // Swift removed `%` for floating-point types (SE-0067 / Swift 3).
+        // Use `truncatingRemainder(dividingBy:)` instead.
+        "%" => Err(
+            "binary operator '%' cannot be applied to two 'Double' operands; \
+             use truncatingRemainder(dividingBy:)"
+                .into(),
+        ),
         _ => Err(format!("unknown floating-point operator `{op}`")),
     }
 }
@@ -737,6 +743,25 @@ mod tests {
     fn division_by_zero_traps() {
         assert!(binary("/", &int(1), &int(0)).is_err());
         assert!(binary("%", &int(1), &int(0)).is_err());
+    }
+
+    #[test]
+    fn double_percent_is_an_error() {
+        // Swift removed `%` for floating-point types (SE-0067 / Swift 3).
+        // The runtime should reject Double % Double rather than silently
+        // producing a NaN or remainder result.
+        let d = SwiftValue::Double(7.5);
+        let e = SwiftValue::Double(2.5);
+        assert!(
+            binary("%", &d, &e).is_err(),
+            "Double % Double must be a runtime error"
+        );
+        // The error message should guide toward truncatingRemainder.
+        let msg = binary("%", &d, &e).unwrap_err();
+        assert!(
+            msg.contains("%") || msg.contains("truncatingRemainder") || msg.contains("Double"),
+            "error message should mention % or truncatingRemainder, got: {msg}"
+        );
     }
 
     #[test]

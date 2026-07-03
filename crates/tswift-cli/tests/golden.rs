@@ -410,3 +410,34 @@ fn small_collection_traps() {
         "expected out-of-bounds message, got: {err}"
     );
 }
+
+/// Operator trap / type-error cases that exit non-zero.
+#[test]
+fn operator_traps() {
+    // --- Int % 0: division by zero traps ---
+    let (ok, _, err) = run_source("tswift_rem_by_zero.swift", "print(5 % 0)\n");
+    assert!(!ok, "Int % 0 must trap");
+    assert!(
+        err.contains("division by zero") || err.contains("zero"),
+        "expected division-by-zero message, got: {err}"
+    );
+
+    // --- Int %= 0: compound remainder by zero also traps ---
+    let (ok, _, err) = run_source(
+        "tswift_rem_assign_by_zero.swift",
+        "var x = 5\nx %= 0\nprint(x)\n",
+    );
+    assert!(!ok, "Int %=  0 must trap");
+    assert!(
+        err.contains("division by zero") || err.contains("zero"),
+        "expected division-by-zero message, got: {err}"
+    );
+
+    // --- Double % Double: operator does not exist in Swift (SE-0067) ---
+    let (ok, _, err) = run_source("tswift_double_rem.swift", "print(5.0 % 2.0)\n");
+    assert!(!ok, "Double % Double must be a runtime error");
+    assert!(
+        err.contains("%") || err.contains("truncatingRemainder") || err.contains("Double"),
+        "expected % -not-applicable-to-Double message, got: {err}"
+    );
+}

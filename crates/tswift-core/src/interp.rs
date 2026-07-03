@@ -3208,6 +3208,27 @@ impl<'w> Interpreter<'w> {
             .next()
             .ok_or_else(|| EvalError::Unsupported("binary without rhs".into()))?;
 
+        // Pattern-match operator `~=`: range-contains or equality.
+        if op == "~=" {
+            let pattern = self.eval(&lhs)?;
+            let subject = self.eval(&rhs)?;
+            let matched = match &pattern {
+                SwiftValue::Range { lo, hi, inclusive } => match &subject {
+                    SwiftValue::Int(v) => {
+                        v.raw >= *lo
+                            && (if *inclusive {
+                                v.raw <= *hi
+                            } else {
+                                v.raw < *hi
+                            })
+                    }
+                    _ => false,
+                },
+                _ => pattern == subject,
+            };
+            return Ok(SwiftValue::Bool(matched));
+        }
+
         // Identity operators compare class instances by reference.
         if op == "===" || op == "!==" {
             let l = self.eval(&lhs)?;

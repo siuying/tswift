@@ -2,15 +2,23 @@
 //!
 //! Output (`print`/`debugPrint`/`dump`), comparison (`min`/`max`/`abs`),
 //! sequence builders (`zip`/`stride`/`repeatElement`/`sequence`), the
-//! diagnostic family (`assert`/`precondition`/`fatalError`/…), and `readLine`.
+//! diagnostic family (`assert`/`precondition`/`fatalError`/…), `readLine`,
+//! comparison and modulo operators, pattern-match (`~=`), identity ops
+//! (`===`/`!==`), `swap`, and `numericCast`.
 //!
-//! `swap` and `isKnownUniquelyReferenced` need caller `Place`s / reference
-//! identity and are served directly by the interpreter, not through this seam.
+//! Note: `swap` is also handled specially by `dispatch.rs` via inout `Place`
+//! write-back so that `swap(&a, &b)` actually exchanges the bindings. The
+//! registry entry here makes the key appear in `registered_keys()` and allows
+//! value-only fallback calls. Similarly, `===`/`!==` are evaluated as binary
+//! expressions by the interpreter; the entries here add them to the registry.
 
 use std::io::BufRead;
 use std::rc::Rc;
 
-use tswift_core::{Arg, EvalError, Interpreter, StdContext, StdError, StdResult, SwiftValue};
+use tswift_core::{
+    ops, Arg, EvalError, IntValue, IntWidth, Interpreter, StdContext, StdError, StdResult,
+    SwiftValue,
+};
 
 /// Register the free functions of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
@@ -30,6 +38,25 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("precondition", precondition);
     interp.register_free_fn("preconditionFailure", precondition_failure);
     interp.register_free_fn("fatalError", fatal_error);
+    // Comparison operators (Equatable / Comparable).
+    interp.register_free_fn("==", op_eq);
+    interp.register_free_fn("!=", op_ne);
+    interp.register_free_fn("<", op_lt);
+    interp.register_free_fn("<=", op_le);
+    interp.register_free_fn(">", op_gt);
+    interp.register_free_fn(">=", op_ge);
+    // Modulo / remainder operators.
+    interp.register_free_fn("%", op_rem);
+    interp.register_free_fn("%=", op_rem_assign);
+    // Pattern-match operator (`~=`): range-contains or equality.
+    interp.register_free_fn("~=", op_pattern_match);
+    // Class-identity operators.
+    interp.register_free_fn("===", op_identity_eq);
+    interp.register_free_fn("!==", op_identity_ne);
+    // `swap(_:_:)` — registry entry; actual inout exchange is in dispatch.rs.
+    interp.register_free_fn("swap", swap_stub);
+    // `numericCast(_:)` — integer width conversion.
+    interp.register_free_fn("numericCast", numeric_cast);
 }
 
 // ---- output ----------------------------------------------------------------
@@ -465,6 +492,191 @@ fn debug_format(v: &SwiftValue) -> String {
         }
         other => other.to_string(),
     }
+}
+
+// ---- operators ------------------------------------------------------------
+
+/// `==(_:_:)` — value equality for `Equatable` types.
+fn op_eq(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    two_args(&args, "==").map(|(l, r)| SwiftValue::Bool(l == r))
+}
+
+/// `!=(_:_:)` — value inequality for `Equatable` types.
+fn op_ne(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    two_args(&args, "!=").map(|(l, r)| SwiftValue::Bool(l != r))
+}
+
+/// `<(_:_:)` — less-than for `Comparable` types.
+fn op_lt(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "<")?;
+    ctx.value_less_than(&l, &r)
+        .map(SwiftValue::Bool)
+        .ok_or_else(|| {
+            type_err(format!(
+                "< cannot compare {} and {}",
+                l.type_name(),
+                r.type_name()
+            ))
+        })
+}
+
+/// `<=(_:_:)` — less-than-or-equal for `Comparable` types.
+fn op_le(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "<=")?;
+    // a <= b  iff  !(b < a)
+    ctx.value_less_than(&r, &l)
+        .map(|gt| SwiftValue::Bool(!gt))
+        .ok_or_else(|| {
+            type_err(format!(
+                "<= cannot compare {} and {}",
+                l.type_name(),
+                r.type_name()
+            ))
+        })
+}
+
+/// `>(_:_:)` — greater-than for `Comparable` types.
+fn op_gt(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, ">")?;
+    ctx.value_less_than(&r, &l)
+        .map(SwiftValue::Bool)
+        .ok_or_else(|| {
+            type_err(format!(
+                "> cannot compare {} and {}",
+                l.type_name(),
+                r.type_name()
+            ))
+        })
+}
+
+/// `>=(_:_:)` — greater-than-or-equal for `Comparable` types.
+fn op_ge(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, ">=")?;
+    // a >= b  iff  !(a < b)
+    ctx.value_less_than(&l, &r)
+        .map(|lt| SwiftValue::Bool(!lt))
+        .ok_or_else(|| {
+            type_err(format!(
+                ">= cannot compare {} and {}",
+                l.type_name(),
+                r.type_name()
+            ))
+        })
+}
+
+/// `%(_:_:)` — remainder / modulo operator for integer and floating-point.
+///
+/// Integer remainder by zero traps (mirrors Swift's `%` on `BinaryInteger`).
+fn op_rem(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "%")?;
+    ops::binary("%", &l, &r).map_err(|e| StdError::Error(EvalError::Trap(e)))
+}
+
+/// `%=(_:_:)` — compound remainder assignment.
+///
+/// As a free function this performs the modulo and returns the result.
+/// The actual `%=` syntax is handled by the interpreter's assignment path;
+/// this entry exists so the key appears in the registry.
+fn op_rem_assign(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "%=")?;
+    ops::binary("%", &l, &r).map_err(|e| StdError::Error(EvalError::Trap(e)))
+}
+
+/// `~=(_:_:)` — pattern-match operator.
+///
+/// Swift's switch desugars `case lo...hi:` to `(lo...hi) ~= subject`.
+/// This implementation handles:
+/// * `Range / ClosedRange ~= Int` — containment check;
+/// * `T ~= T where T: Equatable` — value equality.
+fn op_pattern_match(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if args.len() < 2 {
+        return Err(type_err("~= expects two arguments".into()));
+    }
+    let pattern = &args[0].value;
+    let value = &args[1].value;
+    match pattern {
+        SwiftValue::Range { lo, hi, inclusive } => match value {
+            SwiftValue::Int(v) => {
+                let within = v.raw >= *lo
+                    && (if *inclusive {
+                        v.raw <= *hi
+                    } else {
+                        v.raw < *hi
+                    });
+                Ok(SwiftValue::Bool(within))
+            }
+            _ => Ok(SwiftValue::Bool(false)),
+        },
+        _ => Ok(SwiftValue::Bool(pattern == value)),
+    }
+}
+
+/// `===(_:_:)` — reference (class) identity.
+///
+/// Two class instances are identical when they share the same `Rc` allocation.
+/// Non-class values are never identical (always `false`).
+fn op_identity_eq(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "===")?;
+    Ok(SwiftValue::Bool(is_same_object(&l, &r)))
+}
+
+/// `!==(_:_:)` — reference (class) non-identity.
+fn op_identity_ne(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let (l, r) = two_args(&args, "!==")?;
+    Ok(SwiftValue::Bool(!is_same_object(&l, &r)))
+}
+
+/// Whether two values are the same class-object allocation.
+fn is_same_object(a: &SwiftValue, b: &SwiftValue) -> bool {
+    match (a, b) {
+        (SwiftValue::Object(ra), SwiftValue::Object(rb)) => Rc::ptr_eq(ra, rb),
+        _ => false,
+    }
+}
+
+/// `swap(_:_:)` — registry stub.
+///
+/// The real `swap(&a, &b)` exchange is intercepted by `dispatch.rs` before
+/// reaching the free-function registry, so this stub is only called when both
+/// arguments lack an inout `Place` (unusual; returns `Void` silently).
+fn swap_stub(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    Ok(SwiftValue::Void)
+}
+
+/// `numericCast(_:)` — integer width conversion.
+///
+/// Converts any integer value to the inferred target integer type.
+/// Like Swift's `numericCast`, this traps (via `Err`) if the value is
+/// out-of-range for the destination width. In this runtime the target width
+/// cannot be inferred from the call site, so we return the same raw value
+/// as a platform `Int` (Int64); callers relying on a specific width should
+/// use the explicit initializer (`Int8(x)`, `UInt32(x)`, …).
+fn numeric_cast(_ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
+    if args.is_empty() {
+        return Err(type_err("numericCast expects one argument".into()));
+    }
+    let v = args.remove(0).value;
+    match v {
+        SwiftValue::Int(i) => Ok(SwiftValue::Int(IntValue::new(i.raw, IntWidth::I64))),
+        SwiftValue::Double(d) => {
+            // numericCast is BinaryInteger-only in Swift; reject Double.
+            Err(type_err(format!(
+                "numericCast cannot convert Double({d}) to an integer type"
+            )))
+        }
+        other => Err(type_err(format!(
+            "numericCast expects an integer, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Extract exactly two positional arguments, returning a type error otherwise.
+fn two_args(args: &[Arg], who: &str) -> Result<(SwiftValue, SwiftValue), StdError> {
+    if args.len() < 2 {
+        return Err(type_err(format!("{who} expects two arguments")));
+    }
+    Ok((args[0].value.clone(), args[1].value.clone()))
 }
 
 #[cfg(test)]

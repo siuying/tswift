@@ -1,3 +1,13 @@
+!=
+!==
+%
+%=
+<
+<=
+==
+===
+>
+>=
 Array.append
 Array.capacity
 Array.count
@@ -371,6 +381,7 @@ dump
 fatalError
 max
 min
+numericCast
 precondition
 preconditionFailure
 print
@@ -378,4 +389,6 @@ readLine
 repeatElement
 sequence
 stride
+swap
 zip
+~=
