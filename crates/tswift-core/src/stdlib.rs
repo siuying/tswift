@@ -192,6 +192,9 @@ pub enum BuiltinReceiver {
     /// `EmptyCollection` — an always-empty typed collection;
     /// represented as a `Struct { type_name: "EmptyCollection" }`.
     EmptyCollection,
+    /// `Date.FormatStyle` — a format-style builder produced by `.dateTime`;
+    /// represented as a `Struct { type_name: "Date.FormatStyle" }`.
+    DateFormatStyle,
 }
 
 impl BuiltinReceiver {
@@ -230,6 +233,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::ReversedCollection => "ReversedCollection",
             BuiltinReceiver::CollectionOfOne => "CollectionOfOne",
             BuiltinReceiver::EmptyCollection => "EmptyCollection",
+            BuiltinReceiver::DateFormatStyle => "Date.FormatStyle",
         }
     }
 
@@ -268,6 +272,7 @@ impl BuiltinReceiver {
             "ReversedCollection" => BuiltinReceiver::ReversedCollection,
             "CollectionOfOne" => BuiltinReceiver::CollectionOfOne,
             "EmptyCollection" => BuiltinReceiver::EmptyCollection,
+            "Date.FormatStyle" => BuiltinReceiver::DateFormatStyle,
             _ => return None,
         })
     }
@@ -326,6 +331,9 @@ impl BuiltinReceiver {
             }
             SwiftValue::Struct(obj) if obj.type_name == "EmptyCollection" => {
                 BuiltinReceiver::EmptyCollection
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "Date.FormatStyle" => {
+                BuiltinReceiver::DateFormatStyle
             }
             _ => return None,
         })

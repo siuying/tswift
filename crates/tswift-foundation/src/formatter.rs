@@ -108,7 +108,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
 /// symbols: `y`, `M` (1–2 numeric, 3 short name, 4 full name), `d`, `H`, `h`,
 /// `m`, `s`, `a`, `E` (4 = full weekday name). `'literal'` quoting is honoured;
 /// other characters pass through. Unsupported symbols pass through verbatim.
-fn format_pattern(civil: &Civil, pattern: &str) -> String {
+pub(crate) fn format_pattern(civil: &Civil, pattern: &str) -> String {
     let chars: Vec<char> = pattern.chars().collect();
     let mut out = String::new();
     let mut i = 0;

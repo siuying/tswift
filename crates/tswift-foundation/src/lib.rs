@@ -5,6 +5,7 @@
 //! behaviour slices small enough to validate with CLI golden fixtures.
 
 mod calendar;
+mod datestyle;
 mod decimal;
 mod formatter;
 mod json;
@@ -27,6 +28,7 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 pub fn install(interp: &mut Interpreter<'_>) {
     url::install(interp);
     calendar::install(interp);
+    datestyle::install(interp);
     formatter::install(interp);
     decimal::install(interp);
     json::install(interp);
@@ -309,6 +311,9 @@ pub fn registered_keys() -> Vec<String> {
     // coding machinery (not the standard registry), so their keys are injected
     // manually here so the coverage tooling counts them.
     keys.extend(json::registered_keys());
+    // Date.FormatStyle enum cases + static values are not auto-detected by the
+    // registry filter above; inject them manually.
+    keys.extend(datestyle::extra_registered_keys());
     keys.sort();
     keys.dedup();
     keys
