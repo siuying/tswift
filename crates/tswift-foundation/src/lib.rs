@@ -85,6 +85,41 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "isValidDate",
         date_components_is_valid_date,
     );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "calendar",
+        date_components_calendar,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "timeZone",
+        date_components_time_zone,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "isLeapMonth",
+        date_components_is_leap_month,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "description",
+        date_components_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "debugDescription",
+        date_components_description,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "hashValue",
+        date_components_hash_value,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
+        "date",
+        date_components_date,
+    );
     for (name, mutating, func) in [
         ("value", false, date_components_value as IntrinsicFn),
         ("setValue", true, date_components_set_value),
@@ -604,8 +639,9 @@ pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
     "dayOfYear",
 ];
 
-/// Initializer labels that are accepted but not stored as readable components.
-const DATE_COMPONENT_IGNORED_LABELS: &[&str] = &["calendar", "timeZone"];
+/// Extra (non-integer) fields stored on a `DateComponents` value.
+/// `calendar` (Calendar?), `timeZone` (TimeZone?), `isLeapMonth` (Bool?).
+const DATE_COMPONENT_EXTRA_FIELDS: &[&str] = &["calendar", "timeZone", "isLeapMonth"];
 
 macro_rules! date_component_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
@@ -668,17 +704,67 @@ fn optional_int_component(value: &SwiftValue, context: &str) -> Result<SwiftValu
 }
 
 fn date_components_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    // Int-valued calendar components.
     let mut fields: Vec<(String, SwiftValue)> = DATE_COMPONENT_FIELDS
         .iter()
         .map(|name| ((*name).to_string(), SwiftValue::Nil))
         .collect();
+    // Extra non-integer fields initialised to nil.
+    for name in DATE_COMPONENT_EXTRA_FIELDS {
+        fields.push(((*name).to_string(), SwiftValue::Nil));
+    }
     for arg in &args {
         let Some(label) = arg.label.as_deref() else {
             return Err(type_error(
                 "DateComponents initializer requires labeled arguments",
             ));
         };
-        if DATE_COMPONENT_IGNORED_LABELS.contains(&label) {
+        if label == "calendar" {
+            let value = match &arg.value {
+                SwiftValue::Nil => SwiftValue::Nil,
+                SwiftValue::Struct(obj) if obj.type_name == "Calendar" => arg.value.clone(),
+                other => {
+                    return Err(type_error(format!(
+                        "DateComponents(calendar:) expects Calendar, got {}",
+                        other.type_name()
+                    )))
+                }
+            };
+            if let Some(slot) = fields.iter_mut().find(|(n, _)| n == "calendar") {
+                slot.1 = value;
+            }
+            continue;
+        }
+        if label == "timeZone" {
+            let value = match &arg.value {
+                SwiftValue::Nil => SwiftValue::Nil,
+                SwiftValue::Struct(obj) if obj.type_name == "TimeZone" => arg.value.clone(),
+                other => {
+                    return Err(type_error(format!(
+                        "DateComponents(timeZone:) expects TimeZone, got {}",
+                        other.type_name()
+                    )))
+                }
+            };
+            if let Some(slot) = fields.iter_mut().find(|(n, _)| n == "timeZone") {
+                slot.1 = value;
+            }
+            continue;
+        }
+        if label == "isLeapMonth" {
+            let value = match &arg.value {
+                SwiftValue::Nil => SwiftValue::Nil,
+                SwiftValue::Bool(b) => SwiftValue::Bool(*b),
+                other => {
+                    return Err(type_error(format!(
+                        "DateComponents(isLeapMonth:) expects Bool?, got {}",
+                        other.type_name()
+                    )))
+                }
+            };
+            if let Some(slot) = fields.iter_mut().find(|(n, _)| n == "isLeapMonth") {
+                slot.1 = value;
+            }
             continue;
         }
         let Some(slot) = fields.iter_mut().find(|(name, _)| name == label) else {
@@ -771,6 +857,163 @@ fn date_components_is_valid_date(recv: SwiftValue) -> StdResult {
         _ => false,
     };
     Ok(SwiftValue::Bool(valid))
+}
+
+// ---------------------------------------------------------------------------
+// DateComponents extended properties
+// ---------------------------------------------------------------------------
+
+/// `DateComponents.calendar` — the associated `Calendar?` (nil if not stored).
+fn date_components_calendar(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    Ok(obj.get("calendar").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// `DateComponents.timeZone` — the associated `TimeZone?` (nil if not stored).
+fn date_components_time_zone(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    Ok(obj.get("timeZone").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// `DateComponents.isLeapMonth` — `Bool?` (nil when not specified).
+fn date_components_is_leap_month(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    Ok(obj.get("isLeapMonth").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// Description field order that matches Foundation's output:
+/// era, year, month, day, hour, minute, second, nanosecond,
+/// weekday, weekdayOrdinal, quarter, weekOfMonth, weekOfYear,
+/// yearForWeekOfYear — then isLeapMonth at the end.
+const DATE_COMPONENT_DESC_ORDER: &[&str] = &[
+    "era",
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "nanosecond",
+    "weekday",
+    "weekdayOrdinal",
+    "quarter",
+    "weekOfMonth",
+    "weekOfYear",
+    "yearForWeekOfYear",
+];
+
+/// Extract the `description` string from a stored `TimeZone` struct.
+fn tz_description_str(tz_val: &SwiftValue) -> Option<String> {
+    if let SwiftValue::Struct(tz) = tz_val {
+        if tz.type_name == "TimeZone" {
+            if let Some(SwiftValue::Str(s)) = tz.get("description") {
+                return Some(s.clone());
+            }
+        }
+    }
+    None
+}
+
+/// `DateComponents.description` / `debugDescription`.
+///
+/// Matches Foundation's format byte-for-byte:
+/// - Calendar block (`"calendar: ... "`) if calendar is stored.
+/// - TimeZone entry (`"timeZone: <desc> "`) if timeZone is stored,
+///   regardless of whether calendar is also stored (Foundation always emits
+///   both when both are present).
+/// - Integer component fields in canonical order.
+/// - `isLeapMonth` at the end.
+fn date_components_description(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    let mut parts = String::new();
+
+    // Calendar block: "calendar: <cal.description> "
+    if let Some(SwiftValue::Struct(cal)) = obj.get("calendar") {
+        if cal.type_name == "Calendar" {
+            let cal_desc = crate::calendar::calendar_description_str(cal);
+            parts.push_str(&format!("calendar: {cal_desc} "));
+        }
+    }
+
+    // TimeZone entry: "timeZone: <tz.description> "
+    // Appears when timeZone is set, even if calendar is also set (Case C).
+    if let Some(tz_val) = obj.get("timeZone") {
+        if let Some(tz_desc) = tz_description_str(tz_val) {
+            parts.push_str(&format!("timeZone: {tz_desc} "));
+        }
+    }
+
+    // Integer component fields.
+    for field in DATE_COMPONENT_DESC_ORDER {
+        if let Some(SwiftValue::Int(i)) = obj.get(*field) {
+            parts.push_str(&format!("{field}: {} ", i.raw));
+        }
+    }
+
+    // Bool isLeapMonth at the end.
+    if let Some(SwiftValue::Bool(b)) = obj.get("isLeapMonth") {
+        parts.push_str(&format!("isLeapMonth: {b} "));
+    }
+
+    Ok(SwiftValue::Str(parts))
+}
+
+/// `DateComponents.hashValue` — hash of all non-nil component fields.
+///
+/// Each int field contributes a present-marker byte + 8 bytes of its value;
+/// absent fields contribute a zero byte.  `isLeapMonth` adds a separate
+/// two-byte sequence.  This is consistent with `==` (which compares all
+/// fields).
+fn date_components_hash_value(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    let mut bytes: Vec<u8> = Vec::new();
+    for field in DATE_COMPONENT_FIELDS {
+        match obj.get(*field) {
+            Some(SwiftValue::Int(i)) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(i.raw as i64).to_le_bytes());
+            }
+            _ => bytes.push(0),
+        }
+    }
+    // isLeapMonth
+    match obj.get("isLeapMonth") {
+        Some(SwiftValue::Bool(b)) => {
+            bytes.push(2);
+            bytes.push(if *b { 1 } else { 0 });
+        }
+        _ => bytes.push(0),
+    }
+    Ok(SwiftValue::int(fnv1a_hash(&bytes)))
+}
+
+/// `DateComponents.date` — compute a `Date?` from the stored calendar and
+/// component values.
+///
+/// Returns `nil` when no calendar is stored.  When a calendar is present,
+/// missing y/m/d default to 1 and missing time fields default to 0 —
+/// matching the behaviour of `Calendar.date(from:)`.
+fn date_components_date(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    // Require a stored Calendar.
+    match obj.get("calendar") {
+        Some(SwiftValue::Struct(cal)) if cal.type_name == "Calendar" => {}
+        _ => return Ok(SwiftValue::Nil),
+    }
+    let get_int = |field: &str| -> Option<i64> {
+        match obj.get(field) {
+            Some(SwiftValue::Int(i)) => Some(i.raw as i64),
+            _ => None,
+        }
+    };
+    let year = get_int("year").unwrap_or(1);
+    let month = get_int("month").unwrap_or(1);
+    let day = get_int("day").unwrap_or(1);
+    let hour = get_int("hour").unwrap_or(0);
+    let minute = get_int("minute").unwrap_or(0);
+    let second = get_int("second").unwrap_or(0);
+    let seconds = crate::calendar::ref_seconds_from_ymdhms(year, month, day, hour, minute, second);
+    Ok(date_value(seconds))
 }
 
 fn data_value(bytes: Vec<u8>) -> SwiftValue {

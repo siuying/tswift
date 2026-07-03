@@ -1,7 +1,7 @@
-gregorian Calendar
-gregorian Calendar
-en_US_POSIX
-UTC
+gregorian (gregorian) locale:  time zone: GMT firstWeekday: 1 minDaysInFirstWeek: 1
+gregorian (gregorian) locale:  time zone: GMT firstWeekday: 1 minDaysInFirstWeek: 1
+
+GMT
 true
 true
 true

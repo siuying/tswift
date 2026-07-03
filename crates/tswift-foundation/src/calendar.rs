@@ -59,6 +59,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
 
     interp.register_free_fn("Calendar", calendar_init);
+    interp.register_free_fn("TimeZone", timezone_init);
     interp.register_static(BuiltinReceiver::Calendar, "current", calendar_current);
     interp.register_property(BuiltinReceiver::Calendar, "identifier", calendar_identifier);
 
@@ -248,10 +249,45 @@ pub(crate) fn ref_seconds_from_ymdhms(y: i64, m: i64, d: i64, h: i64, min: i64, 
 // Builtin wiring
 // ---------------------------------------------------------------------------
 
+/// Build a `TimeZone` struct value.  `id` is the normalized IANA identifier
+/// (e.g. `"GMT"`); `desc` is the Foundation-style description string.
+pub(crate) fn timezone_value(id: &str, desc: &str) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "TimeZone".into(),
+        fields: vec![
+            ("identifier".into(), SwiftValue::Str(id.into())),
+            ("description".into(), SwiftValue::Str(desc.into())),
+        ],
+    }))
+}
+
+/// Normalize a timezone identifier the way Foundation does on Darwin:
+/// `"UTC"` → `"GMT"` (they are synonymous; Darwin always returns `"GMT"`).
+fn normalize_tz_id(id: &str) -> &str {
+    match id {
+        "UTC" => "GMT",
+        other => other,
+    }
+}
+
+/// Build a `Locale` struct value with the given identifier.
+fn locale_value(id: &str) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "Locale".into(),
+        fields: vec![("identifier".into(), SwiftValue::Str(id.into()))],
+    }))
+}
+
 fn calendar_value(identifier: &str) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "Calendar".into(),
-        fields: vec![("_identifier".into(), SwiftValue::Str(identifier.into()))],
+        fields: vec![
+            ("_identifier".into(), SwiftValue::Str(identifier.into())),
+            // Empty locale matches Darwin's `Calendar(identifier: .gregorian).locale?.identifier`.
+            ("locale".into(), locale_value("")),
+            // Fixed GMT timezone — the runtime models Gregorian/UTC only.
+            ("timeZone".into(), timezone_value("GMT", "GMT")),
+        ],
     }))
 }
 
@@ -769,25 +805,118 @@ fn calendar_is_date_in_tomorrow(
 // New calendar properties
 // ---------------------------------------------------------------------------
 
+/// Extract the locale identifier from a stored `locale` field on Calendar.
+fn calendar_locale_id(cal: &Rc<StructObj>) -> String {
+    match cal.get("locale") {
+        Some(SwiftValue::Struct(loc)) => match loc.get("identifier") {
+            Some(SwiftValue::Str(s)) => s.clone(),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    }
+}
+
+/// Extract the timezone description from a stored `timeZone` field on Calendar.
+fn calendar_tz_desc(cal: &Rc<StructObj>) -> String {
+    match cal.get("timeZone") {
+        Some(SwiftValue::Struct(tz)) => match tz.get("description") {
+            Some(SwiftValue::Str(s)) => s.clone(),
+            _ => "GMT".to_string(),
+        },
+        _ => "GMT".to_string(),
+    }
+}
+
+/// Foundation-style description of a Calendar struct:
+/// `"{id} ({id}) locale: {locale_id} time zone: {tz_desc} firstWeekday: 1 minDaysInFirstWeek: 1"`
+pub(crate) fn calendar_description_str(cal: &Rc<StructObj>) -> String {
+    let id = match cal.get("_identifier") {
+        Some(SwiftValue::Str(s)) => s.clone(),
+        _ => "gregorian".to_string(),
+    };
+    let locale_id = calendar_locale_id(cal);
+    let tz_desc = calendar_tz_desc(cal);
+    format!("{id} ({id}) locale: {locale_id} time zone: {tz_desc} firstWeekday: 1 minDaysInFirstWeek: 1")
+}
+
 fn calendar_locale(recv: SwiftValue) -> StdResult {
-    calendar_identifier_value(&recv)?;
-    Ok(SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "Locale".into(),
-        fields: vec![("identifier".into(), SwiftValue::Str("en_US_POSIX".into()))],
-    })))
+    // The stored `locale` field is returned directly if present (the struct
+    // field path takes precedence over the registered getter).  This getter
+    // exists as a fallback for Calendar values created before the field was
+    // added and for callers that go through the property registry.
+    let ok = match &recv {
+        SwiftValue::Struct(obj) if obj.type_name == "Calendar" => obj
+            .get("locale")
+            .cloned()
+            .unwrap_or_else(|| locale_value("")),
+        _ => return Err(type_error("expected Calendar")),
+    };
+    Ok(ok)
 }
 
 fn calendar_time_zone(recv: SwiftValue) -> StdResult {
-    calendar_identifier_value(&recv)?;
-    Ok(SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "TimeZone".into(),
-        fields: vec![("identifier".into(), SwiftValue::Str("UTC".into()))],
-    })))
+    // The stored `timeZone` field is returned directly if present.
+    let ok = match &recv {
+        SwiftValue::Struct(obj) if obj.type_name == "Calendar" => obj
+            .get("timeZone")
+            .cloned()
+            .unwrap_or_else(|| timezone_value("GMT", "GMT")),
+        _ => return Err(type_error("expected Calendar")),
+    };
+    Ok(ok)
 }
 
 fn calendar_description(recv: SwiftValue) -> StdResult {
-    let id = calendar_identifier_value(&recv)?;
-    Ok(SwiftValue::Str(format!("{id} Calendar").into()))
+    let SwiftValue::Struct(obj) = &recv else {
+        return Err(type_error(format!(
+            "expected Calendar, got {}",
+            recv.type_name()
+        )));
+    };
+    if obj.type_name != "Calendar" {
+        return Err(type_error(format!(
+            "expected Calendar, got {}",
+            obj.type_name
+        )));
+    }
+    Ok(SwiftValue::Str(calendar_description_str(obj)))
+}
+
+// ---------------------------------------------------------------------------
+// TimeZone free functions
+// ---------------------------------------------------------------------------
+
+/// `TimeZone(identifier:)` and `TimeZone(abbreviation:)` — failable inits.
+///
+/// `identifier:` normalises `"UTC"` → `"GMT"`; returns `nil` for other
+/// unknown identifiers.  `abbreviation:` maps `"GMT"`/`"UTC"` to a timezone
+/// whose `description` is `"GMT (0)"` (matching Darwin's abbreviation init).
+fn timezone_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let [arg] = args.as_slice() else {
+        return Err(type_error(
+            "TimeZone expects exactly one argument (identifier: or abbreviation:)",
+        ));
+    };
+    let SwiftValue::Str(val) = &arg.value else {
+        return Err(type_error("TimeZone init expects String"));
+    };
+    match arg.label.as_deref() {
+        Some("identifier") => {
+            let norm = normalize_tz_id(val);
+            if norm == "GMT" {
+                Ok(timezone_value("GMT", "GMT"))
+            } else {
+                Ok(SwiftValue::Nil)
+            }
+        }
+        Some("abbreviation") => match val.as_str() {
+            "GMT" | "UTC" => Ok(timezone_value("GMT", "GMT (0)")),
+            _ => Ok(SwiftValue::Nil),
+        },
+        _ => Err(type_error(
+            "TimeZone expects `identifier:` or `abbreviation:` label",
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
