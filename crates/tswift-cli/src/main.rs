@@ -10,6 +10,7 @@
 //! parses a construct — the fast path when adding a language feature.
 
 mod httpmock;
+mod nethttp;
 mod swiftui;
 
 use std::io::{self, Write};
@@ -24,14 +25,16 @@ fn main() -> ExitCode {
 
     match command.as_deref() {
         Some("run") => {
-            let paths: Vec<String> = args.collect();
+            let rest: Vec<String> = args.collect();
+            let allow_network = rest.iter().any(|a| a == "--allow-network");
+            let paths: Vec<String> = rest.into_iter().filter(|a| !a.starts_with("--")).collect();
             if paths.is_empty() {
                 eprintln!(
-                    "error: `run` requires a file path\n\nusage: tswift run <file.swift> [more.swift ...]"
+                    "error: `run` requires a file path\n\nusage: tswift run [--allow-network] <file.swift> [more.swift ...]"
                 );
                 ExitCode::FAILURE
             } else {
-                run(&paths)
+                run(&paths, allow_network)
             }
         }
         Some("dump") => {
@@ -98,7 +101,7 @@ fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError
 
 /// Analyze and evaluate the Swift file(s) at `paths`. Multiple files form one
 /// module: their sources are concatenated so cross-file references resolve.
-fn run(paths: &[String]) -> ExitCode {
+fn run(paths: &[String], allow_network: bool) -> ExitCode {
     let mut source = String::new();
     for path in paths {
         match std::fs::read_to_string(path) {
@@ -147,7 +150,8 @@ fn run(paths: &[String]) -> ExitCode {
     tswift_foundation::install(&mut interp);
     interp.set_filename(path);
     // Golden fixtures (and any offline caller) script `URLSession` through a
-    // deterministic mock transport instead of the real network.
+    // deterministic mock transport instead of the real network; the mock wins
+    // over `--allow-network` so tests can never accidentally go online.
     if let Ok(mock_path) = std::env::var("TSWIFT_HTTP_MOCK") {
         match httpmock::load(&mock_path) {
             Ok(transport) => interp.set_http_transport(Box::new(transport)),
@@ -156,6 +160,8 @@ fn run(paths: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+    } else if allow_network {
+        interp.set_http_transport(Box::new(nethttp::NetTransport));
     }
 
     let result = interp.run(analysis);
