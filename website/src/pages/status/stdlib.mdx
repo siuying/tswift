@@ -14,92 +14,111 @@ types and protocols. tswift implements these entirely in Rust inside `tswift-std
 
 The frontend provides type _shapes_; `tswift-std` provides the _behaviour_.
 
-**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo · 🛡️ Hardened — edge cases ported
+from Apple's Swift test suite (`swift/test`) and ground-truthed against the
+real Swift 6.3 toolchain.
+
+Member counts come from `python3 tools/stdlib-inventory/coverage.py` —
+a member is **verified** only when it is registered in the live runtime *and*
+exercised by a passing golden fixture.
 
 ---
 
 ## Overall coverage
 
-<CoverageBar label="Standard Library" done={19} total={26} />
+<CoverageBar label="Standard Library" done={362} total={511} />
+
+**362 / 511** public members verified (70.8%) across the targeted sections.
 
 ---
 
 ## Core Value Types
 
-<CoverageBar label="Core value types" done={6} total={8} />
+<CoverageBar label="Core value types" done={188} total={265} />
 
-| Status | Type | Notes |
-|--------|------|-------|
-| ✅ | `Int`, `UInt` family (all widths) | Overflow-trapping + `&+`/`&-`/`&*` wrapping |
-| ✅ | `Float`, `Double` | IEEE 754, math functions |
-| ✅ | `Bool` | |
-| 🟡 | `String` (UTF-8, NFC, views) + `Character` | Most APIs work; `CharacterView`, `UnicodeScalarView` partial |
-| 🟡 | `Substring` | Slicing works; full index arithmetic incomplete |
-| ✅ | `Optional<Wrapped>` | Full — binding, chaining, coalescing, patterns |
-| ✅ | `Range` / `ClosedRange` / `Stride` | For-in, `contains`, `count`, `overlaps` |
-| ⬜ | Tuples as first-class stdlib types | Runtime supports tuples; stdlib protocols not wired |
+| Status | Type | Members | Notes |
+|--------|------|---------|-------|
+| 🟡 🛡️ | `Int` family | 42 / 50 | Overflow-trapping arithmetic, `&+`/`&-`/`&*` wrapping — hardened vs Apple `Integers` tests |
+| ✅ 🛡️ | `Double` / `Float` | 49 / 59 | IEEE 754, shortest-round-trip printing incl. scientific notation — hardened vs `PrintFloat` tests |
+| 🟡 | `Bool` | 9 / 13 | `!`, `toggle`, `init(String)` failable, `random` |
+| 🟡 🛡️ | `String` | 29 / 53 | `String.Index` with grapheme-cluster stepping, slicing, `insert`/`remove`/`replaceSubrange` — hardened vs Apple `StringIndex` tests |
+| 🟡 🛡️ | `Substring` | 19 / 33 | Real view type (base + range), base-relative indices, detach-on-mutate — hardened vs Apple `Substring` tests |
+| 🟡 | `Optional<Wrapped>` | 10 / 15 | Binding, chaining, coalescing, `Optional(x)` init, `some`/`none` patterns |
+| 🟡 🛡️ | `Range` | 15 / 21 | For-in, `contains`, `clamped`, `overlaps` — hardened vs Apple range tests |
+| 🟡 🛡️ | `ClosedRange` | 15 / 21 | Traps on inverted bounds (`1...0`) like real Swift |
 
 ---
 
 ## Collections
 
-<CoverageBar label="Collections" done={4} total={5} />
+<CoverageBar label="Collections" done={145} total={199} />
 
-| Status | Type | Notes |
-|--------|------|-------|
-| ✅ | `Array<Element>` + CoW | `append`, `insert`, `remove`, `sorted`, `map`/`filter`/`reduce`, slicing |
-| ✅ | `Dictionary<Key,Value>` + CoW | `keys`, `values`, `merging`, `filter`, `mapValues` |
-| ✅ | `Set<Element>` + CoW | `union`, `intersection`, `subtracting`, `symmetricDifference` |
-| ✅ | `ContiguousArray` / `ArraySlice` | Backed by Array in the runtime |
-| ⬜ | `isKnownUniquelyReferenced` | CoW correctness helper — not exposed |
+| Status | Type | Members | Notes |
+|--------|------|---------|-------|
+| 🟡 🛡️ | `Array<Element>` + CoW | 21 / 32 | Full mutation set, HOFs, slicing; Swift-exact collection printing (debug-quoted strings) — hardened vs Apple `Arrays` tests |
+| 🟡 🛡️ | `ArraySlice` | 17 / 29 | Honest base-relative view: `a[1..<3].startIndex == 1`, detach-on-mutate |
+| 🟡 🛡️ | `ContiguousArray` | 19 / 30 | Delegates to Array semantics |
+| ✅ 🛡️ | `Dictionary<Key,Value>` + CoW | 29 / 32 | `keys`/`values`/`merging`/`mapValues`, `subscript(_:default:)` RMW, opaque `Index` with stale-index traps |
+| ✅ 🛡️ | `Set<Element>` + CoW | 35 / 42 | Full set algebra, opaque `Index`, `remove(at:)` |
+| 🟡 | `ReversedCollection` | 9 / 12 | Honest struct representation, round-trips |
+| 🟡 | `CollectionOfOne` | 7 / 12 | Subscript with bounds traps |
+| ✅ | `EmptyCollection` | 8 / 10 | |
+
+---
+
+## Free Functions & Operators
+
+<CoverageBar label="Free functions" done={29} total={47} />
+
+| Status | API | Notes |
+|--------|-----|-------|
+| ✅ | `print` / `debugPrint` / `dump` | Swift-exact collection element quoting & escaping 🛡️ |
+| ✅ | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/`zip` | All HOF on sequences |
+| ✅ | `assert`/`precondition`/`fatalError`/`assertionFailure` | Trapping semantics |
+| ✅ 🛡️ | Comparison & arithmetic operators (`==`, `<`, `%`, `~=`, `===`…) | `Int % 0` traps; `Double %` rejected per SE-0067 |
+| ✅ | `min`/`max`/`abs`/`stride`/`swap`/`numericCast` | `swap` with real inout mutation |
+| ✅ | `Result<Success, Failure>` | Both cases, `map`, `flatMap`, `mapError` |
+| ✅ | `MemoryLayout<T>` | `size`, `stride`, `alignment` |
+| ⬜ | `Unsafe*Pointer` family, `withUnsafe*`, `transcode`, va-list | Not honestly implementable in an interpreter — intentionally excluded |
 
 ---
 
 ## Protocols That Drive the Language
 
-<CoverageBar label="Key protocols" done={7} total={10} />
-
 | Status | Protocol | Notes |
 |--------|---------|-------|
-| ✅ | `Equatable` / `Hashable` / `Comparable` | Synthesised for structs/enums with synthesised conformance |
+| ✅ | `Equatable` / `Hashable` / `Comparable` | Synthesised for structs/enums |
 | ✅ | `Sequence` / `IteratorProtocol` | Custom sequences via `makeIterator()` |
-| ⬜ | `Collection` / `BidirectionalCollection` / `RandomAccessCollection` | Index arithmetic not yet fully implemented |
-| ⬜ | `RangeReplaceableCollection` | |
+| 🟡 | `Collection` / `BidirectionalCollection` | Index arithmetic implemented for built-in types (String, Array, slices, Set, Dictionary); custom conformances partial |
 | ✅ | `ExpressibleBy*Literal` | All literal-conversion protocols |
 | ✅ | `CustomStringConvertible` / `CustomDebugStringConvertible` | |
 | ✅ | `RawRepresentable` / `CaseIterable` | Enum conformances synthesised |
-| ✅ | `Codable` / `Encodable` / `Decodable` | JSON encode/decode via synthesised `CodingKeys` |
+| ✅ 🛡️ | `Codable` / `Encodable` / `Decodable` | JSON encode/decode via synthesised `CodingKeys` — hardened vs Apple Codable tests (nil-omission, strict type checks) |
 | ✅ | `Identifiable` | |
 | ⬜ | `Sendable` | Accepted by parser; not statically checked |
-| ⬜ | `AsyncSequence` / `AsyncIteratorProtocol` | `for await` works; custom `AsyncSequence` conformances partial |
+| ⬜ | `AsyncSequence` / `AsyncIteratorProtocol` | `for await` works; custom conformances partial |
 
 ---
 
-## Free Functions & Utilities
+## Known divergences
 
-<CoverageBar label="Free functions" done={6} total={7} />
+Documented honestly rather than papered over:
 
-| Status | API | Notes |
-|--------|-----|-------|
-| ✅ | `print` / `debugPrint` / `dump` | Streaming to stdout |
-| ✅ | `map`/`filter`/`reduce`/`flatMap`/`compactMap`/`sorted`/`zip` | All HOF on sequences |
-| ✅ | `assert`/`precondition`/`fatalError`/`assertionFailure` | Trapping semantics |
-| ✅ | `min`/`max`/`abs`/`stride`/`zip`/`swap` | |
-| ✅ | `Result<Success, Failure>` | Both cases, `map`, `flatMap`, `mapError` |
-| ✅ | `MemoryLayout<T>` | `size`, `stride`, `alignment` |
-| ⬜ | `Unsafe*Pointer` family | Requires unsafe Rust; out of scope for now |
+- **Optional-in-collection printing** — `[Optional("x"), nil]` prints as
+  `["x", nil]`; the value model has no Optional wrapper type.
+- **Fitzpatrick skin-tone modifiers** — grapheme segmenter treats
+  emoji + modifier as two Characters (ZWJ families work correctly).
+- `Optional.take()` / `.debugDescription` on present optionals need
+  declared-type-aware dispatch (deferred).
 
 ---
 
 ## What's next
 
-The highest-impact missing pieces:
-
-1. **`Collection` protocol conformances** — needed for custom types to slot
-   into `for-in`, `count`, `first`, `last`, index subscripting.
-2. **`String` index arithmetic** — `String.Index`, `index(before:)`, `index(after:)`,
-   `index(_:offsetBy:)` needed for full character-level manipulation.
-3. **`AsyncSequence`** — needed to implement `for await` over custom types.
+1. **Remaining `String` members** — UTF-8/UTF-16 view APIs, `unicodeScalars`.
+2. **`Collection` conformances for custom types** — custom types in `for-in`,
+   `count`, index subscripting.
+3. **`AsyncSequence`** — `for await` over custom types.
 
 To see how these map to GitHub issues, visit the
 [issue tracker](https://github.com/siuying/tswift/issues).

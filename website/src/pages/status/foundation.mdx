@@ -15,18 +15,21 @@ URL parsing, JSON encoding, data buffers, and more. tswift measures Foundation
 coverage through generated `.swiftinterface` inventories and per-type runtime
 registries.
 
-**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo · 🛡️ Hardened — behaviour
+ground-truthed against the real Swift 6.3 Foundation (probe programs run on the
+Apple toolchain, outputs matched byte-for-byte in golden fixtures).
 
 ---
 
 ## Overall coverage
 
-<CoverageBar label="Foundation" done={56} total={519} />
+<CoverageBar label="Foundation" done={313} total={519} />
 
 Member-level coverage from `tools/framework-inventory/coverage.py --framework
-foundation`: **56 / 519** public members implemented across the in-scope types
-(10.8%). The bar tracks members, not whole types — most implemented types are
-still partial.
+foundation`: **313 / 519** public members verified across the in-scope types
+(60.3%). The bar tracks members, not whole types. A member is **verified** only
+when it is registered in the live runtime *and* exercised by a passing golden
+fixture.
 
 ---
 
@@ -46,24 +49,23 @@ live roll-up. See `docs/swift-runtime/stdlib-inventory.md`.
 <Mermaid caption="Foundation type coverage map">
 {`
 flowchart TD
-    done["✅ Implemented"]
+    done["✅ Mostly done"]
     partial["🟡 Partial"]
-    todo["⬜ Todo"]
 
-    partial --> Data["Data\\nbytes, count, append"]
-    partial --> UUID["UUID\\nuuidString, init, random"]
-    partial --> IndexSet["IndexSet\\nset algebra, queries"]
-    partial --> IndexPath["IndexPath\\nindexes, append, slicing"]
-    partial --> URL["URL / URLComponents\\nparsing + path ops"]
-    partial --> JSON["JSONEncoder / JSONDecoder\\nCodable bridge (in core)"]
-    todo --> Date["Date / Calendar / formatters\\nF3 – issues #214–217"]
-    todo --> Decimal["Decimal / NumberFormatter\\nF4 – issues #218–219"]
-    todo --> Measure["Measurement / Unit\\nF4 – issue #220"]
-    todo --> URLQuery["URLQueryItem\\nmembers todo"]
+    done --> Decimal["Decimal 🛡️\\n38-digit math, ulp, formatted"]
+    done --> JSON["JSONEncoder / JSONDecoder 🛡️\\nstrategies, formatting, key conversion"]
+    done --> IndexPath["IndexPath\\nconcat, compare, Codable"]
+    done --> Measure["Measurement / Unit\\nconvert, arithmetic, Codable"]
+    done --> Plist["PropertyListEncoder\\nXML plists"]
+
+    partial --> Data["Data 🛡️\\nbyte ops, base64, Codable"]
+    partial --> UUID["UUID\\nComparable, Codable"]
+    partial --> IndexSet["IndexSet\\nset algebra, rangeView, shift"]
+    partial --> URL["URL / URLComponents 🛡️\\npath ops + percent-encoding"]
+    partial --> DateT["Date / Calendar / DateComponents 🛡️\\ndate math, formatted(), ISO8601"]
 
     style done fill:#1e3a2a,stroke:#6ddf9f,color:#eeeef5
     style partial fill:#2a2512,stroke:#f5d06e,color:#eeeef5
-    style todo fill:#1e1e27,stroke:#444455,color:#8888a0
 `}
 </Mermaid>
 
@@ -77,59 +79,70 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| 🟡 | `Data` | 3 / 35 | `init()`, `init(bytes:)`, `count`, `isEmpty`, `append` |
-| 🟡 | `UUID` | 2 / 11 | `init()` (random), `init(uuidString:)`, `uuidString` |
-| 🟡 | `IndexPath` | 7 / 24 | `init`, `count`, `isEmpty`, `append(ing)`, `dropLast`, `start/endIndex` |
-| 🟡 | `IndexSet` | 20 / 42 | `init`, `insert`, `remove`, `contains`, full set algebra, integer queries |
+| 🟡 🛡️ | `Data` | 19 / 35 | byte subscript get/set (validated 0–255), for-in, `replaceSubrange`, `resetBytes`, `range(of:)`, base64 encode/decode |
+| 🟡 | `UUID` | 7 / 11 | `init()`, `init(uuidString:)`, `uuidString`, `Comparable` (byte-tuple order), Codable |
+| ✅ | `IndexPath` | 18 / 24 | `+`/`+=`, `compare`, for-in, subscript get/set, Codable with strict decode |
+| 🟡 | `IndexSet` | 28 / 42 | full set algebra, `rangeView`, `intersects`, `shift`, for-in, `"N indexes"` description |
 
-### F2 — URLs & networking types
+### F2 — URLs
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| 🟡 | `URL` | 20 / 81 | `init(string:)`, `absoluteString`, `path(Components)`, `host`, `scheme`, path ops |
-| 🟡 | `URLComponents` | 4 / 35 | `init`, `queryItems`, `string`, `url` |
-| ⬜ | `URLQueryItem` | 0 / 8 | `name`, `value` — todo ([#221](https://github.com/siuying/tswift/issues/221)) |
+| 🟡 🛡️ | `URL` | 37 / 81 | parsing, `appending(path:/component:)`, path extensions, `standardized`, `resolvingSymlinksInPath` (lexical), Codable |
+| 🟡 🛡️ | `URLComponents` | 24 / 35 | all component get/set, `percentEncoded*` accessors with RFC 3986 charset validation, `encodedHost` distinction |
+| 🟡 | `URLQueryItem` | 5 / 8 | `name`, `value`, init, equality |
 
-### F3 — Date & time *(planned — issues filed)*
+### F3 — Date & time
 
-| Status | Type | Issue |
-|--------|------|-------|
-| ⬜ | `Date` / `TimeInterval` | [#214](https://github.com/siuying/tswift/issues/214) |
-| ⬜ | `DateComponents` | [#215](https://github.com/siuying/tswift/issues/215) |
-| ⬜ | `Calendar` (Gregorian/UTC) | [#216](https://github.com/siuying/tswift/issues/216) |
-| ⬜ | `DateFormatter` / `ISO8601DateFormatter` | [#217](https://github.com/siuying/tswift/issues/217) |
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| 🟡 🛡️ | `Date` | 34 / 87 | arithmetic/comparison operators, `formatted()` family (date/time styles, `.dateTime` chain, `.iso8601`), Codable with all four date strategies |
+| 🟡 🛡️ | `Calendar` | 37 / 55 | Gregorian/UTC: component extraction, `date(byAdding:)`, `compare(toGranularity:)`, `dateInterval`, `range`, `ordinality`, `nextDate` |
+| 🟡 🛡️ | `DateComponents` | 26 / 41 | all components, `date`, `calendar`/`timeZone`, Foundation-exact `description` |
 
-### F4 — Numbers & measurement *(planned — issues filed)*
+### F4 — Numbers & measurement
 
-| Status | Type | Issue |
-|--------|------|-------|
-| ⬜ | `Decimal` | [#218](https://github.com/siuying/tswift/issues/218) |
-| ⬜ | `NumberFormatter` | [#219](https://github.com/siuying/tswift/issues/219) |
-| ⬜ | `Measurement` / `Unit` | [#220](https://github.com/siuying/tswift/issues/220) |
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| ✅ 🛡️ | `Decimal` | 49 / 59 | 38-digit arithmetic, rounding, magnitude constants, `ulp`/`nextUp`/`nextDown`, `isTotallyOrdered`, `formatted()` — constants ground-truthed vs Swift 6.3 |
+| 🟡 | `NumberFormatter` | — | basic styles |
+| ✅ | `Measurement` / `Unit` | 15 / 20 | value/unit, conversion, arithmetic, Codable |
 
 ### F5 — Encoding / decoding
 
-| Status | Type | Notes |
-|--------|------|-------|
-| 🟡 | `JSONEncoder` | `encode(_:)` works via the core Codable bridge; not yet a Foundation registry key |
-| 🟡 | `JSONDecoder` | `decode(_:from:)` works via the same bridge |
-| ⬜ | `PropertyListEncoder` | todo |
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| ✅ 🛡️ | `JSONEncoder` | 6 / 8 | `encode` → `Data`, `outputFormatting` (`.prettyPrinted`/`.sortedKeys`), date/data/key strategies (snake_case per Apple's algorithm), nil-omission |
+| 🟡 🛡️ | `JSONDecoder` | 5 / 9 | strict `typeMismatch`/`keyNotFound`/`valueNotFound`, typed arrays, all date/data/key strategies |
+| ✅ | `PropertyListEncoder` | 3 / 4 | XML plist output (`outputFormat = .xml`), Date/Data/nested containers |
 
 ### Out of scope
 
 Platform- and device-specific APIs are intentionally excluded (see
 `frameworks/foundation/scope.toml`): `FileManager`, `FileHandle`, `URLSession`,
-`URLRequest`, `NSObject`, `Bundle`, and friends.
+`URLRequest`, `NSObject`, `Bundle`, and friends. Remaining unimplemented
+members are largely locale-dependent format styles, `rangeOf*` string-range
+APIs, and resource/bookmark filesystem members.
+
+---
+
+## Hardening
+
+Types marked 🛡️ were validated in dedicated hardening passes: small probe
+programs were run on the **real Apple Swift toolchain** to capture ground-truth
+outputs, then encoded as golden fixtures (`harden_foundation_*.swift`,
+`harden_json.swift`). This process found and fixed real divergences — ISO8601
+leap-year/fractional-second validation, `standardized` path edge cases,
+percent-encoding charset rules, Decimal precision boundaries, and JSON
+strategy-enum API surface.
 
 ---
 
 ## Roadmap
 
-The next coverage push (daily-use weighted) is tracked in issues
-[#214–#221](https://github.com/siuying/tswift/issues?q=is%3Aissue+label%3Aready-for-agent+foundation),
-in this order:
+Next coverage pushes (daily-use weighted):
 
-1. `Date` / `DateComponents` / `Calendar` / formatters (F3) — date math & ISO strings
-2. `Decimal` / `NumberFormatter` (F4) — exact money math & number formatting
-3. `Measurement` / `Unit` (F4) — typed quantities & conversion
-4. Fill remaining `Data` / `UUID` / `URL` member gaps (F1/F2)
+1. Locale-aware format styles for `Date` / `Decimal` (`FormatStyle` tokens)
+2. `URLComponents.rangeOf*` members (needs `Range<String.Index>` bridging)
+3. `Calendar.dates` / `enumerateDates` sequence APIs
+4. Remaining `Data` / `IndexSet` / `URL` member gaps
