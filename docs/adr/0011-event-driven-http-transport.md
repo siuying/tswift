@@ -53,14 +53,32 @@ pub enum HttpEvent {
 }
 
 pub trait HttpTransport {
+    /// Required. Perform `req` blocking (used by provided defaults).
+    fn perform(&mut self, req: &HttpRequest) -> Result<HttpResponse, HttpError>;
+    /// Provided default: calls `perform` eagerly and wraps result in
+    /// `SingleShotEvents` stored in a thread-local queue.
     fn start(&mut self, req: &HttpRequest) -> Result<HttpTaskHandle, HttpError>;
-    /// Block until the next event for `h`. After `Done`/`Failed`, `h` is dead.
+    /// Provided default: pops the next event from the thread-local queue.
+    /// After a terminal event the handle is dead; subsequent calls return
+    /// `Failed { code: "badServerResponse" }` sentinel.
     fn next_event(&mut self, h: HttpTaskHandle) -> HttpEvent;
-    /// Best-effort abort. Transport must still deliver a terminal event
-    /// (normally `Failed { code: "cancelled" }`) if `next_event` is called again.
+    /// Provided default: replaces the pending queue with a single
+    /// `Failed { code: "cancelled" }` terminal so the **next** `next_event`
+    /// call returns that event (not the badServerResponse sentinel).
     fn cancel(&mut self, h: HttpTaskHandle);
 }
 ```
+
+> **Deviation from sketch:** The M1 implementation keeps `perform` as the
+> **required** method and makes `start / next_event / cancel` **provided
+> defaults** (backed by a thread-local `SingleShotEvents` queue). This is the
+> reverse of what the sketch above shows, but it is the correct inversion for
+> backward compatibility: all existing one-shot backends compile unchanged
+> because they already implement `perform`. Native streaming backends (M2+)
+> override all four methods. `cancel`'s provided default honours the cancel
+> contract by replacing the pending queue with `Failed{cancelled}` rather than
+> removing the entry, ensuring the caller can always drain exactly one terminal
+> event after cancellation.
 
 Two compatibility helpers keep simple backends one screenful:
 
@@ -70,6 +88,13 @@ Two compatibility helpers keep simple backends one screenful:
   into the canonical `Response → Chunk(body) → Done` / `Failed` sequence.
   All existing backends are migrated to this adapter mechanically (M2); their
   observable behaviour is unchanged.
+
+**Handle-lifetime invariant:** every handle returned by `start` must be
+either drained to its terminal event or `cancel`led *and then polled once*
+(to consume the `Failed{cancelled}` terminal). Handles that are abandoned
+without draining or cancelling accumulate indefinitely in the thread-local
+backing store. The interpreter is responsible for enforcing this contract; it
+must cancel-and-drain any in-flight handle when the owning task is torn down.
 
 Event-order contract: `Response` first, then zero or more `Chunk`, then exactly
 one terminal event (`Done` or `Failed`). A terminal event before `Response` is

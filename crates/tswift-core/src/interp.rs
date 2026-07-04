@@ -6923,7 +6923,7 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
     }
 
     #[test]
-    fn std_context_http_cancel_silences_subsequent_next_event() {
+    fn std_context_http_cancel_yields_cancelled_then_sentinel() {
         use crate::http::{HttpEvent, HttpRequest};
         use crate::stdlib::StdContext;
         let mut buf = Vec::new();
@@ -6938,11 +6938,17 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         };
         let h = interp.http_start(&req).expect("http_start");
         interp.http_cancel(h);
-        // After cancel, next_event returns a sentinel Failed
+        // First post-cancel poll must return Failed{cancelled} per cancel contract
         let e = interp.http_next_event(h);
         assert!(
-            matches!(e, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
-            "expected badServerResponse sentinel, got {e:?}"
+            matches!(e, HttpEvent::Failed { ref code, .. } if code == "cancelled"),
+            "expected Failed{{cancelled}}, got {e:?}"
+        );
+        // After the terminal is consumed the handle is dead — sentinel
+        let sentinel = interp.http_next_event(h);
+        assert!(
+            matches!(sentinel, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected badServerResponse sentinel, got {sentinel:?}"
         );
     }
 

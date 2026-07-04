@@ -85,8 +85,9 @@ pub struct HttpTaskHandle(pub u64);
 /// Event-order contract: exactly one [`HttpEvent::Response`] arrives first,
 /// then zero or more [`HttpEvent::Chunk`] events, then exactly one terminal
 /// event ([`HttpEvent::Done`] or [`HttpEvent::Failed`]). The interpreter loop
-/// enforces this; malformed sequences map to `badServerResponse` rather than
-/// panicking (M3+).
+/// will enforce this contract in M3+; until then, malformed sequences from a
+/// misbehaving transport may surface as unexpected behaviour rather than a
+/// tidy `badServerResponse`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpEvent {
     /// Status line + headers arrived. Exactly one, first.
@@ -222,6 +223,11 @@ pub trait HttpTransport {
     /// After a terminal event ([`HttpEvent::Done`] or [`HttpEvent::Failed`])
     /// is returned, `h` is considered dead — calling `next_event` again is
     /// safe but returns a `Failed(badServerResponse)` sentinel.
+    ///
+    /// **Invariant (caller):** every handle returned by [`start`][HttpTransport::start]
+    /// must be consumed to a terminal event OR explicitly [`cancel`][HttpTransport::cancel]led
+    /// (and then polled once to drain the `Failed{cancelled}` terminal) to
+    /// avoid leaking entries in the backing store.
     fn next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
         DEFAULT_PENDING.with(|p| {
             let mut map = p.borrow_mut();
@@ -241,14 +247,30 @@ pub trait HttpTransport {
         })
     }
 
-    /// Best-effort abort. The handle becomes dead; any subsequent
-    /// `next_event` call returns a `Failed(badServerResponse)` sentinel.
+    /// Best-effort abort. After this returns, the **next** call to
+    /// `next_event(h)` will return `Failed { code: "cancelled" }` as a
+    /// terminal event; any call after that returns the
+    /// `Failed(badServerResponse)` dead-handle sentinel.
+    ///
+    /// Callers must poll `next_event` once after `cancel` to drain the
+    /// terminal event and release the backing entry (see the invariant on
+    /// [`next_event`][HttpTransport::next_event]).
     ///
     /// Backends that support native streaming should override this to signal
     /// cancellation to the transport layer (M2+).
     fn cancel(&mut self, h: HttpTaskHandle) {
         DEFAULT_PENDING.with(|p| {
-            p.borrow_mut().remove(&h.0);
+            // Replace any remaining events with a single terminal
+            // Failed{cancelled} so the next next_event(h) call honours the
+            // cancel contract rather than returning the badServerResponse
+            // sentinel.  next_event's terminal-cleanup removes the entry.
+            p.borrow_mut().insert(
+                h.0,
+                SingleShotEvents::from_outcome(Err(HttpError::failed(
+                    "cancelled",
+                    "request cancelled",
+                ))),
+            );
         });
     }
 }
@@ -598,7 +620,15 @@ impl HttpTransport for MockHttpTransport {
     }
 
     fn cancel(&mut self, h: HttpTaskHandle) {
-        self.pending.remove(&h.0);
+        // Replace any remaining events with a single terminal Failed{cancelled}
+        // so the next next_event(h) call honours the cancel contract.  The
+        // entry is cleaned up when that terminal event is consumed.
+        let mut q = VecDeque::new();
+        q.push_back(HttpEvent::Failed {
+            code: "cancelled".into(),
+            message: "request cancelled".into(),
+        });
+        self.pending.insert(h.0, q);
     }
 }
 
@@ -878,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn mock_cancel_makes_handle_dead() {
+    fn mock_cancel_yields_cancelled_terminal_then_sentinel() {
         let mut mock = MockHttpTransport::new(vec![MockRoute {
             method: "GET".into(),
             url: "https://example.com/y".into(),
@@ -886,9 +916,146 @@ mod tests {
         }]);
         let h = mock.start(&get("https://example.com/y")).unwrap();
         mock.cancel(h);
-        // After cancel, next_event returns badServerResponse
+        // First post-cancel poll must return Failed{cancelled}, not badServerResponse
         let e = mock.next_event(h);
-        assert!(matches!(e, HttpEvent::Failed { code, .. } if code == "badServerResponse"));
+        assert!(
+            matches!(&e, HttpEvent::Failed { code, .. } if code == "cancelled"),
+            "expected Failed{{cancelled}}, got {e:?}"
+        );
+        // After the terminal is consumed the handle is dead — sentinel
+        let sentinel = mock.next_event(h);
+        assert!(
+            matches!(sentinel, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected badServerResponse sentinel, got {sentinel:?}"
+        );
+    }
+
+    #[test]
+    fn mock_cancel_mid_stream_yields_cancelled_then_sentinel() {
+        // Cancel after consuming only the Response event (before Done)
+        let mut mock = MockHttpTransport::new(vec![MockRoute {
+            method: "GET".into(),
+            url: "https://example.com/z".into(),
+            outcome: Ok(ok_resp(200, b"body")),
+        }]);
+        let h = mock.start(&get("https://example.com/z")).unwrap();
+        let first = mock.next_event(h); // Response
+        assert!(matches!(first, HttpEvent::Response { .. }));
+        mock.cancel(h);
+        let e = mock.next_event(h);
+        assert!(
+            matches!(&e, HttpEvent::Failed { code, .. } if code == "cancelled"),
+            "expected Failed{{cancelled}} after mid-stream cancel, got {e:?}"
+        );
+        let sentinel = mock.next_event(h);
+        assert!(
+            matches!(sentinel, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected dead-handle sentinel, got {sentinel:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Default start / next_event / cancel implementations (perform-only backend)
+    //
+    // A transport that only overrides `perform` gets the thread-local
+    // SingleShotEvents queue for free via the trait defaults.  These tests
+    // pin that behaviour without using MockHttpTransport.
+    // -----------------------------------------------------------------------
+
+    /// Minimal perform-only transport — does NOT override start/next_event/cancel.
+    struct PerformOnlyTransport {
+        /// Returns the stored outcome once; subsequent calls return an error.
+        outcome: Option<Result<HttpResponse, HttpError>>,
+    }
+
+    impl PerformOnlyTransport {
+        fn success(status: i64, body: &[u8]) -> Self {
+            Self {
+                outcome: Some(Ok(ok_resp(status, body))),
+            }
+        }
+        fn failure(code: &str, message: &str) -> Self {
+            Self {
+                outcome: Some(Err(HttpError::failed(code, message))),
+            }
+        }
+    }
+
+    impl HttpTransport for PerformOnlyTransport {
+        fn perform(&mut self, _req: &HttpRequest) -> Result<HttpResponse, HttpError> {
+            self.outcome
+                .take()
+                .unwrap_or_else(|| Err(HttpError::failed("cannotFindHost", "exhausted")))
+        }
+        // start / next_event / cancel are NOT overridden — uses trait defaults
+    }
+
+    #[test]
+    fn default_start_next_event_delivers_response_chunk_done() {
+        let mut t = PerformOnlyTransport::success(200, b"hello");
+        let h = t.start(&get("https://example.com/")).unwrap();
+        let events = collect_events(&mut t, h);
+        assert_eq!(
+            events.len(),
+            3,
+            "expected Response+Chunk+Done, got {events:?}"
+        );
+        assert!(matches!(
+            &events[0],
+            HttpEvent::Response { status: 200, .. }
+        ));
+        assert_eq!(events[1], HttpEvent::Chunk(b"hello".to_vec()));
+        assert_eq!(events[2], HttpEvent::Done);
+    }
+
+    #[test]
+    fn default_start_next_event_delivers_failed_on_error() {
+        let mut t = PerformOnlyTransport::failure("timedOut", "scripted timeout");
+        let h = t.start(&get("https://example.com/")).unwrap();
+        let events = collect_events(&mut t, h);
+        assert_eq!(
+            events.len(),
+            1,
+            "expected single Failed event, got {events:?}"
+        );
+        assert!(
+            matches!(&events[0], HttpEvent::Failed { code, .. } if code == "timedOut"),
+            "expected Failed{{timedOut}}, got {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn default_cancel_yields_cancelled_terminal_then_sentinel() {
+        let mut t = PerformOnlyTransport::success(200, b"data");
+        let h = t.start(&get("https://example.com/")).unwrap();
+        t.cancel(h);
+        // First post-cancel poll must return Failed{cancelled} per cancel contract
+        let e = t.next_event(h);
+        assert!(
+            matches!(&e, HttpEvent::Failed { code, .. } if code == "cancelled"),
+            "expected Failed{{cancelled}} from default cancel, got {e:?}"
+        );
+        // After terminal is consumed the handle is dead — sentinel
+        let sentinel = t.next_event(h);
+        assert!(
+            matches!(sentinel, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected dead-handle sentinel, got {sentinel:?}"
+        );
+    }
+
+    #[test]
+    fn default_past_terminal_returns_sentinel() {
+        let mut t = PerformOnlyTransport::success(200, b"");
+        let h = t.start(&get("https://example.com/")).unwrap();
+        // Drain to terminal (Response + Done for empty body)
+        let _ = collect_events(&mut t, h);
+        // Any further poll returns the dead-handle sentinel
+        let sentinel = t.next_event(h);
+        assert!(
+            matches!(sentinel, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected sentinel after terminal consumed, got {sentinel:?}"
+        );
     }
 
     // -----------------------------------------------------------------------
