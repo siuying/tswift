@@ -23,7 +23,11 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use grapheme::graphemes;
-pub use http::{HttpError, HttpRequest, HttpResponse, HttpTransport, MockHttpTransport, MockRoute};
+pub use http::{
+    decode_event_json, encode_event_json, HttpError, HttpEvent, HttpRequest, HttpResponse,
+    HttpTaskHandle, HttpTransport, MockChunkedRoute, MockHttpTransport, MockRoute,
+    SingleShotEvents,
+};
 pub use interp::{BuiltinParam, EvalError, Interpreter, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
