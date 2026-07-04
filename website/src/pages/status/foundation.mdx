@@ -11,9 +11,9 @@ import Mermaid from '../../components/Mermaid.astro';
 # Foundation
 
 Foundation is Apple's "base layer" framework — it provides date/time handling,
-URL parsing, JSON encoding, data buffers, and more. tswift measures Foundation
-coverage through generated `.swiftinterface` inventories and per-type runtime
-registries.
+URL parsing, JSON encoding, data buffers, networking (URLSession / URLRequest /
+URLError), and more. tswift measures Foundation coverage through generated
+`.swiftinterface` inventories and per-type runtime registries.
 
 **Legend:** ✅ Done · 🟡 Partial · ⬜ Todo · 🛡️ Hardened — behaviour
 ground-truthed against the real Swift 6.3 Foundation (probe programs run on the
@@ -23,11 +23,11 @@ Apple toolchain, outputs matched byte-for-byte in golden fixtures).
 
 ## Overall coverage
 
-<CoverageBar label="Foundation" done={313} total={519} />
+<CoverageBar label="Foundation" done={354} total={639} />
 
 Member-level coverage from `tools/framework-inventory/coverage.py --framework
-foundation`: **313 / 519** public members verified across the in-scope types
-(60.3%). The bar tracks members, not whole types. A member is **verified** only
+foundation`: **354 / 639** public members verified across the in-scope types
+(55.4%). The bar tracks members, not whole types. A member is **verified** only
 when it is registered in the live runtime *and* exercised by a passing golden
 fixture.
 
@@ -63,6 +63,10 @@ flowchart TD
     partial --> IndexSet["IndexSet\\nset algebra, rangeView, shift"]
     partial --> URL["URL / URLComponents 🛡️\\npath ops + percent-encoding"]
     partial --> DateT["Date / Calendar / DateComponents 🛡️\\ndate math, formatted(), ISO8601"]
+    partial --> URLNet["URLRequest 🛡️\\nheaders, body, timeout"]
+    partial --> URLSess["URLSession\\nshared, data(from:), upload(for:from:)"]
+    done --> URLResp["URLResponse / HTTPURLResponse 🛡️\\nstatus, headers, mime"]
+    done --> URLErr["URLError 🛡️\\n20 codes, NSURLError mapping"]
 
     style done fill:#1e3a2a,stroke:#6ddf9f,color:#eeeef5
     style partial fill:#2a2512,stroke:#f5d06e,color:#eeeef5
@@ -116,11 +120,30 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 | 🟡 🛡️ | `JSONDecoder` | 5 / 9 | strict `typeMismatch`/`keyNotFound`/`valueNotFound`, typed arrays, all date/data/key strategies |
 | ✅ | `PropertyListEncoder` | 3 / 4 | XML plist output (`outputFormat = .xml`), Date/Data/nested containers |
 
+### F6 — Networking
+
+| Status | Type | Members | APIs implemented |
+|--------|------|---------|----------------|
+| 🟡 🛡️ | `URLRequest` | 10 / 25 | `init(url:)`, `init(url:cachePolicy:timeoutInterval:)`, `httpMethod` get/set, `url`, `httpBody` get/set, `setValue(_:forHTTPHeaderField:)`, `addValue(_:forHTTPHeaderField:)`, `value(forHTTPHeaderField:)`, `allHTTPHeaderFields`, `timeoutInterval` (coerced to f64) |
+| ✅ 🛡️ | `URLResponse` | 8 / 14 | `init(url:mimeType:expectedContentLength:textEncodingName:)`, `url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `suggestedFilename` |
+| ✅ 🛡️ | `HTTPURLResponse` | 9 / 16 | all `URLResponse` members, `statusCode`, `allHeaderFields`, `value(forHTTPHeaderField:)`, `localizedString(forStatusCode:)` (standard phrases for 1xx–5xx) |
+| ✅ 🛡️ | `URLError` | 20 / 25 | 20 error codes (`notConnectedToInternet`, `timedOut`, `cannotFindHost`, …), `NSURLError*` constant mapping, `code`, throwable / catchable in `do-catch` |
+| 🟡 | `URLSession` | 5 / 40 | `shared`, `data(from:)`, `data(for:)`, `upload(for:with:)`, `upload(for:from:)` — backed by pluggable `HttpTransport` (mock in tests, `ureq`/rustls with `--allow-network`, Apple URLSession via C ABI embed, wasm `globalThis.tswiftHttp` hook) |
+
+**Transport matrix**
+
+| Host | Transport installed |
+|------|--------------------|
+| `tswift run` (no flag) | none — `URLError.notConnectedToInternet` on any request |
+| `tswift run --allow-network` | `ureq` + rustls (real HTTPS) |
+| Apple embed (`TSwiftCore`) | platform `URLSession` via C ABI (`tswift_set_http_handler`) |
+| wasm (pages / workers) | synchronous `globalThis.tswiftHttp(requestJson)` hook |
+
 ### Out of scope
 
 Platform- and device-specific APIs are intentionally excluded (see
-`frameworks/foundation/scope.toml`): `FileManager`, `FileHandle`, `URLSession`,
-`URLRequest`, `NSObject`, `Bundle`, and friends. Remaining unimplemented
+`frameworks/foundation/scope.toml`): `FileManager`, `FileHandle`,
+`NSObject`, `Bundle`, and friends. Remaining unimplemented
 members are largely locale-dependent format styles, `rangeOf*` string-range
 APIs, and resource/bookmark filesystem members.
 
@@ -146,3 +169,5 @@ Next coverage pushes (daily-use weighted):
 2. `URLComponents.rangeOf*` members (needs `Range<String.Index>` bridging)
 3. `Calendar.dates` / `enumerateDates` sequence APIs
 4. Remaining `Data` / `IndexSet` / `URL` member gaps
+5. `URLSession` delegate API and background session configuration
+6. `URLSessionTask` / `URLSessionDataTask` cancellation and progress
