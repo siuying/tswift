@@ -1,6 +1,6 @@
 # ADR-0010: URLSession over a synchronous, embedding-owned HTTP transport seam
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by ADR-0011
 - **Date:** 2026-07-04
 - **Context slice:** Foundation networking (`URLRequest`/`URLResponse`/`URLError`/`URLSession`) and every embedding (CLI, ffi, wasm)
 - **Builds on:** ADR-0005 (cooperative single-threaded executor), the serialized-boundary contract (CONTEXT.md)
