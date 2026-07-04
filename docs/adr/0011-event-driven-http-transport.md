@@ -241,6 +241,39 @@ True streaming/abort on wasm (SharedArrayBuffer + `Atomics.wait`, or async
   on wasm, concurrent `async let` requests) is tracked in
   `docs/plan/resumable-run-surface-followup.md` and explicitly out of scope here.
 
+## Known limitations
+
+### URLSessionDataTask value semantics (deferred)
+
+`URLSessionDataTask` is backed by `SwiftValue::Struct` (`Rc<StructObj>`), not
+by a class-instance / handle-registry object.  Mutations from `cancel()` /
+`resume()` are written back only to the **bound variable** that last received
+the `Outcome::receiver` write-back — exactly the same as any Swift struct.
+
+This diverges from the Swift stdlib, where `URLSessionDataTask` is a
+**reference type** (class).  The observable effect: an alias or a captured copy
+of a task will not see state changes made on the original binding:
+
+```swift
+var task = session.dataTask(with: url) { ... }
+let snapshot = task   // copies the struct
+task.resume()         // writes .running back to `task`
+// snapshot.state is still .suspended — value semantics, not reference
+```
+
+Fix: back the task through the class-instance / handle-registry machinery (the
+pattern used by SwiftUI session objects in the interpreter).  This requires
+non-trivial interpreter work and is deferred.  Until then:
+
+- Scripts **must** bind tasks to `var`, not `let`.
+- Scripts **must not** rely on alias observation of `state`, `progress`, or
+  byte counters through a captured copy or `let` binding.
+- The `state` field is always accurate for the binding that last received the
+  `Outcome::receiver` write-back (i.e., the `var` that owns the task).
+
+The limitation is documented in `crates/tswift-foundation/src/urlsession.rs`
+(module-level doc comment) and in `notes.md`.
+
 ## Notes
 
 - The full milestone breakdown (M1–M8), backend change table, testing strategy,

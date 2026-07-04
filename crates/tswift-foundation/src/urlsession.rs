@@ -17,6 +17,35 @@
 //! Transport failures surface as thrown `URLError` values; a missing transport
 //! (sandboxed embedding) is an interpreter error so scripts cannot confuse
 //! "no network capability" with a network failure.
+//!
+//! ## ⚠ VALUE-SEMANTICS LIMITATION — `URLSessionDataTask`
+//!
+//! **TL;DR:** bind tasks to `var`, never `let`; do not alias through closures
+//! and expect the alias to observe `resume()`/`cancel()` mutations.
+//!
+//! `URLSessionDataTask` is backed by `SwiftValue::Struct` (`Rc<StructObj>`).
+//! Mutations made by `cancel()` / `resume()` are written back to the
+//! **bound variable** through the `Outcome::receiver` mechanism — exactly as
+//! for any other Swift struct.  This diverges from the Swift stdlib where
+//! `URLSessionDataTask` is a **reference type** (class), meaning every alias
+//! sees the same mutable state:
+//!
+//! ```swift
+//! var task = session.dataTask(with: url) { ... }
+//! let snapshot = task   // copies the struct — snapshot.state stays .suspended
+//! task.resume()         // writes .running back to `task` only
+//! // ⚠ snapshot.state is still .suspended — alias did NOT observe the change
+//! ```
+//!
+//! Fixing this requires backing the task through the class-instance /
+//! handle-registry machinery (the same pattern used by SwiftUI session
+//! objects).  That work is deferred and tracked as a known limitation in
+//! ADR-0011 §Known limitations.  Until then:
+//! - Scripts **must** bind tasks to `var`.
+//! - Scripts **must not** pass a task into a closure and call `resume()` on the
+//!   outer binding expecting the closure to observe the new state.
+//! - The `state` field read via `task.state` is always accurate for the
+//!   binding that last received the `Outcome::receiver` write-back.
 
 use std::rc::Rc;
 
@@ -245,6 +274,10 @@ struct DriverOutcome {
     bytes_expected: i64,
 }
 
+/// Maximum non-terminal events to drain after cancel or a malformed event
+/// sequence.  Prevents a misbehaving transport from spinning forever.
+const MAX_DRAIN_EVENTS: usize = 1_000;
+
 /// Drive the request event loop: `start → next_event* → Done/Failed`.
 ///
 /// Checks [`StdContext::current_task_cancelled`] before starting and after
@@ -297,6 +330,26 @@ fn run_event_driver(
                 status: s,
                 headers: h,
             } => {
+                if got_response {
+                    // Second Response in the same stream — malformed sequence
+                    // per ADR-0011.  Cancel transport, drain to terminal, then
+                    // surface badServerResponse.
+                    ctx.http_cancel(handle);
+                    let mut drain = 0usize;
+                    loop {
+                        if ctx.http_next_event(handle).is_terminal() {
+                            break;
+                        }
+                        drain += 1;
+                        if drain >= MAX_DRAIN_EVENTS {
+                            break;
+                        }
+                    }
+                    return Err(StdError::Throw(url_error_value(
+                        "badServerResponse",
+                        crate::url::url_value(url),
+                    )));
+                }
                 status = s;
                 // Extract Content-Length for progress tracking.
                 for (name, val) in &h {
@@ -310,6 +363,26 @@ fn run_event_driver(
                 got_response = true;
             }
             HttpEvent::Chunk(bytes) => {
+                if !got_response {
+                    // Chunk before Response — malformed sequence per ADR-0011.
+                    // Cancel transport, drain to terminal, then surface
+                    // badServerResponse.
+                    ctx.http_cancel(handle);
+                    let mut drain = 0usize;
+                    loop {
+                        if ctx.http_next_event(handle).is_terminal() {
+                            break;
+                        }
+                        drain += 1;
+                        if drain >= MAX_DRAIN_EVENTS {
+                            break;
+                        }
+                    }
+                    return Err(StdError::Throw(url_error_value(
+                        "badServerResponse",
+                        crate::url::url_value(url),
+                    )));
+                }
                 body.extend_from_slice(&bytes);
             }
             HttpEvent::Done => {
@@ -323,6 +396,11 @@ fn run_event_driver(
                 break;
             }
             HttpEvent::Failed { code, message: _ } => {
+                // Failed events are transport errors (e.g., connection refused,
+                // DNS failure, or mid-flight network drop).  A Failed event
+                // *before* Response is a legitimate transport failure, not a
+                // protocol violation — surface it as URLError with the
+                // transport's code rather than badServerResponse.
                 return Err(StdError::Throw(url_error_value(
                     &code,
                     crate::url::url_value(url),
@@ -334,10 +412,20 @@ fn run_event_driver(
         // and drain it to terminal before returning (drain-or-cancel invariant
         // from notes.md: every started handle MUST be drained to terminal or
         // cancelled+drained).
+        // Poll cooperative cancellation between events.  Cancel the transport
+        // and drain to terminal before returning (drain-or-cancel invariant:
+        // every started handle MUST be drained to terminal or
+        // cancelled+drained).  The drain loop is capped at MAX_DRAIN_EVENTS to
+        // guard against a misbehaving transport.
         if ctx.current_task_cancelled() {
             ctx.http_cancel(handle);
+            let mut drain = 0usize;
             loop {
                 if ctx.http_next_event(handle).is_terminal() {
+                    break;
+                }
+                drain += 1;
+                if drain >= MAX_DRAIN_EVENTS {
                     break;
                 }
             }
@@ -575,6 +663,21 @@ fn task_resume(
         });
     };
 
+    // State guard: Foundation semantics — resume() on a running or completed
+    // task is a no-op.  A .canceling task is allowed to proceed so that the
+    // pre-flight cancel path (pre_cancelled flag below) can deliver URLError
+    // to the completion handler, matching Foundation behaviour.
+    let should_proceed = matches!(
+        task.get("state"),
+        Some(SwiftValue::Enum(e)) if e.case == "suspended" || e.case == "canceling"
+    );
+    if !should_proceed {
+        return Ok(Outcome {
+            result: SwiftValue::Void,
+            receiver: recv,
+        });
+    }
+
     // Extract closure id (-1 → no handler).
     let closure_id = match task.get("_closure_id") {
         Some(SwiftValue::Int(i)) => i.raw,
@@ -710,6 +813,9 @@ mod tests {
         transport: MockHttpTransport,
         out: Vec<u8>,
         calls: Vec<(usize, Vec<SwiftValue>)>,
+        /// Counts how many times `http_start` was called (used to verify
+        /// that double-resume does not issue a second request).
+        start_count: usize,
     }
 
     impl HttpEventCtx {
@@ -718,6 +824,7 @@ mod tests {
                 transport: MockHttpTransport::new(routes),
                 out: Vec::new(),
                 calls: Vec::new(),
+                start_count: 0,
             }
         }
 
@@ -726,6 +833,7 @@ mod tests {
                 transport: MockHttpTransport::default().with_chunked_routes(routes),
                 out: Vec::new(),
                 calls: Vec::new(),
+                start_count: 0,
             }
         }
     }
@@ -743,6 +851,7 @@ mod tests {
             req: &HttpRequest,
         ) -> Result<HttpTaskHandle, tswift_core::HttpError> {
             use tswift_core::HttpTransport;
+            self.start_count += 1;
             self.transport.start(req)
         }
         fn http_next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
@@ -752,6 +861,72 @@ mod tests {
         fn http_cancel(&mut self, h: HttpTaskHandle) {
             use tswift_core::HttpTransport;
             self.transport.cancel(h)
+        }
+    }
+
+    /// A `StdContext` that replays a fixed sequence of `HttpEvent`s, used to
+    /// inject malformed or cancelled event streams in unit tests.
+    struct SequenceCtx {
+        events: std::collections::VecDeque<HttpEvent>,
+        out: Vec<u8>,
+        http_cancel_called: bool,
+        /// Becomes true for `current_task_cancelled()` after this many events
+        /// have been popped by `http_next_event`. `usize::MAX` means never.
+        cancel_after_events: usize,
+        events_consumed: std::cell::Cell<usize>,
+    }
+
+    impl SequenceCtx {
+        fn new(events: Vec<HttpEvent>) -> Self {
+            Self {
+                events: events.into(),
+                out: Vec::new(),
+                http_cancel_called: false,
+                cancel_after_events: usize::MAX,
+                events_consumed: std::cell::Cell::new(0),
+            }
+        }
+
+        fn cancel_after(mut self, n: usize) -> Self {
+            self.cancel_after_events = n;
+            self
+        }
+    }
+
+    impl StdContext for SequenceCtx {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> tswift_core::StdResult {
+            Ok(SwiftValue::Void)
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            &mut self.out
+        }
+        fn http_start(
+            &mut self,
+            _req: &HttpRequest,
+        ) -> Result<HttpTaskHandle, tswift_core::HttpError> {
+            Ok(HttpTaskHandle(1))
+        }
+        fn http_next_event(&mut self, _h: HttpTaskHandle) -> HttpEvent {
+            let ev = self.events.pop_front().unwrap_or(HttpEvent::Failed {
+                code: "badServerResponse".into(),
+                message: "no more events".into(),
+            });
+            self.events_consumed.set(self.events_consumed.get() + 1);
+            ev
+        }
+        fn http_cancel(&mut self, _h: HttpTaskHandle) {
+            self.http_cancel_called = true;
+            // Append a terminal Failed{cancelled} at the end of the queue so the
+            // drain loop in run_event_driver will eventually hit a terminal event.
+            // Non-terminal events already in the queue remain so the drain loop
+            // exercises the "consume until terminal" path.
+            self.events.push_back(HttpEvent::Failed {
+                code: "cancelled".into(),
+                message: String::new(),
+            });
+        }
+        fn current_task_cancelled(&self) -> bool {
+            self.events_consumed.get() >= self.cancel_after_events
         }
     }
 
@@ -1070,6 +1245,177 @@ mod tests {
         assert!(
             matches!(state, Some(SwiftValue::Enum(e)) if e.case == "completed"),
             "expected completed, got {state:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // run_event_driver — malformed event-order sequences (ADR-0011)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn chunk_before_response_is_bad_server_response() {
+        // Chunk arrives before the Response event — malformed per ADR-0011.
+        let mut ctx = SequenceCtx::new(vec![
+            HttpEvent::Chunk(b"early data".to_vec()),
+            HttpEvent::Done,
+        ]);
+        let req = HttpRequest {
+            url: "https://example.com/".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let StdError::Throw(SwiftValue::Struct(o)) = err else {
+            panic!("expected thrown URLError, got {err:?}");
+        };
+        assert_eq!(o.type_name, "URLError");
+        assert!(
+            matches!(o.get("code"), Some(SwiftValue::Enum(e)) if e.case == "badServerResponse"),
+            "expected badServerResponse, got {:?}",
+            o.get("code")
+        );
+        // http_cancel must have been called so the transport can be cleaned up.
+        assert!(
+            ctx.http_cancel_called,
+            "http_cancel must be called on malformed stream"
+        );
+    }
+
+    #[test]
+    fn double_response_is_bad_server_response() {
+        // Two Response events in one stream — malformed per ADR-0011.
+        let mut ctx = SequenceCtx::new(vec![
+            HttpEvent::Response {
+                status: 200,
+                headers: vec![],
+            },
+            HttpEvent::Response {
+                status: 200,
+                headers: vec![],
+            },
+            HttpEvent::Done,
+        ]);
+        let req = HttpRequest {
+            url: "https://example.com/".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let StdError::Throw(SwiftValue::Struct(o)) = err else {
+            panic!("expected thrown URLError, got {err:?}");
+        };
+        assert_eq!(o.type_name, "URLError");
+        assert!(
+            matches!(o.get("code"), Some(SwiftValue::Enum(e)) if e.case == "badServerResponse"),
+            "expected badServerResponse, got {:?}",
+            o.get("code")
+        );
+        assert!(
+            ctx.http_cancel_called,
+            "http_cancel must be called on malformed stream"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // run_event_driver — mid-flight cooperative cancellation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn mid_flight_cancel_drains_transport_and_returns_url_error() {
+        // Simulate a stream that has delivered one Response event before the
+        // outer Task is cancelled (current_task_cancelled flips true after
+        // events_consumed >= 1).  The driver must:
+        //   1. call http_cancel on the transport handle,
+        //   2. drain the remaining events to the terminal Failed{cancelled},
+        //   3. return URLError(.cancelled).
+        // Sequence: Response (consumed in normal loop), then two Chunks that
+        // are still in the queue when cancel fires.  http_cancel appends a
+        // Failed{cancelled} terminal, giving drain loop: Chunk + Chunk + Failed.
+        // cancel_after_events=1 makes current_task_cancelled() true as soon as
+        // the Response has been consumed (events_consumed >= 1).
+        let mut ctx = SequenceCtx::new(vec![
+            HttpEvent::Response {
+                status: 200,
+                headers: vec![],
+            },
+            // Chunks buffered in the queue; consumed by the drain loop.
+            HttpEvent::Chunk(b"part1".to_vec()),
+            HttpEvent::Chunk(b"part2".to_vec()),
+            // http_cancel will append Failed{cancelled} — no pre-insert needed.
+        ])
+        .cancel_after(1); // cancel_after_events = 1 → true once Response is consumed
+
+        let req = HttpRequest {
+            url: "https://example.com/stream".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+
+        // Driver must have called http_cancel.
+        assert!(
+            ctx.http_cancel_called,
+            "http_cancel must be called on mid-flight cancel"
+        );
+
+        // The queue must be fully drained (no events left unread).
+        assert!(
+            ctx.events.is_empty(),
+            "drain loop must consume all remaining events; {} left",
+            ctx.events.len()
+        );
+
+        // URLError(.cancelled) must be thrown.
+        let StdError::Throw(SwiftValue::Struct(o)) = err else {
+            panic!("expected thrown URLError, got {err:?}");
+        };
+        assert_eq!(o.type_name, "URLError");
+        assert!(
+            matches!(o.get("code"), Some(SwiftValue::Enum(e)) if e.case == "cancelled"),
+            "expected URLError(.cancelled), got {:?}",
+            o.get("code")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // URLSessionDataTask — double resume is a no-op
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn double_resume_issues_exactly_one_request() {
+        let mut ctx = HttpEventCtx::new(vec![MockRoute {
+            method: "GET".into(),
+            url: "https://example.com/once".into(),
+            outcome: Ok(ok_resp(200, b"ok")),
+        }]);
+        let task = task_value(request_value("https://example.com/once"), 60.0, 99);
+
+        // First resume: suspended → running → completed.
+        let out1 = task_resume(&mut ctx, task, vec![]).unwrap();
+        assert_eq!(
+            ctx.start_count, 1,
+            "first resume must issue exactly one request"
+        );
+        assert_eq!(ctx.calls.len(), 1, "handler called once after first resume");
+
+        // Second resume: state is .completed → state guard returns early, no
+        // transport call, no additional handler invocation.
+        let completed_task = out1.receiver;
+        let _out2 = task_resume(&mut ctx, completed_task, vec![]).unwrap();
+        assert_eq!(
+            ctx.start_count, 1,
+            "second resume must NOT issue another request"
+        );
+        assert_eq!(
+            ctx.calls.len(),
+            1,
+            "completion handler must NOT be called a second time"
         );
     }
 
