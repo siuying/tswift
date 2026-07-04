@@ -13,8 +13,13 @@ use crate::util::{elapsed_ms, now_ms};
 const BACKEND: &str = "ffi";
 
 /// Compile and run `source`, returning the result JSON (string body, owned).
-/// A registered host HTTP handler becomes the run's `URLSession` transport.
-pub(crate) fn run_impl(source: &str, http: Option<crate::http::HostHttpHandler>) -> String {
+/// A registered host HTTP handler (one-shot or streaming) becomes the run's
+/// `URLSession` transport. The streaming config takes priority when both are set.
+pub(crate) fn run_impl(
+    source: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> String {
     let started = now_ms();
 
     let analysis = match Analysis::analyze(source, "main.swift") {
@@ -70,7 +75,11 @@ pub(crate) fn run_impl(source: &str, http: Option<crate::http::HostHttpHandler>)
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
     interp.set_filename("main.swift");
-    if let Some(handler) = http {
+    if let Some(config) = stream_http {
+        interp.set_http_transport(Box::new(crate::http::StreamingHostHttpHandler::from(
+            config,
+        )));
+    } else if let Some(handler) = http {
         interp.set_http_transport(Box::new(handler));
     }
 

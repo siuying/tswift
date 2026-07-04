@@ -44,6 +44,76 @@ void           tswift_string_free(char*);
 
 Mirrors `tswift-wasm`'s `run_swift` / `swiftui_compile` / `swiftui_dispatch`.
 
+## HTTP transport — one-shot path (existing)
+
+```c
+typedef void (*tswift_http_handler)(void *userdata,
+                                    const char *request_json,
+                                    void *call);
+void tswift_set_http_handler(TSwiftContext*, tswift_http_handler, void *userdata);
+void tswift_http_respond(void *call, const char *response_json);
+```
+
+The handler is called synchronously during `tswift_run`. It must call
+`tswift_http_respond(call, ...)` exactly once before returning. Request JSON:
+`{"url","method","timeoutSeconds","headers":[[k,v]...],"bodyBase64"?}`. Response
+JSON: `{"status","headers":[[k,v]...],"bodyBase64"?}` or
+`{"error":"<URLError.Code case>","message"?}`.
+
+## HTTP transport — streaming path (M6, additive)
+
+The streaming handler supports delegate callbacks, mid-flight cancellation, and
+byte-level progress (ADR-0011 §2.6). It takes priority over the one-shot
+handler when both are registered.
+
+```c
+// host → Rust: register
+typedef void (*tswift_http_start_fn)(void *userdata,
+                                     const char *request_json,
+                                     void *task_token);
+typedef void (*tswift_http_cancel_fn)(void *userdata, void *task_token);
+void tswift_set_http_stream_handler(TSwiftContext*,
+                                    tswift_http_start_fn,
+                                    tswift_http_cancel_fn,
+                                    void *userdata);
+
+// host → Rust: push events (callable from any thread)
+void tswift_http_event(void *task_token, const char *event_json);
+```
+
+### Event JSON wire format
+
+```jsonc
+{"event":"response","status":200,"headers":[["Content-Type","text/plain"]]}
+{"event":"chunk","bodyBase64":"aGk="}
+{"event":"done"}
+{"event":"error","code":"timedOut","message":"..."}
+```
+
+### Token lifetime contract
+
+`task_token` is a raw pointer to a Rust-managed `Arc<TaskQueue>` heap Box.
+
+1. The token is handed to `tswift_http_start_fn` when the request starts.
+2. The host pushes events via `tswift_http_event(token, event_json)` from
+   any thread. Concurrent pushes are serialised by an internal mutex.
+3. After pushing a terminal event (`done` / `error`), the token is logically
+   dead. Any further push is a safe no-op (the `terminal_pushed` flag blocks
+   it).
+4. Rust reclaims the token Box when the terminal event is **consumed** by the
+   interpreter's `next_event` call (or when the timeout fires). After that
+   point the host **must not** call `tswift_http_event` with the token.
+5. `tswift_http_cancel_fn` is called by Rust on timeout or script-level cancel.
+   The host should stop delivering events; late pushes before the cancel is
+   processed are safe no-ops.
+
+### Timeout behaviour
+
+`next_event` blocks on the condvar using `HttpRequest.timeoutSeconds` as the
+deadline. On expiry it synthesises `Failed{code:"timedOut"}`, calls the host
+`cancel_fn`, reclaims the token Box, and returns the synthesised event to the
+interpreter.
+
 5. **Hand-written header, not cbindgen.** The surface is tiny (6 fns, one opaque
    type); a ~15-line `.h` is diff-reviewable with zero offline/vendoring cost
    (cbindgen is not in `Cargo.lock` and can't be `cargo install`ed offline). A

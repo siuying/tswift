@@ -15,7 +15,10 @@ mod run;
 mod swiftui;
 mod util;
 
-pub use http::{tswift_http_respond, TswiftHttpHandler};
+pub use http::{
+    tswift_http_event, tswift_http_respond, TswiftHttpCancelFn, TswiftHttpHandler,
+    TswiftHttpStartFn,
+};
 
 /// The lifespan-owning VM handle handed to C as an opaque pointer — the native
 /// analogue of QuickJS's `JSContext`. Owns the reclaimable interpreter bundle
@@ -25,9 +28,13 @@ pub struct Context {
     /// The live SwiftUI render session (T3), if one has been compiled. Owns its
     /// interpreter bundle and is reclaimed on recompile or `Context` free.
     swiftui: Option<swiftui::SwiftUiSession>,
-    /// The host-registered HTTP handler backing `URLSession` in scripts run
-    /// through this context (see `src/http.rs`); `None` means no network.
+    /// One-shot HTTP handler (existing path, verbatim). When present,
+    /// each script `URLSession` call invokes the handler synchronously.
     http: Option<http::HostHttpHandler>,
+    /// Streaming HTTP handler config (M6, additive). When present, takes
+    /// priority over `http`; each request uses the event-driven
+    /// `start/next_event/cancel` seam with host-pushed JSON events.
+    stream_http: Option<http::StreamingHandlerConfig>,
 }
 
 impl Context {
@@ -35,6 +42,7 @@ impl Context {
         Context {
             swiftui: None,
             http: None,
+            stream_http: None,
         }
     }
 }
@@ -137,7 +145,7 @@ pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) ->
     let Some(source) = borrow_str(source) else {
         return into_json_ptr(arg_error_json("source is null or not valid UTF-8"));
     };
-    into_json_ptr(run::run_impl(source, ctx.http))
+    into_json_ptr(run::run_impl(source, ctx.http, ctx.stream_http))
 }
 
 /// Register `handler` (with its opaque `userdata`) as the HTTP transport for
@@ -159,6 +167,42 @@ pub unsafe extern "C" fn tswift_set_http_handler(
         return;
     };
     ctx.http = handler.map(|handler| http::HostHttpHandler { handler, userdata });
+}
+
+/// Register an event-driven streaming HTTP transport for scripts run through
+/// `ctx`. Takes priority over the one-shot handler set by
+/// [`tswift_set_http_handler`] when both are installed.
+///
+/// `start_fn` is called once per script request; it must initiate the request
+/// and return quickly (fire-and-forget). The host then pushes events from any
+/// thread via [`tswift_http_event`]. `cancel_fn` is called to abort an
+/// in-flight request (e.g. on timeout or `Task.cancel()`). Pass a null
+/// `start_fn` to remove the streaming handler.
+///
+/// See `docs/plan/native-host.md` and `src/http.rs` for the full contract.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `start_fn` and
+/// `cancel_fn` (when non-null) must remain callable, and `userdata` valid,
+/// until the handler is replaced/removed or the context is freed.
+#[no_mangle]
+pub unsafe extern "C" fn tswift_set_http_stream_handler(
+    ctx: *mut Context,
+    start_fn: Option<TswiftHttpStartFn>,
+    cancel_fn: Option<TswiftHttpCancelFn>,
+    userdata: *mut c_void,
+) {
+    let Some(ctx) = ctx.as_mut() else {
+        return;
+    };
+    ctx.stream_http = match (start_fn, cancel_fn) {
+        (Some(start_fn), Some(cancel_fn)) => Some(http::StreamingHandlerConfig {
+            start_fn,
+            cancel_fn,
+            userdata,
+        }),
+        _ => None,
+    };
 }
 
 /// Compile a SwiftUI program through `ctx`, render its root view, and start a
@@ -251,6 +295,86 @@ mod tests {
         let _set_http: unsafe extern "C" fn(*mut Context, Option<TswiftHttpHandler>, *mut c_void) =
             tswift_set_http_handler;
         let _respond: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_http_respond;
+        // M6 streaming symbols
+        let _set_stream_http: unsafe extern "C" fn(
+            *mut Context,
+            Option<TswiftHttpStartFn>,
+            Option<TswiftHttpCancelFn>,
+            *mut c_void,
+        ) = tswift_set_http_stream_handler;
+        let _http_event: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_http_event;
+    }
+
+    /// Integration test: streaming handler drives a full URLSession request via
+    /// `tswift_run`.  The pusher thread delivers events while `tswift_run`
+    /// blocks; the script prints the status code and body.
+    #[test]
+    fn run_with_stream_http_handler_serves_urlsession_scripts() {
+        use std::sync::{Arc, Mutex};
+
+        /// Raw pointer wrapper that is `Send` for this test only.
+        struct SendPtr(*mut c_void);
+        unsafe impl Send for SendPtr {}
+
+        // Shared store so the pusher thread can get the task token from start_fn.
+        let token_store: Arc<Mutex<Option<SendPtr>>> = Arc::new(Mutex::new(None));
+        let token_store_for_start = token_store.clone();
+        let userdata = Box::into_raw(Box::new(token_store_for_start)) as *mut c_void;
+
+        unsafe extern "C" fn stream_start(
+            userdata: *mut c_void,
+            _req: *const c_char,
+            token: *mut c_void,
+        ) {
+            let store = &*(userdata as *mut Arc<Mutex<Option<SendPtr>>>);
+            *store.lock().unwrap() = Some(SendPtr(token));
+        }
+        unsafe extern "C" fn stream_cancel(_: *mut c_void, _: *mut c_void) {}
+
+        let ctx = tswift_context_new();
+        unsafe {
+            tswift_set_http_stream_handler(ctx, Some(stream_start), Some(stream_cancel), userdata);
+        }
+
+        // Push events from a background thread once the token is available.
+        let token_store_for_pusher = token_store.clone();
+        let pusher = std::thread::spawn(move || {
+            loop {
+                let mut guard = token_store_for_pusher.lock().unwrap();
+                if let Some(SendPtr(token)) = guard.take() {
+                    drop(guard);
+                    unsafe {
+                        let resp = b"{\"event\":\"response\",\"status\":200,\"headers\":[[\"Content-Type\",\"text/plain\"]]}\0";
+                        tswift_http_event(token, resp.as_ptr().cast());
+                        // "aGVsbG8=" is base64 for "hello"
+                        let chunk = b"{\"event\":\"chunk\",\"bodyBase64\":\"aGVsbG8=\"}\0";
+                        tswift_http_event(token, chunk.as_ptr().cast());
+                        let done = b"{\"event\":\"done\"}\0";
+                        tswift_http_event(token, done.as_ptr().cast());
+                    }
+                    break;
+                }
+                drop(guard);
+                std::thread::yield_now();
+            }
+        });
+
+        let source = CString::new(
+            "import Foundation\n\
+             let (data, resp) = try await URLSession.shared.data(from: URL(string: \"https://x.example/\")!)\n\
+             print((resp as! HTTPURLResponse).statusCode)\n\
+             print(String(data: data, encoding: .utf8) ?? \"nil\")\n",
+        )
+        .unwrap();
+        let out = unsafe { tswift_run(ctx, source.as_ptr()) };
+        pusher.join().unwrap();
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe {
+            tswift_string_free(out);
+            tswift_context_free(ctx);
+            drop(Box::from_raw(userdata as *mut Arc<Mutex<Option<SendPtr>>>));
+        }
+        assert!(json.contains("200\\nhello"), "unexpected result: {json}");
     }
 
     #[test]
