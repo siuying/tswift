@@ -15,17 +15,21 @@
 //! allocates a `Box<Arc<TaskQueue>>` and hands the raw pointer to `start_fn`
 //! as the `task_token`. The host fires events back from **any thread** via
 //! [`tswift_http_event`]. `next_event` blocks on a condvar until an event
-//! arrives or the timeout (from `HttpRequest.timeout_seconds`) expires.
+//! arrives or the remaining deadline elapses.
 //!
 //! ## Token lifetime contract
 //!
-//! - The token is valid from the `start_fn` call until the terminal event is
-//!   consumed by `next_event` (or until the timeout fires).
-//! - After that point the token Box has been reclaimed; hosts **must not**
-//!   call `tswift_http_event` with it.
-//! - A push arriving *after* a terminal event has been pushed to the same
-//!   queue (but before `next_event` has consumed it) is a safe no-op: the
-//!   `terminal_pushed` flag prevents it from reaching the queue.
+//! - A token is valid from the `start_fn` call until the tswift **context is
+//!   destroyed** (`tswift_context_free`). Every issued `Box<Arc<TaskQueue>>`
+//!   is kept in a registry inside [`StreamingHostHttpHandler`] and is only
+//!   freed when the handler is dropped (at context destruction time).
+//! - Pushing events after the terminal event has been consumed by `next_event`
+//!   is a **safe no-op**: `terminal_pushed` discards such pushes before they
+//!   reach the queue. Multiple concurrent calls to [`tswift_http_event`] with
+//!   the same token are safe; the internal mutex serialises them.
+//! - **One remaining host contract**: the token must not be used after the
+//!   tswift context is destroyed (i.e., after `tswift_context_free` returns).
+//!   Accessing a token after that point is undefined behaviour.
 //!
 //! Request JSON:  `{"url", "method", "headers": [[k, v]...],
 //!                  "timeoutSeconds", "bodyBase64"?}`
@@ -39,7 +43,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, c_void, CString};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tswift_core::http::{decode_event_json, decode_response_json, encode_request_json};
 use tswift_core::{HttpError, HttpEvent, HttpRequest, HttpResponse, HttpTaskHandle, HttpTransport};
@@ -213,8 +217,11 @@ impl TaskQueue {
             state.terminal_pushed = true;
         }
         state.events.push_back(event);
-        drop(state);
+        // Notify while still holding the lock so the condvar cannot be
+        // destroyed (by a concurrent drop of the last Arc) between the
+        // unlock and the notify call.
         self.condvar.notify_one();
+        // `state` (MutexGuard) is dropped here, releasing the lock.
         true
     }
 
@@ -233,8 +240,9 @@ impl TaskQueue {
                 message: "request cancelled".into(),
             });
             state.terminal_pushed = true;
-            drop(state);
+            // Notify while still holding the lock (see push() for rationale).
             self.condvar.notify_one();
+            // `state` dropped here.
         }
     }
 
@@ -267,15 +275,18 @@ struct InFlightTask {
     /// The task's event queue, shared with the `Box<Arc<TaskQueue>>` token.
     queue: Arc<TaskQueue>,
     /// Raw pointer to the `Box<Arc<TaskQueue>>` handed to the host as the
-    /// task token. Freed (via `Box::from_raw`) exactly once: when the
-    /// terminal event is consumed by `next_event`, or when the timeout fires.
+    /// task token.
     ///
     /// # Invariant
-    /// This pointer is valid from task creation until the first terminal event
-    /// is consumed by `next_event`. Do not dereference it after that point.
+    /// The Box is kept alive in `StreamingHostHttpHandler::all_tokens` until
+    /// the handler is dropped. Do **not** call `Box::from_raw` on this pointer
+    /// inside `next_event` or `cancel`; only `Drop` may free it.
     token_ptr: *mut c_void,
-    /// Timeout in seconds sourced from `HttpRequest.timeout_seconds`.
-    timeout_seconds: f64,
+    /// Absolute deadline computed once at `start()` from
+    /// `HttpRequest.timeout_seconds`. `next_event` computes remaining time as
+    /// `deadline.saturating_duration_since(Instant::now())` so a slow drip of
+    /// events cannot defer the timeout indefinitely.
+    deadline: Instant,
 }
 
 // SAFETY: `token_ptr` is only accessed on the interpreter thread (ADR-0005).
@@ -283,19 +294,57 @@ unsafe impl Send for InFlightTask {}
 
 /// Per-run streaming handler; created fresh for each `tswift_run` call from a
 /// [`StreamingHandlerConfig`] that persists on the `Context`.
+///
+/// # Token registry
+///
+/// Every `Box<Arc<TaskQueue>>` issued by [`start`][Self::start] is pushed into
+/// `all_tokens`. The Box is **only** freed in `Drop`, never earlier. This
+/// means a host thread calling [`tswift_http_event`] with any issued token is
+/// always accessing valid memory as long as the handler (and thus the context)
+/// is alive. `terminal_pushed` on the queue ensures late pushes are no-ops.
 pub(crate) struct StreamingHostHttpHandler {
     config: StreamingHandlerConfig,
     pending: HashMap<u64, InFlightTask>,
+    /// Every raw `Box<Arc<TaskQueue>>` pointer ever issued. Freed in `Drop`.
+    all_tokens: Vec<*mut c_void>,
     next_id: u64,
 }
+
+// SAFETY: `all_tokens` holds `*mut c_void` (raw pointers, !Send by default).
+// All access occurs on the interpreter thread (ADR-0005); `tswift_http_event`
+// accesses the pointees (Arc<TaskQueue>) from host threads but never touches
+// the Vec itself.
+unsafe impl Send for StreamingHostHttpHandler {}
 
 impl From<StreamingHandlerConfig> for StreamingHostHttpHandler {
     fn from(config: StreamingHandlerConfig) -> Self {
         StreamingHostHttpHandler {
             config,
             pending: HashMap::new(),
+            all_tokens: Vec::new(),
             next_id: 1,
         }
+    }
+}
+
+impl Drop for StreamingHostHttpHandler {
+    fn drop(&mut self) {
+        // Free every token Box that was issued but not yet reclaimed.
+        // For completed tasks the Box holds the last Arc<TaskQueue> clone
+        // (InFlightTask.queue was already dropped); freeing it drops the Arc
+        // to zero and frees the queue. For still-pending tasks the Box drops
+        // one Arc clone; InFlightTask.queue (dropped with `pending`) drops the
+        // other — so the queue is freed after both drops complete.
+        for token_ptr in self.all_tokens.drain(..) {
+            // SAFETY: each pointer was created by
+            // `Box::into_raw(Box::new(Arc<TaskQueue>))` in `start`. It is
+            // freed exactly once here.
+            unsafe {
+                drop(Box::from_raw(token_ptr.cast::<Arc<TaskQueue>>()));
+            }
+        }
+        // `pending` is dropped implicitly after this returns, releasing any
+        // remaining InFlightTask.queue Arc clones.
     }
 }
 
@@ -337,28 +386,31 @@ impl HttpTransport for StreamingHostHttpHandler {
     /// # Token ownership
     ///
     /// The `Box<Arc<TaskQueue>>` allocated here is handed to the host as a
-    /// `*mut c_void`. Rust reclaims the Box exactly once: in `next_event` when
-    /// the terminal event is consumed, or in `next_event` when the timeout
-    /// expires. The host **must not** call `tswift_http_event` with the token
-    /// after that point.
+    /// `*mut c_void`. The Box is pushed into `all_tokens` and lives until this
+    /// handler is dropped (context destroyed). The host may therefore call
+    /// [`tswift_http_event`] at any point while the context is alive — even
+    /// after the terminal event has been consumed — and it will be a safe
+    /// no-op (guarded by `terminal_pushed`).
     fn start(&mut self, req: &HttpRequest) -> Result<HttpTaskHandle, HttpError> {
         let queue = TaskQueue::new();
 
-        // Clone the Arc into a Box for the host token.
-        // SAFETY contract: token_ptr is valid until the terminal is consumed
-        // (see module-level doc). tswift_http_event borrows it read-only.
+        // Clone the Arc into a Box for the host token.  The Box is registered
+        // in `all_tokens`; only `Drop` may reclaim it.
         let token_arc: Arc<TaskQueue> = queue.clone();
         let token_ptr = Box::into_raw(Box::new(token_arc)).cast::<c_void>();
+        // Register immediately so Drop never misses it, even if start_fn panics.
+        self.all_tokens.push(token_ptr);
 
         let id = self.next_id;
         self.next_id += 1;
 
+        let deadline = Instant::now() + clamp_timeout(req.timeout_seconds);
         self.pending.insert(
             id,
             InFlightTask {
                 queue,
                 token_ptr,
-                timeout_seconds: req.timeout_seconds,
+                deadline,
             },
         );
 
@@ -369,7 +421,7 @@ impl HttpTransport for StreamingHostHttpHandler {
         // SAFETY: `start_fn` and `userdata` were registered together via
         // `tswift_set_http_stream_handler` and are valid for the context
         // lifetime. `c_request` outlives the call. `token_ptr` is a valid
-        // `Box<Arc<TaskQueue>>` until consumed by `next_event`.
+        // `Box<Arc<TaskQueue>>` (in `all_tokens`) until the handler is dropped.
         unsafe {
             (self.config.start_fn)(self.config.userdata, c_request.as_ptr(), token_ptr);
         }
@@ -377,59 +429,63 @@ impl HttpTransport for StreamingHostHttpHandler {
         Ok(HttpTaskHandle(id))
     }
 
-    /// Block until the next event for `h`, up to the task's timeout deadline.
+    /// Block until the next event for `h`, up to the task's absolute deadline.
     ///
-    /// On timeout: synthesizes `Failed{timedOut}`, calls `cancel_fn`, reclaims
-    /// the token Box, and returns the synthesized event.
+    /// The deadline is computed once in [`start`][Self::start] so repeated
+    /// `next_event` calls share a single wall-clock budget (no per-call drift).
     ///
-    /// On terminal event: reclaims the token Box and removes the task from the
-    /// pending map.
+    /// On timeout: synthesizes `Failed{timedOut}`, calls `cancel_fn`, marks
+    /// the queue as terminated, and removes the task from the pending map.
+    /// The token Box stays in `all_tokens` and is freed only in `Drop`.
+    ///
+    /// On terminal event: removes the task from the pending map. The token
+    /// Box likewise stays in `all_tokens` until `Drop`, so any concurrent
+    /// host push after this point is a safe no-op (`terminal_pushed = true`).
     fn next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
-        let Some(task) = self.pending.get(&h.0) else {
-            return HttpEvent::Failed {
-                code: "badServerResponse".into(),
-                message: "unknown or exhausted task handle".into(),
-            };
+        // Extract what we need then drop the borrow so we can mutate `pending`
+        // inside the match arms.
+        let (queue, token_ptr, deadline) = match self.pending.get(&h.0) {
+            Some(task) => (task.queue.clone(), task.token_ptr, task.deadline),
+            None => {
+                return HttpEvent::Failed {
+                    code: "badServerResponse".into(),
+                    message: "unknown or exhausted task handle".into(),
+                }
+            }
         };
 
-        let timeout = Duration::from_secs_f64(task.timeout_seconds.max(0.0));
-        match task.queue.next_event_timeout(timeout) {
+        // Compute remaining time against the absolute deadline. If the
+        // deadline has already passed, saturating_duration_since returns
+        // Duration::ZERO and next_event_timeout returns None immediately.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+
+        match queue.next_event_timeout(remaining) {
             Some(event) => {
-                let is_terminal = event.is_terminal();
-                if is_terminal {
-                    // Reclaim the token Box and remove the task entry.
-                    let task = self.pending.remove(&h.0).unwrap();
-                    // SAFETY: `token_ptr` was created by
-                    // `Box::into_raw(Box::new(Arc<TaskQueue>))` in `start`.
-                    // The terminal event is the single point where we reclaim
-                    // it. The host must not use `token_ptr` after this.
-                    unsafe {
-                        drop(Box::from_raw(task.token_ptr.cast::<Arc<TaskQueue>>()));
-                    }
+                if event.is_terminal() {
+                    // Remove from pending; the token Box lives on in all_tokens
+                    // so host threads can still safely call tswift_http_event
+                    // (terminal_pushed=true makes it a no-op).
+                    self.pending.remove(&h.0);
                 }
                 event
             }
             None => {
-                // Timeout: synthesize timedOut, call host cancel, reclaim token.
-                let task = self.pending.remove(&h.0).unwrap();
-                let token_ptr = task.token_ptr;
+                // Timeout: remove from pending, mark queue terminated, call
+                // host cancel. Token Box is NOT freed here — only in Drop.
+                self.pending.remove(&h.0);
 
-                // Mark the queue as terminated so any racing push from the host
-                // is a safe no-op (checked in `TaskQueue::push`).
-                task.queue.push(HttpEvent::Failed {
+                // Mark the queue as terminated so any racing host push is a
+                // safe no-op. (queue is the Arc clone we took above.)
+                queue.push(HttpEvent::Failed {
                     code: "timedOut".into(),
                     message: "request timed out waiting for host event".into(),
                 });
 
                 // Notify the host to abort the in-flight request.
-                // SAFETY: `cancel_fn` and `userdata` are valid. `token_ptr`
-                // is still pointing to a live `Box<Arc<TaskQueue>>` here;
-                // we drop it immediately after this call.
+                // SAFETY: `cancel_fn` and `userdata` are valid for the context
+                // lifetime. `token_ptr` is still live (it is in all_tokens).
                 unsafe {
                     (self.config.cancel_fn)(self.config.userdata, token_ptr);
-                    // Reclaim the Box after the cancel call so the host does
-                    // not see a dangling pointer inside `cancel_fn` itself.
-                    drop(Box::from_raw(token_ptr.cast::<Arc<TaskQueue>>()));
                 }
 
                 HttpEvent::Failed {
@@ -466,21 +522,48 @@ impl HttpTransport for StreamingHostHttpHandler {
 }
 
 // ---------------------------------------------------------------------------
+// clamp_timeout — safe Duration conversion
+// ---------------------------------------------------------------------------
+
+/// Convert `secs` to a `Duration`, clamping NaN, infinities, and
+/// out-of-range values to a safe finite duration.
+///
+/// - NaN or ≤ 0 → `Duration::ZERO` (caller sees an immediate timeout)
+/// - +∞ or > `MAX_SECS` → `Duration::from_secs(MAX_SECS_U64)` (≈ 10 years,
+///   effectively "no timeout")
+/// - finite positive → `Duration::from_secs_f64(secs.min(MAX_SECS))`
+fn clamp_timeout(secs: f64) -> Duration {
+    const MAX_SECS: f64 = 86_400.0 * 365.0 * 10.0; // 10 years
+    const MAX_SECS_U64: u64 = 86_400 * 365 * 10;
+    if secs.is_nan() || secs <= 0.0 {
+        Duration::ZERO
+    } else if !secs.is_finite() {
+        // +inf: use a very large but finite duration
+        Duration::from_secs(MAX_SECS_U64)
+    } else {
+        Duration::from_secs_f64(secs.min(MAX_SECS))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // tswift_http_event — host-callable event delivery
 // ---------------------------------------------------------------------------
 
 /// Push one event for an in-flight streaming request from **any thread**.
 ///
-/// `task_token` is the opaque pointer passed to `tswift_http_start_fn`; it
-/// must not be used after the terminal event has been consumed by `next_event`
-/// (see the token lifetime contract in the module docs).
+/// `task_token` is the opaque pointer passed to `tswift_http_start_fn`. The
+/// token remains valid until the tswift context is destroyed; hosts may
+/// therefore call this function freely while the context is alive.
+/// Pushes after the terminal event has been consumed are safe no-ops
+/// (`terminal_pushed` discards them before they reach the queue).
 ///
 /// Malformed or null `event_json` is treated as `Failed{badServerResponse}`.
 ///
 /// # Safety
-/// - `task_token` must be a valid pointer obtained from `tswift_http_start_fn`
-///   that has not yet been reclaimed (i.e., the terminal event has not been
-///   consumed by `next_event` yet).
+/// - `task_token` must be a pointer obtained from `tswift_http_start_fn` for
+///   the **same** context that is still alive (i.e., `tswift_context_free` has
+///   not been called). The registry inside `StreamingHostHttpHandler` keeps
+///   the underlying `Box<Arc<TaskQueue>>` alive for the full context lifetime.
 /// - `event_json` must be null or a valid, NUL-terminated, UTF-8 C string.
 /// - Multiple concurrent calls with the **same** token are safe; the internal
 ///   mutex serialises them.
@@ -506,16 +589,12 @@ pub unsafe extern "C" fn tswift_http_event(task_token: *mut c_void, event_json: 
         },
     };
 
-    // SAFETY: `task_token` is `Box::into_raw(Box::new(Arc<TaskQueue>))`,
-    // valid until reclaimed by `next_event`. We borrow the Arc read-only here
-    // (no ownership transfer); the `push` call only needs `&self` on the Arc.
-    //
-    // The Rust borrow `&*arc_ptr` does NOT call drop — it borrows the Arc in
-    // place. The reference is scoped to this function, which executes before
-    // `next_event` can reclaim the Box (they never overlap: `next_event` runs
-    // on the interpreter thread; this function is called from the host thread,
-    // but the token is only reclaimed after `next_event` has already observed
-    // the terminal and returned).
+    // SAFETY: `task_token` is `Box::into_raw(Box::new(Arc<TaskQueue>))` from
+    // `start`. The Box lives in `StreamingHostHttpHandler::all_tokens` for the
+    // entire context lifetime — it is never freed before `Drop`. Therefore
+    // `arc_ptr` is always valid here (context alive ⟹ Box alive ⟹ Arc alive).
+    // We borrow the Arc in place (`&*arc_ptr`, no refcount change); the borrow
+    // is scoped to this function body. `TaskQueue::push` uses only `&self`.
     let arc_ptr = task_token.cast::<Arc<TaskQueue>>();
     let queue_arc: &Arc<TaskQueue> = &*arc_ptr;
     queue_arc.push(event);
@@ -793,14 +872,14 @@ mod tests {
         );
     }
 
-    // ---- late push after timeout (before token freed by next_event) -------
+    // ---- late push after timeout (token stays valid until handler drop) ---
 
     #[test]
     fn late_push_after_timeout_no_op() {
         use std::sync::{Arc as StdArc, Mutex as StdMutex};
 
         // Collect tokens delivered by start_fn.
-        let tokens: StdArc<StdMutex<Vec<*mut c_void>>> = StdArc::new(StdMutex::new(Vec::new()));
+        let tokens: StdArc<StdMutex<Vec<usize>>> = StdArc::new(StdMutex::new(Vec::new()));
         let tokens_clone = tokens.clone();
 
         // Use a Box to pass the Arc into the extern-C closure via userdata.
@@ -811,8 +890,8 @@ mod tests {
             _req: *const c_char,
             token: *mut c_void,
         ) {
-            let store = &*(userdata as *mut StdArc<StdMutex<Vec<*mut c_void>>>);
-            store.lock().unwrap().push(token);
+            let store = &*(userdata as *mut StdArc<StdMutex<Vec<usize>>>);
+            store.lock().unwrap().push(token as usize);
         }
 
         unsafe extern "C" fn cancel_fn(_userdata: *mut c_void, _token: *mut c_void) {}
@@ -821,37 +900,148 @@ mod tests {
         let h = transport.start(&request_with_timeout(0.05)).unwrap();
 
         // Get the token BEFORE timeout fires.
-        let token = {
+        let token_addr: usize = {
             let guard = tokens.lock().unwrap();
             *guard.last().unwrap()
         };
 
-        // next_event: times out, sets terminal_pushed=true on the queue,
-        // then reclaims the token Box.
+        // next_event times out; sets terminal_pushed=true on the queue.
+        // Under the registry design the token Box is NOT freed here — it stays
+        // in all_tokens until the transport is dropped.
         let event = transport.next_event(h);
         assert!(
             matches!(&event, HttpEvent::Failed { code, .. } if code == "timedOut"),
             "expected timedOut, got {event:?}"
         );
 
-        // At this point the token Box has been freed. We verify that the queue
-        // was marked as terminated before the Box was freed: if we push NOW the
-        // TaskQueue is gone (token freed), but `terminal_pushed` was set before
-        // freeing, so any concurrent push that happened between timeout and
-        // the Box free would have been a no-op.
-        //
-        // We don't call tswift_http_event here because the token is freed —
-        // that would be undefined behaviour. Instead, we verify that the queue
-        // held by `token` (which is now freed) was marked done. We can observe
-        // this indirectly: a second start on a fresh request should work fine,
-        // proving the state machine is clean.
-        let _ = token; // token is no longer valid; just suppress unused warning
+        // The token is still valid (in all_tokens).  A push now is a safe
+        // no-op: terminal_pushed=true causes push() to return false immediately.
+        let chunk_json = CString::new(r#"{"event":"chunk","bodyBase64":"aGk="}"#).unwrap();
+        unsafe { tswift_http_event(token_addr as *mut c_void, chunk_json.as_ptr()) };
+        // No crash — the token is live and the push was discarded.
+
+        // Dropping `transport` reclaims all token Boxes via Drop.
+        drop(transport);
 
         // Free the userdata Box.
         unsafe {
-            drop(Box::from_raw(
-                userdata as *mut StdArc<StdMutex<Vec<*mut c_void>>>,
-            ));
+            drop(Box::from_raw(userdata as *mut StdArc<StdMutex<Vec<usize>>>));
+        }
+    }
+
+    // ---- late push after terminal consumed (registry keeps token alive) ---
+
+    /// Regression test for the use-after-free that existed before M6's registry
+    /// redesign. With the old code, `next_event` freed the token Box on
+    /// terminal-consume; a host push immediately after was UB. With the
+    /// registry design the Box lives until `Drop`, so the push is a safe no-op.
+    #[test]
+    fn late_push_after_terminal_consumed_is_safe_noop() {
+        static TOKEN: AtomicUsize = AtomicUsize::new(0);
+
+        unsafe extern "C" fn start_fn(
+            _userdata: *mut c_void,
+            _req: *const c_char,
+            token: *mut c_void,
+        ) {
+            TOKEN.store(token as usize, Ordering::SeqCst);
+        }
+
+        let mut transport = make_streaming(start_fn, noop_cancel, std::ptr::null_mut());
+        let h = transport.start(&request()).unwrap();
+
+        let token = TOKEN.load(Ordering::SeqCst) as *mut c_void;
+
+        // Push and consume the terminal.
+        let done_json = CString::new(r#"{"event":"done"}"#).unwrap();
+        unsafe { tswift_http_event(token, done_json.as_ptr()) };
+        let event = transport.next_event(h);
+        assert!(matches!(event, HttpEvent::Done));
+
+        // Token Box is still alive in all_tokens (pending entry was removed
+        // but the Box was NOT freed). Push now: terminal_pushed=true ⇒ no-op.
+        let chunk_json = CString::new(r#"{"event":"chunk","bodyBase64":"aGk="}"#).unwrap();
+        unsafe { tswift_http_event(token, chunk_json.as_ptr()) };
+        // No crash, no memory corruption. Box is freed when transport drops.
+    }
+
+    // ---- stress: concurrent pushes racing terminal + drain ----------------
+
+    /// Hammer the queue from multiple threads simultaneously while the main
+    /// thread drains. Repeat many rounds to expose races in push/drain/cancel.
+    #[test]
+    fn stress_concurrent_pushes_racing_drain() {
+        use std::sync::{Arc as StdArc, Barrier, Mutex as StdMutex};
+
+        const ROUNDS: usize = 50;
+        const PUSHERS: usize = 4;
+        const CHUNKS_PER_PUSHER: usize = 10;
+
+        for _round in 0..ROUNDS {
+            // Shared token storage for this round.
+            let token_store: StdArc<StdMutex<Option<usize>>> = StdArc::new(StdMutex::new(None));
+            let ts_for_start = token_store.clone();
+            let userdata = Box::into_raw(Box::new(ts_for_start)) as *mut c_void;
+
+            unsafe extern "C" fn start_fn_stress(
+                userdata: *mut c_void,
+                _req: *const c_char,
+                token: *mut c_void,
+            ) {
+                let store = &*(userdata as *mut StdArc<StdMutex<Option<usize>>>);
+                *store.lock().unwrap() = Some(token as usize);
+            }
+            unsafe extern "C" fn cancel_fn_stress(_: *mut c_void, _: *mut c_void) {}
+
+            let mut transport = make_streaming(start_fn_stress, cancel_fn_stress, userdata);
+            let h = transport.start(&request()).unwrap();
+
+            // Token is now stored; retrieve it before spawning.
+            let token_addr: usize = token_store.lock().unwrap().unwrap();
+
+            // All pushers start at the same time.
+            let barrier = StdArc::new(Barrier::new(PUSHERS + 1));
+            let handles: Vec<_> = (0..PUSHERS)
+                .map(|pusher_id| {
+                    let b = barrier.clone();
+                    std::thread::spawn(move || {
+                        b.wait();
+                        let token = token_addr as *mut c_void;
+                        for chunk_idx in 0..CHUNKS_PER_PUSHER {
+                            // Exactly one pusher (0) on its last chunk pushes Done.
+                            let is_terminal = pusher_id == 0 && chunk_idx == CHUNKS_PER_PUSHER - 1;
+                            let json = if is_terminal {
+                                CString::new(r#"{"event":"done"}"#).unwrap()
+                            } else {
+                                CString::new(r#"{"event":"chunk","bodyBase64":"aA=="}"#).unwrap()
+                            };
+                            unsafe { tswift_http_event(token, json.as_ptr()) };
+                        }
+                    })
+                })
+                .collect();
+
+            barrier.wait(); // release all pushers together
+            let events = drain(&mut transport, h);
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+            // The drain must end with a terminal event.
+            assert!(
+                events.last().map_or(false, |e| e.is_terminal()),
+                "round {_round}: expected terminal as last event, got {events:?}"
+            );
+
+            drop(transport); // frees all token Boxes via Drop
+
+            // Clean up userdata.
+            unsafe {
+                drop(Box::from_raw(
+                    userdata as *mut StdArc<StdMutex<Option<usize>>>,
+                ));
+            }
         }
     }
 

@@ -66,10 +66,13 @@ void tswift_http_respond(void *call, const char *response_json);
 /* Called by Rust once per in-flight request. Must initiate the request and
  * return quickly (fire-and-forget). `request_json` is a NUL-terminated JSON
  * string (valid only during the call). `task_token` is an opaque token that
- * the host must pass to tswift_http_event for each event, keeping it alive
- * until the terminal event (done/error) has been consumed by the interpreter
- * (i.e. until tswift_http_cancel_fn has been called, or the script has
- * finished reading the response). */
+ * the host must pass to tswift_http_event for each event.
+ *
+ * Token lifetime: the token is valid for the entire lifetime of the context
+ * (until tswift_context_free is called). Pushes after the terminal event has
+ * been consumed by the interpreter are safe no-ops; the runtime discards them
+ * before they reach the queue. The ONE remaining host contract: do NOT use
+ * the token after tswift_context_free returns — that is undefined behaviour. */
 typedef void (*tswift_http_start_fn)(void *userdata,
                                      const char *request_json,
                                      void *task_token);
@@ -89,16 +92,17 @@ void tswift_set_http_stream_handler(TSwiftContext *ctx,
                                     tswift_http_cancel_fn cancel_fn,
                                     void *userdata);
 
-/* Push one event for an in-flight streaming request. Callable from ANY thread.
- * `task_token` is the pointer passed to tswift_http_start_fn; it must not be
- * used after the terminal event has been consumed by the interpreter.
+/* Push one event for an in-flight streaming request. Callable from ANY thread,
+ * 0..N times, in any order. `task_token` is the pointer passed to
+ * tswift_http_start_fn; it remains valid until tswift_context_free is called.
  * `event_json` is a NUL-terminated JSON string in one of these forms:
  *   {"event":"response","status":200,"headers":[["Content-Type","text/plain"]]}
  *   {"event":"chunk","bodyBase64":"aGk="}
  *   {"event":"done"}
  *   {"event":"error","code":"timedOut","message":"..."}
  * NULL or malformed event_json is treated as {"event":"error","code":"badServerResponse"}.
- * A push after the terminal event has already been pushed is a safe no-op. */
+ * Pushes after the terminal event has been consumed are safe no-ops.
+ * Multiple concurrent calls with the same token are safe (internally serialised). */
 void tswift_http_event(void *task_token, const char *event_json);
 
 /* ---- TSwiftUI: stateful render session --------------------------------- */
