@@ -77,7 +77,7 @@ jobs:
           if [[ -n "${RELEASE_TAG}" ]]; then
             args+=(--tag "${RELEASE_TAG}")
           fi
-          ./scripts/publish-xcframework.sh "${args[@]}"
+          ./scripts/publish-xcframework.sh "${args[@]+${args[@]}}"
           # Surface the resolved tag (the script may have minted one) for later steps.
           resolved="$(grep -o '"version": *"[^"]*"' ios/TSwift/ffi.pin | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
           echo "tag=${resolved}" >> "$GITHUB_OUTPUT"
