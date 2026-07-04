@@ -43,6 +43,16 @@ The Swift package façade over `tswift-ffi`'s run surface: compile Swift to AST,
 include the standard library, and run a program. Thin wrapper, not a second
 binary.
 
+**HTTP transport seam**:
+The embedding-owned, **synchronous** backend behind script `URLSession`
+(`tswift_core::http::HttpTransport`, installed per-interpreter). Capability
+lives with the host: mock route table for fixtures, `ureq` HTTPS behind the
+CLI's `--allow-network`, a registered handler on the C ABI (the `TSwiftCore`
+façade backs it with the platform's real `URLSession`), a
+`globalThis.tswiftHttp` hook on wasm. Transport failures throw `URLError`; a
+missing transport is an interpreter error, not a network error. See ADR-0010.
+_Avoid_: async transport, per-embedding URLSession forks.
+
 **TSwiftUI**:
 The Swift package façade over `tswift-ffi`'s SwiftUI session surface: manage a
 live render session and preview SwiftUI code. Reuses `UiirRenderer` for the

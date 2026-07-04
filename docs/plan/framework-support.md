@@ -108,10 +108,15 @@ id = "F5"
 title = "Coding"
 types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
+[[tier]]
+id = "F6"
+title = "Networking"
+types = ["URLRequest", "URLError", "URLSession"]
+
 # Explicitly excluded, with rationale — keeps the denominator honest.
 [out_of_scope]
 "filesystem"   = ["FileManager", "FileHandle"]            # host I/O, sandbox
-"networking"   = ["URLSession", "URLRequest", "Host"]     # async + sockets
+"networking"   = ["Host"]                                 # raw sockets
 "objc-runtime" = ["NSObject", "NSCoding", "Bundle"]       # ObjC bridging
 "distributed"  = ["NSXPCConnection", "NSUserActivity"]
 ```

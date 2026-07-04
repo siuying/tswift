@@ -160,6 +160,20 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     }
 }
 
+/// Statics-table keys for the coverage registry: `URLError.Code` cases plus
+/// the session/configuration static values, which `Interpreter::
+/// registered_keys` does not report (they are not builtin members).
+pub(crate) fn extra_registered_keys() -> Vec<String> {
+    let mut keys: Vec<String> = URL_ERROR_CODES
+        .iter()
+        .map(|(case, _)| format!("URLError.{case}"))
+        .collect();
+    keys.push("URLSession.shared".to_string());
+    keys.push("URLSessionConfiguration.default".to_string());
+    keys.push("URLSessionConfiguration.ephemeral".to_string());
+    keys
+}
+
 // ===========================================================================
 // URLRequest
 // ===========================================================================

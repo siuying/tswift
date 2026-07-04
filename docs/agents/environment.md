@@ -22,12 +22,18 @@ all cost time to rediscover.
 
 ## Dependencies / offline builds
 
-- Assume **no network access to crates.io** during a task. Adding a dependency
-  that isn't already in `Cargo.lock` will fail to fetch.
-  - Example: `serde_json` is *not* available — the `Codable` JSON layer is the
-    hand-written `crates/tswift-core/src/json.rs` for this reason.
+- Assume **no network access to crates.io** during a task unless verified.
+  Adding a dependency that isn't already in `Cargo.lock` may fail to fetch —
+  test with a `--dry-run` `cargo add` (or a `static.crates.io` download)
+  before relying on it.
+  - Example: `serde_json` is *not* available in offline sessions — the
+    `Codable` JSON layer is the hand-written `crates/tswift-core/src/json.rs`
+    for this reason.
 - Prefer a small self-contained module over a new dependency. If a crate is
-  genuinely required, confirm it's already vendored / in the lockfile first.
+  genuinely required, confirm it's already vendored / in the lockfile first,
+  and keep it out of `tswift-core`/`tswift-ffi`/`tswift-wasm`.
+  - Sanctioned exception: `ureq` (rustls HTTPS) in **tswift-cli only**, backing
+    `--allow-network` (ADR-0010).
 
 ## Tooling notes
 

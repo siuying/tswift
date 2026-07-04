@@ -28,6 +28,11 @@ id = "F5"
 title = "Coding"
 types = ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"]
 
+[[tier]]
+id = "F6"
+title = "Networking"
+types = ["URLRequest", "URLError", "URLSession"]
+
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 Decimal = ["+", "+=", "-", "-=", "*", "*=", "/", "/=", "==", "<"]
@@ -49,14 +54,21 @@ URLComponents = ["=="]
 # - DateFormatter/ISO8601DateFormatter are ObjC classes absent from the
 #   generated `.swiftinterface` inventory, so they do not appear in coverage
 #   roll-ups even though they are implemented and golden-tested.
+# - URLResponse/HTTPURLResponse/URLSessionConfiguration are likewise ObjC
+#   classes absent from the inventory; implemented and golden-tested
+#   (foundation_urlrequest / foundation_urlsession fixtures).
+# - URLSession delegate-, publisher-, bytes- and download-based members are
+#   not modelled; data(from:)/data(for:)/upload(for:from:) run on the
+#   embedding's HTTP transport (tswift_core::http seam).
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
 decimal_special_values = "Decimal has no infinity or negative zero: isInfinite is always false, isFinite is !isNaN. nan.significand/exponent propagate NaN. greatestFiniteMagnitude and ulp are not modelled."
 numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
+urlsession_transport = "URLSession runs on the embedding's transport: mock (fixtures), ureq HTTPS (CLI --allow-network), host handler (ffi), tswiftHttp hook (wasm); no cache/cookies/redirect policy modelled"
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]
-networking = ["URLSession", "URLRequest", "Host"]
+networking = ["Host"]
 objc_runtime = ["NSObject", "NSCoding", "Bundle"]
 distributed = ["NSXPCConnection", "NSUserActivity"]

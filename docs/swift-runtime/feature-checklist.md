@@ -471,6 +471,8 @@ inventories plus per-framework runtime registries. See
 | [x] | Foundation proof slice: `Data`/`UUID` constructors and core properties | ★★ | R5+ |
 | [x] | Foundation F1 remainder: `IndexPath` / `IndexSet` | ★★ | R5+ |
 | [x] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
+| [x] | Foundation F6: `URLRequest` / `URLResponse` / `HTTPURLResponse` / `URLError` value types | ★★★ | R5+ |
+| [x] | Foundation F6: `URLSession` `data(from:)`/`data(for:)`/`upload(for:from:)` on the HTTP transport seam (mock / ureq HTTPS / ffi host handler / wasm `tswiftHttp` hook) | ★★★★ | R6+ |
 | [x] | SwiftUI measurement descriptor and runtime ADR (ADR-0006, `docs/plan/swiftui-support.md`) | ★★★★ | R6+ |
 | [x] | SwiftUI v1 Counter slice: `View`/`@State`/`@ViewBuilder` shim, `Text`/`Button`/`VStack`/`HStack`/`Spacer`, token modifiers, UIIR + diff + tap dispatch (Layers A/B/C green) | ★★★★ | R6+ |
 | [ ] | SwiftUI Tier 2+: shapes/`ZStack`/composition, `ForEach`/identity, bindings, observation | ★★★★ | R6+ |

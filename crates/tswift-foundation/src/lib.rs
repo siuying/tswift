@@ -375,6 +375,11 @@ pub fn registered_keys() -> Vec<String> {
             "Decimal" => Some("Decimal.init".to_string()),
             "NumberFormatter" => Some("NumberFormatter.init".to_string()),
             "Measurement" => Some("Measurement.init".to_string()),
+            "URLRequest" => Some("URLRequest.init".to_string()),
+            "URLResponse" => Some("URLResponse.init".to_string()),
+            "HTTPURLResponse" => Some("HTTPURLResponse.init".to_string()),
+            "URLError" => Some("URLError.init".to_string()),
+            "URLSession" => Some("URLSession.init".to_string()),
             other
                 if other.starts_with("Data.")
                     || other.starts_with("UUID.")
@@ -390,7 +395,13 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("ISO8601DateFormatter.")
                     || other.starts_with("Decimal.")
                     || other.starts_with("NumberFormatter.")
-                    || other.starts_with("Measurement.") =>
+                    || other.starts_with("Measurement.")
+                    || other.starts_with("URLRequest.")
+                    || other.starts_with("URLResponse.")
+                    || other.starts_with("HTTPURLResponse.")
+                    || other.starts_with("URLError.")
+                    || other.starts_with("URLSession.")
+                    || other.starts_with("URLSessionConfiguration.") =>
             {
                 Some(other.to_string())
             }
@@ -407,6 +418,9 @@ pub fn registered_keys() -> Vec<String> {
     // Date.FormatStyle enum cases + static values are not auto-detected by the
     // registry filter above; inject them manually.
     keys.extend(datestyle::extra_registered_keys());
+    // URLError.Code statics and URLSession/URLSessionConfiguration static
+    // values live in the statics table, not the member registry; inject them.
+    keys.extend(network::extra_registered_keys());
     keys.sort();
     keys.dedup();
     keys
