@@ -23,7 +23,8 @@ Usage: scripts/validate <rust|ios|web|all|changed>
 Slices:
   rust     cargo fmt --check, cargo clippy --workspace, cargo test --workspace --all-targets
   ios      Swift package tests against pinned ffi-v1 plus UiirRenderer iOS simulator tests
-  web      Typecheck/validate the SwiftUI canvas; build changed web packages in changed mode
+  web      Typecheck/validate the SwiftUI canvas, run the wasm smoke test;
+           build changed web packages in changed mode
   all      rust + ios + web
   changed  run slices inferred from files changed vs upstream/origin/main
 
@@ -52,6 +53,11 @@ validate_rust() {
   cargo clippy --workspace
   section "Rust: cargo test --workspace --all-targets"
   cargo test --workspace --all-targets
+}
+
+validate_wasm_smoke() {
+  section "Web: wasm smoke test (full wasm32 rebuild; slow)"
+  TSWIFT_WASM_SMOKE=1 cargo test -p tswift-wasm --test wasm_smoke
 }
 
 validate_ios() {
@@ -91,6 +97,7 @@ validate_web_canvas() {
 
 validate_web_all() {
   validate_web_canvas
+  validate_wasm_smoke
 
   if [[ -f website/package.json ]]; then
     npm_install_if_needed website
@@ -154,6 +161,7 @@ validate_changed() {
   if (( ios )); then validate_ios; fi
   if (( web )); then
     validate_web_canvas
+    validate_wasm_smoke
     if (( website )); then
       npm_install_if_needed website
       section "Web: website smoke test"
