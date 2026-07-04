@@ -161,7 +161,7 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
             }
         }
     } else if allow_network {
-        interp.set_http_transport(Box::new(nethttp::NetTransport));
+        interp.set_http_transport(Box::new(nethttp::NetTransport::default()));
     }
 
     let result = interp.run(analysis);
