@@ -263,14 +263,14 @@ fn url_query_item_description(recv: SwiftValue) -> StdResult {
         Some(SwiftValue::Str(s)) => s.to_string(),
         _ => String::new(),
     };
-    Ok(SwiftValue::Str(format!("{name}={value}").into()))
+    Ok(SwiftValue::Str(format!("{name}={value}")))
 }
 
 fn url_components_description(recv: SwiftValue) -> StdResult {
     // The reconstructed URL string, or empty when components are insufficient.
     match url_components_string(recv)? {
         SwiftValue::Str(s) => Ok(SwiftValue::Str(s)),
-        _ => Ok(SwiftValue::Str(String::new().into())),
+        _ => Ok(SwiftValue::Str(String::new())),
     }
 }
 

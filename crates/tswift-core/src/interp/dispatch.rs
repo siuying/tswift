@@ -5,7 +5,8 @@ use tswift_frontend::{Node, NodeKind, TypeRepr};
 use super::{
     autoclosure_flags, clone_params, literal_syntax_kind, materialize_sequence,
     max_shorthand_in_interpolations, param_type_hints, select_labeled_overload, trap, CallArg,
-    ClosureDef, Eval, EvalError, Interpreter, Param, Place, Signal, MAX_CALL_DEPTH,
+    ClosureDef, Eval, EvalError, Interpreter, MethodLookup, MethodOverload, Param, Place, Signal,
+    MAX_CALL_DEPTH,
 };
 use crate::env::Env;
 use crate::ops;
@@ -56,11 +57,7 @@ impl<'w> Interpreter<'w> {
 
     /// Find the most-derived method `name` for an object of `class_name`,
     /// returning the method and the class that declares it.
-    pub(super) fn lookup_method(
-        &self,
-        class_name: &str,
-        name: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
+    pub(super) fn lookup_method(&self, class_name: &str, name: &str) -> Option<MethodLookup> {
         self.lookup_method_for_call(class_name, name, &[])
     }
 
@@ -72,7 +69,7 @@ impl<'w> Interpreter<'w> {
         class_name: &str,
         name: &str,
         args: &[CallArg],
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
+    ) -> Option<MethodLookup> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
             let def = self.types.class_def(&cls)?;
@@ -1547,7 +1544,7 @@ impl<'w> Interpreter<'w> {
         type_name: &str,
         method: &str,
         args: &[CallArg],
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
+    ) -> Option<MethodOverload> {
         let overloads = self
             .types
             .struct_def(type_name)?

@@ -745,7 +745,7 @@ fn today_day_index(ctx: &mut dyn StdContext) -> i64 {
 /// Swift weekday (1=Sunday..7=Saturday) for a day index since 1970-01-01
 /// (day 0 is a Thursday).
 pub(crate) fn weekday_of_day(day: i64) -> i64 {
-    ((day % 7 + 7) % 7 + 4) % 7 + 1
+    (day.rem_euclid(7) + 4) % 7 + 1
 }
 
 fn calendar_is_date_in_weekend(
@@ -1368,16 +1368,14 @@ fn calendar_next_date(
         let unix_after = after + REFERENCE_DATE_UNIX_OFFSET;
         let (after_day, _) = floor_div_day(unix_after);
         // Start from midnight of the next calendar day (always > after).
-        let mut day = after_day + 1;
         let mut found = SwiftValue::Nil;
-        for _ in 0..400 {
+        for day in (after_day + 1..).take(400) {
             let midnight_ref = (day as f64 * SECONDS_PER_DAY) - REFERENCE_DATE_UNIX_OFFSET;
             let civil = decompose(midnight_ref);
             if matches_components(&civil, obj) {
                 found = date_value(midnight_ref);
                 break;
             }
-            day += 1;
         }
         found
     } else if !has_date {

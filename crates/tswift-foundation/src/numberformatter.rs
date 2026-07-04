@@ -240,7 +240,7 @@ fn group_integer(digits: &str, separator: &str) -> String {
     let mut out = String::new();
     let len = chars.len();
     for (idx, ch) in chars.iter().enumerate() {
-        if idx > 0 && (len - idx) % 3 == 0 {
+        if idx > 0 && (len - idx).is_multiple_of(3) {
             out.push_str(separator);
         }
         out.push(*ch);
@@ -330,7 +330,7 @@ fn number_formatter_string(
     };
 
     Ok(Outcome {
-        result: SwiftValue::Str(body.into()),
+        result: SwiftValue::Str(body),
         receiver: recv,
     })
 }

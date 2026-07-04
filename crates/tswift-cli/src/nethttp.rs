@@ -52,6 +52,7 @@ enum StreamState {
 // ---------------------------------------------------------------------------
 
 /// A real network transport; each request builds a per-timeout agent.
+#[derive(Default)]
 pub struct NetTransport {
     next_id: u64,
     pending: HashMap<u64, StreamState>,
@@ -63,15 +64,6 @@ impl fmt::Debug for NetTransport {
             .field("next_id", &self.next_id)
             .field("pending_count", &self.pending.len())
             .finish()
-    }
-}
-
-impl Default for NetTransport {
-    fn default() -> Self {
-        NetTransport {
-            next_id: 0,
-            pending: HashMap::new(),
-        }
     }
 }
 

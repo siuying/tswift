@@ -14,8 +14,11 @@ use tswift_core::{
 
 use crate::type_error;
 
-/// `(type, [(case, symbol, coefficient, constant)])` for every supported unit.
-const UNITS: &[(&str, &[(&str, &str, f64, f64)])] = &[
+/// A single unit: `(case, symbol, coefficient, constant)`.
+type UnitDef = (&'static str, &'static str, f64, f64);
+
+/// `(type, [unit])` for every supported unit dimension.
+const UNITS: &[(&str, &[UnitDef])] = &[
     (
         "UnitLength",
         &[
@@ -222,9 +225,10 @@ fn measurement_description(recv: SwiftValue) -> StdResult {
         },
         _ => String::new(),
     };
-    Ok(SwiftValue::Str(
-        format!("{} {symbol}", format_double(value)).into(),
-    ))
+    Ok(SwiftValue::Str(format!(
+        "{} {symbol}",
+        format_double(value)
+    )))
 }
 
 /// Convert `obj`'s value into `target` unit; returns `(new_value, target)`.

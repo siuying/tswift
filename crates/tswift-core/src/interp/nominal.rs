@@ -3,7 +3,7 @@ use tswift_frontend::{Node, NodeKind};
 use super::{
     clone_method, clone_params, expand_directives, field_type_name, generic_param_names, is_expr,
     is_value_node, parse_params, ClassDef, ComputedProp, EnumCaseDef, EnumDef, Interpreter,
-    MethodDef, Param, RawKind, StoredProp, StructDef, SubscriptDef,
+    MethodDef, MethodOverload, RawKind, StoredProp, StructDef, SubscriptDef,
 };
 use crate::value::{IntWidth, SwiftValue};
 
@@ -249,7 +249,7 @@ impl<'w> Interpreter<'w> {
         &self,
         type_name: &str,
         method: &str,
-    ) -> Option<(Vec<Param>, Option<Node<'static>>, bool, Vec<String>)> {
+    ) -> Option<MethodOverload> {
         for proto in self.all_protocols(type_name) {
             if let Some(m) = self
                 .types

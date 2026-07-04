@@ -6,8 +6,11 @@
 //! `RuntimeError: unreachable`). Native unit tests in `src/lib.rs` cannot — the
 //! host has a working clock.
 //!
-//! It is part of `cargo test`, but skips gracefully when the JS toolchain is
-//! unavailable: install it once with `npm install` in `prototype/web-sandbox`.
+//! It rebuilds the whole runtime for wasm32 (minutes on a dirty tree), so it
+//! is opt-in: set `TSWIFT_WASM_SMOKE=1` to run it. `scripts/validate` sets the
+//! variable for the web slice; plain `cargo test` skips it. It also skips
+//! gracefully when the JS toolchain is unavailable: install it once with
+//! `npm install` in `prototype/web-sandbox`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -31,6 +34,11 @@ fn tool_available(cmd: &str) -> bool {
 
 #[test]
 fn wasm_smoke_runs_compiled_artifact() {
+    if std::env::var_os("TSWIFT_WASM_SMOKE").is_none_or(|v| v != "1") {
+        eprintln!("skipping wasm smoke test: set TSWIFT_WASM_SMOKE=1 to run it");
+        return;
+    }
+
     let dir = prototype_dir();
 
     if !tool_available("node") {

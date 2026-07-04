@@ -200,7 +200,7 @@ fn coo_index(
         _ => 0,
     };
     let result = base + offset;
-    if result < 0 || result > 1 {
+    if !(0..=1).contains(&result) {
         return Err(StdError::Error(EvalError::Trap(
             "CollectionOfOne index out of bounds".into(),
         )));

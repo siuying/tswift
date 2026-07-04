@@ -409,9 +409,7 @@ fn decimal_magnitude(recv: SwiftValue) -> StdResult {
 }
 
 fn decimal_description(recv: SwiftValue) -> StdResult {
-    Ok(SwiftValue::Str(
-        dec::to_string(decimal_value(&recv)?).into(),
-    ))
+    Ok(SwiftValue::Str(dec::to_string(decimal_value(&recv)?)))
 }
 
 fn rounding_mode(value: &SwiftValue) -> Result<RoundingMode, StdError> {
@@ -679,7 +677,7 @@ fn decimal_formatted_method(
     }
     let v = decimal_value(&recv)?;
     Ok(Outcome {
-        result: SwiftValue::Str(decimal_format_to_string(v).into()),
+        result: SwiftValue::Str(decimal_format_to_string(v)),
         receiver: recv,
     })
 }
@@ -690,7 +688,7 @@ fn group_with_commas(digits: &str) -> String {
     let len = chars.len();
     let mut out = String::with_capacity(len + len / 3);
     for (idx, ch) in chars.iter().enumerate() {
-        if idx > 0 && (len - idx) % 3 == 0 {
+        if idx > 0 && (len - idx).is_multiple_of(3) {
             out.push(',');
         }
         out.push(*ch);

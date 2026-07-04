@@ -21,7 +21,9 @@ use wasm_bindgen::prelude::*;
 ///   unchanged.
 ///
 /// This function is `pub(crate)` and lives **outside** any `#[cfg(wasm32)]`
-/// block so the native unit tests can exercise it directly.
+/// block so the native unit tests can exercise it directly. On non-wasm,
+/// non-test builds it has no caller, so allow it to be unused there.
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 pub(crate) fn decode_batch_response(
     response_json: &str,
 ) -> std::collections::VecDeque<tswift_core::http::HttpEvent> {

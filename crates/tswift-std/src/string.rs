@@ -284,7 +284,7 @@ fn is_number(recv: SwiftValue) -> StdResult {
 /// `Character.isWholeNumber` — a digit with an integer value (e.g. `7`), unlike
 /// `isNumber` which also accepts fractions like `½`.
 fn is_whole_number(recv: SwiftValue) -> StdResult {
-    classify_lone(recv, |c| c.to_digit(10).is_some())
+    classify_lone(recv, |c| c.is_ascii_digit())
 }
 
 fn is_whitespace(recv: SwiftValue) -> StdResult {
@@ -312,9 +312,7 @@ fn is_lowercase(recv: SwiftValue) -> StdResult {
 /// so `e\u{301}` (a combining accent) is not ASCII.
 fn is_ascii(recv: SwiftValue) -> StdResult {
     let s = str_of(&recv)?;
-    Ok(SwiftValue::Bool(
-        !s.is_empty() && s.chars().all(|c| c.is_ascii()),
-    ))
+    Ok(SwiftValue::Bool(!s.is_empty() && s.is_ascii()))
 }
 
 fn is_hex_digit(recv: SwiftValue) -> StdResult {

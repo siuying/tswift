@@ -373,7 +373,7 @@ fn date_style_pattern(style: i64) -> &'static str {
 fn time_style_pattern(style: i64) -> &'static str {
     match style {
         1 => "h:mm a",
-        2 | 3 | 4 => "h:mm:ss a",
+        2..=4 => "h:mm:ss a",
         _ => "",
     }
 }
@@ -407,7 +407,7 @@ fn date_formatter_string(
     let pattern = effective_pattern(obj);
     let civil = decompose(date_seconds(date)?);
     Ok(Outcome {
-        result: SwiftValue::Str(format_pattern(&civil, &pattern).into()),
+        result: SwiftValue::Str(format_pattern(&civil, &pattern)),
         receiver: recv,
     })
 }
@@ -476,7 +476,7 @@ fn iso8601_string(
     let civil = decompose(date_seconds(date)?);
     let body = format_pattern(&civil, ISO8601_PATTERN);
     Ok(Outcome {
-        result: SwiftValue::Str(format!("{body}Z").into()),
+        result: SwiftValue::Str(format!("{body}Z")),
         receiver: recv,
     })
 }

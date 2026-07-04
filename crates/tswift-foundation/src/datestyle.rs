@@ -154,7 +154,7 @@ fn dfs_format(
         format_components(&civil, &components)
     };
     Ok(Some(Outcome {
-        result: SwiftValue::Str(result_str.into()),
+        result: SwiftValue::Str(result_str),
         receiver: recv,
     }))
 }
@@ -374,7 +374,7 @@ pub fn date_formatted(
     };
 
     Ok(Some(Outcome {
-        result: SwiftValue::Str(result_str.into()),
+        result: SwiftValue::Str(result_str),
         receiver: recv,
     }))
 }

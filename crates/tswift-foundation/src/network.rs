@@ -288,10 +288,7 @@ fn url_request_set_timeout_interval(
 
 fn url_request_description(recv: SwiftValue) -> StdResult {
     let url = request_field(&recv, "url")?;
-    Ok(SwiftValue::Str(match url_string(&url) {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    }))
+    Ok(SwiftValue::Str(url_string(&url).unwrap_or_default()))
 }
 
 fn url_request_hash_value(recv: SwiftValue) -> StdResult {

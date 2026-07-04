@@ -211,6 +211,14 @@ struct Param {
     default: Option<Node<'static>>,
 }
 
+/// A resolved method lookup: parameters, body, the class that declares it, and
+/// its generic type parameters.
+type MethodLookup = (Vec<Param>, Option<Node<'static>>, String, Vec<String>);
+
+/// A resolved method overload: parameters, body, whether it is `mutating`, and
+/// its generic type parameters.
+type MethodOverload = (Vec<Param>, Option<Node<'static>>, bool, Vec<String>);
+
 /// A user-defined function: its parameters, body, and captured scope chain.
 struct FuncDef {
     params: Vec<Param>,
@@ -745,10 +753,8 @@ struct Place {
 fn subtree_references_name(node: &Node<'static>, name: &str) -> bool {
     match node.kind() {
         NodeKind::IdentExpr if node.text().as_deref() == Some(name) => return true,
-        NodeKind::StringLiteral => {
-            if node.text().is_some_and(|t| t.contains(name)) {
-                return true;
-            }
+        NodeKind::StringLiteral if node.text().is_some_and(|t| t.contains(name)) => {
+            return true;
         }
         _ => {}
     }
@@ -4819,6 +4825,7 @@ impl StdContext for Interpreter<'_> {
 ///   1. Foundation-internal delegate calls never use defaults or variadics;
 ///   2. The probe is produced by `delegate_probe_args` with precisely the
 ///      labels that the dispatch will actually supply.
+///
 /// If Foundation ever dispatches a variadic delegate method, the probe must
 /// be updated to supply a representative arg count and this comment updated.
 fn overload_labels_match(params: &[Param], args: &[crate::stdlib::Arg]) -> bool {

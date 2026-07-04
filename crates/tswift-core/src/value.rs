@@ -450,6 +450,7 @@ impl PartialEq for SwiftValue {
 /// - CR   (U+0D) → `\r`
 /// - Other C0 control chars (U+01-U+08, U+0B-U+0C, U+0E-U+1F) and DEL (U+7F)
 ///   → `\u{XX}` with lowercase two-digit minimum hex.
+///
 /// All other chars are written as-is (including multibyte UTF-8).
 fn escape_string_for_collection(s: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     for ch in s.chars() {
@@ -701,7 +702,7 @@ fn fmt_double_impl(d: f64, dot_zero: bool) -> String {
     if d.fract() == 0.0 {
         // Large integer (|d| > 2^53): Swift always uses scientific.
         fmt_sci(neg, mantissa_abs, exp)
-    } else if exp >= -4 && exp <= 15 {
+    } else if (-4..=15).contains(&exp) {
         // Non-integer in the "decimal" exponent window.
         let digits: String = mantissa_abs
             .chars()

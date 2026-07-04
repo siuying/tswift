@@ -500,13 +500,10 @@ fn date_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 /// Darwin default. `debugDescription` is identical.
 fn date_description(recv: SwiftValue) -> StdResult {
     let civil = crate::calendar::decompose(date_seconds(&recv)?);
-    Ok(SwiftValue::Str(
-        format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} +0000",
-            civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second
-        )
-        .into(),
-    ))
+    Ok(SwiftValue::Str(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} +0000",
+        civil.year, civil.month, civil.day, civil.hour, civil.minute, civil.second
+    )))
 }
 
 /// `Date.hashValue`: hash of the reference-date offset. Equal dates compare
@@ -1001,7 +998,7 @@ fn date_components_description(recv: SwiftValue) -> StdResult {
 
     // Integer component fields.
     for field in DATE_COMPONENT_DESC_ORDER {
-        if let Some(SwiftValue::Int(i)) = obj.get(*field) {
+        if let Some(SwiftValue::Int(i)) = obj.get(field) {
             parts.push_str(&format!("{field}: {} ", i.raw));
         }
     }
@@ -1024,7 +1021,7 @@ fn date_components_hash_value(recv: SwiftValue) -> StdResult {
     let obj = date_components_obj(&recv)?;
     let mut bytes: Vec<u8> = Vec::new();
     for field in DATE_COMPONENT_FIELDS {
-        match obj.get(*field) {
+        match obj.get(field) {
             Some(SwiftValue::Int(i)) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&(i.raw as i64).to_le_bytes());
@@ -1192,7 +1189,7 @@ fn data_description(recv: SwiftValue) -> StdResult {
     let len = data_bytes(&recv)?.len();
     // Foundation renders e.g. "5 bytes".
     let unit = if len == 1 { "byte" } else { "bytes" };
-    Ok(SwiftValue::Str(format!("{len} {unit}").into()))
+    Ok(SwiftValue::Str(format!("{len} {unit}")))
 }
 
 fn data_base64_encoded_string(
@@ -1782,7 +1779,7 @@ fn index_path_appending(
 fn index_path_description(recv: SwiftValue) -> StdResult {
     let indexes = index_path_indexes(&recv)?;
     let inner: Vec<String> = indexes.iter().map(|i| i.to_string()).collect();
-    Ok(SwiftValue::Str(format!("[{}]", inner.join(", ")).into()))
+    Ok(SwiftValue::Str(format!("[{}]", inner.join(", "))))
 }
 
 /// `IndexPath.makeIterator()` — returns self; for-in uses
