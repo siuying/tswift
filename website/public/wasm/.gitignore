@@ -1,0 +1,9 @@
+# Ignore everything by default, then whitelist the committed production wasm
+# the website ships (and the SwiftUI wasm-smoke test loads). Keep this in sync
+# with the artifacts wasm-pack emits, including the wasm-bindgen JS snippets.
+*
+!.gitignore
+!tswift_wasm.js
+!tswift_wasm_bg.wasm
+!snippets
+!snippets/**
