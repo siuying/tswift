@@ -1302,6 +1302,15 @@ impl<'w> Interpreter<'w> {
     ) -> Result<Option<SwiftValue>, Signal> {
         if let SwiftValue::Object(obj) = base_value {
             let class_name = obj.borrow().class_name.clone();
+            // A class-backed builtin type (no user `ClassDef` for its class)
+            // whose name maps to a `BuiltinReceiver` falls through to the
+            // builtin-intrinsic layer. User-defined classes own a `ClassDef`
+            // and keep shadowing builtins (existing behavior).
+            if self.types.class_def(&class_name).is_none()
+                && BuiltinReceiver::of(base_value).is_some()
+            {
+                return Ok(None);
+            }
             let params = self.user_method_params(&class_name, method);
             let args = self.eval_args_with(arg_nodes, params.as_deref())?;
             return self
@@ -1791,4 +1800,114 @@ fn parse_int_generic_arg(text: &str) -> Option<i128> {
         (s.as_str(), 10)
     };
     i128::from_str_radix(digits, radix).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{ClassDef, Interpreter, MethodDef};
+    use crate::stdlib::{BuiltinReceiver, MethodEntry, Outcome, StdContext, StdError};
+    use crate::value::{ClassObj, SwiftValue};
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    /// A `SwiftValue::Object` tagged as the builtin `URLSessionDataTask` class,
+    /// with no fields — the shape a builtin constructor will eventually mint.
+    fn task_object() -> SwiftValue {
+        SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+            class_name: "URLSessionDataTask".to_string(),
+            fields: vec![],
+        })))
+    }
+
+    /// A sentinel intrinsic: returns `true` so a test can tell the builtin layer
+    /// ran rather than a user method.
+    fn resume_intrinsic(
+        _ctx: &mut dyn StdContext,
+        recv: SwiftValue,
+        _args: Vec<SwiftValue>,
+    ) -> Result<Outcome, StdError> {
+        Ok(Outcome {
+            result: SwiftValue::Bool(true),
+            receiver: recv,
+        })
+    }
+
+    /// A class-backed builtin Object without a user `ClassDef` falls through the
+    /// class-instance dispatch step (returns `Ok(None)`) so the registered
+    /// builtin intrinsic becomes reachable.
+    #[test]
+    fn builtin_class_object_without_classdef_falls_through_to_intrinsic() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        interp.register_intrinsic(
+            BuiltinReceiver::URLSessionDataTask,
+            "resume",
+            MethodEntry {
+                mutating: false,
+                func: resume_intrinsic,
+            },
+        );
+        let obj = task_object();
+        let out = interp
+            .try_class_instance_method(&obj, "resume", &[])
+            .expect("dispatch");
+        assert!(out.is_none(), "expected fall-through to the builtin layer");
+        // The receiver classifies as its builtin and the intrinsic is present,
+        // so the fall-through reaches a registered intrinsic.
+        let kind = BuiltinReceiver::of(&obj).expect("builtin receiver classification");
+        assert_eq!(kind, BuiltinReceiver::URLSessionDataTask);
+        assert!(interp.builtins.intrinsic(kind, "resume").is_some());
+    }
+
+    /// A user-defined class whose name collides with a builtin keeps shadowing
+    /// the builtin: its own method dispatches instead of the intrinsic.
+    #[test]
+    fn user_class_shadows_colliding_builtin_name() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        // Registered intrinsic that would only be hit on (incorrect) fall-through.
+        interp.register_intrinsic(
+            BuiltinReceiver::URLSessionDataTask,
+            "resume",
+            MethodEntry {
+                mutating: false,
+                func: resume_intrinsic,
+            },
+        );
+        // A user class of the same name declaring its own `resume` (body `None`
+        // → returns `Void` without evaluating a tree).
+        let mut methods = HashMap::new();
+        methods.insert(
+            "resume".to_string(),
+            MethodDef {
+                params: vec![],
+                body: None,
+                mutating: false,
+                generic_params: vec![],
+                is_static: false,
+            },
+        );
+        interp.types.insert_class(
+            "URLSessionDataTask".to_string(),
+            ClassDef {
+                superclass: None,
+                stored: vec![],
+                weak_fields: vec![],
+                computed: HashMap::new(),
+                methods,
+                method_overloads: HashMap::new(),
+                init: None,
+                init_overloads: vec![],
+                deinit: None,
+                static_subscript: None,
+            },
+        );
+        let obj = task_object();
+        let out = interp
+            .try_class_instance_method(&obj, "resume", &[])
+            .expect("dispatch");
+        // Dispatched the user method (Void), not the sentinel intrinsic (true).
+        assert_eq!(out, Some(SwiftValue::Void));
+    }
 }

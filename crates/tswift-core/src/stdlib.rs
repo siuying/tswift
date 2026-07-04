@@ -478,6 +478,14 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "Date.FormatStyle" => {
                 BuiltinReceiver::DateFormatStyle
             }
+            // Class-backed builtin types (`SwiftValue::Object`) classify by
+            // their runtime class name, the same way a struct classifies by
+            // `type_name`. Reachable once a builtin constructs Objects; user
+            // classes are filtered out earlier in dispatch (they own a
+            // `ClassDef` and keep shadowing builtins).
+            SwiftValue::Object(o) => {
+                return BuiltinReceiver::from_type_name(&o.borrow().class_name)
+            }
             _ => return None,
         })
     }
