@@ -54,7 +54,7 @@ per section), use the **`stdlib-coverage`** skill.
 
 ### Agent
 
-If using Paseo, use `/paseo` skill to find subagents orchestration skill.
+If using Paseo, use `/paseo` skill to find subagents orchestration skill. Create "subagent" (not "detached" agent) in current workspace. Only start one subagent at a time.
 
 ### Autoloop
 

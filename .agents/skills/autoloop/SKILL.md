@@ -7,8 +7,7 @@ description: Autonomous developer iteration loop driven by a thin orchestrator t
 
 A developer iteration loop for concrete engineering work: fixing bugs, shipping
 features, debugging failures, optimizing hot paths, racing alternative
-implementations, and prototyping designs. Not a research tool — every iteration
-must change code and be judged by a runnable **verification signal**.
+implementations, and prototyping designs.
 
 A thin **orchestrator** drives the loop. Heavy work (coding, reviewing,
 diagnosing) runs in **fresh-context subagents** that return short, structured
