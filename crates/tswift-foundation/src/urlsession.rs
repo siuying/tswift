@@ -9,11 +9,20 @@
 //! Between events the driver polls [`StdContext::current_task_cancelled`] so
 //! a containing `Task.cancel()` triggers `URLError(.cancelled)`.
 //!
-//! `URLSessionDataTask` is backed by `SwiftValue::Object(Rc<RefCell<ClassObj>>)` —
-//! reference semantics matching the real Foundation class.  `cancel()` and
-//! `resume()` mutate the shared `ClassObj` through the `RefCell` in place;
-//! they are registered `mutating: false` so the interpreter does not attempt a
-//! struct write-back and `let task = ...` bindings are legal.
+//! `URLSessionConfiguration`, `URLSession`, and `URLSessionDataTask` are all
+//! backed by `SwiftValue::Object(Rc<RefCell<ClassObj>>)` — reference semantics
+//! matching the real Foundation classes.  Mutations go through the `RefCell`
+//! in place; they are registered `mutating: false` so the interpreter does not
+//! attempt a struct write-back and `let config = ...` / `let session = ...` /
+//! `let task = ...` bindings are all legal.
+//!
+//! `URLSessionConfiguration.default` and `.ephemeral` return a **fresh**
+//! Object per access (matching Foundation).  `URLSession.shared` returns the
+//! same Object on every access within an interpreter run (`===` holds).
+//!
+//! `URLSession(configuration:)` **copies** the configuration (Foundation-
+//! documented): post-init mutations to the original config do not affect the
+//! session.  The copy is snapshotted into an independent `ClassObj` at init.
 //!
 //! The `progress` field holds a **shared** `SwiftValue::Object` for `Progress`.
 //! Aliases of `task.progress` taken before `resume()` observe the completed
@@ -37,7 +46,7 @@ use std::rc::Rc;
 
 use tswift_core::{
     Arg, BuiltinReceiver, ClassObj, EvalError, HttpError, HttpEvent, HttpRequest,
-    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StructObj, SwiftValue,
+    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, SwiftValue,
 };
 
 use crate::network::{http_url_response_value, url_error_value};
@@ -69,7 +78,32 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     );
 
     // ---- URLSessionConfiguration ----
+    // Dual registration strategy for `.default` / `.ephemeral`:
+    //
+    // 1. `register_static` (StaticFn factory) — checked FIRST by `eval_member`
+    //    for the fully-qualified `URLSessionConfiguration.default` form.  Each
+    //    call returns a **fresh** independent Object, matching Foundation.
+    //
+    // 2. `register_static_value` — needed so the shorthand `.default` form
+    //    (implicit-member, no type prefix) resolves via `resolve_implicit_static`,
+    //    which only scans the `statics` map.  This entry holds a pre-allocated
+    //    Object; because `eval_member` checks `static_method` first, the
+    //    pre-allocated value is only returned for the shorthand path.
+    //    Limitation: `.default` shorthand returns the same Rc across accesses;
+    //    `URLSessionConfiguration.default` (qualified) always returns a fresh
+    //    one.  The key use-case (`let config = URLSessionConfiguration.default;
+    //    config.X = ...`) uses the qualified form and is correct.
+    interp.register_static(
+        BuiltinReceiver::URLSessionConfiguration,
+        "default",
+        config_default_static,
+    );
     interp.register_static_value("URLSessionConfiguration", "default", configuration_value());
+    interp.register_static(
+        BuiltinReceiver::URLSessionConfiguration,
+        "ephemeral",
+        config_ephemeral_static,
+    );
     interp.register_static_value(
         "URLSessionConfiguration",
         "ephemeral",
@@ -77,6 +111,9 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     );
 
     // ---- URLSession ----
+    // `shared` is registered as a pre-allocated Object value so every access
+    // returns a clone of the same `Rc` → `URLSession.shared === URLSession.shared`
+    // holds within one interpreter run.
     interp.register_static_value("URLSession", "shared", session_value(configuration_value()));
     interp.register_free_fn("URLSession", session_init);
     interp.register_property(
@@ -135,11 +172,15 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
 // URLSessionConfiguration
 // ---------------------------------------------------------------------------
 
-/// The default/ephemeral configuration value (the runtime has no URL cache or
-/// cookie storage, so the two presets coincide).
+/// Build a fresh `URLSessionConfiguration` Object with factory-default fields.
+///
+/// Returns a new independent `SwiftValue::Object` on every call, matching
+/// Foundation's `URLSessionConfiguration.default` semantics (each access is a
+/// distinct, independently-mutable configuration).  The runtime has no URL
+/// cache or cookie storage, so `default` and `ephemeral` presets coincide.
 fn configuration_value() -> SwiftValue {
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "URLSessionConfiguration".into(),
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "URLSessionConfiguration".into(),
         fields: vec![
             ("timeoutIntervalForRequest".into(), SwiftValue::Double(60.0)),
             (
@@ -150,7 +191,40 @@ fn configuration_value() -> SwiftValue {
             ("allowsCellularAccess".into(), SwiftValue::Bool(true)),
             ("waitsForConnectivity".into(), SwiftValue::Bool(false)),
         ],
-    }))
+    })))
+}
+
+/// Snapshot a `URLSessionConfiguration` (Struct or Object) into a **fresh**
+/// independent `SwiftValue::Object`.
+///
+/// Foundation documents that `URLSession(configuration:)` copies its argument
+/// so post-init mutations to the original do not affect the session.  This
+/// helper implements that copy for both the legacy Struct representation and
+/// the new Object one.
+fn copy_configuration(config: &SwiftValue) -> SwiftValue {
+    let fields: Vec<(String, SwiftValue)> = match config {
+        SwiftValue::Struct(o) if o.type_name == "URLSessionConfiguration" => o.fields.clone(),
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSessionConfiguration" => {
+            o.borrow().fields.clone()
+        }
+        _ => Vec::new(),
+    };
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "URLSessionConfiguration".into(),
+        fields,
+    })))
+}
+
+/// `StaticFn` factory for `URLSessionConfiguration.default`: returns a fresh
+/// independent Object on every access (Foundation semantics).
+fn config_default_static(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> tswift_core::StdResult {
+    Ok(configuration_value())
+}
+
+/// `StaticFn` factory for `URLSessionConfiguration.ephemeral`: returns a fresh
+/// independent Object on every access (Foundation semantics).
+fn config_ephemeral_static(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> tswift_core::StdResult {
+    Ok(configuration_value())
 }
 
 // ---------------------------------------------------------------------------
@@ -162,15 +236,15 @@ fn session_value(configuration: SwiftValue) -> SwiftValue {
 }
 
 fn session_value_with_delegate(configuration: SwiftValue, delegate: SwiftValue) -> SwiftValue {
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "URLSession".into(),
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "URLSession".into(),
         fields: vec![
             ("configuration".into(), configuration),
             // Stored delegate object; SwiftValue::Nil when no delegate is set.
             // `delegateQueue` is accepted but ignored (single-threaded executor).
             ("_delegate".into(), delegate),
         ],
-    }))
+    })))
 }
 
 /// Extract the delegate object from a session value, if present.
@@ -178,6 +252,13 @@ fn session_delegate(session: &SwiftValue) -> SwiftValue {
     match session {
         SwiftValue::Struct(o) if o.type_name == "URLSession" => {
             o.get("_delegate").cloned().unwrap_or(SwiftValue::Nil)
+        }
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSession" => {
+            // Short borrow: copy the value out before dropping the guard.
+            o.borrow()
+                .get("_delegate")
+                .cloned()
+                .unwrap_or(SwiftValue::Nil)
         }
         _ => SwiftValue::Nil,
     }
@@ -196,15 +277,26 @@ fn session_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> tswift_core::StdRe
         .find(|a| a.label.as_deref() == Some("delegate"))
         .map(|a| a.value.clone())
         .unwrap_or(SwiftValue::Nil);
-    match config_arg.map(|a| &a.value) {
-        Some(SwiftValue::Struct(o)) if o.type_name == "URLSessionConfiguration" => Ok(
-            session_value_with_delegate(config_arg.unwrap().value.clone(), delegate),
-        ),
-        Some(_) => Err(type_error(
-            "URLSession(configuration:) expects a URLSessionConfiguration",
-        )),
-        None => Err(type_error("URLSession(configuration:) expects one label")),
-    }
+    let Some(config_arg) = config_arg else {
+        return Err(type_error("URLSession(configuration:) expects one label"));
+    };
+    // Foundation documents that URLSession copies its configuration at init
+    // time.  Snapshot into a fresh independent Object so post-init mutations
+    // to the caller's config do not affect the session.
+    let config_snapshot = match &config_arg.value {
+        SwiftValue::Struct(o) if o.type_name == "URLSessionConfiguration" => {
+            copy_configuration(&config_arg.value)
+        }
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSessionConfiguration" => {
+            copy_configuration(&config_arg.value)
+        }
+        _ => {
+            return Err(type_error(
+                "URLSession(configuration:) expects a URLSessionConfiguration",
+            ))
+        }
+    };
+    Ok(session_value_with_delegate(config_snapshot, delegate))
 }
 
 fn session_configuration(recv: SwiftValue) -> tswift_core::StdResult {
@@ -213,21 +305,53 @@ fn session_configuration(recv: SwiftValue) -> tswift_core::StdResult {
             .get("configuration")
             .cloned()
             .unwrap_or_else(configuration_value)),
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSession" => {
+            // Short borrow: copy the value out before dropping the Ref guard.
+            Ok(o.borrow()
+                .get("configuration")
+                .cloned()
+                .unwrap_or_else(configuration_value))
+        }
         _ => Err(type_error("configuration expects URLSession")),
     }
 }
 
 /// Extract the session's request timeout from its configuration.
+///
+/// Handles both the legacy Struct representation and the new Object backing
+/// for `URLSession` and `URLSessionConfiguration`.
 fn session_timeout(recv: &SwiftValue) -> f64 {
-    let SwiftValue::Struct(o) = recv else {
-        return 60.0;
+    // Read the `configuration` field from a Struct or Object session.
+    let config: SwiftValue = match recv {
+        SwiftValue::Struct(o) if o.type_name == "URLSession" => {
+            o.get("configuration").cloned().unwrap_or(SwiftValue::Nil)
+        }
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSession" => {
+            // Short borrow: copy out before dropping the Ref.
+            o.borrow()
+                .get("configuration")
+                .cloned()
+                .unwrap_or(SwiftValue::Nil)
+        }
+        _ => return 60.0,
     };
-    let Some(SwiftValue::Struct(config)) = o.get("configuration") else {
-        return 60.0;
-    };
-    match config.get("timeoutIntervalForRequest") {
-        Some(SwiftValue::Double(d)) => *d,
-        Some(SwiftValue::Int(i)) => i.raw as f64,
+    // Read `timeoutIntervalForRequest` from a Struct or Object configuration.
+    match &config {
+        SwiftValue::Struct(c) if c.type_name == "URLSessionConfiguration" => {
+            match c.get("timeoutIntervalForRequest") {
+                Some(SwiftValue::Double(d)) => *d,
+                Some(SwiftValue::Int(i)) => i.raw as f64,
+                _ => 60.0,
+            }
+        }
+        SwiftValue::Object(o) if o.borrow().class_name == "URLSessionConfiguration" => {
+            // Short borrow: copy numeric value out before dropping the Ref.
+            match o.borrow().get("timeoutIntervalForRequest").cloned() {
+                Some(SwiftValue::Double(d)) => d,
+                Some(SwiftValue::Int(i)) => i.raw as f64,
+                _ => 60.0,
+            }
+        }
         _ => 60.0,
     }
 }
@@ -1154,7 +1278,7 @@ mod tests {
     use crate::url::url_value;
     use tswift_core::{
         HttpEvent, HttpRequest, HttpResponse, HttpTaskHandle, MockChunkedRoute, MockHttpTransport,
-        MockRoute,
+        MockRoute, StructObj,
     };
 
     /// A minimal `StdContext` that uses the event-loop seam of a
@@ -2178,6 +2302,144 @@ mod tests {
         assert!(
             !Rc::ptr_eq(a, b),
             "two dataTask calls must return distinct Objects"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — URLSessionConfiguration + URLSession Object migration
+    // -----------------------------------------------------------------------
+
+    /// `configuration_value()` returns an Object with class_name
+    /// `"URLSessionConfiguration"` and all expected default fields.
+    #[test]
+    fn config_value_is_object() {
+        let config = configuration_value();
+        let SwiftValue::Object(obj) = config else {
+            panic!("configuration_value must return Object");
+        };
+        let guard = obj.borrow();
+        assert_eq!(guard.class_name, "URLSessionConfiguration");
+        assert_eq!(
+            guard.get("timeoutIntervalForRequest"),
+            Some(&SwiftValue::Double(60.0))
+        );
+        assert_eq!(
+            guard.get("timeoutIntervalForResource"),
+            Some(&SwiftValue::Double(604_800.0))
+        );
+    }
+
+    /// Two calls to `configuration_value()` (simulating `.default` per-access
+    /// fresh semantics) return independent Objects — not the same `Rc`.
+    #[test]
+    fn config_default_fresh_per_call() {
+        let a = configuration_value();
+        let b = configuration_value();
+        let (SwiftValue::Object(ra), SwiftValue::Object(rb)) = (&a, &b) else {
+            panic!("expected two Object configs");
+        };
+        assert!(
+            !Rc::ptr_eq(ra, rb),
+            ".default must return a fresh Object on each access"
+        );
+    }
+
+    /// `session_value()` returns an Object with class_name `"URLSession"`.
+    #[test]
+    fn session_value_is_object() {
+        let sess = session_value(configuration_value());
+        let SwiftValue::Object(obj) = &sess else {
+            panic!("session_value must return Object");
+        };
+        assert_eq!(obj.borrow().class_name, "URLSession");
+    }
+
+    /// CRITICAL: `session_init` copies the configuration.
+    /// Post-init mutations to the original config MUST NOT affect the session.
+    #[test]
+    fn session_init_copies_config() {
+        let config = configuration_value();
+        // Set a custom timeout on the config before init.
+        if let SwiftValue::Object(o) = &config {
+            o.borrow_mut()
+                .set("timeoutIntervalForRequest", SwiftValue::Double(42.0));
+        }
+
+        // Build a session via session_init — it must snapshot the config.
+        let mut ctx = HttpEventCtx::new(vec![]);
+        let out = session_init(
+            &mut ctx,
+            vec![Arg {
+                label: Some("configuration".into()),
+                value: config.clone(),
+            }],
+        )
+        .unwrap();
+
+        // Mutate the original config AFTER session creation.
+        if let SwiftValue::Object(o) = &config {
+            o.borrow_mut()
+                .set("timeoutIntervalForRequest", SwiftValue::Double(99.0));
+        }
+
+        // Session's copy must still hold 42.0 (not the post-init 99.0).
+        let session_timeout = session_timeout(&out);
+        assert_eq!(
+            session_timeout, 42.0,
+            "session must hold a snapshot of config at init time (got {session_timeout})"
+        );
+
+        // Original config must now show the mutation (99.0).
+        if let SwiftValue::Object(o) = &config {
+            assert_eq!(
+                o.borrow().get("timeoutIntervalForRequest"),
+                Some(&SwiftValue::Double(99.0))
+            );
+        }
+    }
+
+    /// `copy_configuration` produces an independent Object: mutations to the
+    /// copy do not affect the source.
+    #[test]
+    fn copy_config_is_independent() {
+        let original = configuration_value();
+        let copied = copy_configuration(&original);
+
+        let (SwiftValue::Object(orig_rc), SwiftValue::Object(copy_rc)) = (&original, &copied)
+        else {
+            panic!("expected two Object configs");
+        };
+
+        // Must be distinct Rc (different storage).
+        assert!(!Rc::ptr_eq(orig_rc, copy_rc), "copy must be a distinct Rc");
+
+        // Mutate the copy — original must be unchanged.
+        copy_rc
+            .borrow_mut()
+            .set("timeoutIntervalForRequest", SwiftValue::Double(7.0));
+        assert_eq!(
+            orig_rc.borrow().get("timeoutIntervalForRequest").cloned(),
+            Some(SwiftValue::Double(60.0)),
+            "original must be unaffected by copy mutation"
+        );
+    }
+
+    /// `URLSession.shared` identity: two `SwiftValue::Object` values wrapping
+    /// the same `Rc` compare equal via `Rc::ptr_eq`, so `shared === shared`
+    /// holds in the interpreter (value.rs PartialEq uses ptr_eq for Objects).
+    #[test]
+    fn shared_object_identity_via_rc_clone() {
+        // Simulate what the statics map does: store one Object, hand out Rc
+        // clones on each access.
+        let shared = session_value(configuration_value());
+        let access1 = shared.clone(); // simulates first statics.get().cloned()
+        let access2 = shared.clone(); // simulates second access
+        let (SwiftValue::Object(a), SwiftValue::Object(b)) = (&access1, &access2) else {
+            panic!("expected Object session");
+        };
+        assert!(
+            Rc::ptr_eq(a, b),
+            "two clones of the shared session Rc must be ptr_eq (shared === shared)"
         );
     }
 }
