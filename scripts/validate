@@ -60,11 +60,30 @@ validate_wasm_smoke() {
   TSWIFT_WASM_SMOKE=1 cargo test -p tswift-wasm --test wasm_smoke
 }
 
+# If a local (git-ignored) xcframework exists it shadows the pinned ffi-v1 for
+# the SwiftPM build. Rebuild it when it is older than any tswift-ffi source or
+# header, so a stale override cannot silently break the build with missing
+# symbols. No-op when there is no local override (the pin is used as-is).
+rebuild_local_xcframework_if_stale() {
+  local xcframework="ios/TSwift/Artifacts/TSwiftFFI.xcframework"
+  [[ -d "$xcframework" ]] || return 0
+
+  local newest_source
+  newest_source="$(find crates/tswift-ffi/src crates/tswift-ffi/include -type f \
+    -newer "$xcframework" -print -quit 2>/dev/null || true)"
+  [[ -n "$newest_source" ]] || return 0
+
+  section "iOS/Swift: local TSwiftFFI.xcframework is stale — rebuilding"
+  scripts/build-xcframework.sh
+}
+
 validate_ios() {
   if ! have swift; then
     echo "error: swift is required for validate ios" >&2
     return 1
   fi
+
+  rebuild_local_xcframework_if_stale
 
   section "iOS/Swift: TSwift package tests (uses pinned ffi-v1 unless local Artifacts exists)"
   swift test --package-path ios/TSwift
