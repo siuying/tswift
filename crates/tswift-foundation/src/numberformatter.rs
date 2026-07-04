@@ -6,11 +6,11 @@
 //! `.swiftinterface` inventory, so it is implemented and tested but does not
 //! move the coverage roll-up.
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, ClassObj, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext,
+    StdError, StdResult, SwiftValue,
 };
 
 use crate::type_error;
@@ -58,8 +58,8 @@ macro_rules! prop_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
         $(
             fn $getter(recv: SwiftValue) -> StdResult {
-                let obj = formatter_obj(&recv)?;
-                Ok(obj.get($field).cloned().unwrap_or(SwiftValue::Nil))
+                check_nf_recv(&recv)?;
+                Ok(read_nf_field(&recv, $field).unwrap_or(SwiftValue::Nil))
             }
         )+
         fn prop_getter(name: &str) -> tswift_core::PropertyFn {
@@ -81,33 +81,20 @@ prop_getters! {
 }
 
 fn get_uses_grouping(recv: SwiftValue) -> StdResult {
-    let obj = formatter_obj(&recv)?;
-    let value = match obj.get("usesGroupingSeparator") {
-        Some(SwiftValue::Bool(b)) => *b,
+    let value = match read_nf_field(&recv, "usesGroupingSeparator") {
+        Some(SwiftValue::Bool(b)) => b,
         _ => {
-            let (_, _, def_group) = style_defaults(number_style(obj));
+            let (_, _, def_group) = style_defaults(number_style(&recv));
             def_group
         }
     };
     Ok(SwiftValue::Bool(value))
 }
 
-fn formatter_obj(value: &SwiftValue) -> Result<&Rc<StructObj>, StdError> {
-    match value {
-        SwiftValue::Struct(obj) if obj.type_name == "NumberFormatter" => Ok(obj),
-        other => Err(type_error(format!(
-            "expected NumberFormatter, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn number_formatter_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    if !args.is_empty() {
-        return Err(type_error("NumberFormatter() takes no arguments"));
-    }
-    Ok(SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "NumberFormatter".into(),
+/// Construct a `NumberFormatter` Object (reference semantics — class in real Swift).
+fn number_formatter_object() -> SwiftValue {
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "NumberFormatter".into(),
         fields: vec![
             ("numberStyle".into(), SwiftValue::int(0)),
             // -1 sentinels: "unset", so per-style defaults apply.
@@ -123,9 +110,42 @@ fn number_formatter_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
     })))
 }
 
+fn number_formatter_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !args.is_empty() {
+        return Err(type_error("NumberFormatter() takes no arguments"));
+    }
+    Ok(number_formatter_object())
+}
+
+/// Read a named field from either a `SwiftValue::Struct` or `SwiftValue::Object`
+/// `NumberFormatter` receiver.
+///
+/// Returns `None` when the receiver is the wrong type or the field is absent.
+fn read_nf_field(recv: &SwiftValue, field: &str) -> Option<SwiftValue> {
+    match recv {
+        SwiftValue::Struct(obj) if obj.type_name == "NumberFormatter" => obj.get(field).cloned(),
+        SwiftValue::Object(o) if o.borrow().class_name == "NumberFormatter" => {
+            o.borrow().get(field).cloned()
+        }
+        _ => None,
+    }
+}
+
+/// Return `Err` if `recv` is not a `NumberFormatter` Struct or Object receiver.
+fn check_nf_recv(recv: &SwiftValue) -> Result<(), StdError> {
+    match recv {
+        SwiftValue::Struct(obj) if obj.type_name == "NumberFormatter" => Ok(()),
+        SwiftValue::Object(o) if o.borrow().class_name == "NumberFormatter" => Ok(()),
+        other => Err(type_error(format!(
+            "expected NumberFormatter, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 /// Resolve `numberStyle` (stored as Int ordinal or `.style` enum) to a [`Style`].
-fn number_style(obj: &Rc<StructObj>) -> Style {
-    match obj.get("numberStyle") {
+fn number_style(recv: &SwiftValue) -> Style {
+    match read_nf_field(recv, "numberStyle") {
         Some(SwiftValue::Int(i)) => Style::from_ordinal(i.raw),
         Some(SwiftValue::Enum(e)) => Style::from_name(&e.case),
         _ => Style::None,
@@ -163,15 +183,15 @@ impl Style {
     }
 }
 
-fn int_field(obj: &Rc<StructObj>, field: &str) -> i64 {
-    match obj.get(field) {
+fn int_field(recv: &SwiftValue, field: &str) -> i64 {
+    match read_nf_field(recv, field) {
         Some(SwiftValue::Int(i)) => i.raw as i64,
         _ => -1,
     }
 }
 
-fn str_field(obj: &Rc<StructObj>, field: &str, default: &str) -> String {
-    match obj.get(field) {
+fn str_field(recv: &SwiftValue, field: &str, default: &str) -> String {
+    match read_nf_field(recv, field) {
         Some(SwiftValue::Str(s)) => s.to_string(),
         _ => default.to_string(),
     }
@@ -264,11 +284,11 @@ fn number_formatter_string(
             number.type_name()
         )));
     };
-    let obj = formatter_obj(&recv)?;
-    let style = number_style(obj);
+    check_nf_recv(&recv)?;
+    let style = number_style(&recv);
     let (def_min, def_max, def_group) = style_defaults(style);
     let min_frac = {
-        let explicit = int_field(obj, "minimumFractionDigits");
+        let explicit = int_field(&recv, "minimumFractionDigits");
         if explicit < 0 {
             def_min
         } else {
@@ -276,20 +296,20 @@ fn number_formatter_string(
         }
     };
     let max_frac = {
-        let explicit = int_field(obj, "maximumFractionDigits");
+        let explicit = int_field(&recv, "maximumFractionDigits");
         if explicit < 0 {
             def_max.max(min_frac)
         } else {
             explicit.max(min_frac)
         }
     };
-    let grouping = match obj.get("usesGroupingSeparator") {
-        Some(SwiftValue::Bool(b)) => *b,
+    let grouping = match read_nf_field(&recv, "usesGroupingSeparator") {
+        Some(SwiftValue::Bool(b)) => b,
         // Unset: fall back to the per-style default.
         _ => def_group,
     };
-    let group_sep = str_field(obj, "groupingSeparator", ",");
-    let decimal_sep = str_field(obj, "decimalSeparator", ".");
+    let group_sep = str_field(&recv, "groupingSeparator", ",");
+    let decimal_sep = str_field(&recv, "decimalSeparator", ".");
 
     let body = match style {
         Style::Percent => {
@@ -304,7 +324,7 @@ fn number_formatter_string(
             format!("{formatted}%")
         }
         Style::Currency => {
-            let symbol = str_field(obj, "currencySymbol", "$");
+            let symbol = str_field(&recv, "currencySymbol", "$");
             let formatted = format_decimal(
                 value.abs(),
                 min_frac,
@@ -345,11 +365,11 @@ fn number_formatter_number(
             "NumberFormatter.number(from:) expects a String argument",
         ));
     };
-    let obj = formatter_obj(&recv)?;
-    let style = number_style(obj);
-    let group_sep = str_field(obj, "groupingSeparator", ",");
-    let decimal_sep = str_field(obj, "decimalSeparator", ".");
-    let currency_symbol = str_field(obj, "currencySymbol", "$");
+    check_nf_recv(&recv)?;
+    let style = number_style(&recv);
+    let group_sep = str_field(&recv, "groupingSeparator", ",");
+    let decimal_sep = str_field(&recv, "decimalSeparator", ".");
+    let currency_symbol = str_field(&recv, "currencySymbol", "$");
 
     let mut cleaned = input.replace(&group_sep, "");
     cleaned = cleaned.replace(&currency_symbol, "");
@@ -383,6 +403,18 @@ fn number_formatter_number(
 mod tests {
     use super::*;
 
+    // Minimal no-op context for intrinsics that never call closures or write
+    // output (mirrors the `PanicCtx` pattern in `formatter.rs`).
+    struct PanicCtx;
+    impl StdContext for PanicCtx {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
+            unreachable!("number formatter helpers never call closures")
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            unreachable!("number formatter helpers never write output")
+        }
+    }
+
     #[test]
     fn decimal_grouping_and_fraction() {
         assert_eq!(
@@ -399,5 +431,71 @@ mod tests {
         assert_eq!(group_integer("100", ","), "100");
         assert_eq!(group_integer("1000", ","), "1,000");
         assert_eq!(group_integer("1234567", ","), "1,234,567");
+    }
+
+    // ----- Phase 2b reference-semantics tests --------------------------------
+
+    #[test]
+    fn number_formatter_init_returns_object() {
+        let result = number_formatter_init(&mut PanicCtx, vec![]).unwrap();
+        assert!(
+            matches!(&result, SwiftValue::Object(o)
+                if o.borrow().class_name == "NumberFormatter"),
+            "expected Object with class_name NumberFormatter, got {result:?}"
+        );
+    }
+
+    /// An alias of a `NumberFormatter` Object observes property mutations
+    /// written through the alias (reference semantics — Swift class behaviour).
+    #[test]
+    fn number_formatter_alias_observes_property_change() {
+        let nf = number_formatter_object();
+        let alias = nf.clone(); // shallow Rc clone — same ClassObj
+                                // Write numberStyle = 1 (decimal) through the alias.
+        if let SwiftValue::Object(o) = &alias {
+            o.borrow_mut().set("numberStyle", SwiftValue::int(1));
+        } else {
+            panic!("alias was not Object");
+        }
+        // The original binding must see the mutation.
+        let field = read_nf_field(&nf, "numberStyle");
+        assert_eq!(
+            field,
+            Some(SwiftValue::int(1)),
+            "original did not observe alias mutation"
+        );
+    }
+
+    /// `string(from:)` uses the `numberStyle` stored in the Object, so a
+    /// property set before the call is reflected in the output.
+    #[test]
+    fn number_formatter_string_reflects_object_number_style() {
+        let nf = number_formatter_object();
+        // Set decimal style (ordinal 1) directly on the Object.
+        if let SwiftValue::Object(o) = &nf {
+            o.borrow_mut().set("numberStyle", SwiftValue::int(1));
+        }
+        let out = number_formatter_string(&mut PanicCtx, nf, vec![SwiftValue::int(1234)]).unwrap();
+        assert_eq!(out.result, SwiftValue::Str("1,234".into()));
+    }
+
+    /// `let nf = NumberFormatter()` — verifies that `mutating: false` is
+    /// correct: the receiver is returned unchanged (no write-back needed).
+    #[test]
+    fn string_intrinsic_returns_unchanged_receiver() {
+        let nf = number_formatter_object();
+        let before = if let SwiftValue::Object(o) = &nf {
+            Rc::as_ptr(o)
+        } else {
+            panic!("not Object")
+        };
+        let out =
+            number_formatter_string(&mut PanicCtx, nf, vec![SwiftValue::Double(3.14)]).unwrap();
+        let after = if let SwiftValue::Object(o) = &out.receiver {
+            Rc::as_ptr(o)
+        } else {
+            panic!("receiver not Object")
+        };
+        assert_eq!(before, after, "receiver Rc pointer should be identical");
     }
 }
