@@ -57,15 +57,28 @@ URLComponents = ["=="]
 # - URLResponse/HTTPURLResponse/URLSessionConfiguration are likewise ObjC
 #   classes absent from the inventory; implemented and golden-tested
 #   (foundation_urlrequest / foundation_urlsession fixtures).
-# - URLSession delegate-, publisher-, bytes- and download-based members are
-#   not modelled; data(from:)/data(for:)/upload(for:from:) run on the
-#   embedding's HTTP transport (tswift_core::http seam).
+# - URLSession F6 (M3–M7): URLSessionDataTask (cancel/resume/state/progress/
+#   bytesReceived/bytesExpected), dataTask(with:completionHandler:), and the
+#   three delegate protocols (URLSessionDelegate, URLSessionTaskDelegate,
+#   URLSessionDataDelegate) are **modelled** — backed by the tswift_core::http
+#   event-transport seam (mock/ureq/ffi/wasm).
+# - Bytes- and download-based members (bytes(for:), downloadTask) are NOT
+#   modelled; publisher-based members (dataTaskPublisher) are NOT modelled.
+# - Wasm degraded tier: the wasm tswiftHttp hook completes the fetch
+#   synchronously before events are dispatched; cancellation stops event
+#   delivery only — it cannot abort a fetch already returned.
+# - URLSessionDataTask is backed by SwiftValue::Struct (not a class instance).
+#   Scripts MUST bind tasks to `var`, not `let`; aliases do not observe
+#   resume()/cancel() mutations (value-semantics divergence from Foundation).
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
 decimal_special_values = "Decimal has no infinity or negative zero: isInfinite is always false, isFinite is !isNaN. nan.significand/exponent propagate NaN. greatestFiniteMagnitude and ulp are not modelled."
 numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
 urlsession_transport = "URLSession runs on the embedding's transport: mock (fixtures), ureq HTTPS (CLI --allow-network), host handler (ffi), tswiftHttp hook (wasm); no cache/cookies/redirect policy modelled"
+urlsession_delegates = "URLSessionDataDelegate/TaskDelegate callbacks modelled (M3/M4); URLSessionDataTask.cancel/resume/state/progress modelled; bytes/download/publisher members unmodelled"
+urlsession_wasm_tier = "wasm: fetch completes eagerly; delegate+progress replay faithfully; cancel stops delivery only (cannot abort completed fetch)"
+urlsession_task_semantics = "URLSessionDataTask is struct-backed (SwiftValue::Struct); task bindings MUST be `var` — let bindings reject cancel()/resume() mutations; aliases do not observe mutations"
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]

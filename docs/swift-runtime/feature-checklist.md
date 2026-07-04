@@ -473,6 +473,10 @@ inventories plus per-framework runtime registries. See
 | [x] | Foundation F2: `URL` / `URLComponents` / `URLQueryItem` | ★★★ | R5+ |
 | [x] | Foundation F6: `URLRequest` / `URLResponse` / `HTTPURLResponse` / `URLError` value types | ★★★ | R5+ |
 | [x] | Foundation F6: `URLSession` `data(from:)`/`data(for:)`/`upload(for:from:)` on the HTTP transport seam (mock / ureq HTTPS / ffi host handler / wasm `tswiftHttp` hook) | ★★★★ | R6+ |
+| [x] | Foundation F6: `URLSession.dataTask(with:completionHandler:)` + `URLSessionDataTask` (`cancel`/`resume`/`state`/`progress.fractionCompleted`/byte counters) | ★★★★ | R6+ |
+| [x] | Foundation F6: `URLSessionDelegate` / `URLSessionTaskDelegate` / `URLSessionDataDelegate` callback dispatch (M4); `URLSession.ResponseDisposition` enum | ★★★★ | R6+ |
+| [x] | Foundation F6: cooperative task cancellation (`Task.cancel()` mid-flight → `URLError(.cancelled)`); drain-or-cancel invariant enforced | ★★★★ | R6+ |
+| [x] | Foundation F6: wasm batch-event `tswiftHttp` hook — `response`/`chunk`/`done`/`error` events; delegate+progress replay; degraded-tier cancel (M7) | ★★★★ | R6+ |
 | [x] | SwiftUI measurement descriptor and runtime ADR (ADR-0006, `docs/plan/swiftui-support.md`) | ★★★★ | R6+ |
 | [x] | SwiftUI v1 Counter slice: `View`/`@State`/`@ViewBuilder` shim, `Text`/`Button`/`VStack`/`HStack`/`Spacer`, token modifiers, UIIR + diff + tap dispatch (Layers A/B/C green) | ★★★★ | R6+ |
 | [ ] | SwiftUI Tier 2+: shapes/`ZStack`/composition, `ForEach`/identity, bindings, observation | ★★★★ | R6+ |
