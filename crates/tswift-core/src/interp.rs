@@ -4174,17 +4174,21 @@ impl<'w> Interpreter<'w> {
         BuiltinCtors { table: t }
     }
 
-    /// `JSONEncoder()` / `JSONDecoder()` — opaque value markers carrying only
-    /// their type name (coding is driven entirely by method intrinsics).
+    /// `JSONEncoder()` / `JSONDecoder()` / `PropertyListEncoder()` —
+    /// class-backed Objects so that `let encoder = JSONEncoder();`
+    /// `encoder.outputFormatting = .prettyPrinted` is legal (reference
+    /// semantics; `set_object_field` mutates in place without write-back).
     fn ctor_json_coder(
         _interp: &mut Interpreter,
         name: &str,
         _args: &[CallArg],
     ) -> Result<Option<SwiftValue>, Signal> {
-        Ok(Some(SwiftValue::Struct(Rc::new(StructObj {
-            type_name: name.to_string(),
-            fields: vec![],
-        }))))
+        Ok(Some(SwiftValue::Object(StdRc::new(RefCell::new(
+            ClassObj {
+                class_name: name.to_string(),
+                fields: vec![],
+            },
+        )))))
     }
 
     /// `Array<T>()` / `Array(repeating:count:)` / `Array(sequence)`.

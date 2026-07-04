@@ -327,28 +327,57 @@ fn date_value(ref_seconds: f64) -> SwiftValue {
     }))
 }
 
-/// Read a `DateEncodingStrategy` from a `JSONEncoder` struct.
-/// Accepts both the legacy raw-integer form and the builtin-enum form
-/// produced by leading-dot resolution (e.g. `.iso8601`).
-fn encoder_date_strategy(o: &StructObj) -> DateEncoding {
-    match o.get("dateEncodingStrategy") {
+// ---------------------------------------------------------------------------
+// Coder receiver helpers (Struct-or-Object dual-mode)
+// ---------------------------------------------------------------------------
+
+/// Read a named field from a coder receiver that may be either a legacy
+/// `SwiftValue::Struct` or a class-backed `SwiftValue::Object`.  The
+/// `RefCell` borrow is dropped before returning the cloned value.
+fn read_coder_field(recv: &SwiftValue, field: &str) -> Option<SwiftValue> {
+    match recv {
+        SwiftValue::Struct(o) => o.get(field).cloned(),
+        SwiftValue::Object(o) => {
+            let borrow = o.borrow();
+            borrow.get(field).cloned()
+        }
+        _ => None,
+    }
+}
+
+/// Return the type name carried by a coder receiver (Struct or Object).
+/// Returns an owned `String` so callers avoid keeping a `RefCell` borrow live.
+fn coder_type_name(recv: &SwiftValue) -> Option<String> {
+    match recv {
+        SwiftValue::Struct(o) => Some(o.type_name.clone()),
+        SwiftValue::Object(o) => Some(o.borrow().class_name.clone()),
+        _ => None,
+    }
+}
+
+/// Read a `DateEncodingStrategy` from a `JSONEncoder` receiver (Struct or
+/// Object).  Accepts both the legacy raw-integer form and the builtin-enum
+/// form produced by leading-dot resolution (e.g. `.iso8601`).
+fn encoder_date_strategy(recv: &SwiftValue) -> DateEncoding {
+    match read_coder_field(recv, "dateEncodingStrategy") {
         Some(SwiftValue::Int(i)) => DateEncoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => DateEncoding::from_case(&e.case),
         _ => DateEncoding::DeferredToDate,
     }
 }
 
-/// Read a `DateDecodingStrategy` from a `JSONDecoder` struct.
-/// Accepts both the legacy raw-integer form and the builtin-enum form.
-fn decoder_date_strategy(o: &StructObj) -> DateDecoding {
-    match o.get("dateDecodingStrategy") {
+/// Read a `DateDecodingStrategy` from a `JSONDecoder` receiver (Struct or
+/// Object).  Accepts both the legacy raw-integer form and the builtin-enum
+/// form.
+fn decoder_date_strategy(recv: &SwiftValue) -> DateDecoding {
+    match read_coder_field(recv, "dateDecodingStrategy") {
         Some(SwiftValue::Int(i)) => DateDecoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => DateDecoding::from_case(&e.case),
         _ => DateDecoding::DeferredToDate,
     }
 }
 
-/// Read `outputFormatting` from a `JSONEncoder` struct.
+/// Read `outputFormatting` from a `JSONEncoder` receiver (Struct or Object).
 /// The field may be an `Int` (single flag) or an `Array` of ints (OptionSet
 /// array literal `[.prettyPrinted, .sortedKeys]` → OR of bit flags).
 /// Map an `OutputFormatting` case name to its bit position.
@@ -360,8 +389,8 @@ fn output_formatting_case_bit(case: &str) -> u64 {
     }
 }
 
-fn encoder_output_formatting(o: &StructObj) -> OutputFormatting {
-    let bits: u64 = match o.get("outputFormatting") {
+fn encoder_output_formatting(recv: &SwiftValue) -> OutputFormatting {
+    let bits: u64 = match read_coder_field(recv, "outputFormatting") {
         Some(SwiftValue::Int(i)) => i.raw as u64,
         Some(SwiftValue::Enum(e)) => output_formatting_case_bit(&e.case),
         Some(SwiftValue::Array(items)) => items.iter().fold(0u64, |acc, v| match v {
@@ -377,36 +406,40 @@ fn encoder_output_formatting(o: &StructObj) -> OutputFormatting {
     }
 }
 
-/// Read a `KeyEncodingStrategy` from a `JSONEncoder` struct.
-fn encoder_key_strategy(o: &StructObj) -> KeyEncoding {
-    match o.get("keyEncodingStrategy") {
+/// Read a `KeyEncodingStrategy` from a `JSONEncoder` receiver (Struct or
+/// Object).
+fn encoder_key_strategy(recv: &SwiftValue) -> KeyEncoding {
+    match read_coder_field(recv, "keyEncodingStrategy") {
         Some(SwiftValue::Int(i)) => KeyEncoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => KeyEncoding::from_case(&e.case),
         _ => KeyEncoding::UseDefaultKeys,
     }
 }
 
-/// Read a `KeyDecodingStrategy` from a `JSONDecoder` struct.
-fn decoder_key_strategy(o: &StructObj) -> KeyDecoding {
-    match o.get("keyDecodingStrategy") {
+/// Read a `KeyDecodingStrategy` from a `JSONDecoder` receiver (Struct or
+/// Object).
+fn decoder_key_strategy(recv: &SwiftValue) -> KeyDecoding {
+    match read_coder_field(recv, "keyDecodingStrategy") {
         Some(SwiftValue::Int(i)) => KeyDecoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => KeyDecoding::from_case(&e.case),
         _ => KeyDecoding::UseDefaultKeys,
     }
 }
 
-/// Read a `DataEncodingStrategy` from a `JSONEncoder` struct.
-fn encoder_data_strategy(o: &StructObj) -> DataEncoding {
-    match o.get("dataEncodingStrategy") {
+/// Read a `DataEncodingStrategy` from a `JSONEncoder` receiver (Struct or
+/// Object).
+fn encoder_data_strategy(recv: &SwiftValue) -> DataEncoding {
+    match read_coder_field(recv, "dataEncodingStrategy") {
         Some(SwiftValue::Int(i)) => DataEncoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => DataEncoding::from_case(&e.case),
         _ => DataEncoding::Base64,
     }
 }
 
-/// Read a `DataDecodingStrategy` from a `JSONDecoder` struct.
-fn decoder_data_strategy(o: &StructObj) -> DataDecoding {
-    match o.get("dataDecodingStrategy") {
+/// Read a `DataDecodingStrategy` from a `JSONDecoder` receiver (Struct or
+/// Object).
+fn decoder_data_strategy(recv: &SwiftValue) -> DataDecoding {
+    match read_coder_field(recv, "dataDecodingStrategy") {
         Some(SwiftValue::Int(i)) => DataDecoding::from_raw(i.raw),
         Some(SwiftValue::Enum(e)) => DataDecoding::from_case(&e.case),
         _ => DataDecoding::Base64,
@@ -518,15 +551,19 @@ impl<'w> Interpreter<'w> {
         method: &str,
         arg_nodes: &[Node<'static>],
     ) -> Result<Option<SwiftValue>, Signal> {
-        let SwiftValue::Struct(o) = base_value else {
-            return Ok(None);
+        // Accept both legacy Struct receivers and new Object receivers so the
+        // transition is backward-compatible with any serialised Struct values
+        // that might exist in long-lived interpreter sessions.
+        let type_name = match coder_type_name(base_value) {
+            Some(n) => n,
+            None => return Ok(None),
         };
         // `JSONEncoder().encode(value)` → a JSON `Data` (UTF-8 bytes).
-        if o.type_name == "JSONEncoder" && method == "encode" {
-            let date_enc = encoder_date_strategy(o);
-            let output_fmt = encoder_output_formatting(o);
-            let key_enc = encoder_key_strategy(o);
-            let data_enc = encoder_data_strategy(o);
+        if type_name == "JSONEncoder" && method == "encode" {
+            let date_enc = encoder_date_strategy(base_value);
+            let output_fmt = encoder_output_formatting(base_value);
+            let key_enc = encoder_key_strategy(base_value);
+            let data_enc = encoder_data_strategy(base_value);
             let args = self.eval_args(arg_nodes)?;
             let value = args
                 .first()
@@ -545,10 +582,10 @@ impl<'w> Interpreter<'w> {
             return Ok(Some(data));
         }
         // `JSONDecoder().decode(T.self, from: data)` → a value of type `T`.
-        if o.type_name == "JSONDecoder" && method == "decode" {
-            let date_dec = decoder_date_strategy(o);
-            let key_dec = decoder_key_strategy(o);
-            let data_dec = decoder_data_strategy(o);
+        if type_name == "JSONDecoder" && method == "decode" {
+            let date_dec = decoder_date_strategy(base_value);
+            let key_dec = decoder_key_strategy(base_value);
+            let data_dec = decoder_data_strategy(base_value);
             let type_name = arg_nodes
                 .first()
                 .and_then(metatype_name)
@@ -613,17 +650,19 @@ impl<'w> Interpreter<'w> {
         method: &str,
         arg_nodes: &[Node<'static>],
     ) -> Result<Option<SwiftValue>, Signal> {
-        let SwiftValue::Struct(o) = base_value else {
-            return Ok(None);
+        // Accept both legacy Struct receivers and new Object receivers.
+        let type_name = match coder_type_name(base_value) {
+            Some(n) => n,
+            None => return Ok(None),
         };
-        if o.type_name != "PropertyListEncoder" || method != "encode" {
+        if type_name != "PropertyListEncoder" || method != "encode" {
             return Ok(None);
         }
         // outputFormat is a `PropertyListSerialization.PropertyListFormat` enum
         // case set via `.xml` / `.binary` / `.openStep` leading-dot syntax.
         // Real Foundation defaults to `.binary`; we default to `.xml` since
         // binary output cannot be represented as UTF-8 Data in this runtime.
-        let fmt_case = match o.get("outputFormat") {
+        let fmt_case = match read_coder_field(base_value, "outputFormat") {
             Some(SwiftValue::Enum(e))
                 if e.type_name == "PropertyListSerialization.PropertyListFormat" =>
             {
