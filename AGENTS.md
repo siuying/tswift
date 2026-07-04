@@ -26,6 +26,20 @@ This project aimed to build a end-to-end, lightweight Swift compiler and runtime
 - **Git Commits**: Use conventional format: <type>(<scope>): <subject> where type = feat|fix|docs|style|refactor|test|chore|perf. Subject: 50 chars max, imperative mood ("add" not "added"), no period. For small changes: one-line commit only. For complex changes: add body explaining what/why (72-char lines) and reference issues. Keep commits atomic (one logical change) and self-explanatory. Split into multiple commits if addressing different concerns.
 - No "Co-Authored-By: Claude" or "Generated with" line.
 
+## Software Design Principles
+
+- Read the load-bearing decisions and invariants (architecture docs, concurrency model, API promises) before sketching any design.
+- Decompose the feature to its weakest sufficient requirement — most “we need to rewrite X” claims dissolve into something the current architecture already supports.
+- Turn open-ended design choices into a single “who owns X?” question (who blocks, who owns state, who retries, who drives whom); enumerating its answers gives a complete, non-overlapping option set.
+- Stress-test candidates against the least forgiving layer first (threading boundaries, public APIs, third-party integrations) — prefer the design that shrinks that layer’s contract.
+- Distinguish adopting a capability internally from exposing it in your public contract; the former is far cheaper and can come first.
+- Write rejected-for-now options down as tripwires: explicit triggers that would reopen the decision, and what the chosen design preserves for them.
+- Phase migrations so infrastructure changes land behavior-preserving and separately from behavior changes — each step green, reviewable, and bisectable.
+- Evolve interfaces additively, using adapters to keep existing consumers working unchanged.
+- Where platforms or clients differ in capability, name the degraded tiers honestly instead of faking parity.
+- Ground the design in what the code actually does at every layer the feature crosses; never design from memory or docs alone.
+- Record unverified assumptions as named risks with a “verify by” checkpoint, not silent bets.
+
 ## Coverage
 
 ### Stdlib coverage
