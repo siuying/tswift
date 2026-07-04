@@ -274,8 +274,9 @@ pub enum BuiltinReceiver {
     URLSession,
     URLSessionConfiguration,
     /// A `URLSessionDataTask` handle returned by `URLSession.dataTask(with:completionHandler:)`.
-    /// Represented as a `Struct { type_name: "URLSessionDataTask" }` with mutable
+    /// Represented as a `SwiftValue::Object` (reference type) with mutable
     /// state fields (state, counters, progress) updated by `resume()` / `cancel()`.
+    /// `let` bindings are legal; aliases and closure captures observe state changes.
     URLSessionDataTask,
     Date,
     DateComponents,
@@ -444,9 +445,6 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "URLSession" => BuiltinReceiver::URLSession,
             SwiftValue::Struct(obj) if obj.type_name == "URLSessionConfiguration" => {
                 BuiltinReceiver::URLSessionConfiguration
-            }
-            SwiftValue::Struct(obj) if obj.type_name == "URLSessionDataTask" => {
-                BuiltinReceiver::URLSessionDataTask
             }
             SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
             SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {

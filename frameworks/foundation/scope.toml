@@ -78,7 +78,7 @@ numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; 
 urlsession_transport = "URLSession runs on the embedding's transport: mock (fixtures), ureq HTTPS (CLI --allow-network), host handler (ffi), tswiftHttp hook (wasm); no cache/cookies/redirect policy modelled"
 urlsession_delegates = "URLSessionDataDelegate/TaskDelegate callbacks modelled (M3/M4); URLSessionDataTask.cancel/resume/state/progress modelled; bytes/download/publisher members unmodelled"
 urlsession_wasm_tier = "wasm: fetch completes eagerly; delegate+progress replay faithfully; cancel stops delivery only (cannot abort completed fetch)"
-urlsession_task_semantics = "URLSessionDataTask is struct-backed (SwiftValue::Struct); task bindings MUST be `var` — let bindings reject cancel()/resume() mutations; aliases do not observe mutations"
+urlsession_task_semantics = "URLSessionDataTask, URLSession, URLSessionConfiguration, DateFormatter, ISO8601DateFormatter, NumberFormatter, JSONEncoder, JSONDecoder, PropertyListEncoder are Object-backed (SwiftValue::Object, reference semantics); `let` bindings legal; aliases observe mutations; `===` identity holds. See ADR-0012."
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]

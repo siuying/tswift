@@ -243,36 +243,14 @@ True streaming/abort on wasm (SharedArrayBuffer + `Atomics.wait`, or async
 
 ## Known limitations
 
-### URLSessionDataTask value semantics (deferred)
+### URLSessionDataTask value semantics — **superseded by ADR-0012**
 
-`URLSessionDataTask` is backed by `SwiftValue::Struct` (`Rc<StructObj>`), not
-by a class-instance / handle-registry object.  Mutations from `cancel()` /
-`resume()` are written back only to the **bound variable** that last received
-the `Outcome::receiver` write-back — exactly the same as any Swift struct.
-
-This diverges from the Swift stdlib, where `URLSessionDataTask` is a
-**reference type** (class).  The observable effect: an alias or a captured copy
-of a task will not see state changes made on the original binding:
-
-```swift
-var task = session.dataTask(with: url) { ... }
-let snapshot = task   // copies the struct
-task.resume()         // writes .running back to `task`
-// snapshot.state is still .suspended — value semantics, not reference
-```
-
-Fix: back the task through the class-instance / handle-registry machinery (the
-pattern used by SwiftUI session objects in the interpreter).  This requires
-non-trivial interpreter work and is deferred.  Until then:
-
-- Scripts **must** bind tasks to `var`, not `let`.
-- Scripts **must not** rely on alias observation of `state`, `progress`, or
-  byte counters through a captured copy or `let` binding.
-- The `state` field is always accurate for the binding that last received the
-  `Outcome::receiver` write-back (i.e., the `var` that owns the task).
-
-The limitation is documented in `crates/tswift-foundation/src/urlsession.rs`
-(module-level doc comment) and in `notes.md`.
+> **This limitation no longer applies.**  `URLSessionDataTask` (and
+> `Progress`) are now backed by `SwiftValue::Object` (reference semantics)
+> as of the builtin class-backed types migration (ADR-0012).  `let task`
+> bindings are legal; aliases and closure captures observe state changes;
+> `===` identity holds.  See ADR-0012 for the full dispatch seam design and
+> the complete inventory of migrated types.
 
 ### `has_method_on` ignores protocol-extension default methods (known limitation)
 

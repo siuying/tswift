@@ -131,7 +131,7 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 | ✅ 🛡️ | `HTTPURLResponse` | 9 / 16 | all `URLResponse` members, `statusCode`, `allHeaderFields`, `value(forHTTPHeaderField:)`, `localizedString(forStatusCode:)` (standard phrases for 1xx–5xx) |
 | ✅ 🛡️ | `URLError` | 20 / 25 | 20 error codes (`notConnectedToInternet`, `timedOut`, `cannotFindHost`, …), `NSURLError*` constant mapping, `code`, throwable / catchable in `do-catch` |
 | 🟡 | `URLSession` | 6 / 40 | `shared`, `data(from:)`, `data(for:)`, `upload(for:with:)`, `upload(for:from:)`, `dataTask(with:completionHandler:)` — backed by pluggable `HttpTransport` (mock in tests, `ureq`/rustls with `--allow-network`, Apple URLSession via C ABI embed, wasm `globalThis.tswiftHttp` hook) |
-| 🟡 | `URLSessionDataTask` | — | `cancel()`, `resume()`, `state` (`.running/.suspended/.canceling/.completed`), `progress.fractionCompleted`, `countOfBytesReceived`, `countOfBytesExpectedToReceive` — **task bindings must be `var`** (struct-backed; aliases do not observe mutations) |
+| 🟡 | `URLSessionDataTask` | — | `cancel()`, `resume()`, `state` (`.running/.suspended/.canceling/.completed`), `progress.fractionCompleted`, `countOfBytesReceived`, `countOfBytesExpectedToReceive` — reference type (`Object`-backed); `let` bindings legal; aliases and closure captures observe state changes; `===` identity holds |
 | 🟡 | `URLSessionDataDelegate` / `URLSessionTaskDelegate` | — | `urlSession(_:dataTask:didReceive:completionHandler:)` (response disposition), `urlSession(_:dataTask:didReceive:)` (chunk), `urlSession(_:task:didCompleteWithError:)` — dispatched per event; `URLSession.ResponseDisposition` enum (`.allow/.cancel/.becomeDownload/.becomeStream`) |
 
 **Transport matrix**
