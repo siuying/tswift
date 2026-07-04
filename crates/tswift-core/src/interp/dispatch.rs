@@ -1910,4 +1910,85 @@ mod tests {
         // Dispatched the user method (Void), not the sentinel intrinsic (true).
         assert_eq!(out, Some(SwiftValue::Void));
     }
+
+    /// A `URLSessionDataTask`-tagged Object carrying one stored field.
+    fn task_object_with_field(name: &str, value: SwiftValue) -> SwiftValue {
+        SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+            class_name: "URLSessionDataTask".to_string(),
+            fields: vec![(name.to_string(), value)],
+        })))
+    }
+
+    /// A property intrinsic returning a sentinel string, so a test can tell the
+    /// registry getter ran.
+    fn state_property(_recv: SwiftValue) -> Result<SwiftValue, StdError> {
+        Ok(SwiftValue::Str("running".to_string()))
+    }
+
+    /// A ClassDef-less builtin Object resolves a computed property through the
+    /// builtin registry (the `NumberFormatter.numberStyle` shape).
+    #[test]
+    fn builtin_property_getter_reachable_on_classdef_less_object() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        interp.register_property(BuiltinReceiver::URLSessionDataTask, "state", state_property);
+        let obj = task_object();
+        let got = interp.read_object_member(&obj, "state").expect("read");
+        assert_eq!(got, SwiftValue::Str("running".to_string()));
+    }
+
+    /// A raw stored field still wins over the registry: reading a field present
+    /// on the `ClassObj` returns it without consulting the builtin getter.
+    #[test]
+    fn raw_stored_field_readable_on_classdef_less_object() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        // A registry getter for the same name would return "running".
+        interp.register_property(BuiltinReceiver::URLSessionDataTask, "state", state_property);
+        let obj = task_object_with_field("state", SwiftValue::Str("stored".to_string()));
+        let got = interp.read_object_member(&obj, "state").expect("read");
+        assert_eq!(got, SwiftValue::Str("stored".to_string()));
+    }
+
+    /// A user class read is unchanged: the builtin registry is *not* consulted
+    /// (the ClassDef-less gate skips it), so a stored field reads normally and a
+    /// colliding registry getter never shadows it.
+    #[test]
+    fn user_class_member_read_ignores_builtin_registry() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        interp.register_property(BuiltinReceiver::URLSessionDataTask, "state", state_property);
+        // A user class of the same name owning a stored `state` field.
+        interp.types.insert_class(
+            "URLSessionDataTask".to_string(),
+            ClassDef {
+                superclass: None,
+                stored: vec![],
+                weak_fields: vec![],
+                computed: HashMap::new(),
+                methods: HashMap::new(),
+                method_overloads: HashMap::new(),
+                init: None,
+                init_overloads: vec![],
+                deinit: None,
+                static_subscript: None,
+            },
+        );
+        let obj = task_object_with_field("state", SwiftValue::Str("user".to_string()));
+        let got = interp.read_object_member(&obj, "state").expect("read");
+        assert_eq!(got, SwiftValue::Str("user".to_string()));
+    }
+
+    /// A ClassDef-less Object renders in struct form via `render_description`
+    /// (falls through to the `Display` impl) — the golden-fixture-safe shape.
+    #[test]
+    fn classdef_less_object_renders_in_struct_form() {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        let obj = task_object_with_field("count", SwiftValue::int(3));
+        assert_eq!(
+            interp.render_description(&obj),
+            "URLSessionDataTask(count: 3)"
+        );
+    }
 }

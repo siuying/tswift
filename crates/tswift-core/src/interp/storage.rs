@@ -74,6 +74,21 @@ impl<'w> Interpreter<'w> {
             self.class_ctx.pop();
             return r;
         }
+        // Builtin class-backed types (no user `ClassDef`) resolve computed
+        // properties through the same registry the `Struct` read path uses
+        // (`NumberFormatter.numberStyle`, …). Gated on ClassDef-lessness so a
+        // user class never shadows-then-falls-through to a builtin intrinsic;
+        // reachable only once a builtin mints an Object (behavior-preserving).
+        if self.types.class_def(&class_name).is_none() {
+            if let Some(kind) = BuiltinReceiver::of(value) {
+                if let Some(func) = self.builtins.contextual_property(kind, name) {
+                    return func(self, value.clone()).map_err(Self::std_error_to_signal);
+                }
+                if let Some(func) = self.builtins.property(kind, name) {
+                    return func(value.clone()).map_err(Self::std_error_to_signal);
+                }
+            }
+        }
         // An `@objc optional` property requirement the conformer does not
         // implement reads as nil (plain or chained — no chain marker survives
         // parsing; documented permissiveness).

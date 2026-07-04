@@ -290,10 +290,23 @@ impl<'w> Interpreter<'w> {
             }
             SwiftValue::Object(o) => {
                 let cn = o.borrow().class_name.clone();
-                self.class_computed_getter(&cn, "description")
+                // User-defined computed `description` takes priority.
+                let user_desc = self
+                    .class_computed_getter(&cn, "description")
                     .is_some()
                     .then(|| self.read_object_member(value, "description").ok())
-                    .flatten()
+                    .flatten();
+                // A ClassDef-less builtin Object falls back to a registered
+                // builtin `description` (mirrors the `Struct` arm). Absent both,
+                // the `Display` impl renders it in struct form
+                // (`ClassName(field: value, …)`).
+                if user_desc.is_none() && self.types.class_def(&cn).is_none() {
+                    let kind = crate::stdlib::BuiltinReceiver::of(value);
+                    kind.and_then(|k| self.builtins.property(k, "description"))
+                        .and_then(|f| f(value.clone()).ok())
+                } else {
+                    user_desc
+                }
             }
             SwiftValue::Enum(e) => self
                 .types
