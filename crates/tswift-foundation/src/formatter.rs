@@ -6,11 +6,11 @@
 //! `frameworks/foundation/scope.toml`. Formatting/parsing is pure Rust against
 //! the civil-date helpers in [`crate::calendar`].
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext, StdError,
-    StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, ClassObj, Interpreter, IntrinsicFn, MethodEntry, Outcome, StdContext,
+    StdError, StdResult, SwiftValue,
 };
 
 use crate::{
@@ -301,27 +301,45 @@ fn read_int(chars: &[char], start: usize, max: usize) -> Option<(i64, usize)> {
 // DateFormatter
 // ---------------------------------------------------------------------------
 
-fn date_formatter_value(date_format: SwiftValue, date_style: i128, time_style: i128) -> SwiftValue {
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "DateFormatter".into(),
+/// Construct a `DateFormatter` Object (reference semantics — class in real Swift).
+fn date_formatter_object(
+    date_format: SwiftValue,
+    date_style: i128,
+    time_style: i128,
+) -> SwiftValue {
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "DateFormatter".into(),
         fields: vec![
             ("dateFormat".into(), date_format),
             ("dateStyle".into(), SwiftValue::int(date_style)),
             ("timeStyle".into(), SwiftValue::int(time_style)),
         ],
-    }))
+    })))
 }
 
 fn date_formatter_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if !args.is_empty() {
         return Err(type_error("DateFormatter() takes no arguments"));
     }
-    Ok(date_formatter_value(SwiftValue::Nil, 0, 0))
+    Ok(date_formatter_object(SwiftValue::Nil, 0, 0))
 }
 
-fn formatter_obj<'a>(value: &'a SwiftValue, ty: &str) -> Result<&'a Rc<StructObj>, StdError> {
-    match value {
-        SwiftValue::Struct(obj) if obj.type_name == ty => Ok(obj),
+/// Read a named field from either a `SwiftValue::Struct` or `SwiftValue::Object` receiver.
+///
+/// Returns `None` when the receiver is the wrong type or the field is absent.
+fn read_formatter_field(recv: &SwiftValue, ty: &str, field: &str) -> Option<SwiftValue> {
+    match recv {
+        SwiftValue::Struct(obj) if obj.type_name == ty => obj.get(field).cloned(),
+        SwiftValue::Object(o) if o.borrow().class_name == ty => o.borrow().get(field).cloned(),
+        _ => None,
+    }
+}
+
+/// Return `Err` if `recv` is not a `ty` Struct or Object receiver.
+fn check_formatter_recv(recv: &SwiftValue, ty: &str) -> Result<(), StdError> {
+    match recv {
+        SwiftValue::Struct(obj) if obj.type_name == ty => Ok(()),
+        SwiftValue::Object(o) if o.borrow().class_name == ty => Ok(()),
         other => Err(type_error(format!(
             "expected {ty}, got {}",
             other.type_name()
@@ -330,18 +348,18 @@ fn formatter_obj<'a>(value: &'a SwiftValue, ty: &str) -> Result<&'a Rc<StructObj
 }
 
 fn date_formatter_date_format(recv: SwiftValue) -> StdResult {
-    let obj = formatter_obj(&recv, "DateFormatter")?;
-    Ok(obj.get("dateFormat").cloned().unwrap_or(SwiftValue::Nil))
+    check_formatter_recv(&recv, "DateFormatter")?;
+    Ok(read_formatter_field(&recv, "DateFormatter", "dateFormat").unwrap_or(SwiftValue::Nil))
 }
 
 fn date_formatter_date_style(recv: SwiftValue) -> StdResult {
-    let obj = formatter_obj(&recv, "DateFormatter")?;
-    Ok(obj.get("dateStyle").cloned().unwrap_or(SwiftValue::int(0)))
+    check_formatter_recv(&recv, "DateFormatter")?;
+    Ok(read_formatter_field(&recv, "DateFormatter", "dateStyle").unwrap_or(SwiftValue::int(0)))
 }
 
 fn date_formatter_time_style(recv: SwiftValue) -> StdResult {
-    let obj = formatter_obj(&recv, "DateFormatter")?;
-    Ok(obj.get("timeStyle").cloned().unwrap_or(SwiftValue::int(0)))
+    check_formatter_recv(&recv, "DateFormatter")?;
+    Ok(read_formatter_field(&recv, "DateFormatter", "timeStyle").unwrap_or(SwiftValue::int(0)))
 }
 
 /// Resolve a style field that may be stored as an `Int` or a `.style` enum.
@@ -379,12 +397,18 @@ fn time_style_pattern(style: i64) -> &'static str {
 }
 
 /// The effective pattern: an explicit `dateFormat`, else date/time styles.
-fn effective_pattern(obj: &Rc<StructObj>) -> String {
-    if let Some(SwiftValue::Str(fmt)) = obj.get("dateFormat") {
+///
+/// Accepts both `SwiftValue::Struct` and `SwiftValue::Object` receivers.
+fn effective_pattern(recv: &SwiftValue) -> String {
+    if let Some(SwiftValue::Str(fmt)) = read_formatter_field(recv, "DateFormatter", "dateFormat") {
         return fmt.to_string();
     }
-    let date = date_style_pattern(style_ordinal(obj.get("dateStyle")));
-    let time = time_style_pattern(style_ordinal(obj.get("timeStyle")));
+    let date = date_style_pattern(style_ordinal(
+        read_formatter_field(recv, "DateFormatter", "dateStyle").as_ref(),
+    ));
+    let time = time_style_pattern(style_ordinal(
+        read_formatter_field(recv, "DateFormatter", "timeStyle").as_ref(),
+    ));
     match (date.is_empty(), time.is_empty()) {
         (false, false) => format!("{date} {time}"),
         (false, true) => date.to_string(),
@@ -403,8 +427,8 @@ fn date_formatter_string(
             "DateFormatter.string(from:) expects one argument",
         ));
     };
-    let obj = formatter_obj(&recv, "DateFormatter")?;
-    let pattern = effective_pattern(obj);
+    check_formatter_recv(&recv, "DateFormatter")?;
+    let pattern = effective_pattern(&recv);
     let civil = decompose(date_seconds(date)?);
     Ok(Outcome {
         result: SwiftValue::Str(format_pattern(&civil, &pattern)),
@@ -422,8 +446,8 @@ fn date_formatter_date(
             "DateFormatter.date(from:) expects a String argument",
         ));
     };
-    let obj = formatter_obj(&recv, "DateFormatter")?;
-    let pattern = effective_pattern(obj);
+    check_formatter_recv(&recv, "DateFormatter")?;
+    let pattern = effective_pattern(&recv);
     let result = match parse_pattern(input, &pattern) {
         Some(seconds) => date_value(seconds),
         None => SwiftValue::Nil,
@@ -440,11 +464,12 @@ fn date_formatter_date(
 
 const ISO8601_PATTERN: &str = "yyyy-MM-dd'T'HH:mm:ss";
 
-fn iso8601_value(options: i128) -> SwiftValue {
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "ISO8601DateFormatter".into(),
+/// Construct an `ISO8601DateFormatter` Object (reference semantics — class in real Swift).
+fn iso8601_object(options: i128) -> SwiftValue {
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "ISO8601DateFormatter".into(),
         fields: vec![("formatOptions".into(), SwiftValue::int(options))],
-    }))
+    })))
 }
 
 fn iso8601_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
@@ -452,15 +477,15 @@ fn iso8601_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         return Err(type_error("ISO8601DateFormatter() takes no arguments"));
     }
     // 1 == `.withInternetDateTime`, the Darwin default.
-    Ok(iso8601_value(1))
+    Ok(iso8601_object(1))
 }
 
 fn iso8601_format_options(recv: SwiftValue) -> StdResult {
-    let obj = formatter_obj(&recv, "ISO8601DateFormatter")?;
-    Ok(obj
-        .get("formatOptions")
-        .cloned()
-        .unwrap_or(SwiftValue::int(1)))
+    check_formatter_recv(&recv, "ISO8601DateFormatter")?;
+    Ok(
+        read_formatter_field(&recv, "ISO8601DateFormatter", "formatOptions")
+            .unwrap_or(SwiftValue::int(1)),
+    )
 }
 
 fn iso8601_string(
@@ -506,7 +531,19 @@ fn iso8601_date(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::REFERENCE_DATE_UNIX_OFFSET;
+    use crate::{date_value, REFERENCE_DATE_UNIX_OFFSET};
+
+    /// Minimal `StdContext` for formatter unit tests: formatters never invoke
+    /// closures or write output, so both required methods are unreachable.
+    struct PanicCtx;
+    impl StdContext for PanicCtx {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> StdResult {
+            unreachable!("formatter helpers never call closures")
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            unreachable!("formatter helpers never write output")
+        }
+    }
 
     fn civil_at(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64) -> Civil {
         decompose(ref_seconds_from_ymdhms(y, mo, d, h, mi, s))
@@ -537,6 +574,60 @@ mod tests {
         let parsed = parse_pattern("2024-06-29 09:04:05", "yyyy-MM-dd HH:mm:ss").unwrap();
         assert_eq!(parsed, seconds);
     }
+
+    // ----- Phase 2 reference-semantics tests --------------------------------
+
+    #[test]
+    fn date_formatter_init_returns_object() {
+        let result = date_formatter_init(&mut PanicCtx, vec![]).unwrap();
+        assert!(
+            matches!(&result, SwiftValue::Object(o) if o.borrow().class_name == "DateFormatter"),
+            "expected Object with class_name DateFormatter, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn iso8601_init_returns_object() {
+        let result = iso8601_init(&mut PanicCtx, vec![]).unwrap();
+        assert!(
+            matches!(&result, SwiftValue::Object(o)
+                if o.borrow().class_name == "ISO8601DateFormatter"),
+            "expected Object with class_name ISO8601DateFormatter, got {result:?}"
+        );
+    }
+
+    /// `let f = DateFormatter()` — an alias of `f` observes a property mutation
+    /// written through the alias (reference semantics, Swift class behaviour).
+    #[test]
+    fn date_formatter_alias_observes_property_change() {
+        let f = date_formatter_object(SwiftValue::Nil, 0, 0);
+        let alias = f.clone(); // shallow Rc clone — same ClassObj
+        if let SwiftValue::Object(o) = &alias {
+            o.borrow_mut()
+                .set("dateFormat", SwiftValue::Str("yyyy".into()));
+        } else {
+            panic!("alias was not Object");
+        }
+        // The original binding must see the mutation.
+        let field = read_formatter_field(&f, "DateFormatter", "dateFormat");
+        assert_eq!(
+            field,
+            Some(SwiftValue::Str("yyyy".into())),
+            "original did not observe alias mutation"
+        );
+    }
+
+    /// `string(from:)` uses the `dateFormat` stored in the Object, so a
+    /// property set before the call is reflected in the output.
+    #[test]
+    fn date_formatter_string_reflects_object_date_format() {
+        let obj = date_formatter_object(SwiftValue::Str("yyyy-MM-dd".into()), 0, 0);
+        let date = date_value(ref_seconds_from_ymdhms(2024, 6, 29, 0, 0, 0));
+        let out = date_formatter_string(&mut PanicCtx, obj, vec![date]).unwrap();
+        assert_eq!(out.result, SwiftValue::Str("2024-06-29".into()));
+    }
+
+    // ----- existing tests (unchanged) ---------------------------------------
 
     #[test]
     fn iso8601_emits_internet_date_time() {
