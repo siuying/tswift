@@ -9,49 +9,35 @@
 //! Between events the driver polls [`StdContext::current_task_cancelled`] so
 //! a containing `Task.cancel()` triggers `URLError(.cancelled)`.
 //!
-//! `URLSessionDataTask` is modelled as a `SwiftValue::Struct` whose mutable
-//! state (`state`, counters, `progress`, `_cancelled`) lives in struct fields.
-//! The `cancel()` / `resume()` intrinsics write the updated receiver back via
-//! the normal `Outcome` mechanism — no interior-mutable class machinery needed.
+//! `URLSessionDataTask` is backed by `SwiftValue::Object(Rc<RefCell<ClassObj>>)` —
+//! reference semantics matching the real Foundation class.  `cancel()` and
+//! `resume()` mutate the shared `ClassObj` through the `RefCell` in place;
+//! they are registered `mutating: false` so the interpreter does not attempt a
+//! struct write-back and `let task = ...` bindings are legal.
+//!
+//! The `progress` field holds a **shared** `SwiftValue::Object` for `Progress`.
+//! Aliases of `task.progress` taken before `resume()` observe the completed
+//! fraction after `resume()` returns because they share the same `Rc`.
 //!
 //! Transport failures surface as thrown `URLError` values; a missing transport
 //! (sandboxed embedding) is an interpreter error so scripts cannot confuse
 //! "no network capability" with a network failure.
 //!
-//! ## ⚠ VALUE-SEMANTICS LIMITATION — `URLSessionDataTask`
+//! ## RefCell borrow discipline
 //!
-//! **TL;DR:** bind tasks to `var`, never `let`; do not alias through closures
-//! and expect the alias to observe `resume()`/`cancel()` mutations.
-//!
-//! `URLSessionDataTask` is backed by `SwiftValue::Struct` (`Rc<StructObj>`).
-//! Mutations made by `cancel()` / `resume()` are written back to the
-//! **bound variable** through the `Outcome::receiver` mechanism — exactly as
-//! for any other Swift struct.  This diverges from the Swift stdlib where
-//! `URLSessionDataTask` is a **reference type** (class), meaning every alias
-//! sees the same mutable state:
-//!
-//! ```swift
-//! var task = session.dataTask(with: url) { ... }
-//! let snapshot = task   // copies the struct — snapshot.state stays .suspended
-//! task.resume()         // writes .running back to `task` only
-//! // ⚠ snapshot.state is still .suspended — alias did NOT observe the change
-//! ```
-//!
-//! Fixing this requires backing the task through the class-instance /
-//! handle-registry machinery (the same pattern used by SwiftUI session
-//! objects).  That work is deferred and tracked as a known limitation in
-//! ADR-0011 §Known limitations.  Until then:
-//! - Scripts **must** bind tasks to `var`.
-//! - Scripts **must not** pass a task into a closure and call `resume()` on the
-//!   outer binding expecting the closure to observe the new state.
-//! - The `state` field read via `task.state` is always accurate for the
-//!   binding that last received the `Outcome::receiver` write-back.
+//! **Never hold a `borrow()` or `borrow_mut()` across a call into
+//! [`StdContext`]** (e.g. `ctx.call_closure`, `run_event_driver`,
+//! `ctx.call_method_on`).  Re-entrant script code may try to access the same
+//! task Object through a closure capture, which would panic on the second
+//! borrow.  Always copy needed field values out of the borrow, drop it, then
+//! call into the context.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EvalError, HttpError, HttpEvent, HttpRequest, LabeledMethodEntry,
-    MethodEntry, Outcome, StdContext, StdError, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, ClassObj, EvalError, HttpError, HttpEvent, HttpRequest,
+    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StructObj, SwiftValue,
 };
 
 use crate::network::{http_url_response_value, url_error_value};
@@ -124,11 +110,14 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     );
 
     // ---- URLSessionDataTask ----
+    // `mutating: false` — task is an Object (reference type); cancel/resume
+    // mutate the shared ClassObj in place through the RefCell.  No struct
+    // write-back is needed, and `let task = ...` bindings are legal.
     interp.register_intrinsic(
         BuiltinReceiver::URLSessionDataTask,
         "cancel",
         MethodEntry {
-            mutating: true,
+            mutating: false,
             func: task_cancel,
         },
     );
@@ -136,7 +125,7 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         BuiltinReceiver::URLSessionDataTask,
         "resume",
         MethodEntry {
-            mutating: true,
+            mutating: false,
             func: task_resume,
         },
     );
@@ -808,15 +797,23 @@ fn task_state_value(case_name: &str) -> SwiftValue {
     }))
 }
 
-/// Build a `Progress` struct with the given `fractionCompleted`.
-fn progress_value(fraction: f64) -> SwiftValue {
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "Progress".into(),
+/// Build a `Progress` Object with the given `fractionCompleted`.
+///
+/// Returns `SwiftValue::Object` (reference semantics) so that aliases of
+/// `task.progress` taken before `resume()` observe the updated fraction after
+/// the request completes — they share the same `Rc`.
+fn progress_object(fraction: f64) -> SwiftValue {
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "Progress".into(),
         fields: vec![("fractionCompleted".into(), SwiftValue::Double(fraction))],
-    }))
+    })))
 }
 
-/// Build a fresh suspended `URLSessionDataTask` struct.
+/// Build a fresh suspended `URLSessionDataTask` Object.
+///
+/// Returns `SwiftValue::Object` (reference semantics), matching the real
+/// Foundation class.  `cancel()` and `resume()` mutate the shared `ClassObj`
+/// in place through the `RefCell`; `let task = ...` bindings are legal.
 ///
 /// `req_value` is a `URLRequest` struct (or URL to be lowered at resume time).
 /// `session_value` is the owning `URLSession` (stored so `task_resume` can
@@ -825,8 +822,8 @@ fn progress_value(fraction: f64) -> SwiftValue {
 /// completion handler; `-1` means no handler.
 fn task_value(req_value: SwiftValue, session_value: SwiftValue, closure_id: i128) -> SwiftValue {
     let timeout = session_timeout(&session_value);
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: "URLSessionDataTask".into(),
+    SwiftValue::Object(Rc::new(RefCell::new(ClassObj {
+        class_name: "URLSessionDataTask".into(),
         fields: vec![
             // Private: request, session, closure
             ("_req".into(), req_value),
@@ -842,9 +839,10 @@ fn task_value(req_value: SwiftValue, session_value: SwiftValue, closure_id: i128
             ("state".into(), task_state_value("suspended")),
             ("countOfBytesReceived".into(), SwiftValue::int(0)),
             ("countOfBytesExpectedToReceive".into(), SwiftValue::int(-1)),
-            ("progress".into(), progress_value(0.0)),
+            // Shared Progress object — aliases observe mutations in place.
+            ("progress".into(), progress_object(0.0)),
         ],
-    }))
+    })))
 }
 
 /// `URLSession.dataTask(with: URL|URLRequest, completionHandler: ...)`.
@@ -900,6 +898,10 @@ fn session_data_task(
 
 /// `URLSessionDataTask.cancel()` — mark the task as canceling.
 ///
+/// Mutates the shared `ClassObj` in place through the `RefCell`.
+/// Registered `mutating: false` — no struct write-back occurs, so
+/// `let task = ...` bindings are legal (reference semantics).
+///
 /// If `resume()` has not been called yet, the next `resume()` will complete
 /// with `URLError(.cancelled)` without touching the transport.
 fn task_cancel(
@@ -907,57 +909,119 @@ fn task_cancel(
     recv: SwiftValue,
     _args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
-    let SwiftValue::Struct(ref task) = recv else {
-        return Ok(Outcome {
-            result: SwiftValue::Void,
-            receiver: recv,
-        });
+    // Clone the Rc so `recv` is free to move into Outcome later.
+    let obj = match &recv {
+        SwiftValue::Object(o) => Rc::clone(o),
+        _ => {
+            return Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: recv,
+            })
+        }
     };
     // Idempotent: already canceling or completed — no-op.
-    let already_done = matches!(
-        task.get("state"),
-        Some(SwiftValue::Enum(e)) if e.case == "canceling" || e.case == "completed"
-    );
-    if already_done {
-        return Ok(Outcome {
-            result: SwiftValue::Void,
-            receiver: recv,
-        });
+    {
+        let task = obj.borrow();
+        if task.class_name != "URLSessionDataTask" {
+            return Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: recv,
+            });
+        }
+        let already_done = matches!(
+            task.get("state"),
+            Some(SwiftValue::Enum(e)) if e.case == "canceling" || e.case == "completed"
+        );
+        if already_done {
+            return Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: recv,
+            });
+        }
     }
-    let mut updated: StructObj = (**task).clone();
-    updated.set("_cancelled", SwiftValue::Bool(true));
-    updated.set("state", task_state_value("canceling"));
+    // Mutate in place — reference semantics: all aliases observe the change.
+    {
+        let mut task = obj.borrow_mut();
+        task.set("_cancelled", SwiftValue::Bool(true));
+        task.set("state", task_state_value("canceling"));
+    }
     Ok(Outcome {
         result: SwiftValue::Void,
-        receiver: SwiftValue::Struct(Rc::new(updated)),
+        receiver: recv,
     })
 }
 
 /// `URLSessionDataTask.resume()` — drive the event loop then invoke the
 /// completion handler.
 ///
+/// Mutates the shared `ClassObj` in place through the `RefCell`.
+/// Registered `mutating: false` — no struct write-back occurs, so
+/// `let task = ...` bindings are legal (reference semantics).
+///
 /// State transitions: `suspended` → `running` → `completed` (or `canceling`
 /// if cancelled).
+///
+/// # Borrow discipline
+///
+/// All `RefCell` borrows are acquired in a short block, fields are copied out,
+/// and the borrow is dropped **before** any call into `ctx` (closure, driver,
+/// method dispatch).  Re-entrant script code accessing the same task Object
+/// through a capture therefore never encounters a live borrow.
 fn task_resume(
     ctx: &mut dyn StdContext,
     recv: SwiftValue,
     _args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
-    let SwiftValue::Struct(ref task) = recv else {
-        return Ok(Outcome {
-            result: SwiftValue::Void,
-            receiver: recv,
-        });
+    // Clone the Rc so `recv` is free to move into Outcome later.
+    let obj = match &recv {
+        SwiftValue::Object(o) => Rc::clone(o),
+        _ => {
+            return Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: recv,
+            })
+        }
     };
 
-    // State guard: Foundation semantics — resume() on a running or completed
-    // task is a no-op.  A .canceling task is allowed to proceed so that the
-    // pre-flight cancel path (pre_cancelled flag below) can deliver URLError
-    // to the completion handler, matching Foundation behaviour.
-    let should_proceed = matches!(
-        task.get("state"),
-        Some(SwiftValue::Enum(e)) if e.case == "suspended" || e.case == "canceling"
-    );
+    // --- Copy fields out before any context call (borrow discipline). ---
+    let (should_proceed, closure_id, req_value, task_session, session_timeout_val, pre_cancelled) = {
+        let task = obj.borrow();
+        if task.class_name != "URLSessionDataTask" {
+            return Ok(Outcome {
+                result: SwiftValue::Void,
+                receiver: recv,
+            });
+        }
+        // State guard: Foundation semantics — resume() on a running or completed
+        // task is a no-op.  A .canceling task is allowed to proceed so that the
+        // pre-flight cancel path (pre_cancelled flag below) can deliver URLError
+        // to the completion handler, matching Foundation behaviour.
+        let should_proceed = matches!(
+            task.get("state"),
+            Some(SwiftValue::Enum(e)) if e.case == "suspended" || e.case == "canceling"
+        );
+        let closure_id = match task.get("_closure_id") {
+            Some(SwiftValue::Int(i)) => i.raw,
+            _ => -1,
+        };
+        let req_value = task.get("_req").cloned().unwrap_or(SwiftValue::Nil);
+        let task_session = task.get("_session").cloned().unwrap_or(SwiftValue::Nil);
+        let session_timeout_val = match task.get("_session_timeout") {
+            Some(SwiftValue::Double(d)) => *d,
+            _ => 60.0,
+        };
+        let pre_cancelled = matches!(task.get("_cancelled"), Some(SwiftValue::Bool(true)));
+        (
+            should_proceed,
+            closure_id,
+            req_value,
+            task_session,
+            session_timeout_val,
+            pre_cancelled,
+        )
+        // borrow dropped here
+    };
+
     if !should_proceed {
         return Ok(Outcome {
             result: SwiftValue::Void,
@@ -965,20 +1029,6 @@ fn task_resume(
         });
     }
 
-    // Extract closure id (-1 → no handler).
-    let closure_id = match task.get("_closure_id") {
-        Some(SwiftValue::Int(i)) => i.raw,
-        _ => -1,
-    };
-
-    // Extract the stored URLRequest and the back-reference to the owning session
-    // (used to access the delegate for M4 per-event callbacks).
-    let req_value = task.get("_req").cloned().unwrap_or(SwiftValue::Nil);
-    let task_session = task.get("_session").cloned().unwrap_or(SwiftValue::Nil);
-    let session_timeout_val = match task.get("_session_timeout") {
-        Some(SwiftValue::Double(d)) => *d,
-        _ => 60.0,
-    };
     // Ensure the URLRequest has its timeoutInterval set to the session timeout
     // when not explicitly overridden.
     let mut req = lower_request(&req_value)?;
@@ -987,12 +1037,10 @@ fn task_resume(
     }
 
     // Pre-flight cancel: deliver URLError(.cancelled) to the handler without
-    // touching the transport.
-    let pre_cancelled = matches!(task.get("_cancelled"), Some(SwiftValue::Bool(true)));
+    // touching the transport.  Short borrow dropped before call_closure.
     if pre_cancelled {
-        let mut updated: StructObj = (**task).clone();
-        updated.set("state", task_state_value("completed"));
-        let updated_recv = SwiftValue::Struct(Rc::new(updated));
+        obj.borrow_mut().set("state", task_state_value("completed"));
+        // borrow_mut dropped before call_closure
         if closure_id >= 0 {
             let err = url_error_value("cancelled", crate::url::url_value(req.url));
             ctx.call_closure(
@@ -1002,19 +1050,17 @@ fn task_resume(
         }
         return Ok(Outcome {
             result: SwiftValue::Void,
-            receiver: updated_recv,
+            receiver: recv,
         });
     }
 
-    // Mark running.
-    let mut updated: StructObj = (**task).clone();
-    updated.set("state", task_state_value("running"));
+    // Mark running — short borrow, dropped before run_event_driver.
+    obj.borrow_mut().set("state", task_state_value("running"));
 
-    // Drive the event loop, passing the task's owning session so the driver
-    // can dispatch delegate callbacks (M4). Use the current (running) task
-    // receiver as the task argument to delegate callbacks.
-    let running_task = SwiftValue::Struct(Rc::new(updated.clone()));
-    match run_event_driver(ctx, &req, &task_session, &running_task) {
+    // Drive the event loop, passing `recv` as the live task Object so
+    // delegate callbacks receive the shared reference (M4).  The borrow is
+    // fully released above — no live borrow crosses into run_event_driver.
+    match run_event_driver(ctx, &req, &task_session, &recv) {
         Ok(outcome) => {
             let bytes_received = outcome.bytes_received;
             let bytes_expected = outcome.bytes_expected;
@@ -1031,22 +1077,34 @@ fn task_resume(
             );
             let data = data_value(outcome.body);
 
-            // Update counters and progress on the task struct.
-            updated.set(
-                "countOfBytesReceived",
-                SwiftValue::int(bytes_received as i128),
-            );
-            updated.set(
-                "countOfBytesExpectedToReceive",
-                SwiftValue::int(if bytes_expected >= 0 {
-                    bytes_expected as i128
+            // Mutate counters, progress, and state in place — all aliases
+            // observe the final state.  Short borrow dropped before call_closure.
+            {
+                let mut task = obj.borrow_mut();
+                task.set(
+                    "countOfBytesReceived",
+                    SwiftValue::int(bytes_received as i128),
+                );
+                task.set(
+                    "countOfBytesExpectedToReceive",
+                    SwiftValue::int(if bytes_expected >= 0 {
+                        bytes_expected as i128
+                    } else {
+                        -1
+                    }),
+                );
+                // Update the shared Progress object in place so aliases of
+                // task.progress observe the new fraction.
+                if let Some(SwiftValue::Object(prog_obj)) = task.get("progress") {
+                    prog_obj
+                        .borrow_mut()
+                        .set("fractionCompleted", SwiftValue::Double(fraction));
                 } else {
-                    -1
-                }),
-            );
-            updated.set("progress", progress_value(fraction));
-            updated.set("state", task_state_value("completed"));
-            let updated_recv = SwiftValue::Struct(Rc::new(updated));
+                    task.set("progress", progress_object(fraction));
+                }
+                task.set("state", task_state_value("completed"));
+            }
+            // borrow_mut dropped — safe to call into ctx now.
 
             // Invoke completion handler: (Data, URLResponse, nil).
             if closure_id >= 0 {
@@ -1055,13 +1113,13 @@ fn task_resume(
 
             Ok(Outcome {
                 result: SwiftValue::Void,
-                receiver: updated_recv,
+                receiver: recv,
             })
         }
         Err(err) => {
             // Transport error: mark task completed, deliver error to handler.
-            updated.set("state", task_state_value("completed"));
-            let updated_recv = SwiftValue::Struct(Rc::new(updated));
+            // Short borrow dropped before call_closure.
+            obj.borrow_mut().set("state", task_state_value("completed"));
 
             let error_value = match &err {
                 StdError::Throw(v) => v.clone(),
@@ -1080,7 +1138,7 @@ fn task_resume(
             // the handler, not re-thrown to the call site).
             Ok(Outcome {
                 result: SwiftValue::Void,
-                receiver: updated_recv,
+                receiver: recv,
             })
         }
     }
@@ -1462,11 +1520,13 @@ mod tests {
         );
         let mut ctx = HttpEventCtx::new(vec![]);
         let outcome = task_cancel(&mut ctx, task, vec![]).unwrap();
-        let SwiftValue::Struct(updated) = &outcome.receiver else {
-            panic!("expected struct receiver");
+        // With Object backing, receiver is the same Rc — inspect through borrow.
+        let SwiftValue::Object(obj) = &outcome.receiver else {
+            panic!("expected Object receiver");
         };
-        assert_eq!(updated.get("_cancelled"), Some(&SwiftValue::Bool(true)));
-        let state = updated.get("state");
+        let task_ref = obj.borrow();
+        assert_eq!(task_ref.get("_cancelled"), Some(&SwiftValue::Bool(true)));
+        let state = task_ref.get("state");
         assert!(
             matches!(state, Some(SwiftValue::Enum(e)) if e.case == "canceling"),
             "expected state=canceling, got {state:?}"
@@ -1496,13 +1556,13 @@ mod tests {
             panic!("expected URLError struct as third arg, got {:?}", args[2]);
         };
         assert_eq!(err_struct.type_name, "URLError");
-        // State should be completed.
-        let SwiftValue::Struct(task_struct) = &outcome.receiver else {
-            panic!("expected struct receiver after resume");
+        // State should be completed — read through the Object borrow.
+        let SwiftValue::Object(obj) = &outcome.receiver else {
+            panic!("expected Object receiver after resume");
         };
-        let state = task_struct.get("state");
+        let state = obj.borrow().get("state").cloned();
         assert!(
-            matches!(state, Some(SwiftValue::Enum(e)) if e.case == "completed"),
+            matches!(state, Some(SwiftValue::Enum(ref e)) if e.case == "completed"),
             "expected state=completed, got {state:?}"
         );
     }
@@ -1536,18 +1596,23 @@ mod tests {
         assert_eq!(resp.type_name, "HTTPURLResponse");
         assert_eq!(args[2], SwiftValue::Nil, "error should be nil");
 
-        // Task state updated.
-        let SwiftValue::Struct(t) = &outcome.receiver else {
-            panic!("expected struct");
+        // Task state updated — read through the Object borrow.
+        let SwiftValue::Object(obj) = &outcome.receiver else {
+            panic!("expected Object receiver");
         };
-        assert_eq!(t.get("countOfBytesReceived"), Some(&SwiftValue::int(5)));
+        let task_ref = obj.borrow();
         assert_eq!(
-            t.get("countOfBytesExpectedToReceive"),
+            task_ref.get("countOfBytesReceived"),
             Some(&SwiftValue::int(5))
         );
-        let state = t.get("state");
+        assert_eq!(
+            task_ref.get("countOfBytesExpectedToReceive"),
+            Some(&SwiftValue::int(5))
+        );
+        let state = task_ref.get("state").cloned();
+        drop(task_ref);
         assert!(
-            matches!(state, Some(SwiftValue::Enum(e)) if e.case == "completed"),
+            matches!(state, Some(SwiftValue::Enum(ref e)) if e.case == "completed"),
             "expected completed, got {state:?}"
         );
     }
@@ -1714,7 +1779,9 @@ mod tests {
 
         // Second resume: state is .completed → state guard returns early, no
         // transport call, no additional handler invocation.
-        let completed_task = out1.receiver;
+        // With Object backing, out1.receiver is the same Rc — clone it to get
+        // a second handle pointing to the same ClassObj.
+        let completed_task = out1.receiver.clone();
         let _out2 = task_resume(&mut ctx, completed_task, vec![]).unwrap();
         assert_eq!(
             ctx.start_count, 1,
@@ -1753,18 +1820,24 @@ mod tests {
         let args = &ctx.calls[0].1;
         assert_eq!(data_bytes(&args[0]).unwrap(), b"chunk1chunk2".to_vec());
 
-        let SwiftValue::Struct(t) = &outcome.receiver else {
-            panic!("expected struct");
+        let SwiftValue::Object(obj) = &outcome.receiver else {
+            panic!("expected Object receiver");
         };
-        assert_eq!(t.get("countOfBytesReceived"), Some(&SwiftValue::int(12)));
+        let task_ref = obj.borrow();
         assert_eq!(
-            t.get("countOfBytesExpectedToReceive"),
+            task_ref.get("countOfBytesReceived"),
             Some(&SwiftValue::int(12))
         );
-        let prog = t.get("progress");
+        assert_eq!(
+            task_ref.get("countOfBytesExpectedToReceive"),
+            Some(&SwiftValue::int(12))
+        );
+        // progress is a shared Object — read fractionCompleted through its borrow.
+        let prog = task_ref.get("progress").cloned();
+        drop(task_ref);
         assert!(
-            matches!(prog, Some(SwiftValue::Struct(s)) if {
-                matches!(s.get("fractionCompleted"), Some(SwiftValue::Double(f)) if (*f - 1.0).abs() < 1e-9)
+            matches!(&prog, Some(SwiftValue::Object(s)) if {
+                matches!(s.borrow().get("fractionCompleted"), Some(SwiftValue::Double(f)) if (*f - 1.0).abs() < 1e-9)
             }),
             "expected fractionCompleted=1.0, got {prog:?}"
         );
@@ -1975,6 +2048,136 @@ mod tests {
         assert!(
             matches!(err, StdError::Error(_)),
             "expected StdError propagated from chunk delegate, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 1 — reference-semantics tests
+    // -----------------------------------------------------------------------
+
+    /// `let task = ...; task.resume()` is legal and leaves the task completed.
+    #[test]
+    fn let_bound_task_can_be_resumed() {
+        let mut ctx = HttpEventCtx::new(vec![MockRoute {
+            method: "GET".into(),
+            url: "https://example.com/ref".into(),
+            outcome: Ok(ok_resp(200, b"ref")),
+        }]);
+        // task_value now returns an Object — no `var` required.
+        let task = task_value(
+            request_value("https://example.com/ref"),
+            session_value(configuration_value()),
+            0,
+        );
+        let _outcome = task_resume(&mut ctx, task.clone(), vec![]).unwrap();
+        // The original `task` binding (same Rc) must show state=completed.
+        let SwiftValue::Object(obj) = &task else {
+            panic!("expected Object");
+        };
+        let state = obj.borrow().get("state").cloned();
+        assert!(
+            matches!(state, Some(SwiftValue::Enum(ref e)) if e.case == "completed"),
+            "let-bound task should be completed after resume, got {state:?}"
+        );
+    }
+
+    /// An alias taken before `resume()` observes `completed` after it returns.
+    #[test]
+    fn alias_observes_state_after_resume() {
+        let mut ctx = HttpEventCtx::new(vec![MockRoute {
+            method: "GET".into(),
+            url: "https://example.com/alias".into(),
+            outcome: Ok(ok_resp(200, b"alias")),
+        }]);
+        let task = task_value(
+            request_value("https://example.com/alias"),
+            session_value(configuration_value()),
+            1,
+        );
+        // alias shares the same Rc.
+        let alias = task.clone();
+        task_resume(&mut ctx, task, vec![]).unwrap();
+        // alias must now see state=completed (reference semantics).
+        let SwiftValue::Object(obj) = &alias else {
+            panic!("expected Object alias");
+        };
+        let state = obj.borrow().get("state").cloned();
+        assert!(
+            matches!(state, Some(SwiftValue::Enum(ref e)) if e.case == "completed"),
+            "alias should observe completed after resume, got {state:?}"
+        );
+    }
+
+    /// cancel-then-resume delivers `URLError(.cancelled)` to the handler.
+    #[test]
+    fn cancel_then_resume_delivers_url_error_cancelled() {
+        let task = task_value(
+            request_value("https://example.com/cancel-resume"),
+            session_value(configuration_value()),
+            5,
+        );
+        let mut ctx = HttpEventCtx::new(vec![]);
+        task_cancel(&mut ctx, task.clone(), vec![]).unwrap();
+        // cancel mutated in place — use the same task value.
+        task_resume(&mut ctx, task, vec![]).unwrap();
+        assert_eq!(ctx.calls.len(), 1, "expected one handler call");
+        let args = &ctx.calls[0].1;
+        assert_eq!(args[0], SwiftValue::Nil, "data should be nil on cancel");
+        assert_eq!(args[1], SwiftValue::Nil, "response should be nil on cancel");
+        let SwiftValue::Struct(err_struct) = &args[2] else {
+            panic!("expected URLError struct, got {:?}", args[2]);
+        };
+        assert_eq!(err_struct.type_name, "URLError");
+        assert!(
+            matches!(err_struct.get("code"), Some(SwiftValue::Enum(e)) if e.case == "cancelled"),
+            "expected URLError(.cancelled), got {:?}",
+            err_struct.get("code")
+        );
+    }
+
+    /// Two `dataTask` calls produce distinct Objects (not `Rc::ptr_eq`).
+    #[test]
+    fn two_data_tasks_are_distinct_objects() {
+        let mut ctx = HttpEventCtx::new(vec![]);
+        let session = session_value(configuration_value());
+        let out1 = session_data_task(
+            &mut ctx,
+            session.clone(),
+            vec![
+                Arg {
+                    label: Some("with".into()),
+                    value: request_value("https://a.example.com/"),
+                },
+                Arg {
+                    label: None,
+                    value: SwiftValue::Closure(0),
+                },
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        let out2 = session_data_task(
+            &mut ctx,
+            session,
+            vec![
+                Arg {
+                    label: Some("with".into()),
+                    value: request_value("https://b.example.com/"),
+                },
+                Arg {
+                    label: None,
+                    value: SwiftValue::Closure(1),
+                },
+            ],
+        )
+        .unwrap()
+        .unwrap();
+        let (SwiftValue::Object(a), SwiftValue::Object(b)) = (&out1.result, &out2.result) else {
+            panic!("expected two Object tasks");
+        };
+        assert!(
+            !Rc::ptr_eq(a, b),
+            "two dataTask calls must return distinct Objects"
         );
     }
 }
