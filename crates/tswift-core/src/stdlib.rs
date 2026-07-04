@@ -124,15 +124,73 @@ pub trait StdContext {
         0.0
     }
 
-    /// Perform an HTTP request through the embedding's configured transport
-    /// (the seam behind `URLSession`). The default reports that no transport
-    /// is available; the interpreter overrides it to delegate to the transport
-    /// installed with [`crate::Interpreter::set_http_transport`].
-    fn perform_http(
+    /// Start an HTTP request, returning an opaque task handle. The default
+    /// reports unavailable; the interpreter overrides it to delegate to the
+    /// transport installed with [`crate::Interpreter::set_http_transport`].
+    fn http_start(
         &mut self,
         _req: &crate::http::HttpRequest,
-    ) -> Result<crate::http::HttpResponse, crate::http::HttpError> {
+    ) -> Result<crate::http::HttpTaskHandle, crate::http::HttpError> {
         Err(crate::http::HttpError::Unavailable)
+    }
+
+    /// Block until the next event for task `h`. The default returns a
+    /// `Failed` sentinel; the interpreter overrides it.
+    fn http_next_event(&mut self, _h: crate::http::HttpTaskHandle) -> crate::http::HttpEvent {
+        crate::http::HttpEvent::Failed {
+            code: "unsupported".into(),
+            message: "HTTP transport unavailable".into(),
+        }
+    }
+
+    /// Best-effort cancel the task identified by `h`. The default is a no-op;
+    /// the interpreter overrides it.
+    fn http_cancel(&mut self, _h: crate::http::HttpTaskHandle) {}
+
+    /// Perform an HTTP request through the embedding's configured transport
+    /// (the seam behind `URLSession`). This is a convenience wrapper built on
+    /// [`http_start`][StdContext::http_start] /
+    /// [`http_next_event`][StdContext::http_next_event] /
+    /// [`http_cancel`][StdContext::http_cancel]; callers that need events
+    /// (delegates, cancellation, progress) call those methods directly.
+    fn perform_http(
+        &mut self,
+        req: &crate::http::HttpRequest,
+    ) -> Result<crate::http::HttpResponse, crate::http::HttpError> {
+        use crate::http::HttpEvent;
+        let h = self.http_start(req)?;
+        let mut status = 0i64;
+        let mut headers = Vec::new();
+        let mut body = Vec::new();
+        loop {
+            match self.http_next_event(h) {
+                HttpEvent::Response {
+                    status: s,
+                    headers: hd,
+                } => {
+                    status = s;
+                    headers = hd;
+                }
+                HttpEvent::Chunk(bytes) => body.extend_from_slice(&bytes),
+                HttpEvent::Done => break,
+                HttpEvent::Failed { code, message } => {
+                    return Err(crate::http::HttpError::Failed { code, message });
+                }
+            }
+        }
+        Ok(crate::http::HttpResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// Whether the innermost running Swift `Task` has been cooperatively
+    /// cancelled (`Task.isCancelled`). The default is `false`; the interpreter
+    /// overrides it to expose the executor's real cancellation flag, so
+    /// Foundation can poll it between events (M3+).
+    fn current_task_cancelled(&self) -> bool {
+        false
     }
 }
 

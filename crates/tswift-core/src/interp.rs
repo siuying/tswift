@@ -4561,14 +4561,53 @@ impl StdContext for Interpreter<'_> {
         now_unix_seconds()
     }
 
+    fn http_start(
+        &mut self,
+        req: &crate::http::HttpRequest,
+    ) -> Result<crate::http::HttpTaskHandle, crate::http::HttpError> {
+        match &mut self.http_transport {
+            Some(transport) => transport.start(req),
+            None => Err(crate::http::HttpError::Unavailable),
+        }
+    }
+
+    fn http_next_event(&mut self, h: crate::http::HttpTaskHandle) -> crate::http::HttpEvent {
+        match &mut self.http_transport {
+            Some(transport) => transport.next_event(h),
+            None => crate::http::HttpEvent::Failed {
+                code: "unsupported".into(),
+                message: "HTTP transport unavailable".into(),
+            },
+        }
+    }
+
+    fn http_cancel(&mut self, h: crate::http::HttpTaskHandle) {
+        if let Some(transport) = &mut self.http_transport {
+            transport.cancel(h);
+        }
+    }
+
     fn perform_http(
         &mut self,
         req: &crate::http::HttpRequest,
     ) -> Result<crate::http::HttpResponse, crate::http::HttpError> {
+        // Optimised path: call the transport's one-shot `perform` directly,
+        // avoiding the start/next_event loop overhead for callers that don't
+        // need event-level access. Foundation (M3+) uses http_start /
+        // http_next_event / http_cancel instead.
         match &mut self.http_transport {
             Some(transport) => transport.perform(req),
             None => Err(crate::http::HttpError::Unavailable),
         }
+    }
+
+    fn current_task_cancelled(&self) -> bool {
+        // Delegate to the Interpreter's own inherent method (pub(super),
+        // defined in concurrency.rs) which reads the scheduler's flag.
+        // Calling self.current_task_cancelled() here resolves to the inherent
+        // method (inherent methods take priority over trait methods in Rust
+        // method resolution), so there is no infinite recursion.
+        Interpreter::current_task_cancelled(self)
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
@@ -6813,5 +6852,107 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
             matches!(err, EvalError::Trap(ref msg) if msg.contains("custom sequence algorithm exceeded")),
             "got {err:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // StdContext HTTP forwarding (M2)
+    // -----------------------------------------------------------------------
+
+    /// Build an interpreter with a single-route mock transport installed.
+    fn interp_with_mock<'a>(buf: &'a mut Vec<u8>, url: &str, body: &[u8]) -> Interpreter<'a> {
+        use crate::http::{HttpResponse, MockHttpTransport, MockRoute};
+        let mut interp = Interpreter::new(buf);
+        crate::install_test_print(&mut interp);
+        interp.set_http_transport(Box::new(MockHttpTransport::new(vec![MockRoute {
+            method: "GET".into(),
+            url: url.into(),
+            outcome: Ok(HttpResponse {
+                status: 200,
+                headers: vec![("Content-Type".into(), "text/plain".into())],
+                body: body.to_vec(),
+            }),
+        }])));
+        interp
+    }
+
+    #[test]
+    fn std_context_http_start_next_event_cancel_forward_to_transport() {
+        use crate::http::{HttpEvent, HttpRequest};
+        use crate::stdlib::StdContext;
+        let mut buf = Vec::new();
+        let url = "https://example.com/test";
+        let mut interp = interp_with_mock(&mut buf, url, b"hello");
+        let req = HttpRequest {
+            url: url.into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        // http_start should return a valid handle (no Unavailable)
+        let h = interp.http_start(&req).expect("http_start");
+        // next_event: first event is Response
+        let e0 = interp.http_next_event(h);
+        assert!(matches!(e0, HttpEvent::Response { status: 200, .. }));
+        // next_event: body chunk
+        let e1 = interp.http_next_event(h);
+        assert_eq!(e1, HttpEvent::Chunk(b"hello".to_vec()));
+        // next_event: terminal Done
+        let e2 = interp.http_next_event(h);
+        assert_eq!(e2, HttpEvent::Done);
+    }
+
+    #[test]
+    fn std_context_http_start_returns_unavailable_without_transport() {
+        use crate::http::HttpError;
+        use crate::http::HttpRequest;
+        use crate::stdlib::StdContext;
+        let mut buf = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        crate::install_test_print(&mut interp);
+        // No transport installed — http_start must return Unavailable
+        let req = HttpRequest {
+            url: "https://example.com/".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = interp.http_start(&req).unwrap_err();
+        assert_eq!(err, HttpError::Unavailable);
+    }
+
+    #[test]
+    fn std_context_http_cancel_silences_subsequent_next_event() {
+        use crate::http::{HttpEvent, HttpRequest};
+        use crate::stdlib::StdContext;
+        let mut buf = Vec::new();
+        let url = "https://example.com/cancel";
+        let mut interp = interp_with_mock(&mut buf, url, b"data");
+        let req = HttpRequest {
+            url: url.into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let h = interp.http_start(&req).expect("http_start");
+        interp.http_cancel(h);
+        // After cancel, next_event returns a sentinel Failed
+        let e = interp.http_next_event(h);
+        assert!(
+            matches!(e, HttpEvent::Failed { ref code, .. } if code == "badServerResponse"),
+            "expected badServerResponse sentinel, got {e:?}"
+        );
+    }
+
+    #[test]
+    fn std_context_current_task_cancelled_is_false_at_top_level() {
+        let mut buf = Vec::new();
+        let interp = Interpreter::new(&mut buf);
+        // At top level (no running task) cancellation flag is false.
+        // current_task_cancelled is both a pub(super) inherent method on
+        // Interpreter and a StdContext trait method; both return false here.
+        assert!(!interp.current_task_cancelled());
     }
 }
