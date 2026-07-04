@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "url": "http://127.0.0.1:8765/cancel-me",
+   "status": 200,
+   "headers": {"Content-Type": "text/plain"},
+   "body": "should not be delivered"}
+]

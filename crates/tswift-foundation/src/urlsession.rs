@@ -72,6 +72,16 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         &["running", "suspended", "canceling", "completed"],
     );
 
+    // ---- URLSession.ResponseDisposition enum (M4 delegates) ----
+    // Registering as "URLSession.ResponseDisposition" so shorthand `.allow` /
+    // `.cancel` resolve when the contextual type is set on the completionHandler
+    // parameter.  We also register the bare name so `URLSession.ResponseDisposition`
+    // type references in protocol declarations are recognised.
+    interp.register_builtin_enum(
+        "URLSession.ResponseDisposition",
+        &["allow", "cancel", "becomeDownload", "becomeStream"],
+    );
+
     // ---- URLSessionConfiguration ----
     interp.register_static_value("URLSessionConfiguration", "default", configuration_value());
     interp.register_static_value(
@@ -159,22 +169,48 @@ fn configuration_value() -> SwiftValue {
 // ---------------------------------------------------------------------------
 
 fn session_value(configuration: SwiftValue) -> SwiftValue {
+    session_value_with_delegate(configuration, SwiftValue::Nil)
+}
+
+fn session_value_with_delegate(configuration: SwiftValue, delegate: SwiftValue) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URLSession".into(),
-        fields: vec![("configuration".into(), configuration)],
+        fields: vec![
+            ("configuration".into(), configuration),
+            // Stored delegate object; SwiftValue::Nil when no delegate is set.
+            // `delegateQueue` is accepted but ignored (single-threaded executor).
+            ("_delegate".into(), delegate),
+        ],
     }))
+}
+
+/// Extract the delegate object from a session value, if present.
+fn session_delegate(session: &SwiftValue) -> SwiftValue {
+    match session {
+        SwiftValue::Struct(o) if o.type_name == "URLSession" => {
+            o.get("_delegate").cloned().unwrap_or(SwiftValue::Nil)
+        }
+        _ => SwiftValue::Nil,
+    }
 }
 
 fn session_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> tswift_core::StdResult {
     // Accept `URLSession(configuration:)` and
-    // `URLSession(configuration:delegate:delegateQueue:)` (delegate/queue ignored).
+    // `URLSession(configuration:delegate:delegateQueue:)`. The `delegateQueue`
+    // parameter is accepted and silently ignored — the executor is
+    // single-threaded (ADR-0005), so queue selection has no effect at runtime.
     let config_arg = args
         .iter()
         .find(|a| a.label.as_deref() == Some("configuration"));
+    let delegate = args
+        .iter()
+        .find(|a| a.label.as_deref() == Some("delegate"))
+        .map(|a| a.value.clone())
+        .unwrap_or(SwiftValue::Nil);
     match config_arg.map(|a| &a.value) {
-        Some(SwiftValue::Struct(o)) if o.type_name == "URLSessionConfiguration" => {
-            Ok(session_value(config_arg.unwrap().value.clone()))
-        }
+        Some(SwiftValue::Struct(o)) if o.type_name == "URLSessionConfiguration" => Ok(
+            session_value_with_delegate(config_arg.unwrap().value.clone(), delegate),
+        ),
         Some(_) => Err(type_error(
             "URLSession(configuration:) expects a URLSessionConfiguration",
         )),
@@ -278,6 +314,143 @@ struct DriverOutcome {
 /// sequence.  Prevents a misbehaving transport from spinning forever.
 const MAX_DRAIN_EVENTS: usize = 1_000;
 
+// ---------------------------------------------------------------------------
+// Delegate dispatch helpers (M4)
+// ---------------------------------------------------------------------------
+
+/// Argument-label stubs used for `StdContext::has_method_on` overload matching.
+///
+/// Values are never evaluated — only labels matter for overload selection.
+fn delegate_probe_args(labels: &[Option<&str>]) -> Vec<Arg> {
+    labels
+        .iter()
+        .map(|l| Arg {
+            label: l.map(|s| s.to_string()),
+            value: SwiftValue::Void,
+        })
+        .collect()
+}
+
+/// Fire `urlSession(_:dataTask:didReceive:completionHandler:)` on `delegate`
+/// (if it implements it) and return the disposition: `true` = allow, `false` =
+/// cancel.  When the delegate doesn't implement the method, returns `true`
+/// (allow) by default.
+fn dispatch_did_receive_response(
+    ctx: &mut dyn StdContext,
+    delegate: &SwiftValue,
+    session: SwiftValue,
+    task: SwiftValue,
+    response: SwiftValue,
+) -> Result<bool, StdError> {
+    // Method labels: [_ session, dataTask:, didReceive:, completionHandler:]
+    let probe = delegate_probe_args(&[
+        None,
+        Some("dataTask"),
+        Some("didReceive"),
+        Some("completionHandler"),
+    ]);
+    if !ctx.has_method_on(delegate, "urlSession", &probe) {
+        return Ok(true); // no delegate for this event → allow
+    }
+    // Allocate the synthetic completionHandler closure.
+    let handler_id = ctx.allocate_response_disposition_closure();
+    ctx.call_method_on(
+        delegate.clone(),
+        "urlSession",
+        vec![
+            Arg {
+                label: None,
+                value: session,
+            },
+            Arg {
+                label: Some("dataTask".into()),
+                value: task,
+            },
+            Arg {
+                label: Some("didReceive".into()),
+                value: response,
+            },
+            Arg {
+                label: Some("completionHandler".into()),
+                value: SwiftValue::Closure(handler_id),
+            },
+        ],
+    )?;
+    Ok(ctx.take_response_disposition())
+}
+
+/// Fire `urlSession(_:dataTask:didReceive:)` (Data variant) on `delegate` if
+/// it implements it.  Any error propagates to abort the request.
+fn dispatch_did_receive_data(
+    ctx: &mut dyn StdContext,
+    delegate: &SwiftValue,
+    session: SwiftValue,
+    task: SwiftValue,
+    data: SwiftValue,
+) -> Result<(), StdError> {
+    // 3-arg variant: [_ session, dataTask:, didReceive: Data]
+    let probe = delegate_probe_args(&[None, Some("dataTask"), Some("didReceive")]);
+    if !ctx.has_method_on(delegate, "urlSession", &probe) {
+        return Ok(());
+    }
+    ctx.call_method_on(
+        delegate.clone(),
+        "urlSession",
+        vec![
+            Arg {
+                label: None,
+                value: session,
+            },
+            Arg {
+                label: Some("dataTask".into()),
+                value: task,
+            },
+            Arg {
+                label: Some("didReceive".into()),
+                value: data,
+            },
+        ],
+    )?;
+    Ok(())
+}
+
+/// Fire `urlSession(_:task:didCompleteWithError:)` on `delegate` if it
+/// implements it.  Errors are swallowed (the task is already terminal).
+fn dispatch_did_complete(
+    ctx: &mut dyn StdContext,
+    delegate: &SwiftValue,
+    session: SwiftValue,
+    task: SwiftValue,
+    error: SwiftValue,
+) {
+    let probe = delegate_probe_args(&[None, Some("task"), Some("didCompleteWithError")]);
+    if !ctx.has_method_on(delegate, "urlSession", &probe) {
+        return;
+    }
+    let _ = ctx.call_method_on(
+        delegate.clone(),
+        "urlSession",
+        vec![
+            Arg {
+                label: None,
+                value: session,
+            },
+            Arg {
+                label: Some("task".into()),
+                value: task,
+            },
+            Arg {
+                label: Some("didCompleteWithError".into()),
+                value: error,
+            },
+        ],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Event-loop driver (M3/M4 seam)
+// ---------------------------------------------------------------------------
+
 /// Drive the request event loop: `start → next_event* → Done/Failed`.
 ///
 /// Checks [`StdContext::current_task_cancelled`] before starting and after
@@ -286,12 +459,20 @@ const MAX_DRAIN_EVENTS: usize = 1_000;
 /// violations (no `Response` before terminal, malformed sequence) map to
 /// `badServerResponse`.
 ///
+/// When `session` contains a delegate object (M4), the driver fires the
+/// three optional `URLSessionDataDelegate` / `URLSessionTaskDelegate` callbacks
+/// per event: `didReceive response + completionHandler` (disposition),
+/// `didReceive data` (chunk), and `didCompleteWithError` (terminal). Each
+/// callback is dispatched only if the delegate class implements that overload.
+///
 /// Callers must NOT call [`StdContext::perform_http`]; they must use this
 /// driver directly so delegate hooks and cancellation checks compose
-/// correctly (M3 seam contract from notes.md).
+/// correctly (M3/M4 seam contract from notes.md).
 fn run_event_driver(
     ctx: &mut dyn StdContext,
     req: &HttpRequest,
+    session: &SwiftValue,
+    task: &SwiftValue,
 ) -> Result<DriverOutcome, StdError> {
     // Honour cooperative cancellation before touching the transport.
     if ctx.current_task_cancelled() {
@@ -322,7 +503,32 @@ fn run_event_driver(
     let mut headers: Vec<(String, String)> = Vec::new();
     let mut got_response = false;
     let mut bytes_expected: i64 = -1;
+    // M4: pre-extract the delegate so we can dispatch per-event callbacks.
+    let delegate = session_delegate(session);
 
+    /// Cancel the transport and drain to terminal, then return
+    /// `Err(URLError(code))`.  Inlined as a macro to avoid borrow issues.
+    macro_rules! cancel_and_return {
+        ($ctx:expr, $handle:expr, $url:expr, $code:literal) => {{
+            $ctx.http_cancel($handle);
+            let mut _d = 0usize;
+            loop {
+                if $ctx.http_next_event($handle).is_terminal() {
+                    break;
+                }
+                _d += 1;
+                if _d >= MAX_DRAIN_EVENTS {
+                    break;
+                }
+            }
+            return Err(StdError::Throw(url_error_value(
+                $code,
+                crate::url::url_value($url),
+            )));
+        }};
+    }
+
+    let terminal_error: Option<StdError>;
     loop {
         let event = ctx.http_next_event(handle);
         match event {
@@ -331,24 +537,8 @@ fn run_event_driver(
                 headers: h,
             } => {
                 if got_response {
-                    // Second Response in the same stream — malformed sequence
-                    // per ADR-0011.  Cancel transport, drain to terminal, then
-                    // surface badServerResponse.
-                    ctx.http_cancel(handle);
-                    let mut drain = 0usize;
-                    loop {
-                        if ctx.http_next_event(handle).is_terminal() {
-                            break;
-                        }
-                        drain += 1;
-                        if drain >= MAX_DRAIN_EVENTS {
-                            break;
-                        }
-                    }
-                    return Err(StdError::Throw(url_error_value(
-                        "badServerResponse",
-                        crate::url::url_value(url),
-                    )));
+                    // Second Response in the same stream — malformed per ADR-0011.
+                    cancel_and_return!(ctx, handle, url, "badServerResponse");
                 }
                 status = s;
                 // Extract Content-Length for progress tracking.
@@ -359,29 +549,55 @@ fn run_event_driver(
                         }
                     }
                 }
-                headers = h;
+                headers = h.clone();
                 got_response = true;
+
+                // M4: dispatch `urlSession(_:dataTask:didReceive:completionHandler:)`
+                // if the delegate implements it.  Honour the returned disposition:
+                // .cancel → cancel the transport and surface URLError(.cancelled).
+                if !matches!(delegate, SwiftValue::Nil) {
+                    let url_resp = http_url_response_value(
+                        crate::url::url_value(url.clone()),
+                        i128::from(status),
+                        h,
+                    );
+                    let allow = dispatch_did_receive_response(
+                        ctx,
+                        &delegate,
+                        session.clone(),
+                        task.clone(),
+                        url_resp,
+                    )?;
+                    if !allow {
+                        // Delegate cancelled via disposition.  Fire
+                        // `didCompleteWithError(.cancelled)` before draining.
+                        let cancelled_err =
+                            url_error_value("cancelled", crate::url::url_value(url.clone()));
+                        dispatch_did_complete(
+                            ctx,
+                            &delegate,
+                            session.clone(),
+                            task.clone(),
+                            cancelled_err,
+                        );
+                        cancel_and_return!(ctx, handle, url, "cancelled");
+                    }
+                }
             }
             HttpEvent::Chunk(bytes) => {
                 if !got_response {
                     // Chunk before Response — malformed sequence per ADR-0011.
-                    // Cancel transport, drain to terminal, then surface
-                    // badServerResponse.
-                    ctx.http_cancel(handle);
-                    let mut drain = 0usize;
-                    loop {
-                        if ctx.http_next_event(handle).is_terminal() {
-                            break;
-                        }
-                        drain += 1;
-                        if drain >= MAX_DRAIN_EVENTS {
-                            break;
-                        }
-                    }
-                    return Err(StdError::Throw(url_error_value(
-                        "badServerResponse",
-                        crate::url::url_value(url),
-                    )));
+                    cancel_and_return!(ctx, handle, url, "badServerResponse");
+                }
+                // M4: dispatch `urlSession(_:dataTask:didReceive:)` (Data).
+                if !matches!(delegate, SwiftValue::Nil) {
+                    dispatch_did_receive_data(
+                        ctx,
+                        &delegate,
+                        session.clone(),
+                        task.clone(),
+                        data_value(bytes.clone()),
+                    )?;
                 }
                 body.extend_from_slice(&bytes);
             }
@@ -393,6 +609,17 @@ fn run_event_driver(
                         crate::url::url_value(url),
                     )));
                 }
+                // M4: dispatch `urlSession(_:task:didCompleteWithError:)` with nil.
+                if !matches!(delegate, SwiftValue::Nil) {
+                    dispatch_did_complete(
+                        ctx,
+                        &delegate,
+                        session.clone(),
+                        task.clone(),
+                        SwiftValue::Nil,
+                    );
+                }
+                terminal_error = None;
                 break;
             }
             HttpEvent::Failed { code, message: _ } => {
@@ -401,17 +628,23 @@ fn run_event_driver(
                 // *before* Response is a legitimate transport failure, not a
                 // protocol violation — surface it as URLError with the
                 // transport's code rather than badServerResponse.
-                return Err(StdError::Throw(url_error_value(
-                    &code,
-                    crate::url::url_value(url),
-                )));
+                let err_val = url_error_value(&code, crate::url::url_value(url.clone()));
+                // M4: dispatch `didCompleteWithError` with the error before
+                // propagating it to the caller.
+                if !matches!(delegate, SwiftValue::Nil) {
+                    dispatch_did_complete(
+                        ctx,
+                        &delegate,
+                        session.clone(),
+                        task.clone(),
+                        err_val.clone(),
+                    );
+                }
+                terminal_error = Some(StdError::Throw(err_val));
+                break;
             }
         }
 
-        // Poll cooperative cancellation between events. Cancel the transport
-        // and drain it to terminal before returning (drain-or-cancel invariant
-        // from notes.md: every started handle MUST be drained to terminal or
-        // cancelled+drained).
         // Poll cooperative cancellation between events.  Cancel the transport
         // and drain to terminal before returning (drain-or-cancel invariant:
         // every started handle MUST be drained to terminal or
@@ -429,11 +662,20 @@ fn run_event_driver(
                     break;
                 }
             }
+            // M4: delegate didCompleteWithError(.cancelled) on cooperative cancel.
+            if !matches!(delegate, SwiftValue::Nil) {
+                let err_val = url_error_value("cancelled", crate::url::url_value(url.clone()));
+                dispatch_did_complete(ctx, &delegate, session.clone(), task.clone(), err_val);
+            }
             return Err(StdError::Throw(url_error_value(
                 "cancelled",
                 crate::url::url_value(url),
             )));
         }
+    }
+
+    if let Some(err) = terminal_error {
+        return Err(err);
     }
 
     let bytes_received = body.len() as i64;
@@ -481,7 +723,11 @@ fn session_data(
         Some("for") => lower_request(&args[0].value)?,
         _ => return Ok(None),
     };
-    let outcome = run_event_driver(ctx, &req)?;
+    // For async paths, create a minimal synthetic task for delegate callbacks.
+    // Its state/progress fields are not updated mid-flight (no task_resume here),
+    // but the delegate still receives session/task references.
+    let synthetic_task = task_value(args[0].value.clone(), recv.clone(), -1);
+    let outcome = run_event_driver(ctx, &req, &recv, &synthetic_task)?;
     let result = driver_outcome_to_tuple(outcome);
     Ok(Some(Outcome {
         result,
@@ -503,7 +749,8 @@ fn session_upload(
     }
     let mut req = lower_request(&args[0].value)?;
     req.body = Some(data_bytes(&args[1].value)?);
-    let outcome = run_event_driver(ctx, &req)?;
+    let synthetic_task = task_value(args[0].value.clone(), recv.clone(), -1);
+    let outcome = run_event_driver(ctx, &req, &recv, &synthetic_task)?;
     let result = driver_outcome_to_tuple(outcome);
     Ok(Some(Outcome {
         result,
@@ -535,21 +782,25 @@ fn progress_value(fraction: f64) -> SwiftValue {
 /// Build a fresh suspended `URLSessionDataTask` struct.
 ///
 /// `req_value` is a `URLRequest` struct (or URL to be lowered at resume time).
+/// `session_value` is the owning `URLSession` (stored so `task_resume` can
+/// extract the delegate for per-event callback dispatch).
 /// `closure_id` is the index into the interpreter's closure table for the
 /// completion handler; `-1` means no handler.
-fn task_value(req_value: SwiftValue, session_timeout: f64, closure_id: i128) -> SwiftValue {
+fn task_value(req_value: SwiftValue, session_value: SwiftValue, closure_id: i128) -> SwiftValue {
+    let timeout = session_timeout(&session_value);
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "URLSessionDataTask".into(),
         fields: vec![
-            // Private: request, timeout, closure
+            // Private: request, session, closure
             ("_req".into(), req_value),
-            (
-                "_session_timeout".into(),
-                SwiftValue::Double(session_timeout),
-            ),
+            // Session back-reference (for delegate access in task_resume).
+            ("_session".into(), session_value),
             ("_closure_id".into(), SwiftValue::int(closure_id)),
             // Private: cancelled flag
             ("_cancelled".into(), SwiftValue::Bool(false)),
+            // Stored session timeout — copied so task_resume doesn't need the
+            // session struct to compute the request timeout.
+            ("_session_timeout".into(), SwiftValue::Double(timeout)),
             // Public state
             ("state".into(), task_state_value("suspended")),
             ("countOfBytesReceived".into(), SwiftValue::int(0)),
@@ -603,8 +854,7 @@ fn session_data_task(
         _ => -1,
     };
 
-    let timeout = session_timeout(&recv);
-    let task = task_value(req_value, timeout, closure_id);
+    let task = task_value(req_value, recv.clone(), closure_id);
     Ok(Some(Outcome {
         result: task,
         receiver: recv,
@@ -684,9 +934,11 @@ fn task_resume(
         _ => -1,
     };
 
-    // Extract the stored URLRequest.
+    // Extract the stored URLRequest and the back-reference to the owning session
+    // (used to access the delegate for M4 per-event callbacks).
     let req_value = task.get("_req").cloned().unwrap_or(SwiftValue::Nil);
-    let session_timeout = match task.get("_session_timeout") {
+    let task_session = task.get("_session").cloned().unwrap_or(SwiftValue::Nil);
+    let session_timeout_val = match task.get("_session_timeout") {
         Some(SwiftValue::Double(d)) => *d,
         _ => 60.0,
     };
@@ -694,7 +946,7 @@ fn task_resume(
     // when not explicitly overridden.
     let mut req = lower_request(&req_value)?;
     if req.timeout_seconds == 60.0 {
-        req.timeout_seconds = session_timeout;
+        req.timeout_seconds = session_timeout_val;
     }
 
     // Pre-flight cancel: deliver URLError(.cancelled) to the handler without
@@ -721,8 +973,11 @@ fn task_resume(
     let mut updated: StructObj = (**task).clone();
     updated.set("state", task_state_value("running"));
 
-    // Drive the event loop.
-    match run_event_driver(ctx, &req) {
+    // Drive the event loop, passing the task's owning session so the driver
+    // can dispatch delegate callbacks (M4). Use the current (running) task
+    // receiver as the task argument to delegate callbacks.
+    let running_task = SwiftValue::Struct(Rc::new(updated.clone()));
+    match run_event_driver(ctx, &req, &task_session, &running_task) {
         Ok(outcome) => {
             let bytes_received = outcome.bytes_received;
             let bytes_expected = outcome.bytes_expected;
@@ -980,7 +1235,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let out = run_event_driver(&mut ctx, &req).unwrap();
+        let out = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap();
         assert_eq!(out.body, b"hello");
         assert_eq!(out.status, 200);
         assert_eq!(out.bytes_received, 5);
@@ -997,7 +1252,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
         let StdError::Throw(SwiftValue::Struct(o)) = err else {
             panic!("expected thrown URLError, got {err:?}");
         };
@@ -1030,7 +1285,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
         let StdError::Throw(SwiftValue::Struct(o)) = err else {
             panic!("expected thrown URLError, got {err:?}");
         };
@@ -1065,7 +1320,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
         assert!(matches!(err, StdError::Error(EvalError::Unsupported(_))));
     }
 
@@ -1163,7 +1418,11 @@ mod tests {
 
     #[test]
     fn task_cancel_sets_cancelled_flag_and_state() {
-        let task = task_value(request_value("https://example.com/"), 60.0, 0);
+        let task = task_value(
+            request_value("https://example.com/"),
+            session_value(configuration_value()),
+            0,
+        );
         let mut ctx = HttpEventCtx::new(vec![]);
         let outcome = task_cancel(&mut ctx, task, vec![]).unwrap();
         let SwiftValue::Struct(updated) = &outcome.receiver else {
@@ -1179,7 +1438,11 @@ mod tests {
 
     #[test]
     fn task_resume_after_cancel_calls_handler_with_url_error() {
-        let task = task_value(request_value("https://example.com/"), 60.0, 0);
+        let task = task_value(
+            request_value("https://example.com/"),
+            session_value(configuration_value()),
+            0,
+        );
         // Cancel first.
         let mut ctx = HttpEventCtx::new(vec![]);
         let cancel_out = task_cancel(&mut ctx, task, vec![]).unwrap();
@@ -1218,7 +1481,11 @@ mod tests {
             url: "https://example.com/hello".into(),
             outcome: Ok(ok_resp(200, b"hello")),
         }]);
-        let task = task_value(request_value("https://example.com/hello"), 60.0, 42);
+        let task = task_value(
+            request_value("https://example.com/hello"),
+            session_value(configuration_value()),
+            42,
+        );
         let outcome = task_resume(&mut ctx, task, vec![]).unwrap();
 
         // Handler called with (data, response, nil).
@@ -1266,7 +1533,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
         let StdError::Throw(SwiftValue::Struct(o)) = err else {
             panic!("expected thrown URLError, got {err:?}");
         };
@@ -1304,7 +1571,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
         let StdError::Throw(SwiftValue::Struct(o)) = err else {
             panic!("expected thrown URLError, got {err:?}");
         };
@@ -1356,7 +1623,7 @@ mod tests {
             body: None,
             timeout_seconds: 60.0,
         };
-        let err = run_event_driver(&mut ctx, &req).unwrap_err();
+        let err = run_event_driver(&mut ctx, &req, &SwiftValue::Nil, &SwiftValue::Nil).unwrap_err();
 
         // Driver must have called http_cancel.
         assert!(
@@ -1394,7 +1661,11 @@ mod tests {
             url: "https://example.com/once".into(),
             outcome: Ok(ok_resp(200, b"ok")),
         }]);
-        let task = task_value(request_value("https://example.com/once"), 60.0, 99);
+        let task = task_value(
+            request_value("https://example.com/once"),
+            session_value(configuration_value()),
+            99,
+        );
 
         // First resume: suspended → running → completed.
         let out1 = task_resume(&mut ctx, task, vec![]).unwrap();
@@ -1433,7 +1704,11 @@ mod tests {
             chunks: vec![b"chunk1".to_vec(), b"chunk2".to_vec()],
             fail_after_chunks: None,
         }]);
-        let task = task_value(request_value("https://stream.example.com/"), 60.0, 7);
+        let task = task_value(
+            request_value("https://stream.example.com/"),
+            session_value(configuration_value()),
+            7,
+        );
         let outcome = task_resume(&mut ctx, task, vec![]).unwrap();
 
         // Handler called once with all data concatenated.

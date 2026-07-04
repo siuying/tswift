@@ -61,9 +61,36 @@ impl<'w> Interpreter<'w> {
         class_name: &str,
         name: &str,
     ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
+        self.lookup_method_for_call(class_name, name, &[])
+    }
+
+    /// Like [`lookup_method`] but uses `args` to select the right overload when
+    /// the class declares multiple methods with the same name (e.g. delegate
+    /// protocol methods that all spell `urlSession` but differ by labels).
+    pub(super) fn lookup_method_for_call(
+        &self,
+        class_name: &str,
+        name: &str,
+        args: &[CallArg],
+    ) -> Option<(Vec<Param>, Option<Node<'static>>, String, Vec<String>)> {
         let mut current = Some(class_name.to_string());
         while let Some(cls) = current {
             let def = self.types.class_def(&cls)?;
+            // If there are multiple overloads, try label-aware selection first.
+            if let Some(overloads) = def.method_overloads.get(name) {
+                if overloads.len() > 1 && !args.is_empty() {
+                    if let Some(m) = select_labeled_overload(overloads, args) {
+                        return Some((
+                            clone_params(&m.params),
+                            m.body,
+                            cls,
+                            m.generic_params.clone(),
+                        ));
+                    }
+                }
+            }
+            // Fall back to the last-wins map (covers single-method and
+            // unresolved-overload cases).
             if let Some(m) = def.methods.get(name) {
                 return Some((
                     clone_params(&m.params),
@@ -268,6 +295,19 @@ impl<'w> Interpreter<'w> {
                 .into()),
             };
         }
+        // Synthetic response-disposition capture closure (Foundation M4 delegate
+        // dispatch): writes the disposition to the interpreter field so Foundation
+        // can read it back via `take_response_disposition`.
+        if let (ClosureDef::ResponseDispositionCapture, _) = &self.closures[id] {
+            self.depth -= 1;
+            let allow = match args.first() {
+                Some(SwiftValue::Enum(e)) => e.case != "cancel",
+                _ => true,
+            };
+            self.response_disposition = Some(allow);
+            return Ok(SwiftValue::Void);
+        }
+
         // A key-path value used as a function: walk the path from its single
         // argument (`names.map(\.count)`).
         if let (ClosureDef::KeyPath(components), _) = &self.closures[id] {
@@ -287,8 +327,10 @@ impl<'w> Interpreter<'w> {
                 ClosureDef::User { params, body } => {
                     (clone_params(params), body.clone(), cap.clone())
                 }
-                ClosureDef::Operator(_) | ClosureDef::KeyPath(_) => {
-                    unreachable!("operator/key-path handled above")
+                ClosureDef::Operator(_)
+                | ClosureDef::KeyPath(_)
+                | ClosureDef::ResponseDispositionCapture => {
+                    unreachable!("operator/key-path/disposition handled above")
                 }
             }
         };
@@ -1436,24 +1478,25 @@ impl<'w> Interpreter<'w> {
         method: &str,
         args: Vec<CallArg>,
     ) -> Eval {
-        let (params, body, owner, generics) = match self.lookup_method(from_class, method) {
-            Some(m) => m,
-            None => match self.protocol_default_method(from_class, method) {
-                Some((p, b, _, g)) => (p, b, from_class.to_string(), g),
-                // An `@objc optional` method requirement the conformer does
-                // not implement resolves to nil — for chained and plain calls
-                // alike (the parser drops the `?`; documented permissiveness).
-                None if self.protocol_optional_method(from_class, method) => {
-                    return Ok(SwiftValue::Nil);
-                }
-                None => {
-                    return Err(EvalError::Unsupported(format!(
-                        "{from_class} has no method `{method}`"
-                    ))
-                    .into());
-                }
-            },
-        };
+        let (params, body, owner, generics) =
+            match self.lookup_method_for_call(from_class, method, &args) {
+                Some(m) => m,
+                None => match self.protocol_default_method(from_class, method) {
+                    Some((p, b, _, g)) => (p, b, from_class.to_string(), g),
+                    // An `@objc optional` method requirement the conformer does
+                    // not implement resolves to nil — for chained and plain calls
+                    // alike (the parser drops the `?`; documented permissiveness).
+                    None if self.protocol_optional_method(from_class, method) => {
+                        return Ok(SwiftValue::Nil);
+                    }
+                    None => {
+                        return Err(EvalError::Unsupported(format!(
+                            "{from_class} has no method `{method}`"
+                        ))
+                        .into());
+                    }
+                },
+            };
         // A type-level (`static`/`class`) method has no instance `self`.
         let is_static_call = matches!(this, SwiftValue::Void);
         if is_static_call {

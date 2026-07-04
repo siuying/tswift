@@ -1,0 +1,7 @@
+[
+  {"method": "GET", "url": "http://127.0.0.1:8765/failing",
+   "status": 200,
+   "headers": {"Content-Type": "application/octet-stream"},
+   "chunksBase64": ["aGVsbG8="],
+   "failAfterChunks": "networkConnectionLost"}
+]

@@ -17,4 +17,5 @@ loop-log*.md
 docs/loop-logs/
 *.log
 notes.md
-__pycache__run.log
+__pycache__
+run.log

@@ -452,6 +452,8 @@ impl<'w> Interpreter<'w> {
         let mut weak_fields = Vec::new();
         let mut computed = std::collections::HashMap::new();
         let mut methods = std::collections::HashMap::new();
+        let mut method_overloads: std::collections::HashMap<String, Vec<MethodDef>> =
+            std::collections::HashMap::new();
         let mut init = None;
         let mut init_overloads = Vec::new();
         let mut deinit = None;
@@ -489,16 +491,21 @@ impl<'w> Interpreter<'w> {
                 }
                 NodeKind::FuncDecl => {
                     if let Some(mname) = member.text() {
-                        methods.insert(
-                            mname,
-                            MethodDef {
-                                params: parse_params(&member),
-                                body: member.find_child(NodeKind::Block),
-                                mutating: false,
-                                generic_params: generic_param_names(&member),
-                                is_static: member.is_static(),
-                            },
-                        );
+                        let def = MethodDef {
+                            params: parse_params(&member),
+                            body: member.find_child(NodeKind::Block),
+                            mutating: false,
+                            generic_params: generic_param_names(&member),
+                            is_static: member.is_static(),
+                        };
+                        // Accumulate in the overloads vec (retains every
+                        // definition even when multiple methods share a name).
+                        method_overloads
+                            .entry(mname.clone())
+                            .or_default()
+                            .push(clone_method(&def));
+                        // Last-wins map used for single-overload fast path.
+                        methods.insert(mname, def);
                     }
                 }
                 NodeKind::VarDecl | NodeKind::LetDecl => {
@@ -566,6 +573,7 @@ impl<'w> Interpreter<'w> {
                 weak_fields,
                 computed,
                 methods,
+                method_overloads,
                 init,
                 init_overloads,
                 deinit,

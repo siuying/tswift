@@ -192,6 +192,41 @@ pub trait StdContext {
     fn current_task_cancelled(&self) -> bool {
         false
     }
+
+    /// Call the named method on `receiver` (a class instance or any Swift
+    /// value), dispatching with overload resolution by argument labels.
+    /// Returns `Ok(Void)` if `receiver` is not an object or doesn't implement
+    /// the method. The default is a no-op; the interpreter overrides it.
+    fn call_method_on(&mut self, receiver: SwiftValue, method: &str, args: Vec<Arg>) -> StdResult {
+        let _ = (receiver, method, args);
+        Ok(SwiftValue::Void)
+    }
+
+    /// Whether `receiver` has a method named `method` whose parameter labels
+    /// match `call_args`. Used to check optional protocol conformance before
+    /// firing a delegate callback. The default returns `false`; the interpreter
+    /// overrides it.
+    fn has_method_on(&self, receiver: &SwiftValue, method: &str, call_args: &[Arg]) -> bool {
+        let _ = (receiver, method, call_args);
+        false
+    }
+
+    /// Allocate a synthetic response-disposition capture closure in the
+    /// interpreter's closure table. The returned closure ID can be passed as a
+    /// `SwiftValue::Closure(id)` to a delegate's `completionHandler` parameter;
+    /// when the script calls it with a `URLSession.ResponseDisposition` value,
+    /// the disposition is stored and can be retrieved via
+    /// [`take_response_disposition`]. Default returns 0; interpreter overrides.
+    fn allocate_response_disposition_closure(&mut self) -> usize {
+        0
+    }
+
+    /// Consume (and reset) the response disposition captured by the last
+    /// `ResponseDispositionCapture` closure call. Returns `true` (allow) or
+    /// `false` (cancel). Default is `true` (allow — safe default for mocks).
+    fn take_response_disposition(&mut self) -> bool {
+        true
+    }
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).

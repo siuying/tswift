@@ -336,6 +336,11 @@ struct ClassDef {
     weak_fields: Vec<String>,
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
+    /// All method overloads keyed by method name. When a class declares
+    /// multiple methods with the same name (different parameter labels — e.g.
+    /// the three `urlSession` delegate variants), the last-wins `methods` map
+    /// loses them; this vec retains every definition for label-aware dispatch.
+    method_overloads: std::collections::HashMap<String, Vec<MethodDef>>,
     init: Option<MethodDef>,
     /// All custom initializer overloads, selected by argument labels/types.
     init_overloads: Vec<MethodDef>,
@@ -710,6 +715,12 @@ enum ClosureDef {
     /// (`names.map(\.count)`) and via `root[keyPath:]` subscripting. An empty
     /// component list is the identity key path (`\.self`).
     KeyPath(Vec<String>),
+    /// Synthetic closure injected by Foundation's delegate dispatcher for
+    /// `urlSession(_:dataTask:didReceive:completionHandler:)`. When called with
+    /// one `URLSession.ResponseDisposition` argument it writes the disposition
+    /// to `Interpreter::response_disposition`; Foundation reads it back via
+    /// `StdContext::take_response_disposition`.
+    ResponseDispositionCapture,
 }
 
 /// An assignable storage location: a root variable plus a field path.
@@ -897,6 +908,11 @@ pub struct Interpreter<'w> {
     /// The embedding-installed HTTP backend behind `URLSession` (see
     /// [`crate::http`]); `None` means network access is unavailable.
     http_transport: Option<Box<dyn crate::http::HttpTransport>>,
+    /// Last response disposition captured by the `ResponseDispositionCapture`
+    /// synthetic closure (Foundation M4 delegate dispatch). `true` = allow,
+    /// `false` = cancel. Reset to `None` before each response-delegate call;
+    /// consumed by `StdContext::take_response_disposition`.
+    response_disposition: Option<bool>,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -962,6 +978,7 @@ impl<'w> Interpreter<'w> {
             type_hint: Vec::new(),
             fragment_cache: FragmentCache::default(),
             http_transport: None,
+            response_disposition: None,
         }
     }
 
@@ -4672,6 +4689,93 @@ impl StdContext for Interpreter<'_> {
         }
         None
     }
+
+    fn call_method_on(
+        &mut self,
+        receiver: SwiftValue,
+        method: &str,
+        args: Vec<crate::stdlib::Arg>,
+    ) -> crate::stdlib::StdResult {
+        let class_name = match &receiver {
+            SwiftValue::Object(o) => o.borrow().class_name.clone(),
+            _ => return Ok(SwiftValue::Void),
+        };
+        let call_args: Vec<CallArg> = args
+            .into_iter()
+            .map(|a| CallArg {
+                label: a.label,
+                value: a.value,
+                place: None,
+            })
+            .collect();
+        match self.dispatch_class_method(receiver, &class_name, method, call_args) {
+            Ok(v) => Ok(v),
+            Err(Signal::Return(v)) => Ok(v),
+            Err(sig) => Err(Self::signal_to_std_error(sig)),
+        }
+    }
+
+    fn has_method_on(
+        &self,
+        receiver: &SwiftValue,
+        method: &str,
+        call_args: &[crate::stdlib::Arg],
+    ) -> bool {
+        let class_name = match receiver {
+            SwiftValue::Object(o) => o.borrow().class_name.clone(),
+            _ => return false,
+        };
+        // Walk the inheritance chain looking for any overload whose parameter
+        // labels match the argument labels we intend to pass.
+        let mut current = Some(class_name);
+        while let Some(cls) = current {
+            let Some(def) = self.types.class_def(&cls) else {
+                break;
+            };
+            if let Some(overloads) = def.method_overloads.get(method) {
+                // Use label-match: each call_arg's label should match the
+                // effective param label (explicit label or param name).
+                for ov in overloads {
+                    if overload_labels_match(&ov.params, call_args) {
+                        return true;
+                    }
+                }
+            } else if def.methods.contains_key(method) {
+                return true;
+            }
+            current = def.superclass.clone();
+        }
+        false
+    }
+
+    fn allocate_response_disposition_closure(&mut self) -> usize {
+        let id = self.closures.len();
+        self.closures
+            .push((ClosureDef::ResponseDispositionCapture, Vec::new()));
+        id
+    }
+
+    fn take_response_disposition(&mut self) -> bool {
+        self.response_disposition.take().unwrap_or(true)
+    }
+}
+
+/// Check whether the argument labels we plan to pass match an overload's
+/// parameter labels, used by `has_method_on` and class-method overload
+/// selection.  A `None` arg label matches any parameter (positional call).
+fn overload_labels_match(params: &[Param], args: &[crate::stdlib::Arg]) -> bool {
+    if params.len() != args.len() {
+        return false;
+    }
+    for (param, arg) in params.iter().zip(args.iter()) {
+        let effective = param.label.as_deref().unwrap_or(param.name.as_str());
+        if let Some(label) = &arg.label {
+            if label.as_str() != effective && effective != "_" {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Extract `T` from a metatype argument node `T.self`.
