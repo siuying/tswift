@@ -5,6 +5,94 @@ use tswift_core::Interpreter;
 use tswift_frontend::{Analysis, Severity};
 use wasm_bindgen::prelude::*;
 
+// ── Batch-response decoder (wasm-independent, tested natively) ──────────────
+
+/// Decode a `tswiftHttp` response JSON into a queue of [`HttpEvent`]s.
+///
+/// The hook may return either of two forms:
+///
+/// - **Batch** (M7): `{"events":[{…},…]}` — each array element is decoded via
+///   [`tswift_core::http::decode_event_json`]; decoding stops at the first
+///   terminal event.  A malformed element short-circuits the whole batch into
+///   a single `Failed{badServerResponse}` queue.
+/// - **Scalar** (legacy): any other valid JSON object is treated as a one-shot
+///   response (`{"status":…}` / `{"error":…}`) and wrapped via
+///   [`tswift_core::http::SingleShotEvents`]; existing hooks keep working
+///   unchanged.
+///
+/// This function is `pub(crate)` and lives **outside** any `#[cfg(wasm32)]`
+/// block so the native unit tests can exercise it directly.
+pub(crate) fn decode_batch_response(
+    response_json: &str,
+) -> std::collections::VecDeque<tswift_core::http::HttpEvent> {
+    use std::collections::VecDeque;
+    use tswift_core::http::{
+        decode_event_json, decode_response_json, HttpError, HttpEvent, SingleShotEvents,
+    };
+    use tswift_core::json::{self, Json};
+
+    macro_rules! bad {
+        ($msg:expr) => {{
+            let mut q = VecDeque::new();
+            q.push_back(HttpEvent::Failed {
+                code: "badServerResponse".into(),
+                message: $msg.to_string(),
+            });
+            return q;
+        }};
+    }
+
+    let root = match json::parse(response_json) {
+        Ok(r) => r,
+        Err(_) => bad!("tswiftHttp returned invalid JSON"),
+    };
+
+    if let Some(Json::Array(events_arr)) = root.get("events") {
+        // ── Batch form ────────────────────────────────────────────────────
+        let mut queue = VecDeque::new();
+        for event_val in events_arr {
+            let event_json = json::to_string(event_val);
+            match decode_event_json(&event_json) {
+                Ok(event) => {
+                    let terminal = event.is_terminal();
+                    queue.push_back(event);
+                    if terminal {
+                        break; // stop at first terminal; ignore any trailing events
+                    }
+                }
+                Err(HttpError::Failed { code, message }) => {
+                    let mut q = VecDeque::new();
+                    q.push_back(HttpEvent::Failed { code, message });
+                    return q;
+                }
+                Err(_) => bad!("unexpected transport error in batch decode"),
+            }
+        }
+        if queue.is_empty() {
+            bad!("tswiftHttp batch response has no events");
+        }
+        // Guarantee a terminal event so the interpreter loop always terminates.
+        if !queue.back().map(|e| e.is_terminal()).unwrap_or(false) {
+            queue.push_back(HttpEvent::Done);
+        }
+        queue
+    } else {
+        // ── Scalar / legacy form ──────────────────────────────────────────
+        let outcome = decode_response_json(response_json);
+        let mut sse = SingleShotEvents::from_outcome(outcome);
+        let mut queue = VecDeque::new();
+        loop {
+            let e = sse.next_event();
+            let terminal = e.is_terminal();
+            queue.push_back(e);
+            if terminal {
+                break;
+            }
+        }
+        queue
+    }
+}
+
 mod swiftui;
 
 const BACKEND: &str = "wasm";
@@ -165,7 +253,9 @@ fn run_swift_impl(source: &str) -> String {
 #[cfg(target_arch = "wasm32")]
 mod platform {
     use tswift_core::http::{decode_response_json, encode_request_json};
-    use tswift_core::{HttpError, HttpRequest, HttpResponse, HttpTransport};
+    use tswift_core::{
+        HttpError, HttpEvent, HttpRequest, HttpResponse, HttpTaskHandle, HttpTransport,
+    };
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
@@ -176,15 +266,46 @@ mod platform {
         fn console_error(msg: &str);
     }
 
-    // The `URLSession` host hook. The embedding page/worker opts in by
+    // The `URLSession` host hook.  The embedding page/worker opts in by
     // defining a **synchronous** `globalThis.tswiftHttp(requestJson) ->
-    // responseJson` (wire contract: `tswift_core::http::encode_request_json` /
-    // `decode_response_json`). Synchronous because the interpreter's transport
-    // seam is (ADR-0005): on the main thread that means a scripted/cached
-    // answer or sync XHR; a worker can bridge to async `fetch` on the main
-    // thread via `Atomics.wait` + `SharedArrayBuffer`. Absent hook → `null` →
-    // `URLSession` reports itself unavailable; a thrown hook exception becomes
-    // an error-JSON transport failure rather than a wasm trap.
+    // responseJson` (ADR-0005 — the interpreter is single-threaded).  On the
+    // main thread that means a scripted/cached answer or sync XHR; a worker
+    // can bridge to async `fetch` via `Atomics.wait` + `SharedArrayBuffer`.
+    //
+    // ## Response forms
+    //
+    // ### Scalar (legacy — still accepted)
+    //
+    //   Success: `{"status":200,"headers":[["K","V"]],"bodyBase64":"<b64>"}`
+    //   Failure: `{"error":"timedOut","message":"…"}`
+    //
+    // ### Batch (M7 — enables delegates, progress, cancellation replay)
+    //
+    //   ```json
+    //   {"events":[
+    //     {"event":"response","status":200,"headers":[["Content-Type","text/plain"]]},
+    //     {"event":"chunk","bodyBase64":"aGVsbG8="},
+    //     {"event":"done"}
+    //   ]}
+    //   ```
+    //
+    //   Each element follows the event-stream wire format from ADR-0011
+    //   (`response` / `chunk` / `done` / `error`).  The runtime decodes events
+    //   in order, dispatching delegate callbacks between each one.  Progress
+    //   (`task.progress.fractionCompleted`) updates per chunk.
+    //
+    // ## Degraded-tier semantics (wasm)
+    //
+    // The fetch completes eagerly inside `tswiftHttp` — the hook returns the
+    // full batch before the runtime dispatches any events.  Delegates and
+    // progress replay faithfully in event order.  **Cancellation stops
+    // delivery only**: `task.cancel()` / `Task.cancel()` prevents further
+    // events from being dispatched but cannot abort the already-completed
+    // native fetch.  True streaming requires SharedArrayBuffer + Atomics.wait
+    // or an option-C resumable run surface — both deferred.
+    //
+    // Absent hook → `null` → `URLSession` reports itself unavailable.
+    // A thrown exception → error-JSON transport failure, not a wasm trap.
     #[wasm_bindgen(inline_js = r#"
         export function tswift_http_call(requestJson) {
             const hook = globalThis.tswiftHttp;
@@ -204,19 +325,82 @@ mod platform {
     }
 
     /// The `globalThis.tswiftHttp`-backed transport.
-    struct JsHttpTransport;
+    ///
+    /// Owns a per-handle event queue so that `start` / `next_event` / `cancel`
+    /// work without the thread-local default shim.  See the hook comment above
+    /// for the two accepted response forms (scalar legacy and batch M7).
+    struct JsHttpTransport {
+        next_id: u64,
+        pending: std::collections::HashMap<u64, std::collections::VecDeque<HttpEvent>>,
+    }
+
+    impl JsHttpTransport {
+        fn new() -> Self {
+            JsHttpTransport {
+                next_id: 0,
+                pending: std::collections::HashMap::new(),
+            }
+        }
+    }
 
     impl HttpTransport for JsHttpTransport {
+        /// One-shot scalar path — used by the default `perform`-based callers
+        /// that do not drive the event loop (backward compat).
         fn perform(&mut self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
             match tswift_http_call(&encode_request_json(req)) {
                 Some(response_json) => decode_response_json(&response_json),
                 None => Err(HttpError::Unavailable),
             }
         }
+
+        /// Start a request: calls `tswiftHttp` once, decodes the response (scalar
+        /// or batch), and stores the resulting event queue keyed by handle.
+        fn start(&mut self, req: &HttpRequest) -> Result<HttpTaskHandle, HttpError> {
+            let response_json = match tswift_http_call(&encode_request_json(req)) {
+                Some(json) => json,
+                None => return Err(HttpError::Unavailable),
+            };
+            self.next_id += 1;
+            let id = self.next_id;
+            let queue = super::decode_batch_response(&response_json);
+            self.pending.insert(id, queue);
+            Ok(HttpTaskHandle(id))
+        }
+
+        /// Pop the next queued event.  Returns `Failed{badServerResponse}` if
+        /// the handle is unknown or already exhausted.
+        fn next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
+            let event = self.pending.get_mut(&h.0).and_then(|q| q.pop_front());
+            match event {
+                Some(e) => {
+                    if e.is_terminal() {
+                        self.pending.remove(&h.0);
+                    }
+                    e
+                }
+                None => HttpEvent::Failed {
+                    code: "badServerResponse".into(),
+                    message: "unknown or exhausted task handle".into(),
+                },
+            }
+        }
+
+        /// Cancel delivery: drop any pending events and replace with a single
+        /// terminal `Failed{cancelled}` so the next `next_event` call honours
+        /// the cancel contract.  Cannot abort the fetch that already completed
+        /// inside `tswiftHttp` (wasm degraded tier).
+        fn cancel(&mut self, h: HttpTaskHandle) {
+            let mut q = std::collections::VecDeque::new();
+            q.push_back(HttpEvent::Failed {
+                code: "cancelled".into(),
+                message: "request cancelled".into(),
+            });
+            self.pending.insert(h.0, q);
+        }
     }
 
     pub(super) fn install_http_transport(interp: &mut tswift_core::Interpreter<'_>) {
-        interp.set_http_transport(Box::new(JsHttpTransport));
+        interp.set_http_transport(Box::new(JsHttpTransport::new()));
     }
 
     pub(super) fn now_ms() -> f64 {
@@ -269,6 +453,149 @@ fn elapsed_ms(started: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tswift_core::http::HttpEvent;
+
+    // -----------------------------------------------------------------------
+    // decode_batch_response — pure logic, wasm-independent
+    // -----------------------------------------------------------------------
+
+    /// Build a compact event-stream JSON array for test fixtures.
+    fn batch(events_json: &str) -> String {
+        format!("{{\"events\":[{events_json}]}}")
+    }
+
+    const RESPONSE_200: &str =
+        r#"{"event":"response","status":200,"headers":[["Content-Type","text/plain"]]}"#;
+    const CHUNK_HI: &str = r#"{"event":"chunk","bodyBase64":"aGk="}"#; // base64("hi")
+    const DONE: &str = r#"{"event":"done"}"#;
+
+    #[test]
+    fn batch_response_chunk_done_yields_three_events() {
+        let json = batch(&format!("{RESPONSE_200},{CHUNK_HI},{DONE}"));
+        let mut q = decode_batch_response(&json);
+        assert!(
+            matches!(q.pop_front(), Some(HttpEvent::Response { status: 200, .. })),
+            "expected Response(200)"
+        );
+        assert_eq!(q.pop_front(), Some(HttpEvent::Chunk(b"hi".to_vec())));
+        assert_eq!(q.pop_front(), Some(HttpEvent::Done));
+        assert!(q.is_empty(), "unexpected trailing events");
+    }
+
+    #[test]
+    fn batch_response_done_no_chunk_yields_two_events() {
+        let json = batch(&format!("{RESPONSE_200},{DONE}"));
+        let mut q = decode_batch_response(&json);
+        assert!(matches!(
+            q.pop_front(),
+            Some(HttpEvent::Response { status: 200, .. })
+        ));
+        assert_eq!(q.pop_front(), Some(HttpEvent::Done));
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn batch_error_event_yields_failed() {
+        let error_ev = r#"{"event":"error","code":"timedOut","message":"timeout"}"#;
+        let json = batch(error_ev);
+        let mut q = decode_batch_response(&json);
+        let ev = q.pop_front();
+        assert!(
+            matches!(&ev, Some(HttpEvent::Failed { code, .. }) if code == "timedOut"),
+            "expected Failed{{timedOut}}, got {ev:?}"
+        );
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn batch_multiple_chunks_all_delivered() {
+        let c1 = r#"{"event":"chunk","bodyBase64":"YQ=="}"#; // "a"
+        let c2 = r#"{"event":"chunk","bodyBase64":"Yg=="}"#; // "b"
+        let json = batch(&format!("{RESPONSE_200},{c1},{c2},{DONE}"));
+        let q = decode_batch_response(&json);
+        assert_eq!(q.len(), 4, "expected Response+2×Chunk+Done, got {q:?}");
+    }
+
+    #[test]
+    fn batch_stops_at_first_terminal_ignores_trailing_events() {
+        // Events after the first terminal must be silently dropped.
+        let extra_chunk = r#"{"event":"chunk","bodyBase64":"dHJhaWw="}"#;
+        let json = batch(&format!("{RESPONSE_200},{DONE},{extra_chunk}"));
+        let q = decode_batch_response(&json);
+        // Should be exactly Response + Done, the extra chunk is ignored.
+        assert_eq!(q.len(), 2, "trailing events not dropped: {q:?}");
+        assert!(matches!(q.back(), Some(HttpEvent::Done)));
+    }
+
+    #[test]
+    fn batch_malformed_event_yields_bad_server_response() {
+        let bad_ev = r#"{"event":"unknown_kind"}"}"#; // unknown event type
+        let json = batch(bad_ev);
+        let mut q = decode_batch_response(&json);
+        let ev = q.pop_front();
+        assert!(
+            matches!(&ev, Some(HttpEvent::Failed { code, .. }) if code == "badServerResponse"),
+            "expected Failed{{badServerResponse}}, got {ev:?}"
+        );
+        assert_eq!(q.len(), 0);
+    }
+
+    #[test]
+    fn batch_empty_events_array_yields_bad_server_response() {
+        let json = batch(""); // {"events":[]}
+        let mut q = decode_batch_response(&json);
+        assert!(
+            matches!(&q.pop_front(), Some(HttpEvent::Failed { code, .. }) if code == "badServerResponse"),
+            "empty batch should be badServerResponse"
+        );
+    }
+
+    #[test]
+    fn batch_no_terminal_event_gets_done_appended() {
+        // A batch that ends with non-terminal events should get Done appended
+        // so the interpreter loop always terminates.
+        let json = batch(&format!("{RESPONSE_200},{CHUNK_HI}"));
+        let q = decode_batch_response(&json);
+        assert!(
+            matches!(q.back(), Some(HttpEvent::Done)),
+            "expected Done appended, got {q:?}"
+        );
+    }
+
+    // Scalar legacy form still works.
+    #[test]
+    fn scalar_success_response_wraps_as_response_chunk_done() {
+        let scalar =
+            r#"{"status":200,"headers":[["Content-Type","text/plain"]],"bodyBase64":"aGk="}"#;
+        let mut q = decode_batch_response(scalar);
+        assert!(matches!(
+            q.pop_front(),
+            Some(HttpEvent::Response { status: 200, .. })
+        ));
+        assert_eq!(q.pop_front(), Some(HttpEvent::Chunk(b"hi".to_vec())));
+        assert_eq!(q.pop_front(), Some(HttpEvent::Done));
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn scalar_error_response_yields_failed() {
+        let scalar = r#"{"error":"timedOut","message":"timeout"}"#;
+        let mut q = decode_batch_response(scalar);
+        assert!(
+            matches!(&q.pop_front(), Some(HttpEvent::Failed { code, .. }) if code == "timedOut"),
+            "expected Failed{{timedOut}}"
+        );
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn invalid_json_yields_bad_server_response() {
+        let mut q = decode_batch_response("not json at all");
+        assert!(
+            matches!(&q.pop_front(), Some(HttpEvent::Failed { code, .. }) if code == "badServerResponse"),
+            "invalid JSON should be badServerResponse"
+        );
+    }
 
     // Minimal JSON field extraction good enough for these assertions; avoids a
     // serde_json dependency in a cdylib crate.

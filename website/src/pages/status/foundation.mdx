@@ -136,8 +136,42 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 |------|--------------------|
 | `tswift run` (no flag) | none — `URLError.notConnectedToInternet` on any request |
 | `tswift run --allow-network` | `ureq` + rustls (real HTTPS) |
-| Apple embed (`TSwiftCore`) | platform `URLSession` via C ABI (`tswift_set_http_handler`) |
-| wasm (pages / workers) | synchronous `globalThis.tswiftHttp(requestJson)` hook |
+| Apple embed (`TSwiftCore`) | platform `URLSession` via C ABI (`tswift_set_http_handler` one-shot, or `tswift_set_http_stream_handler` + `tswift_http_event` streaming) |
+| wasm (pages / workers) | synchronous `globalThis.tswiftHttp(requestJson)` hook — scalar or **batch** form (see below) |
+
+#### `tswiftHttp` hook — accepted response forms
+
+The wasm runtime calls `globalThis.tswiftHttp(requestJson)` synchronously for
+every `URLSession` request.  The hook may return one of two forms:
+
+**Scalar (legacy — unchanged)**
+```jsonc
+// success:
+{ "status": 200, "headers": [["Content-Type", "text/plain"]], "bodyBase64": "aGVsbG8=" }
+// failure:
+{ "error": "timedOut", "message": "request timed out" }
+```
+
+**Batch (M7 — enables delegate callbacks and progress)**
+```jsonc
+{
+  "events": [
+    { "event": "response", "status": 200, "headers": [["Content-Type", "text/plain"]] },
+    { "event": "chunk", "bodyBase64": "aGVsbG8=" },
+    { "event": "done" }
+  ]
+}
+```
+
+Batch events follow the ADR-0011 wire format: `response` \| `chunk` \| `done` \| `error`.
+The runtime dispatches `URLSessionDataDelegate` callbacks and updates
+`task.progress.fractionCompleted` per chunk.
+
+**Degraded-tier semantics (wasm):** the fetch completes eagerly inside the hook
+before any events are dispatched.  Delegates and progress replay faithfully;
+**cancellation stops delivery only** — it cannot abort a fetch already returned
+from `tswiftHttp`.  A malformed batch (unknown event type, missing fields)
+produces `URLError(.badServerResponse)`.
 
 ### Out of scope
 
