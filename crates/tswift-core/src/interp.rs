@@ -720,7 +720,15 @@ enum ClosureDef {
     /// one `URLSession.ResponseDisposition` argument it writes the disposition
     /// to `Interpreter::response_disposition`; Foundation reads it back via
     /// `StdContext::take_response_disposition`.
-    ResponseDispositionCapture,
+    ///
+    /// The embedded `token` matches `Interpreter::response_disposition_token`
+    /// at the time the closure was allocated.  If the token has advanced (e.g.
+    /// a new request started and called `allocate_response_disposition_closure`
+    /// again), a late invocation of an old closure is silently ignored — it
+    /// cannot poison the next request's disposition.
+    ResponseDispositionCapture {
+        token: u64,
+    },
 }
 
 /// An assignable storage location: a root variable plus a field path.
@@ -910,9 +918,18 @@ pub struct Interpreter<'w> {
     http_transport: Option<Box<dyn crate::http::HttpTransport>>,
     /// Last response disposition captured by the `ResponseDispositionCapture`
     /// synthetic closure (Foundation M4 delegate dispatch). `true` = allow,
-    /// `false` = cancel. Reset to `None` before each response-delegate call;
-    /// consumed by `StdContext::take_response_disposition`.
+    /// `false` = cancel.  Reset to `None` by `allocate_response_disposition_closure`
+    /// so that late invocations of a stale closure are detected by the token
+    /// guard and silently ignored.  Consumed by
+    /// `StdContext::take_response_disposition`.
     response_disposition: Option<bool>,
+    /// Monotonically increasing counter.  Incremented each time
+    /// `allocate_response_disposition_closure` is called.  The allocated
+    /// closure carries the value at allocation time; a `ResponseDispositionCapture`
+    /// invocation whose token does not match the current value is discarded,
+    /// preventing a script-stored completionHandler from poisoning a later
+    /// request's disposition.
+    response_disposition_token: u64,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -979,6 +996,7 @@ impl<'w> Interpreter<'w> {
             fragment_cache: FragmentCache::default(),
             http_transport: None,
             response_disposition: None,
+            response_disposition_token: 0,
         }
     }
 
@@ -4727,6 +4745,20 @@ impl StdContext for Interpreter<'_> {
         };
         // Walk the inheritance chain looking for any overload whose parameter
         // labels match the argument labels we intend to pass.
+        //
+        // ⚠ Known limitation (ADR-0011 §Known limitations): protocol-extension
+        // *default* implementations are not visible here.  A class that
+        // conforms to `URLSessionDataDelegate` but does NOT explicitly override
+        // a protocol method (relying instead on the default no-op provided by
+        // the Swift stdlib via a protocol extension) will have that method
+        // absent from its `methods`/`method_overloads` maps, so `has_method_on`
+        // returns `false` and the callback is skipped.  In the tswift runtime
+        // this is correct behaviour — optional delegate methods that the
+        // script does not explicitly implement should be silently skipped —
+        // but it diverges from a world where protocol-extension defaults
+        // could have observable side-effects.  Fixing this would require the
+        // interpreter to index protocol-extension bodies (non-trivial;
+        // deferred).
         let mut current = Some(class_name);
         while let Some(cls) = current {
             let Some(def) = self.types.class_def(&cls) else {
@@ -4749,9 +4781,18 @@ impl StdContext for Interpreter<'_> {
     }
 
     fn allocate_response_disposition_closure(&mut self) -> usize {
+        // Advance the token so any previously-allocated closure whose script
+        // reference is stored and called late will be silently ignored.
+        self.response_disposition_token = self.response_disposition_token.wrapping_add(1);
+        let token = self.response_disposition_token;
+        // Clear any stale disposition from a previous request.  A well-behaved
+        // delegate calls the completionHandler synchronously; the reset here
+        // is a belt-and-suspenders guard so a late call from an old handler
+        // can never bleed into this request.
+        self.response_disposition = None;
         let id = self.closures.len();
         self.closures
-            .push((ClosureDef::ResponseDispositionCapture, Vec::new()));
+            .push((ClosureDef::ResponseDispositionCapture { token }, Vec::new()));
         id
     }
 
@@ -4763,6 +4804,23 @@ impl StdContext for Interpreter<'_> {
 /// Check whether the argument labels we plan to pass match an overload's
 /// parameter labels, used by `has_method_on` and class-method overload
 /// selection.  A `None` arg label matches any parameter (positional call).
+///
+/// ## Intentional divergence from `args_select_params`
+///
+/// `args_select_params` (used in `select_labeled_overload` for call dispatch)
+/// handles defaults and variadics: it can match a call with fewer arguments
+/// than parameters if the remaining params have defaults, and it advances the
+/// argument cursor through a variadic span.  `overload_labels_match` is
+/// intentionally **strict** (`len ==`).  It is only used by `has_method_on`
+/// to decide whether a delegate class *implements* a particular overload,
+/// where Foundation always passes the *exact* arg count for that overload
+/// (the probe args are synthesised with the correct label count in
+/// `delegate_probe_args`).  Divergence is safe because:
+///   1. Foundation-internal delegate calls never use defaults or variadics;
+///   2. The probe is produced by `delegate_probe_args` with precisely the
+///      labels that the dispatch will actually supply.
+/// If Foundation ever dispatches a variadic delegate method, the probe must
+/// be updated to supply a representative arg count and this comment updated.
 fn overload_labels_match(params: &[Param], args: &[crate::stdlib::Arg]) -> bool {
     if params.len() != args.len() {
         return false;
@@ -7064,5 +7122,66 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         // current_task_cancelled is both a pub(super) inherent method on
         // Interpreter and a StdContext trait method; both return false here.
         assert!(!interp.current_task_cancelled());
+    }
+
+    // -----------------------------------------------------------------------
+    // IMPORTANT fix: ResponseDispositionCapture token staleness (M4 review)
+    // -----------------------------------------------------------------------
+
+    /// Verify that calling a *stale* `ResponseDispositionCapture` closure
+    /// (one allocated for a previous request) does NOT poison the current
+    /// request's disposition.
+    ///
+    /// Scenario:
+    ///   1. Request A allocates closure C_A, fires with `.cancel` → disposition=false.
+    ///   2. `take_response_disposition` reads false → resets to None.
+    ///   3. Request B allocates closure C_B (token advances), resets disposition=None.
+    ///   4. Script late-calls C_A with `.cancel` → stale token, ignored.
+    ///   5. `take_response_disposition` returns the default (true = allow).
+    #[test]
+    fn stale_response_disposition_closure_does_not_poison_next_request() {
+        use crate::stdlib::StdContext;
+
+        let mut buf = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+
+        // Helper: build a `.cancel` enum value.
+        fn cancel_enum() -> SwiftValue {
+            SwiftValue::Enum(Rc::new(EnumObj {
+                type_name: "URLSession.ResponseDisposition".into(),
+                case: "cancel".into(),
+                payload: vec![],
+            }))
+        }
+
+        // ---- Request A ----
+        let id_a = interp.allocate_response_disposition_closure();
+        // Simulate delegate calling completionHandler(.cancel).
+        interp
+            .call_closure(id_a, vec![cancel_enum()])
+            .expect("call C_A");
+        let disp_a = interp.take_response_disposition();
+        assert!(!disp_a, "request A disposition should be false (cancel)");
+
+        // ---- Request B ----
+        // allocate advances the token and clears disposition.
+        let _id_b = interp.allocate_response_disposition_closure();
+        // Request B's delegate has NOT called the handler yet (synchronous
+        // delegate called its handler immediately in the test above, but here
+        // we simulate the late-call scenario first).
+
+        // ---- Late call from A ----
+        // The stale closure C_A fires with .cancel.  Token mismatch → ignored.
+        interp
+            .call_closure(id_a, vec![cancel_enum()])
+            .expect("late call C_A is a no-op, not an error");
+
+        // Request B's take must return the default (true = allow) because the
+        // late call from A was silently discarded.
+        let disp_b = interp.take_response_disposition();
+        assert!(
+            disp_b,
+            "request B disposition must be true (allow, default) — not poisoned by stale A handler"
+        );
     }
 }

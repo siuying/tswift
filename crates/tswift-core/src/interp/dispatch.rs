@@ -298,13 +298,21 @@ impl<'w> Interpreter<'w> {
         // Synthetic response-disposition capture closure (Foundation M4 delegate
         // dispatch): writes the disposition to the interpreter field so Foundation
         // can read it back via `take_response_disposition`.
-        if let (ClosureDef::ResponseDispositionCapture, _) = &self.closures[id] {
+        //
+        // Token guard: only write if the closure's token matches the current
+        // `response_disposition_token`.  A script that stores the completionHandler
+        // and calls it after `take_response_disposition` (or after a new request
+        // started) will carry a stale token and is silently ignored.
+        if let (ClosureDef::ResponseDispositionCapture { token }, _) = &self.closures[id] {
+            let token = *token;
             self.depth -= 1;
-            let allow = match args.first() {
-                Some(SwiftValue::Enum(e)) => e.case != "cancel",
-                _ => true,
-            };
-            self.response_disposition = Some(allow);
+            if token == self.response_disposition_token {
+                let allow = match args.first() {
+                    Some(SwiftValue::Enum(e)) => e.case != "cancel",
+                    _ => true,
+                };
+                self.response_disposition = Some(allow);
+            }
             return Ok(SwiftValue::Void);
         }
 
@@ -329,7 +337,7 @@ impl<'w> Interpreter<'w> {
                 }
                 ClosureDef::Operator(_)
                 | ClosureDef::KeyPath(_)
-                | ClosureDef::ResponseDispositionCapture => {
+                | ClosureDef::ResponseDispositionCapture { .. } => {
                     unreachable!("operator/key-path/disposition handled above")
                 }
             }

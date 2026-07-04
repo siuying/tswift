@@ -274,6 +274,34 @@ non-trivial interpreter work and is deferred.  Until then:
 The limitation is documented in `crates/tswift-foundation/src/urlsession.rs`
 (module-level doc comment) and in `notes.md`.
 
+### `has_method_on` ignores protocol-extension default methods (known limitation)
+
+`Interpreter::has_method_on` walks the class inheritance chain checking the
+`method_overloads` and `methods` maps of each `ClassDef`.  Protocol-extension
+*default* implementations are not indexed in these maps — the interpreter does
+not yet parse or store protocol-extension bodies in the type table.  As a
+result, a class that conforms to `URLSessionDataDelegate` or
+`URLSessionTaskDelegate` but does **not** explicitly override an optional
+delegate method will have `has_method_on` return `false` for that method, and
+the callback will be silently skipped.
+
+In the tswift runtime this is the *correct* observable behaviour (optional
+Foundation delegate methods with no script override should be no-ops), but it
+diverges from a world where protocol-extension defaults could have observable
+side-effects.  Fixing this would require indexing protocol-extension bodies in
+the type table — non-trivial, deferred.
+
+### `overload_labels_match` vs `args_select_params` (intentional strictness)
+
+`has_method_on` uses `overload_labels_match`, which requires an exact
+arg-count match (`len ==`).  The call-dispatch path uses `args_select_params`,
+which handles variadic spans and default-valued parameters.  The strictness in
+`overload_labels_match` is intentional: Foundation's delegate probes are
+constructed by `delegate_probe_args` with *exactly* the labels that will be
+passed on the real call, so defaults and variadics never arise.  If a future
+delegate method uses a default or variadic, the probe must supply the
+representative arg count and this note must be updated.
+
 ## Notes
 
 - The full milestone breakdown (M1–M8), backend change table, testing strategy,

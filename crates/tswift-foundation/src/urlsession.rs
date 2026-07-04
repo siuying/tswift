@@ -528,6 +528,33 @@ fn run_event_driver(
         }};
     }
 
+    /// Evaluate a delegate-dispatch expression; if it returns `Err`, cancel
+    /// the transport handle and drain to terminal before propagating the error.
+    /// Without this, a delegate method that calls `fatalError` / traps inside
+    /// a script would leak the handle-store entry (violating ADR-0011's
+    /// drain-or-cancel invariant).
+    macro_rules! delegate_or_cancel {
+        ($ctx:expr, $handle:expr, $url:expr, $result:expr) => {{
+            match $result {
+                Ok(v) => v,
+                Err(e) => {
+                    $ctx.http_cancel($handle);
+                    let mut _d = 0usize;
+                    loop {
+                        if $ctx.http_next_event($handle).is_terminal() {
+                            break;
+                        }
+                        _d += 1;
+                        if _d >= MAX_DRAIN_EVENTS {
+                            break;
+                        }
+                    }
+                    return Err(e);
+                }
+            }
+        }};
+    }
+
     let terminal_error: Option<StdError>;
     loop {
         let event = ctx.http_next_event(handle);
@@ -561,13 +588,18 @@ fn run_event_driver(
                         i128::from(status),
                         h,
                     );
-                    let allow = dispatch_did_receive_response(
+                    let allow = delegate_or_cancel!(
                         ctx,
-                        &delegate,
-                        session.clone(),
-                        task.clone(),
-                        url_resp,
-                    )?;
+                        handle,
+                        url,
+                        dispatch_did_receive_response(
+                            ctx,
+                            &delegate,
+                            session.clone(),
+                            task.clone(),
+                            url_resp,
+                        )
+                    );
                     if !allow {
                         // Delegate cancelled via disposition.  Fire
                         // `didCompleteWithError(.cancelled)` before draining.
@@ -591,13 +623,18 @@ fn run_event_driver(
                 }
                 // M4: dispatch `urlSession(_:dataTask:didReceive:)` (Data).
                 if !matches!(delegate, SwiftValue::Nil) {
-                    dispatch_did_receive_data(
+                    delegate_or_cancel!(
                         ctx,
-                        &delegate,
-                        session.clone(),
-                        task.clone(),
-                        data_value(bytes.clone()),
-                    )?;
+                        handle,
+                        url,
+                        dispatch_did_receive_data(
+                            ctx,
+                            &delegate,
+                            session.clone(),
+                            task.clone(),
+                            data_value(bytes.clone()),
+                        )
+                    );
                 }
                 body.extend_from_slice(&bytes);
             }
@@ -1730,6 +1767,214 @@ mod tests {
                 matches!(s.get("fractionCompleted"), Some(SwiftValue::Double(f)) if (*f - 1.0).abs() < 1e-9)
             }),
             "expected fractionCompleted=1.0, got {prog:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CRITICAL fix: delegate error → cancel+drain handle (ADR-0011 invariant)
+    // -----------------------------------------------------------------------
+
+    /// A `StdContext` wrapper around `SequenceCtx` that returns a hard error
+    /// from `call_method_on` (simulating a delegate method that calls
+    /// `fatalError` or traps inside Swift).  `has_method_on` always returns
+    /// `true` so the driver tries to dispatch.
+    struct DelegateErrCtx {
+        inner: SequenceCtx,
+    }
+
+    impl StdContext for DelegateErrCtx {
+        fn call_closure(&mut self, _id: usize, _args: Vec<SwiftValue>) -> tswift_core::StdResult {
+            Ok(SwiftValue::Void)
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            &mut self.inner.out
+        }
+        fn http_start(
+            &mut self,
+            req: &HttpRequest,
+        ) -> Result<HttpTaskHandle, tswift_core::HttpError> {
+            self.inner.http_start(req)
+        }
+        fn http_next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
+            self.inner.http_next_event(h)
+        }
+        fn http_cancel(&mut self, h: HttpTaskHandle) {
+            self.inner.http_cancel(h);
+        }
+        fn has_method_on(&self, _receiver: &SwiftValue, _method: &str, _args: &[Arg]) -> bool {
+            true // pretend every method exists so dispatch is attempted
+        }
+        fn call_method_on(
+            &mut self,
+            _receiver: SwiftValue,
+            _method: &str,
+            _args: Vec<Arg>,
+        ) -> tswift_core::StdResult {
+            Err(type_error("delegate method raised fatalError"))
+        }
+    }
+
+    #[test]
+    fn delegate_response_error_cancels_and_drains_handle() {
+        // Simulate a delegate whose `didReceive response` method raises an
+        // error (fatalError / trap inside Swift).  The driver MUST:
+        //   1. call http_cancel on the handle,
+        //   2. drain remaining events to terminal (so the handle-store is clean),
+        //   3. propagate the error.
+        // Without the `delegate_or_cancel!` fix, the `?` in the driver would
+        // return immediately, leaving the handle alive and leaking the entry.
+        let mut ctx = DelegateErrCtx {
+            inner: SequenceCtx::new(vec![
+                HttpEvent::Response {
+                    status: 200,
+                    headers: vec![],
+                },
+                // Extra chunks that should be drained after the delegate error.
+                // No Done here: http_cancel will append Failed{cancelled} so
+                // the drain loop terminates on that, leaving the queue empty.
+                HttpEvent::Chunk(b"data1".to_vec()),
+                HttpEvent::Chunk(b"data2".to_vec()),
+            ]),
+        };
+        // Build a session with a non-Nil delegate so the dispatch path is taken.
+        let fake_delegate = SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "FakeDelegate".into(),
+            fields: vec![],
+        }));
+        let sess = session_value_with_delegate(configuration_value(), fake_delegate);
+        let req = HttpRequest {
+            url: "https://example.com/delegate-trap".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = run_event_driver(&mut ctx, &req, &sess, &SwiftValue::Nil).unwrap_err();
+
+        // http_cancel must have been called (drain-or-cancel invariant).
+        assert!(
+            ctx.inner.http_cancel_called,
+            "http_cancel must be called when delegate dispatch returns Err"
+        );
+        // Handle must be drained (no events left in the queue).
+        assert!(
+            ctx.inner.events.is_empty(),
+            "handle must be fully drained after delegate error; {} events left",
+            ctx.inner.events.len()
+        );
+        // The delegate's error must be propagated.
+        assert!(
+            matches!(err, StdError::Error(_)),
+            "expected StdError propagated from delegate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn delegate_chunk_error_cancels_and_drains_handle() {
+        // Same invariant, but the error fires during `didReceive data` (Chunk
+        // arm), not the Response arm.
+        //
+        // Override: let the Response dispatch succeed (return Ok) by making
+        // `call_method_on` fail only on the second call (the Chunk callback).
+        struct ChunkErrCtx {
+            inner: SequenceCtx,
+            call_count: usize,
+        }
+        impl StdContext for ChunkErrCtx {
+            fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> tswift_core::StdResult {
+                // Simulate the completionHandler returning .allow so the driver
+                // continues past the Response arm.
+                self.inner.call_closure(id, args)
+            }
+            fn out(&mut self) -> &mut dyn std::io::Write {
+                &mut self.inner.out
+            }
+            fn http_start(
+                &mut self,
+                req: &HttpRequest,
+            ) -> Result<HttpTaskHandle, tswift_core::HttpError> {
+                self.inner.http_start(req)
+            }
+            fn http_next_event(&mut self, h: HttpTaskHandle) -> HttpEvent {
+                self.inner.http_next_event(h)
+            }
+            fn http_cancel(&mut self, h: HttpTaskHandle) {
+                self.inner.http_cancel(h);
+            }
+            fn has_method_on(&self, _receiver: &SwiftValue, _method: &str, _args: &[Arg]) -> bool {
+                true
+            }
+            fn call_method_on(
+                &mut self,
+                _receiver: SwiftValue,
+                _method: &str,
+                args: Vec<Arg>,
+            ) -> tswift_core::StdResult {
+                self.call_count += 1;
+                if self.call_count == 1 {
+                    // First call is the response-delegate — call completionHandler
+                    // arg with .allow so the driver gets `true` back.
+                    let handler_id = args
+                        .iter()
+                        .find(|a| a.label.as_deref() == Some("completionHandler"))
+                        .and_then(|a| {
+                            if let SwiftValue::Closure(id) = a.value {
+                                Some(id)
+                            } else {
+                                None
+                            }
+                        });
+                    // We can't call back into ctx.call_closure here (no
+                    // access) — return Ok so the default `take_response_disposition`
+                    // returns true (allow) from `unwrap_or(true)`.
+                    let _ = handler_id;
+                    Ok(SwiftValue::Void)
+                } else {
+                    // Second call is the Chunk data delegate — trap.
+                    Err(type_error("didReceive(data) raised fatalError"))
+                }
+            }
+        }
+
+        let mut ctx = ChunkErrCtx {
+            inner: SequenceCtx::new(vec![
+                HttpEvent::Response {
+                    status: 200,
+                    headers: vec![],
+                },
+                HttpEvent::Chunk(b"part1".to_vec()),
+                // No Done: http_cancel appends Failed{cancelled}; drain stops there,
+                // leaving the queue empty.
+                HttpEvent::Chunk(b"part2".to_vec()),
+            ]),
+            call_count: 0,
+        };
+        let fake_delegate = SwiftValue::Struct(Rc::new(StructObj {
+            type_name: "FakeDelegate".into(),
+            fields: vec![],
+        }));
+        let sess = session_value_with_delegate(configuration_value(), fake_delegate);
+        let req = HttpRequest {
+            url: "https://example.com/chunk-trap".into(),
+            method: "GET".into(),
+            headers: Vec::new(),
+            body: None,
+            timeout_seconds: 60.0,
+        };
+        let err = run_event_driver(&mut ctx, &req, &sess, &SwiftValue::Nil).unwrap_err();
+
+        assert!(
+            ctx.inner.http_cancel_called,
+            "http_cancel must be called when chunk-delegate dispatch returns Err"
+        );
+        assert!(
+            ctx.inner.events.is_empty(),
+            "handle must be fully drained after chunk-delegate error; {} left",
+            ctx.inner.events.len()
+        );
+        assert!(
+            matches!(err, StdError::Error(_)),
+            "expected StdError propagated from chunk delegate, got {err:?}"
         );
     }
 }

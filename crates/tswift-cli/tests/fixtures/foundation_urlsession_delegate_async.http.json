@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "url": "http://127.0.0.1:8765/async-stream",
+   "status": 200,
+   "headers": {"Content-Type": "application/octet-stream", "Content-Length": "12"},
+   "chunksBase64": ["YXN5bmMx", "YXN5bmMy"]}
+]
