@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "url": "http://127.0.0.1:8765/hello",
+   "status": 200,
+   "headers": {"Content-Type": "text/plain", "Content-Length": "5"},
+   "body": "hello"}
+]

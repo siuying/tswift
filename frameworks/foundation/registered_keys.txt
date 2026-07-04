@@ -398,6 +398,7 @@ URLResponse.textEncodingName
 URLResponse.url
 URLSession.configuration
 URLSession.data
+URLSession.dataTask
 URLSession.init
 URLSession.shared
 URLSession.upload

@@ -238,6 +238,10 @@ pub enum BuiltinReceiver {
     URLError,
     URLSession,
     URLSessionConfiguration,
+    /// A `URLSessionDataTask` handle returned by `URLSession.dataTask(with:completionHandler:)`.
+    /// Represented as a `Struct { type_name: "URLSessionDataTask" }` with mutable
+    /// state fields (state, counters, progress) updated by `resume()` / `cancel()`.
+    URLSessionDataTask,
     Date,
     DateComponents,
     Calendar,
@@ -299,6 +303,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::URLError => "URLError",
             BuiltinReceiver::URLSession => "URLSession",
             BuiltinReceiver::URLSessionConfiguration => "URLSessionConfiguration",
+            BuiltinReceiver::URLSessionDataTask => "URLSessionDataTask",
             BuiltinReceiver::Date => "Date",
             BuiltinReceiver::DateComponents => "DateComponents",
             BuiltinReceiver::Calendar => "Calendar",
@@ -344,6 +349,7 @@ impl BuiltinReceiver {
             "URLError" => BuiltinReceiver::URLError,
             "URLSession" => BuiltinReceiver::URLSession,
             "URLSessionConfiguration" => BuiltinReceiver::URLSessionConfiguration,
+            "URLSessionDataTask" => BuiltinReceiver::URLSessionDataTask,
             "Date" => BuiltinReceiver::Date,
             "DateComponents" => BuiltinReceiver::DateComponents,
             "Calendar" => BuiltinReceiver::Calendar,
@@ -403,6 +409,9 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "URLSession" => BuiltinReceiver::URLSession,
             SwiftValue::Struct(obj) if obj.type_name == "URLSessionConfiguration" => {
                 BuiltinReceiver::URLSessionConfiguration
+            }
+            SwiftValue::Struct(obj) if obj.type_name == "URLSessionDataTask" => {
+                BuiltinReceiver::URLSessionDataTask
             }
             SwiftValue::Struct(obj) if obj.type_name == "Date" => BuiltinReceiver::Date,
             SwiftValue::Struct(obj) if obj.type_name == "DateComponents" => {
