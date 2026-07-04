@@ -20,7 +20,7 @@ This project aimed to build a end-to-end, lightweight Swift compiler and runtime
 
 - Read `CODING_STANDARD.md` before writing code.
 - **Hard rules** (details in `docs/agents/environment.md`):
-  - Run `scripts/presubmit` (fmt + clippy + test) before every commit; it must be green. It usually finishes in under a minute, but can take several minutes on a cold/dirty build — invoke it with a generous timeout (>= 900s) or run it in the background and poll, instead of letting the default tool timeout kill and retry it.
+  - Run `scripts/presubmit` (fmt + clippy + test) before every commit; it must be green. It can take 10 minutes on a cold/dirty build — invoke it with a generous timeout (>= 900s) or run it in the background and poll, instead of letting the default tool timeout kill and retry it.
   - The wasm smoke test (`crates/tswift-wasm/tests/wasm_smoke.rs`) is opt-in (`TSWIFT_WASM_SMOKE=1`); run `scripts/validate web` when touching `crates/tswift-wasm` or web code.
   - Commit with `git commit --no-gpg-sign` (the signing agent fails in non-interactive sessions).
   - Assume no network access to crates.io: never add a dependency that isn't already in `Cargo.lock` unless user confirmed. Prefer a small self-contained module.
