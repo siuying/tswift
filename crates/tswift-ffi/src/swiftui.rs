@@ -252,6 +252,33 @@ pub(crate) fn dispatch(slot: &mut Option<SwiftUiSession>, event_json: &str) -> S
     }
 }
 
+/// Fire any pending `.task {}` closures on the live session's tree and return a
+/// patch stream in the **same** envelope as [`dispatch`]
+/// (`{"ok":bool,"patches":[…]|null,"error":string|null}`). The host calls this
+/// once after a successful [`compile`] to run appear-time async work. Safe with
+/// no `.task` modifiers present — it re-renders and yields an empty patch list.
+pub(crate) fn run_mount_tasks(slot: &mut Option<SwiftUiSession>) -> String {
+    let Some(bundle) = slot.as_mut() else {
+        return dispatch_error_json("no active SwiftUI session — compile first");
+    };
+    let Some(session) = bundle.session.as_mut() else {
+        return dispatch_error_json("session has not rendered yet");
+    };
+    let Some(before) = session.current_tree().cloned() else {
+        return dispatch_error_json("session has not rendered yet");
+    };
+    match session.run_mount_tasks() {
+        Ok(after) => {
+            let patches = diff::diff(&before, &after);
+            format!(
+                "{{\"ok\":true,\"patches\":{},\"error\":null}}",
+                diff::to_json(&patches)
+            )
+        }
+        Err(error) => dispatch_error_json(&error.to_string()),
+    }
+}
+
 /// Parse the `{"id","event","value"?}` envelope into an [`Event`].
 fn parse_event(event_json: &str) -> Result<Event, String> {
     let parsed = json::parse(event_json)?;
@@ -330,6 +357,35 @@ struct CounterView: View {
             after.contains(r#"{"op":"setText","id":"0.0","text":"1"}"#),
             "{after}"
         );
+    }
+
+    #[test]
+    fn compile_then_run_mount_tasks_patches_task_state() {
+        let mut slot = None;
+        let result = compile(
+            &mut slot,
+            r#"
+struct V: View {
+    @State private var ready = false
+    var body: some View {
+        Text(ready ? "ready" : "wait").task { ready = true }
+    }
+}
+"#,
+        );
+        assert!(result.contains("\"ok\":true"), "{result}");
+        assert!(result.contains("wait"), "initial tree shows wait: {result}");
+        let patches = run_mount_tasks(&mut slot);
+        assert!(patches.contains("\"ok\":true"), "{patches}");
+        assert!(patches.contains("ready"), "task updated state: {patches}");
+    }
+
+    #[test]
+    fn run_mount_tasks_without_session_is_error() {
+        let mut slot = None;
+        let json = run_mount_tasks(&mut slot);
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"patches\":null"), "{json}");
     }
 
     #[test]

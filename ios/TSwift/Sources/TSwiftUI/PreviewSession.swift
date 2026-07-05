@@ -71,6 +71,22 @@ public final class PreviewSession: ObservableObject {
         root = envelope.root
         lastError = nil
         model = RenderModel(root: tree)
+        // Fire `.task {}` closures — appear-time async work that runs inline
+        // under the cooperative executor — and apply the resulting patches.
+        runMountTasks()
+    }
+
+    /// Fire any pending `.task {}` closures on the live session and apply the
+    /// returned patches. Mirrors `dispatch(...)`'s FFI-call pattern; a no-op
+    /// (empty patch list) when the mounted view has no `.task` modifiers.
+    public func runMountTasks() {
+        guard let ptr = tswift_swiftui_run_mount_tasks(context.handle) else { return }
+        defer { tswift_string_free(ptr) }
+        let raw = String(cString: ptr)
+        guard let envelope = try? JSONDecoder().decode(
+            DispatchEnvelope.self, from: Data(raw.utf8)
+        ), envelope.ok, let patches = envelope.patches else { return }
+        model.apply(patches)
     }
 
     // MARK: Diagnostics

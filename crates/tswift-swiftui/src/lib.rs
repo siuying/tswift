@@ -902,6 +902,7 @@ mod tests {
                 "View.strikethrough",
                 "View.tabItem",
                 "View.tag",
+                "View.task",
                 "View.textCase",
                 "View.textFieldStyle",
                 "View.tint",

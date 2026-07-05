@@ -253,6 +253,26 @@ pub unsafe extern "C" fn tswift_swiftui_dispatch(
     into_json_ptr(swiftui::dispatch(&mut ctx.swiftui, event_json))
 }
 
+/// Fire any pending `.task {}` closures on `ctx`'s live render session and
+/// return an owned patch-stream JSON in the same envelope as
+/// [`tswift_swiftui_dispatch`] (`{"ok":bool,"patches":[…]|null,"error":
+/// string|null}`); release it with [`tswift_string_free`]. Call once after a
+/// successful [`tswift_swiftui_compile`] to run appear-time async work and show
+/// post-mount state. Safe to call with no `.task` modifiers present (returns an
+/// empty patch list).
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. The returned
+/// pointer is owned by the caller and must be freed once with
+/// [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_swiftui_run_mount_tasks(ctx: *mut Context) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(swiftui::dispatch_error_json("null context"));
+    };
+    into_json_ptr(swiftui::run_mount_tasks(&mut ctx.swiftui))
+}
+
 /// Lint a SwiftUI `source` and return frontend diagnostics as owned JSON
 /// (`{"ok":bool,"diagnostics":[{"line","col","severity","message"}]}`), without
 /// rendering or mutating any session — the editor's live error-feedback channel.
@@ -290,6 +310,8 @@ mod tests {
             tswift_swiftui_compile;
         let _dispatch: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
             tswift_swiftui_dispatch;
+        let _run_mount_tasks: unsafe extern "C" fn(*mut Context) -> *mut c_char =
+            tswift_swiftui_run_mount_tasks;
         let _diagnostics: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_diagnostics;
         let _string_free: unsafe extern "C" fn(*mut c_char) = tswift_string_free;
         let _set_http: unsafe extern "C" fn(*mut Context, Option<TswiftHttpHandler>, *mut c_void) =

@@ -255,6 +255,7 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("onLongPressGesture", modifier_on_long_press_gesture),
     ("onSubmit", modifier_on_submit),
     ("onAppear", modifier_on_appear),
+    ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
     // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
@@ -472,6 +473,20 @@ fn modifier_on_appear(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
         .into_iter()
         .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
     attach_event(recv, "onAppear", "appear", Vec::new(), action)
+}
+
+/// `.task(priority:_:)` — SwiftUI runs the async action when the view appears
+/// and cancels it on disappear. The runtime's cooperative executor has no
+/// mid-flight cancellation, so v1 fires the action inline (any `await` inside
+/// runs to completion) when the host calls `run_mount_tasks` after mount. The
+/// optional `priority:` label is parsed and dropped (one signature covers all
+/// priorities). Emits a `task` marker modifier and binds the action under the
+/// `"task"` event; coexists with `.onAppear` (distinct handler keys).
+fn modifier_task(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let action = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+    attach_event(recv, "task", "task", Vec::new(), action)
 }
 
 /// `.onDisappear(perform:)` — the host fires a `disappear` event on unmount;

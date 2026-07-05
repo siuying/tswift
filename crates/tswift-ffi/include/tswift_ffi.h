@@ -115,6 +115,12 @@ char *tswift_swiftui_compile(TSwiftContext *ctx, const char *source);
  * returning an owned patch-stream JSON. */
 char *tswift_swiftui_dispatch(TSwiftContext *ctx, const char *event_json);
 
+/* Fire any pending `.task {}` closures on the live session and return an owned
+ * patch-stream JSON (same envelope as tswift_swiftui_dispatch). Call once after
+ * a successful tswift_swiftui_compile to run appear-time async work. Safe with
+ * no `.task` modifiers present (returns an empty patch list). */
+char *tswift_swiftui_run_mount_tasks(TSwiftContext *ctx);
+
 /* Lint `source` and return owned diagnostics JSON
  * (`{"ok":bool,"diagnostics":[{"line","col","severity","message"}]}`) without
  * rendering. Stateless (no context). The editor's live error-feedback channel. */

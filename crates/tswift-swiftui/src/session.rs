@@ -464,6 +464,40 @@ impl<'i, 'w> Session<'i, 'w> {
         self.run_watchers(baseline, tree)
     }
 
+    /// Fire every pending `.task {}` closure on the current tree (ADR-0013 §3),
+    /// then re-render and run `onChange` watchers, returning the new tree.
+    ///
+    /// The host calls this once after a successful mount to run
+    /// appear-time async work (`.task` runs the action inline; any `await`
+    /// inside it runs to completion under the cooperative executor). A
+    /// `.task` and a `.onAppear` on the same view coexist — they bind distinct
+    /// handler keys and fire independently. With no `.task` modifiers this is a
+    /// re-render that emits an empty patch set. Same `Result` shape as
+    /// `render`/`dispatch` so the caller can diff before/after identically.
+    pub fn run_mount_tasks(&mut self) -> Result<SwiftValue, EvalError> {
+        let tree = match &self.current {
+            Some(tree) => tree.clone(),
+            None => self.render()?,
+        };
+        // Snapshot the watched-value baseline before firing tasks so any state a
+        // task mutates is observed by `onChange` watchers on re-render.
+        let baseline = collect_watch_values(&tree);
+        // Collect every `"task"` handler closure in structural order.
+        let mut task_closures: Vec<usize> = Vec::new();
+        crate::tree::walk(&tree, &mut |_, _, obj| {
+            if let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) {
+                if let Some(SwiftValue::Closure(cid)) = handlers.get("task") {
+                    task_closures.push(*cid);
+                }
+            }
+        });
+        for cid in task_closures {
+            self.interp.invoke_closure(cid, Vec::new())?;
+        }
+        let tree = self.render()?;
+        self.run_watchers(baseline, tree)
+    }
+
     /// Fire `onChange(of:)` watchers whose watched value differs from `baseline`
     /// (the pre-event snapshot), invoking each action with `(oldValue,
     /// newValue)`. A fired action may mutate state a *second* watcher observes,
@@ -1238,6 +1272,98 @@ struct ChangeView: View {
         assert!(
             json.contains("c=1 d=2 0-&gt;2") || json.contains("c=1 d=2 0->2"),
             "chained onChange should run both watchers with old/new: {json}"
+        );
+    }
+
+    #[test]
+    fn task_modifier_fires_on_run_mount_tasks() {
+        let mut interp = events_interp(
+            r#"
+struct TaskView: View {
+    @State private var loaded = false
+    var body: some View {
+        Text(loaded ? "Loaded" : "Loading...")
+            .task { loaded = true }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TaskView").expect("session");
+        let initial = session.render().expect("render");
+        assert!(
+            uiir::to_json(&initial).contains("Loading..."),
+            "initial tree shows Loading...: {}",
+            uiir::to_json(&initial)
+        );
+        let after = session.run_mount_tasks().expect("run_mount_tasks");
+        assert!(
+            uiir::to_json(&after).contains("Loaded"),
+            "task fired and updated state: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn task_modifier_coexists_with_on_appear() {
+        let mut interp = events_interp(
+            r#"
+struct TwoView: View {
+    @State private var a = false
+    @State private var b = false
+    var body: some View {
+        Text(a && b ? "both" : "neither")
+            .onAppear { a = true }
+            .task { b = true }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TwoView").expect("session");
+        session.render().expect("render");
+        // The host fires `appear` on the root (id "0"); then tasks run.
+        let appear = Event {
+            id: "0".into(),
+            event: "appear".into(),
+            value: None,
+        };
+        session.dispatch(&appear).expect("appear");
+        let after = session.run_mount_tasks().expect("run_mount_tasks");
+        assert!(
+            uiir::to_json(&after).contains("both"),
+            "onAppear and task both fired: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn task_modifier_runs_await_inline() {
+        // The load-bearing claim for networked `.task`: an `await` inside the
+        // task closure runs inline under the cooperative executor, so the
+        // re-render after `run_mount_tasks` observes the mutated @State.
+        let mut interp = events_interp(
+            r#"
+struct TaskView: View {
+    @State private var label = "Loading..."
+    func fetchLabel() async -> String { "Loaded" }
+    var body: some View {
+        Text(label)
+            .task { label = await fetchLabel() }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TaskView").expect("session");
+        let initial = session.render().expect("render");
+        assert!(
+            uiir::to_json(&initial).contains("Loading..."),
+            "initial tree shows Loading...: {}",
+            uiir::to_json(&initial)
+        );
+        let after = session.run_mount_tasks().expect("run_mount_tasks");
+        assert!(
+            uiir::to_json(&after).contains("Loaded"),
+            "await inside .task ran inline and updated state: {}",
+            uiir::to_json(&after)
         );
     }
 
