@@ -21,6 +21,13 @@ pub mod diff;
 pub mod session;
 pub(crate) mod tree;
 pub mod uiir;
+pub(crate) mod values;
+
+pub use values::{child_id, key_of, token_of, view_type_name};
+pub(crate) use values::{
+    container_value, key_string, number_f64, range_bounds, sequence_items, set_or_push_field,
+    type_error, view_value, with_key,
+};
 
 use tswift_core::{
     Arg, BuiltinParam, EvalError, Interpreter, StdContext, StdError, StdResult, StructMethodFn,
@@ -602,35 +609,6 @@ struct AsyncImagePhase {
 }
 "#;
 
-/// The token string carried by a prelude token struct (`Color`/`Font`/
-/// `FontWeight`), if `value` is one.
-pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
-    let SwiftValue::Struct(obj) = value else {
-        return None;
-    };
-    if !matches!(
-        obj.type_name.as_str(),
-        "Color"
-            | "Font"
-            | "FontWeight"
-            | "TextAlignment"
-            | "TextCase"
-            | "Axis"
-            | "_ControlStyle"
-            | "Alignment"
-            | "HorizontalAlignment"
-            | "VerticalAlignment"
-            | "Edge"
-            | "ContentMode"
-    ) {
-        return None;
-    }
-    match obj.get("token") {
-        Some(SwiftValue::Str(s)) => Some((obj.type_name.as_str(), s.as_str())),
-        _ => None,
-    }
-}
-
 /// Register every currently-supported SwiftUI view constructor and modifier
 /// into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
@@ -857,27 +835,6 @@ pub fn registered_keys() -> Vec<String> {
     keys.sort();
     keys.dedup();
     keys
-}
-
-/// Build a view value: a struct carrying `type_name` plus any constructor
-/// fields, an empty ordered `_modifiers` list, and (for containers) `_children`.
-fn view_value(type_name: &str, mut fields: Vec<(String, SwiftValue)>) -> SwiftValue {
-    fields.push((
-        MODIFIERS_FIELD.into(),
-        SwiftValue::Array(Rc::new(Vec::new())),
-    ));
-    SwiftValue::Struct(Rc::new(StructObj {
-        type_name: type_name.into(),
-        fields,
-    }))
-}
-
-/// Build a container view value with an ordered `_children` list.
-fn container_value(type_name: &str, children: Vec<SwiftValue>) -> SwiftValue {
-    view_value(
-        type_name,
-        vec![(CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children)))],
-    )
 }
 
 /// `Text(_ verbatim: String)` — the leaf text view.
@@ -1539,15 +1496,6 @@ pub fn path_remove_last(ctx: &mut Interpreter, binding: &SwiftValue) -> Result<b
     Ok(true)
 }
 
-/// Set (or append) a field on a mutable struct object.
-fn set_or_push_field(obj: &mut StructObj, name: &str, value: SwiftValue) {
-    if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == name) {
-        slot.1 = value;
-    } else {
-        obj.fields.push((name.into(), value));
-    }
-}
-
 /// `Slider(value: Binding<Double>, in: range, step:)` — a continuous value
 /// control. The current value (read from the binding) plus the range bounds and
 /// optional step are serialized as args so the host can render an `<input
@@ -1637,39 +1585,6 @@ fn stepper_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(view_value("Stepper", fields))
 }
 
-/// Read a Swift numeric value as `f64` (int widened, double as-is).
-fn number_f64(value: &SwiftValue) -> Option<f64> {
-    match value {
-        SwiftValue::Int(i) => Some(i.raw as f64),
-        SwiftValue::Double(d) => Some(*d),
-        _ => None,
-    }
-}
-
-/// Resolve `(lower, upper)` bounds from an `in:` range argument, falling back to
-/// the given defaults when absent or not a range. v1 limitation: the runtime
-/// represents only integer ranges, so a `Slider` range is written as `0...1`
-/// (not `0.0...1.0`); the integer endpoints are widened to `f64` here.
-fn range_bounds(range: Option<&SwiftValue>, def_lo: f64, def_hi: f64) -> (f64, f64) {
-    match range {
-        Some(SwiftValue::Range { lo, hi, .. }) => (*lo as f64, *hi as f64),
-        _ => (def_lo, def_hi),
-    }
-}
-
-/// Materialize a ForEach data argument into an ordered element list. Supports
-/// arrays and integer ranges (the two common `ForEach` sources).
-fn sequence_items(data: &SwiftValue) -> Option<Vec<SwiftValue>> {
-    match data {
-        SwiftValue::Array(items) => Some(items.iter().cloned().collect()),
-        SwiftValue::Range { lo, hi, inclusive } => {
-            let end = if *inclusive { *hi + 1 } else { *hi };
-            Some((*lo..end).map(SwiftValue::int).collect())
-        }
-        _ => None,
-    }
-}
-
 /// Derive a ForEach row's identity key for `item`: apply the `id:` key path if
 /// given, else read an `id` member, else fall back to the display string.
 fn foreach_key(
@@ -1687,39 +1602,6 @@ fn foreach_key(
         },
     };
     Ok(key_string(&keyed))
-}
-
-/// Stringify an identity value into a stable, id-safe key: an *injective* escape
-/// so distinct identities never collapse to the same key (which would let the
-/// keyed diff preserve the wrong row's state). ASCII alphanumerics and `-` pass
-/// through; every other byte (including `_` and `.`) becomes `_<hex>`, so the
-/// key is a reversible, `.`-free path segment.
-fn key_string(value: &SwiftValue) -> String {
-    let raw = match value {
-        SwiftValue::Str(s) => s.clone(),
-        other => other.to_string(),
-    };
-    let mut out = String::with_capacity(raw.len());
-    for b in raw.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' {
-            out.push(b as char);
-        } else {
-            out.push('_');
-            out.push_str(&format!("{b:02x}"));
-        }
-    }
-    out
-}
-
-/// Attach a stable identity [`KEY_FIELD`] to a view value (copy-on-write).
-fn with_key(view: SwiftValue, key: String) -> SwiftValue {
-    let SwiftValue::Struct(obj) = view else {
-        return view;
-    };
-    let mut obj = (*obj).clone();
-    obj.fields.retain(|(k, _)| k != KEY_FIELD);
-    obj.fields.push((KEY_FIELD.into(), SwiftValue::Str(key)));
-    SwiftValue::Struct(Rc::new(obj))
 }
 
 /// `Circle()` — a circular shape leaf.
@@ -2824,20 +2706,6 @@ fn append_modifier(view: SwiftValue, modifier: SwiftValue) -> StdResult {
     })))
 }
 
-fn type_error(message: impl Into<String>) -> StdError {
-    StdError::Error(EvalError::Type(message.into()))
-}
-
-/// Returns the SwiftUI type name of a view value, if it is one.
-pub fn view_type_name(value: &SwiftValue) -> Option<&str> {
-    match value {
-        SwiftValue::Struct(obj) if obj.fields.iter().any(|(k, _)| k == MODIFIERS_FIELD) => {
-            Some(obj.type_name.as_str())
-        }
-        _ => None,
-    }
-}
-
 /// Find the program's root `View` struct to render: the one no other view
 /// *constructs* inside a view body.
 ///
@@ -2900,28 +2768,6 @@ pub fn find_root_view(analysis: &Analysis) -> Option<String> {
         .find(|v| !constructed.contains(*v))
         .or_else(|| views.first())
         .cloned()
-}
-
-/// A node's stable identity key ([`KEY_FIELD`]), set on `ForEach`-generated
-/// children so the diff and serializer agree on a position-independent id.
-pub fn key_of(value: &SwiftValue) -> Option<&str> {
-    match value {
-        SwiftValue::Struct(obj) => match obj.get(KEY_FIELD) {
-            Some(SwiftValue::Str(s)) => Some(s.as_str()),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The UIIR id of the `index`-th child of node `parent_id`. A keyed child
-/// (`ForEach` row) uses its stable key so reorders preserve identity; every
-/// other child uses its structural position.
-pub fn child_id(parent_id: &str, index: usize, child: &SwiftValue) -> String {
-    match key_of(child) {
-        Some(key) => format!("{parent_id}.{key}"),
-        None => format!("{parent_id}.{index}"),
-    }
 }
 
 #[cfg(test)]
