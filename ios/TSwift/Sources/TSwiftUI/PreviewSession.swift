@@ -71,9 +71,12 @@ public final class PreviewSession: ObservableObject {
         root = envelope.root
         lastError = nil
         model = RenderModel(root: tree)
-        // Fire `.task {}` closures — appear-time async work that runs inline
-        // under the cooperative executor — and apply the resulting patches.
-        runMountTasks()
+        // Fire `.task {}` closures on the next main-actor tick, not inline: the
+        // cooperative executor runs their `await`s to completion (blocking this
+        // thread — e.g. a networked fetch), so deferring lets SwiftUI paint the
+        // initial "loading" tree first instead of freezing on a blank mount.
+        // A no-op for views without `.task`.
+        Task { @MainActor [weak self] in self?.runMountTasks() }
     }
 
     /// Fire any pending `.task {}` closures on the live session and apply the
