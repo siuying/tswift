@@ -33,6 +33,7 @@ struct CatalogGroup: Identifiable {
 /// Full catalog ported from website/src/components/FullPlayground.astro ALL_PRESETS.
 enum Catalog {
     static let all: [CatalogGroup] = [
+        appsGroup,
         basicsGroup,
         functionsGroup,
         valueTypesGroup,
@@ -42,6 +43,79 @@ enum Catalog {
         swiftUIGroup,
         stdlibGroup,
     ]
+
+    // MARK: Apps
+    private static let appsGroup = CatalogGroup(
+        id: "apps",
+        name: "Apps",
+        items: [
+            CatalogItem(
+                id: "apps-hacker-news",
+                title: "Hacker News Reader",
+                subtitle: "Networked end-to-end app",
+                source: """
+                import Foundation
+
+                struct HNStory: Decodable {
+                    let id: Int
+                    let title: String
+                    let by: String
+                    let score: Int
+                    let url: String?
+                }
+
+                struct HNReaderView: View {
+                    @State private var stories: [HNStory] = []
+                    @State private var status = "Loading top stories…"
+
+                    func loadStories() async {
+                        do {
+                            let topURL = URL(string: "https://hacker-news.firebaseio.com/v0/topstories.json")!
+                            let (idsData, _) = try await URLSession.shared.data(from: topURL)
+                            let ids = try JSONDecoder().decode([Int].self, from: idsData)
+                            var result: [HNStory] = []
+                            for id in ids.prefix(10) {
+                                let itemURL = URL(string: "https://hacker-news.firebaseio.com/v0/item/\\(id).json")!
+                                if let (itemData, _) = try? await URLSession.shared.data(from: itemURL),
+                                   let story = try? JSONDecoder().decode(HNStory.self, from: itemData) {
+                                    result.append(story)
+                                }
+                            }
+                            stories = result
+                            status = "Top \\(result.count) stories"
+                        } catch {
+                            status = "Error: \\(error)"
+                        }
+                    }
+
+                    var body: some View {
+                        NavigationStack {
+                            List {
+                                Section(status) {
+                                    ForEach(stories, id: \\.id) { story in
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(story.title)
+                                                .font(.headline)
+                                            Text("\\(story.score) pts · by \\(story.by)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.vertical, 2)
+                                    }
+                                }
+                            }
+                            .navigationTitle("Hacker News")
+                        }
+                        .task {
+                            await loadStories()
+                        }
+                    }
+                }
+                """,
+                kind: .swiftUI(needsNetwork: true)
+            ),
+        ]
+    )
 
     // MARK: Basics
     private static let basicsGroup = CatalogGroup(

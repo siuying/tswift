@@ -49,11 +49,11 @@ struct CatalogDetailView: View {
             // onAppear fires automatically, auto-running the new source.
             .id(item.id)
 
-        case .swiftUI:
-            // `needsNetwork` is ignored this slice (HN networking is slice 6);
-            // a plain PreviewSession suffices.
+        case .swiftUI(let needsNetwork):
+            // `needsNetwork` selects a URLSession-backed context for the
+            // networked Hacker News reader; other demos use a plain session.
             SplitDemoView(source: $editableSource) {
-                SwiftUIDemoView(source: editableSource)
+                SwiftUIDemoView(source: editableSource, needsNetwork: needsNetwork)
             }
             // New identity per item ⟹ PreviewSession is recreated and
             // onAppear fires, recompiling the new source.

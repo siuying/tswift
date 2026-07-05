@@ -1,4 +1,5 @@
 import SwiftUI
+import TSwiftCore
 import TSwiftUI
 import UiirRenderer
 
@@ -14,8 +15,22 @@ struct SwiftUIDemoView: View {
     /// The Swift source to compile.  Updated by the parent's TextEditor.
     let source: String
 
-    @StateObject private var session = PreviewSession()
+    @StateObject private var session: PreviewSession
     @State private var didCompile = false
+
+    /// Networked demos (e.g. the Hacker News reader) need a context with a
+    /// real URLSession HTTP handler installed so `.task { await … }` fetches
+    /// resolve; plain demos use a zero-config session.
+    init(source: String, needsNetwork: Bool) {
+        self.source = source
+        if needsNetwork {
+            let ctx = TSwiftContext()
+            ctx.installURLSessionHTTPHandler()
+            _session = StateObject(wrappedValue: PreviewSession(context: ctx))
+        } else {
+            _session = StateObject(wrappedValue: PreviewSession())
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

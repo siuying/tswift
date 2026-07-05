@@ -13,6 +13,11 @@ targets:
     type: application
     platform: iOS
     sources: [Sources]
+    info:
+      path: TSwiftExample-Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
     dependencies:
       - package: TSwift
         product: TSwiftCore
