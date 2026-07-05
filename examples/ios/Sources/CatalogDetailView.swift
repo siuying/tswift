@@ -1,60 +1,70 @@
 import SwiftUI
 
-/// Placeholder detail panel shown when a catalog item is selected.
-/// Slice 1 only: displays the item title, kind badge, and raw source.
-/// The real split-screen demo (code on left, live output on right) is added
-/// in later slices.
+/// Detail panel shown when a catalog item is selected.
+///
+/// - `.console` items: `SplitDemoView` with an editable `TextEditor` on the
+///   left and `ConsoleDemoView` (stdout / diagnostics) on the right.
+/// - `.swiftUI` items: placeholder — implemented in slice 3.
+///
+/// The `@State` source is seeded from `item.source` on first appearance and
+/// reset whenever the selected item changes (via `.onChange(of:)`).
+/// `.id(item.id)` on the split container recreates the demo pane (and its
+/// `@StateObject ConsoleRunner`) so auto-run fires for each new selection.
 struct CatalogDetailView: View {
     let item: CatalogItem
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // ── Header ──────────────────────────────────────────────────────
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                    .font(.title2.bold())
-                Text(item.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                kindBadge
-                    .padding(.top, 2)
-            }
-            .padding()
+    /// Editable copy of the source code; lives in this view so the
+    /// TextEditor binding doesn't reach into the immutable model.
+    @State private var editableSource: String
 
-            Divider()
-
-            // ── Source code ─────────────────────────────────────────────────
-            ScrollView([.horizontal, .vertical]) {
-                Text(item.source)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
-            .background(Color(.secondarySystemBackground))
-        }
-        .navigationTitle(item.title)
-        .navigationBarTitleDisplayMode(.inline)
+    init(item: CatalogItem) {
+        self.item = item
+        // Seed the initial state value directly in the init so the very first
+        // render shows the item's source without waiting for onAppear.
+        self._editableSource = State(initialValue: item.source)
     }
 
-    // MARK: - Helpers
+    var body: some View {
+        contentView
+            .navigationTitle(item.title)
+            .navigationBarTitleDisplayMode(.inline)
+            // iOS 16-compatible single-param form; resets the editor when the
+            // selected item changes in the sidebar.
+            .onChange(of: item) { newItem in
+                editableSource = newItem.source
+            }
+    }
+
+    // MARK: - Content
 
     @ViewBuilder
-    private var kindBadge: some View {
+    private var contentView: some View {
         switch item.kind {
         case .console:
-            badge(label: "Console", color: .orange)
-        case .swiftUI(let needsNetwork):
-            badge(label: needsNetwork ? "SwiftUI + Network" : "SwiftUI", color: .blue)
+            SplitDemoView(source: $editableSource) {
+                ConsoleDemoView(source: editableSource)
+            }
+            // New identity per item ⟹ ConsoleRunner is recreated and
+            // onAppear fires automatically, auto-running the new source.
+            .id(item.id)
+
+        case .swiftUI:
+            swiftUIPlaceholder
         }
     }
 
-    private func badge(label: String, color: Color) -> some View {
-        Text(label)
-            .font(.caption.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.15))
-            .foregroundStyle(color)
-            .clipShape(Capsule())
+    // MARK: - Placeholders
+
+    private var swiftUIPlaceholder: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "swift")
+                .font(.system(size: 48))
+                .foregroundStyle(.orange)
+            Text("SwiftUI Demo")
+                .font(.title3.bold())
+            Text("Coming in slice 3.")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
