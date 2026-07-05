@@ -16,6 +16,8 @@ LazyHStack.init
 LazyVGrid.init
 LazyVStack.init
 List.init
+NavigationLink.init
+NavigationStack.init
 Picker.init
 ProgressView.init
 Rectangle.init

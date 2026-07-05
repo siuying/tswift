@@ -1,0 +1,1 @@
+[[{"op":"insert","parentId":"0","index":1,"node":{"id":"0.1","kind":"VStack","args":{},"modifiers":[{"name":"navigationTitle","value":"Detail"}],"children":[{"id":"0.1.0","kind":"Text","args":{"verbatim":"Count: 0"},"modifiers":[],"children":[]}]}}],[{"op":"setText","id":"0.1.0","text":"Count: 1"}],[{"op":"remove","id":"0.1"}]]

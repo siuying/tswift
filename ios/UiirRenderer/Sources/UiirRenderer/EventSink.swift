@@ -39,6 +39,13 @@ public struct UiirEvent: Equatable, Sendable {
     public static func select(_ id: String, _ value: String) -> UiirEvent {
         UiirEvent(id: id, event: "select", value: value)
     }
+
+    /// A `NavigationStack` back navigation (ADR-0013 §1): the system pop
+    /// gesture / back button on the stack `id`. The runtime pops the topmost
+    /// pushed screen.
+    public static func back(_ id: String) -> UiirEvent {
+        UiirEvent(id: id, event: "back", value: "")
+    }
 }
 
 /// Receives interaction events from rendered controls. The default sink

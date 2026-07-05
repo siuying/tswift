@@ -186,6 +186,11 @@ public enum ViewFactory {
         case "TabView":
             return AnyView(tabView(node, sink))
 
+        case "NavigationStack":
+            return AnyView(navigationStack(node, sink))
+        case "NavigationLink":
+            return AnyView(navigationLink(node, sink))
+
         case "VStack":
             return AnyView(
                 VStack(alignment: hAlignment(node), spacing: optLength(node, "spacing")) {
@@ -296,6 +301,67 @@ public enum ViewFactory {
             return AnyView(shape.fill(fill))
         }
         return AnyView(shape)
+    }
+
+    /// A native `NavigationStack` driven by the runtime-owned stack (ADR-0013
+    /// §1): the children are every screen (root first, pushed last). The path
+    /// depth mirrors the pushed-screen count; a `navigationDestination(for:
+    /// Int.self)` maps a path index back to the matching child screen. A system
+    /// pop (swipe-back / bar back button) shortens the path, which forwards one
+    /// `back` event per removed level so the runtime pops to match. Each screen's
+    /// `navigationTitle` modifier (applied by `ModifierApply`) becomes the bar
+    /// title.
+    private static func navigationStack(_ node: UiirNode, _ sink: any UiirEventSink) -> some View {
+        let screens = node.children
+        let pushedCount = max(0, screens.count - 1)
+        let path = Binding<[Int]>(
+            get: { pushedCount > 0 ? Array(1...pushedCount) : [] },
+            set: { newPath in
+                if newPath.count < pushedCount {
+                    for _ in 0..<(pushedCount - newPath.count) {
+                        sink.send(.back(node.id))
+                    }
+                }
+            }
+        )
+        return NavigationStack(path: path) {
+            Group {
+                if let root = screens.first {
+                    render(root, eventSink: sink)
+                } else {
+                    EmptyView()
+                }
+            }
+            .navigationDestination(for: Int.self) { index in
+                if index < screens.count {
+                    render(screens[index], eventSink: sink)
+                } else {
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    /// A `NavigationLink` node (ADR-0013 §1): rendered as a tappable row that
+    /// forwards a `tap` — the runtime owns navigation, so this is NOT a native
+    /// `SwiftUI.NavigationLink` (which would drive its own push). The label is
+    /// the `title` arg (with a trailing chevron) or the `label:` children.
+    @ViewBuilder
+    private static func navigationLink(_ node: UiirNode, _ sink: any UiirEventSink) -> some View {
+        Button(action: { sink.send(.tap(node.id)) }) {
+            if node.children.isEmpty {
+                HStack {
+                    Text(str(node, "title"))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                renderChildren(node, sink)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     /// A native `TabView` driven by the children + their `tabItem` labels

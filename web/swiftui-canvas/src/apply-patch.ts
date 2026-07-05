@@ -82,12 +82,17 @@ export class PatchApplier {
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         parent.insertBefore(el, patchRef(parent, patch.index));
+        // A screen pushed onto a faux NavigationStack: re-sync bar + visibility.
+        if (parent.dataset.kind === "NavigationStack") this.syncNavStack(parent);
         break;
       }
       case "remove": {
         const el = this.nodes.get(patch.id);
+        const parent = el?.parentElement ?? null;
         el?.remove();
         this.forget(patch.id);
+        // A screen popped off a faux NavigationStack: re-sync bar + visibility.
+        if (parent?.dataset.kind === "NavigationStack") this.syncNavStack(parent);
         break;
       }
       case "move": {
@@ -147,6 +152,10 @@ export class PatchApplier {
           // that appeared, detach ones that were removed, and re-sync disappear
           // tracking. Not a fresh mount, so `onAppear` does not re-fire.
           this.attachHandlers(el, patch.id, patch.modifiers, false);
+          // A screen root's navigationTitle may have changed: refresh the bar.
+          if (el.parentElement?.dataset.kind === "NavigationStack") {
+            this.syncNavStack(el.parentElement);
+          }
         }
         break;
       }
@@ -375,6 +384,7 @@ export class PatchApplier {
   private build(node: UiirNode): HTMLElement {
     const el = this.element(node);
     el.dataset.kind = node.kind;
+    el.dataset.id = node.id;
     // Pristine style straight from `element()` — no args, no modifiers — so
     // `setArgs` can revert arg-owned style to defaults.
     el.dataset.intrinsicStyle = el.style.cssText;
@@ -396,6 +406,8 @@ export class PatchApplier {
       if (typeof node.args.selection === "string") el.value = node.args.selection;
     } else if (node.kind === "TabView") {
       this.buildTabView(el, node);
+    } else if (node.kind === "NavigationStack") {
+      this.buildNavStack(el, node);
     } else {
       for (const child of node.children) {
         const childEl = this.build(child);
@@ -405,6 +417,59 @@ export class PatchApplier {
       }
     }
     return el;
+  }
+
+  /** Build a faux `NavigationStack` (ADR-0013 §1): a rendered nav bar (a back
+   * button + the topmost screen's `navigationTitle`) plus the screen children,
+   * only the topmost shown. The `.nav-bar` is a synthetic element excluded from
+   * patch addressing (like a TabView's tab bar); push/pop arrive as ordinary
+   * `insert`/`remove` patches, after which the stack is re-synced. */
+  private buildNavStack(el: HTMLElement, node: UiirNode): void {
+    const bar = document.createElement("div");
+    bar.className = "nav-bar";
+    bar.style.cssText =
+      "display:flex;flex-direction:row;align-items:center;gap:8px;min-height:44px;" +
+      "border-bottom:1px solid #e0e0e0;padding:0 8px;";
+    const back = document.createElement("button");
+    back.className = "nav-back";
+    back.textContent = "\u2039 Back";
+    back.style.cssText =
+      "border:none;background:none;cursor:pointer;color:#007aff;font-size:15px;";
+    back.addEventListener("click", () => this.emit(node.id, "back", null));
+    const title = document.createElement("span");
+    title.className = "nav-title";
+    title.style.cssText = "font-weight:600;flex:1;text-align:center;";
+    bar.append(back, title);
+    el.appendChild(bar);
+    for (const child of node.children) {
+      el.appendChild(this.build(child));
+    }
+    this.syncNavStack(el);
+  }
+
+  /** Reflect a `NavigationStack`'s current stack: show only the topmost screen,
+   * reveal the back button when more than one screen is present, and set the
+   * bar title from the topmost screen's `navigationTitle` modifier. */
+  private syncNavStack(el: HTMLElement): void {
+    const screens = Array.from(el.children).filter(
+      (c) => !c.classList.contains("nav-bar"),
+    ) as HTMLElement[];
+    screens.forEach((s, i) => {
+      s.style.display = i === screens.length - 1 ? "" : "none";
+    });
+    const bar = el.querySelector(":scope > .nav-bar");
+    if (!bar) return;
+    const back = bar.querySelector(".nav-back") as HTMLElement | null;
+    if (back) back.style.visibility = screens.length > 1 ? "visible" : "hidden";
+    const title = bar.querySelector(".nav-title") as HTMLElement | null;
+    if (title) {
+      const top = screens[screens.length - 1];
+      const id = top?.dataset.id;
+      const mods = id ? this.mods.get(id) ?? [] : [];
+      const navTitle = mods.find((m) => m.name === "navigationTitle");
+      title.textContent =
+        navTitle && typeof navTitle.value === "string" ? navTitle.value : "";
+    }
   }
 
   /** Build a `TabView` (ADR-0013 §2): every tab renders eagerly as a child;
@@ -614,6 +679,25 @@ export class PatchApplier {
         el.addEventListener("click", () => this.emit(node.id, "tap", null));
         return el;
       }
+      case "NavigationStack": {
+        // A faux navigation container (ADR-0013 §1): a rendered nav bar plus the
+        // stack of screen children, only the topmost shown. `position:relative`
+        // anchors the bar; `buildNavStack` adds the bar and syncs visibility.
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:flex;flex-direction:column;position:relative;flex:1;min-height:0;";
+        return el;
+      }
+      case "NavigationLink": {
+        // A tappable row that pushes its (host-invisible) destination: a `tap`
+        // routes to the runtime, which appends the destination to the stack.
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:flex;flex-direction:row;align-items:center;justify-content:space-between;" +
+          "gap:8px;cursor:pointer;color:#007aff;";
+        el.addEventListener("click", () => this.emit(node.id, "tap", null));
+        return el;
+      }
       case "Toggle": {
         // A labelled switch: a checkbox emits `set` with its new boolean.
         const el = document.createElement("label");
@@ -782,6 +866,14 @@ export class PatchApplier {
       }
     } else if (kind === "Button" && typeof args.title === "string") {
       el.textContent = args.title;
+    } else if (kind === "NavigationLink" && typeof args.title === "string") {
+      // The title-string form (no label children) renders its title as text; a
+      // trailing disclosure chevron hints the push affordance.
+      el.textContent = args.title;
+      const chevron = document.createElement("span");
+      chevron.textContent = "\u203A";
+      chevron.style.opacity = "0.5";
+      el.appendChild(chevron);
     } else if (kind === "RoundedRectangle" && typeof args.cornerRadius === "number") {
       el.style.borderRadius = `${args.cornerRadius}px`;
     } else if (kind === "Section") {

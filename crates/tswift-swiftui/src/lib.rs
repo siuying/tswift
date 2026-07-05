@@ -51,6 +51,13 @@ pub const WATCH_FIELD: &str = "_watch";
 pub const WATCH_TYPE: &str = "_Watch";
 /// Type name of an appended modifier record (`_Modifier { name, <args> }`).
 pub const MODIFIER_TYPE: &str = "_Modifier";
+/// Field name holding a `NavigationLink`'s captured destination (ADR-0013 §1):
+/// either a `@ViewBuilder` destination `Closure` (re-evaluated fresh on every
+/// render so a pushed screen stays live against `@State`) or an eagerly-built
+/// destination view value (the `destination:` view form). Never serialized
+/// (leading `_`); the session pushes it onto the enclosing stack's state when
+/// the link is tapped.
+pub const NAV_DESTINATION_FIELD: &str = "_destination";
 /// Field name holding a `ForEach`-generated child's stable identity key. When
 /// present, the child's UIIR id is `{parent}.{key}` (not `{parent}.{index}`) so
 /// the keyed diff can emit `move` instead of replacing reordered rows.
@@ -657,6 +664,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Stepper", stepper_init);
     interp.register_free_fn("Picker", picker_init);
     interp.register_free_fn("TabView", tabview_init);
+    interp.register_free_fn("NavigationStack", navigation_stack_init);
+    interp.register_free_fn("NavigationLink", navigation_link_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -763,7 +772,9 @@ pub fn registered_keys() -> Vec<String> {
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
             | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView"
             | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form" | "LazyVGrid"
-            | "LazyHGrid" | "TabView" => Some(format!("{key}.init")),
+            | "LazyHGrid" | "TabView" | "NavigationStack" | "NavigationLink" => {
+                Some(format!("{key}.init"))
+            }
             _ => None,
         })
         .collect();
@@ -1125,6 +1136,107 @@ fn modifier_tab_item(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>)
         None => Vec::new(),
     };
     append_modifier(recv, make_modifier("tabItem", margs))
+}
+
+/// `NavigationStack { root }` — a runtime-owned navigation container (ADR-0013
+/// §1). The trailing `@ViewBuilder` is the root screen; every screen in the
+/// stack renders as an ordinary child (root first, topmost last). Pushed screens
+/// are appended by the session from per-stack state, so the base node here holds
+/// just the root content. A `path:` binding (value-based navigation) is out of
+/// this slice and ignored.
+fn navigation_stack_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let content_args: Vec<Arg> = args
+        .into_iter()
+        .filter(|a| a.label.as_deref() != Some("path"))
+        .collect();
+    Ok(container_value(
+        "NavigationStack",
+        collect_children(ctx, content_args)?,
+    ))
+}
+
+/// `NavigationLink("title") { destination }` / `NavigationLink(destination:
+/// label:)` — a tappable link serialized *without* its destination subtree
+/// (ADR-0013 §1). The destination is captured in [`NAV_DESTINATION_FIELD`] (a
+/// `@ViewBuilder` closure — re-evaluated fresh on every render so the pushed
+/// screen stays live against `@State` — or an eagerly-built view for the
+/// `destination: SomeView()` form) and never serialized. The link's own label is
+/// its `title` arg (title form) or its `label:`/trailing `@ViewBuilder`
+/// children. A tap routes to the session, which pushes the destination onto the
+/// enclosing stack. Value-based links / `navigationDestination(for:)` are out of
+/// this slice.
+fn navigation_link_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut title: Option<String> = None;
+    let mut destination: Option<SwiftValue> = None;
+    let mut label_closure: Option<SwiftValue> = None;
+    let mut trailing: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("destination") => destination = Some(arg.value),
+            Some("label") => label_closure = Some(arg.value),
+            None => match arg.value {
+                SwiftValue::Str(s) if title.is_none() => title = Some(s),
+                v @ SwiftValue::Closure(_) => trailing = Some(v),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    // Disambiguate the trailing `@ViewBuilder`: with an explicit `destination:`
+    // it is the link's label; otherwise it is the destination itself (the
+    // `NavigationLink("title") { destination }` form).
+    let destination = match (destination, trailing) {
+        (Some(dest), trailing) => {
+            if label_closure.is_none() {
+                label_closure = trailing;
+            }
+            Some(dest)
+        }
+        (None, trailing) => trailing,
+    };
+    let children = match label_closure {
+        Some(closure) => collect_children(
+            ctx,
+            vec![Arg {
+                label: None,
+                value: closure,
+            }],
+        )?,
+        None => Vec::new(),
+    };
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    if let Some(title) = title {
+        fields.push(("title".into(), SwiftValue::Str(title)));
+    }
+    fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    if let Some(destination) = destination {
+        fields.push((NAV_DESTINATION_FIELD.into(), destination));
+    }
+    Ok(view_value("NavigationLink", fields))
+}
+
+/// Realize a `NavigationLink` destination captured in [`NAV_DESTINATION_FIELD`]
+/// into a single screen view value, expanding a custom `View` into its `body`
+/// (ADR-0013 §1). A `@ViewBuilder` closure destination is evaluated fresh (so
+/// the pushed screen re-reads `@State` on every render); an eagerly-built view
+/// destination is expanded as-is. Multiple produced views compose as a `Group`.
+pub fn realize_pushed_screen(
+    ctx: &mut dyn StdContext,
+    destination: &SwiftValue,
+) -> Result<Option<SwiftValue>, StdError> {
+    let mut out = Vec::new();
+    match destination {
+        SwiftValue::Closure(id) => {
+            let block = ctx.eval_block_values(*id)?;
+            expand_into(ctx, block, &mut out, 0, &[])?;
+        }
+        other => expand_into(ctx, other.clone(), &mut out, 0, &[])?,
+    }
+    Ok(match out.len() {
+        0 => None,
+        1 => Some(out.into_iter().next().expect("len checked")),
+        _ => Some(container_value("Group", out)),
+    })
 }
 
 /// `Slider(value: Binding<Double>, in: range, step:)` — a continuous value
@@ -2234,6 +2346,8 @@ mod tests {
                 "LazyVGrid.init",
                 "LazyVStack.init",
                 "List.init",
+                "NavigationLink.init",
+                "NavigationStack.init",
                 "Picker.init",
                 "ProgressView.init",
                 "Rectangle.init",

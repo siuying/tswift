@@ -1,0 +1,5 @@
+[
+  { "id": "0.0.2", "event": "tap" },
+  { "id": "0.0.1", "event": "tap" },
+  { "id": "0", "event": "back" }
+]

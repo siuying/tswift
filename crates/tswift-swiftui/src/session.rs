@@ -14,7 +14,9 @@ use std::rc::Rc;
 
 use tswift_core::{EvalError, Interpreter, SwiftValue};
 
-use crate::{child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, WATCH_FIELD};
+use crate::{
+    child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATION_FIELD, WATCH_FIELD,
+};
 
 /// Maximum `onChange` cascade passes per dispatch: a watcher's action may mutate
 /// state a *second* watcher observes (chained state). We re-render and re-scan
@@ -76,6 +78,12 @@ pub struct Session<'i, 'w> {
     /// such a node records its tag-or-index here; each render re-applies it into
     /// the node's `selection` arg (mirrors NavigationStack per-stack state).
     tab_selection: HashMap<String, SwiftValue>,
+    /// Per-`NavigationStack` pushed-screen state (ADR-0013 §1), keyed by the
+    /// stack's structural node id. Each entry is a captured `NavigationLink`
+    /// destination (a `@ViewBuilder` closure re-evaluated fresh each render, or
+    /// an eagerly-built destination view). A link tap appends; a `back` event
+    /// pops. Each render appends the realized screens as children of the stack.
+    nav_stack: HashMap<String, Vec<SwiftValue>>,
 }
 
 impl<'i, 'w> Session<'i, 'w> {
@@ -87,6 +95,7 @@ impl<'i, 'w> Session<'i, 'w> {
             instance,
             current: None,
             tab_selection: HashMap::new(),
+            nav_stack: HashMap::new(),
         })
     }
 
@@ -95,6 +104,9 @@ impl<'i, 'w> Session<'i, 'w> {
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {
         let body = self.interp.get_member(&self.instance, "body")?;
         let tree = crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?;
+        // Append each `NavigationStack`'s pushed screens (ADR-0013 §1) before the
+        // tab-selection pass, so the tab pass sees the full (root + pushed) tree.
+        let tree = self.apply_nav_stack(tree, "0")?;
         // Re-apply any per-node `TabView` selection owned by the session (the
         // no-binding case): the freshly evaluated `body` defaults each such tab
         // view to its first tab, so the session's stored selection overrides it.
@@ -134,6 +146,61 @@ impl<'i, 'w> Session<'i, 'w> {
             }
         }
         SwiftValue::Struct(Rc::new(obj))
+    }
+
+    /// Append every `NavigationStack`'s pushed screens (ADR-0013 §1) as ordinary
+    /// children, keyed by the stack's structural id. Each pushed destination is
+    /// realized fresh — a `@ViewBuilder` closure is re-evaluated so the screen
+    /// re-reads `@State`; an eager destination view is expanded as-is — and
+    /// appended after the stack's root content (root first, topmost last). Walks
+    /// with the same structural ids as `uiir`.
+    fn apply_nav_stack(&mut self, node: SwiftValue, id: &str) -> Result<SwiftValue, EvalError> {
+        let SwiftValue::Struct(obj) = node else {
+            return Ok(node);
+        };
+        let mut obj = (*obj).clone();
+        // Recurse into the existing children first (mapping to their ids).
+        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
+                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
+                let mut mapped = Vec::with_capacity(kids.len());
+                for (i, c) in kids.into_iter().enumerate() {
+                    let cid = child_id(id, i, &c);
+                    mapped.push(self.apply_nav_stack(c, &cid)?);
+                }
+                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
+            }
+        }
+        // Then, if this is a stack with pushed screens, append them as children.
+        if obj.type_name == "NavigationStack" {
+            if let Some(pushed) = self.nav_stack.get(id).cloned() {
+                if !pushed.is_empty() {
+                    let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+                        Some(pos) => pos,
+                        None => {
+                            obj.fields.push((
+                                CHILDREN_FIELD.into(),
+                                SwiftValue::Array(Rc::new(Vec::new())),
+                            ));
+                            obj.fields.len() - 1
+                        }
+                    };
+                    let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
+                        SwiftValue::Array(a) => a.iter().cloned().collect(),
+                        _ => Vec::new(),
+                    };
+                    for dest in pushed {
+                        if let Some(screen) = crate::realize_pushed_screen(self.interp, &dest)
+                            .map_err(crate::std_error_to_eval)?
+                        {
+                            kids.push(screen);
+                        }
+                    }
+                    obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
+                }
+            }
+        }
+        Ok(SwiftValue::Struct(Rc::new(obj)))
     }
 
     /// The most recently rendered UIIR tree, if any (for diffing).
@@ -184,9 +251,32 @@ impl<'i, 'w> Session<'i, 'w> {
                     self.tab_selection.insert(event.id.clone(), value.clone());
                 }
             }
-            // Any other event routes to the node's handler map by name.
+            // A `NavigationStack` back affordance (ADR-0013 §1): pop the topmost
+            // pushed screen off the stack keyed by the event id. A `back` on a
+            // stack with no pushed screens (only the root child) is a no-op.
+            "back" => {
+                if let Some(stack) = self.nav_stack.get_mut(&event.id) {
+                    stack.pop();
+                    if stack.is_empty() {
+                        self.nav_stack.remove(&event.id);
+                    }
+                }
+            }
+            // Any other event routes to the node's handler map by name. A `tap`
+            // on a `NavigationLink` is special-cased first (ADR-0013 §1): it
+            // captures the link's destination onto the enclosing stack's pushed
+            // state instead of running a handler.
             name => {
-                if let Some(closure_id) = find_handler(&tree, &event.id, name) {
+                if name == "tap" {
+                    if let Some((stack_id, destination)) = find_nav_link(&tree, &event.id) {
+                        self.nav_stack
+                            .entry(stack_id)
+                            .or_default()
+                            .push(destination);
+                    } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
+                        self.interp.invoke_closure(closure_id, Vec::new())?;
+                    }
+                } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
                     self.interp.invoke_closure(closure_id, Vec::new())?;
                 }
             }
@@ -320,6 +410,45 @@ pub fn find_handler(tree: &SwiftValue, target: &str, event: &str) -> Option<usiz
         None
     }
     walk(tree, "0", target, event)
+}
+
+/// Find the tapped `NavigationLink` at structural path `target` and its
+/// enclosing `NavigationStack` (ADR-0013 §1). Returns `(stack id, captured
+/// destination)` so the session can push the destination onto that stack. The
+/// nearest ancestor `NavigationStack` id is threaded down the walk.
+pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<(String, SwiftValue)> {
+    fn walk(
+        node: &SwiftValue,
+        id: &str,
+        target: &str,
+        stack_id: Option<&str>,
+    ) -> Option<(String, SwiftValue)> {
+        let SwiftValue::Struct(obj) = node else {
+            return None;
+        };
+        let this_stack = if obj.type_name == "NavigationStack" {
+            Some(id)
+        } else {
+            stack_id
+        };
+        if id == target {
+            let dest = obj.get(NAV_DESTINATION_FIELD)?;
+            return this_stack.map(|sid| (sid.to_string(), dest.clone()));
+        }
+        let prefix = format!("{id}.");
+        if !target.starts_with(&prefix) {
+            return None;
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                if let Some(found) = walk(child, &child_id(id, i, child), target, this_stack) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(tree, "0", target, None)
 }
 
 /// Find the `Binding` value stashed on the control node at structural path
@@ -999,6 +1128,128 @@ struct TabsView: View {
         // The stored selection survives a subsequent unrelated re-render.
         let again = session.render().expect("render");
         assert!(uiir::to_json(&again).contains(r#""selection":1"#));
+    }
+
+    #[test]
+    fn navigation_link_tap_pushes_and_back_pops() {
+        // A `NavigationStack` with a `NavigationLink`: tapping the link pushes
+        // its destination as a second child; `back` pops it. `back` on the
+        // single-child (root-only) stack is a no-op.
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    var body: some View {
+        NavigationStack {
+            NavigationLink("Go") {
+                Text("Detail").navigationTitle("Detail")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        // Root stack has exactly one child (the link); no destination leaks.
+        assert!(json.contains(r#""kind":"NavigationStack""#), "{json}");
+        assert!(json.contains(r#""kind":"NavigationLink""#), "{json}");
+        assert!(
+            !json.contains("_destination"),
+            "destination never serialized: {json}"
+        );
+        assert!(
+            !json.contains("Detail"),
+            "destination subtree not serialized: {json}"
+        );
+
+        // A `back` before any push is a no-op (still one child).
+        let back = Event {
+            id: "0".into(),
+            event: "back".into(),
+            value: None,
+        };
+        let after = session.dispatch(&back).expect("dispatch");
+        assert!(
+            !uiir::to_json(&after).contains("Detail"),
+            "back on root is a no-op"
+        );
+
+        // Tap the link (id "0.0") → the detail screen is pushed as a second child.
+        let tap = Event {
+            id: "0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains("Detail"),
+            "link tap pushes the destination: {json}"
+        );
+        assert!(
+            json.contains(r#""name":"navigationTitle","value":"Detail""#),
+            "pushed screen carries its navigationTitle: {json}"
+        );
+
+        // `back` pops the pushed screen.
+        let after = session.dispatch(&back).expect("dispatch");
+        assert!(
+            !uiir::to_json(&after).contains("Detail"),
+            "back pops the pushed screen: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn pushed_screen_re_renders_against_state_change() {
+        // A pushed destination reads the root's `@State`; a mutation on the root
+        // (still live in the tree) is reflected on the pushed screen's next
+        // render — proving pushed closures re-evaluate fresh (not snapshots).
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    @State private var count = 0
+    var body: some View {
+        NavigationStack {
+            VStack {
+                Button("Inc") { count += 1 }
+                NavigationLink("Go") {
+                    Text("Count: \(count)")
+                }
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        session.render().expect("render");
+        // Push the detail (link id "0.0.1": stack > VStack(0.0) > link(0.0.1)).
+        let tap = Event {
+            id: "0.0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Count: 0"),
+            "pushed: {}",
+            uiir::to_json(&after)
+        );
+        // Increment the root counter (button id "0.0.0"); the pushed screen,
+        // re-evaluated fresh, reflects the new value.
+        let inc = Event {
+            id: "0.0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&inc).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Count: 1"),
+            "pushed screen re-reads @State: {}",
+            uiir::to_json(&after)
+        );
     }
 
     #[test]
