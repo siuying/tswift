@@ -333,6 +333,9 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("onAppear", modifier_on_appear),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
+    // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
+    // same marker+handler route as `.onTapGesture`/`.onLongPressGesture`.
+    ("gesture", modifier_gesture),
 ];
 
 /// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
@@ -733,6 +736,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
     interp.register_free_fn("Capsule", capsule_init);
     interp.register_free_fn("Ellipse", ellipse_init);
+    // Gesture value types — not Views, but their `.onEnded` method needs to be
+    // registered so the interpreter can chain it on the gesture struct before
+    // passing the result to `.gesture(_:)`.
+    interp.register_free_fn("TapGesture", tap_gesture_init);
+    interp.register_free_fn("LongPressGesture", long_press_gesture_init);
+    interp.register_struct_method("onEnded", gesture_on_ended);
 
     for (name, func) in MODIFIER_FNS {
         interp.register_struct_method(name, *func);
@@ -834,14 +843,16 @@ pub fn registered_keys() -> Vec<String> {
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
             | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "AsyncImage"
             | "ProgressView" | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form"
-            | "LazyVGrid" | "LazyHGrid" | "TabView" | "NavigationStack" | "NavigationLink" => {
-                Some(format!("{key}.init"))
-            }
+            | "LazyVGrid" | "LazyHGrid" | "TabView" | "NavigationStack" | "NavigationLink"
+            | "TapGesture" | "LongPressGesture" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
     // Modifiers are members of `View` for coverage purposes.
     keys.extend(MODIFIER_FNS.iter().map(|(m, _)| format!("View.{m}")));
+    // Gesture method — not a View modifier, coverage key is per gesture type.
+    keys.push("TapGesture.onEnded".into());
+    keys.push("LongPressGesture.onEnded".into());
     keys.sort();
     keys.dedup();
     keys
@@ -2490,6 +2501,116 @@ fn modifier_on_change(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
     }
 }
 
+// ── Gesture value types (TapGesture / LongPressGesture) ────────────────────
+
+/// `TapGesture(count:)` — constructs a tap-gesture value that can chain
+/// `.onEnded { _ in … }` before being passed to `.gesture(_:)`. Mirrors
+/// https://developer.apple.com/documentation/swiftui/tapgesture/init(count:).
+fn tap_gesture_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let count = args.into_iter().find_map(|a| match a.label.as_deref() {
+        Some("count") | None => Some(a.value),
+        _ => None,
+    });
+    let mut fields = Vec::new();
+    if let Some(c) = count {
+        fields.push(("count".into(), c));
+    }
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "TapGesture".into(),
+        fields,
+    })))
+}
+
+/// `LongPressGesture(minimumDuration:)` — constructs a long-press gesture value
+/// that can chain `.onEnded { _ in … }` before being passed to `.gesture(_:)`.
+/// Mirrors https://developer.apple.com/documentation/swiftui/longpressgesture.
+fn long_press_gesture_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("minimumDuration") | None => {
+                fields.push(("minimumDuration".into(), arg.value));
+            }
+            _ => {}
+        }
+    }
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "LongPressGesture".into(),
+        fields,
+    })))
+}
+
+/// `.onEnded(_:)` on `TapGesture` or `LongPressGesture` — attach the action
+/// closure and return the modified gesture value. The value passed to `perform`
+/// in real SwiftUI is the gesture's `Value` type (`Void` for `TapGesture`,
+/// `Bool` for `LongPressGesture`); the runtime supplies `()` (unit) for both —
+/// document this as an accepted v1 simplification in notes.md.
+/// Mirrors https://developer.apple.com/documentation/swiftui/gesture/onended(_:).
+fn gesture_on_ended(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let action = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+    let Some(action) = action else {
+        return Ok(recv);
+    };
+    let SwiftValue::Struct(obj) = &recv else {
+        return Err(type_error(format!(
+            "onEnded applied to non-gesture value `{}`",
+            recv.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    fields.retain(|(k, _)| k != "_action");
+    fields.push(("_action".into(), action));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
+/// `.gesture(_:)` View modifier — accepts a `TapGesture` or `LongPressGesture`
+/// built via `.onEnded { }` and lowers it to the **same** marker + handler route
+/// as `.onTapGesture`/`.onLongPressGesture` (ADR-0013 §3). Hosts need no new
+/// code: the same `onTapGesture`/`onLongPressGesture` markers and `tap`/
+/// `longPress` handler keys are emitted.
+/// Mirrors https://developer.apple.com/documentation/swiftui/view/gesture(_:including:).
+fn modifier_gesture(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let gesture = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Struct(_)).then_some(a.value));
+    let Some(SwiftValue::Struct(ref g)) = gesture else {
+        return Ok(recv);
+    };
+    let action = g.get("_action").cloned();
+    match g.type_name.as_str() {
+        "TapGesture" => {
+            // Honour the same Button-priority rule as `.onTapGesture`.
+            if has_handler(&recv, "tap") {
+                return Ok(recv);
+            }
+            let marker_args = match g.get("count") {
+                Some(SwiftValue::Int(i)) if i.raw != 1 => vec![Arg {
+                    label: Some("count".into()),
+                    value: SwiftValue::Int(i.clone()),
+                }],
+                _ => Vec::new(),
+            };
+            attach_event(recv, "onTapGesture", "tap", marker_args, action)
+        }
+        "LongPressGesture" => {
+            let mut marker_args = Vec::new();
+            if let Some(v) = g.get("minimumDuration") {
+                marker_args.push(Arg {
+                    label: Some("minimumDuration".into()),
+                    value: v.clone(),
+                });
+            }
+            attach_event(recv, "onLongPressGesture", "longPress", marker_args, action)
+        }
+        _ => Ok(recv), // Unknown gesture type — silently ignored.
+    }
+}
+
 /// Append an `onChange` watcher (`_Watch { value, action }`) to a view's
 /// [`WATCH_FIELD`] list (copy-on-write).
 fn add_watch(view: SwiftValue, value: SwiftValue, action: SwiftValue) -> StdResult {
@@ -2842,6 +2963,8 @@ mod tests {
                 "LazyVGrid.init",
                 "LazyVStack.init",
                 "List.init",
+                "LongPressGesture.init",
+                "LongPressGesture.onEnded",
                 "NavigationLink.init",
                 "NavigationStack.init",
                 "Picker.init",
@@ -2855,6 +2978,8 @@ mod tests {
                 "Spacer.init",
                 "Stepper.init",
                 "TabView.init",
+                "TapGesture.init",
+                "TapGesture.onEnded",
                 "Text.init",
                 "TextField.init",
                 "Toggle.init",
@@ -2880,6 +3005,7 @@ mod tests {
                 "View.foregroundColor",
                 "View.foregroundStyle",
                 "View.frame",
+                "View.gesture",
                 "View.italic",
                 "View.layoutPriority",
                 "View.lineLimit",
@@ -3608,6 +3734,101 @@ struct V: View {
             }
             other => panic!("expected a HorizontalAlignment alignment field, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn gesture_tap_gesture_on_ended_lowers_to_on_tap_gesture_marker() {
+        // `.gesture(TapGesture().onEnded { _ in })` must produce the same UIIR
+        // marker (`onTapGesture`) and handler key (`tap`) as `.onTapGesture { }`.
+        let src = r#"
+struct V: View {
+    @State private var taps = 0
+    var body: some View {
+        Text("tap me")
+            .gesture(TapGesture().onEnded { _ in taps += 1 })
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains("onTapGesture"),
+            "gesture(TapGesture) must emit onTapGesture marker: {json}"
+        );
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+            panic!("expected _handlers map");
+        };
+        assert!(
+            matches!(handlers.get("tap"), Some(SwiftValue::Closure(_))),
+            "tap handler must be registered"
+        );
+    }
+
+    #[test]
+    fn gesture_long_press_gesture_on_ended_lowers_to_on_long_press_marker() {
+        // `.gesture(LongPressGesture(minimumDuration: 1.0).onEnded { _ in })`
+        // must produce `onLongPressGesture` marker + `longPress` handler key.
+        let src = r#"
+struct V: View {
+    @State private var held = false
+    var body: some View {
+        Text("hold me")
+            .gesture(LongPressGesture(minimumDuration: 1.0).onEnded { _ in held = true })
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains("onLongPressGesture"),
+            "gesture(LongPressGesture) must emit onLongPressGesture marker: {json}"
+        );
+        assert!(
+            json.contains("minimumDuration"),
+            "minimumDuration must appear in the marker: {json}"
+        );
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+            panic!("expected _handlers map");
+        };
+        assert!(
+            matches!(handlers.get("longPress"), Some(SwiftValue::Closure(_))),
+            "longPress handler must be registered"
+        );
+    }
+
+    #[test]
+    fn gesture_on_button_keeps_button_action() {
+        // `.gesture(TapGesture().onEnded { })` on a Button must not clobber the
+        // Button's action (same Button-priority rule as `.onTapGesture`).
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Button("inc") { }.gesture(TapGesture().onEnded { _ in })
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let json = uiir::to_json(&view);
+        assert!(
+            !json.contains("onTapGesture"),
+            "no gesture marker added to Button: {json}"
+        );
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+            panic!("button should keep its _handlers map");
+        };
+        assert!(
+            matches!(handlers.get("tap"), Some(SwiftValue::Closure(_))),
+            "button action stays authoritative"
+        );
     }
 
     #[test]

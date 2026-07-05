@@ -17,6 +17,8 @@ LazyHStack.init
 LazyVGrid.init
 LazyVStack.init
 List.init
+LongPressGesture.init
+LongPressGesture.onEnded
 NavigationLink.init
 NavigationStack.init
 Picker.init
@@ -30,6 +32,8 @@ Slider.init
 Spacer.init
 Stepper.init
 TabView.init
+TapGesture.init
+TapGesture.onEnded
 Text.init
 TextField.init
 Toggle.init
@@ -55,6 +59,7 @@ View.fontWeight
 View.foregroundColor
 View.foregroundStyle
 View.frame
+View.gesture
 View.italic
 View.layoutPriority
 View.lineLimit

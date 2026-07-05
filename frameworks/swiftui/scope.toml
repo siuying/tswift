@@ -23,6 +23,10 @@ lifecycle are out of scope (deferred to a backlog ADR / never).
 [core_members]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
+# Gesture value types (slice 7): init + onEnded lowering via .gesture(_:).
+# DragGesture/streaming gestures remain out of scope (need async event channel).
+TapGesture = ["init", "onEnded"]
+LongPressGesture = ["init", "onEnded"]
 
 # ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
 [[tier]]
@@ -75,7 +79,7 @@ types = ["NavigationStack", "NavigationLink", "NavigationSplitView", "Navigation
 # ── Explicitly excluded (keeps the denominator honest) ────────────────────────
 [out_of_scope]
 animation = ["Animation", "AnyTransition", "Namespace", "MatchedGeometryEffect", "PhaseAnimator", "KeyframeAnimator"]
-gestures = ["DragGesture", "TapGesture", "LongPressGesture", "MagnificationGesture", "RotationGesture", "GestureState", "SpatialEventGesture"]
+gestures = ["DragGesture", "MagnificationGesture", "RotationGesture", "GestureState", "SpatialEventGesture"]
 graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
 platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
 app_scene_lifecycle = ["App", "Scene", "WindowGroup", "Settings", "DocumentGroup", "MenuBarExtra", "Commands"]
