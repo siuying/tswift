@@ -46,6 +46,14 @@ public struct UiirEvent: Equatable, Sendable {
     public static func back(_ id: String) -> UiirEvent {
         UiirEvent(id: id, event: "back", value: "")
     }
+
+    /// An `AsyncImage` load-phase update (ADR-0013 §4): `phase` is
+    /// `"empty"` | `"success"` | `"failure"`. Emitted by the host when the
+    /// image URL resolves or fails so the runtime can transition to the
+    /// appropriate closure output.
+    public static func imagePhase(_ id: String, _ phase: String) -> UiirEvent {
+        UiirEvent(id: id, event: "imagePhase", value: phase)
+    }
 }
 
 /// Receives interaction events from rendered controls. The default sink

@@ -15,3 +15,5 @@ tswift-frontend.workspace = true
 # `Array` intrinsics (`append`/`removeLast`); the CLI installs these alongside
 # the SwiftUI host, so tests mirror that setup.
 tswift-std.workspace = true
+# AsyncImage session tests use `URL(string:)` which lives in tswift-foundation.
+tswift-foundation.workspace = true

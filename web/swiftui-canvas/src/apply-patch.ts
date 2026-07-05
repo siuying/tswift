@@ -408,6 +408,18 @@ export class PatchApplier {
       this.buildTabView(el, node);
     } else if (node.kind === "NavigationStack") {
       this.buildNavStack(el, node);
+    } else if (node.kind === "AsyncImage" && node.args.phase !== undefined) {
+      // v1.5: render children (runtime-owned phase content), start image preload
+      // when the node arrives in the "empty" phase (initial mount).
+      for (const child of node.children) {
+        el.appendChild(this.build(child));
+      }
+      if (
+        typeof node.args.url === "string" &&
+        node.args.phase === "empty"
+      ) {
+        this.startAsyncImageLoad(node.id, node.args.url);
+      }
     } else {
       for (const child of node.children) {
         const childEl = this.build(child);
@@ -524,6 +536,34 @@ export class PatchApplier {
         (b as HTMLElement).style.opacity = i === active ? "1" : "0.5";
       });
     }
+  }
+
+  /** Start a background image load for a v1.5 `AsyncImage` node id (ADR-0013
+   * §4) and emit `imagePhase` events when the URL resolves or fails.
+   *
+   * Stores `url` in `el.dataset.asyncImageUrl` so `applyArgs` can detect URL
+   * changes and call this method again with the new URL. Callbacks are
+   * guarded by a double liveness check: the node must still be in the map
+   * (not unmounted) **and** the stored URL must still match (no newer load
+   * started for the same node) before emitting an event. This prevents both
+   * stale-after-unmount and stale-after-URL-change races (Fix #2/#1). */
+  private startAsyncImageLoad(nodeId: string, url: string): void {
+    if (!url) return;
+    // Record the URL on the element so callbacks and applyArgs can compare.
+    const el = this.nodes.get(nodeId);
+    if (el) el.dataset.asyncImageUrl = url;
+    const img = document.createElement("img");
+    img.onload = () => {
+      const live = this.nodes.get(nodeId);
+      if (live && live.dataset.asyncImageUrl === url)
+        this.emit(nodeId, "imagePhase", "success");
+    };
+    img.onerror = () => {
+      const live = this.nodes.get(nodeId);
+      if (live && live.dataset.asyncImageUrl === url)
+        this.emit(nodeId, "imagePhase", "failure");
+    };
+    img.src = url;
   }
 
   /** Build a Picker `<option>` from a tagged child view (label + tag value). */
@@ -654,8 +694,33 @@ export class PatchApplier {
         return el;
       }
       case "Image": {
+        // A remote image (from AsyncImage content closure) uses an <img> element;
+        // a system/bundle image uses a <span> with text content.
+        if (typeof node.args.url === "string") {
+          const img = document.createElement("img");
+          img.alt = "";
+          img.style.cssText = "object-fit:contain;max-width:100%;max-height:100%;display:block;";
+          img.src = node.args.url;
+          return img;
+        }
         const el = document.createElement("span");
         el.style.cssText = "display:inline-flex;align-items:center;justify-content:center;";
+        return el;
+      }
+      case "AsyncImage": {
+        // v1 bare (no `phase` arg): native <img> element — host loads natively,
+        // no imagePhase events emitted (ADR-0013 §4).
+        if (node.args.phase === undefined) {
+          const img = document.createElement("img");
+          img.alt = "";
+          img.style.cssText = "object-fit:contain;max-width:100%;max-height:100%;display:block;";
+          if (typeof node.args.url === "string") img.src = node.args.url;
+          return img;
+        }
+        // v1.5 with closures: a transparent container; the runtime-evaluated
+        // children are the phase-appropriate content.
+        const el = document.createElement("div");
+        el.style.cssText = "display:contents;";
         return el;
       }
       case "ProgressView": {
@@ -829,7 +894,10 @@ export class PatchApplier {
       if (icon) icon.textContent = typeof args.systemImage === "string" ? sfGlyph(args.systemImage) : "";
       if (text) text.textContent = typeof args.title === "string" ? args.title : "";
     } else if (kind === "Image") {
-      if (typeof args.systemName === "string") {
+      if (el instanceof HTMLImageElement) {
+        // Remote image from an AsyncImage content closure.
+        if (typeof args.url === "string" && el.src !== args.url) el.src = args.url;
+      } else if (typeof args.systemName === "string") {
         el.textContent = sfGlyph(args.systemName);
         el.removeAttribute("title"); // clear any stale asset-name tooltip
       } else if (typeof args.name === "string") {
@@ -839,6 +907,22 @@ export class PatchApplier {
       } else {
         el.textContent = "";
         el.removeAttribute("title");
+      }
+    } else if (kind === "AsyncImage") {
+      if (el instanceof HTMLImageElement) {
+        // v1 bare: update the img src when the URL arg changes.
+        if (typeof args.url === "string" && el.src !== args.url) el.src = args.url;
+      } else if (args.phase !== undefined) {
+        // v1.5: a `setArgs` with a changed URL means the image source changed
+        // (the runtime has already reset the phase to "empty"). Re-trigger the
+        // background load so the host fires fresh `imagePhase` events for the
+        // new URL (Fix #1).
+        const newUrl = typeof args.url === "string" ? args.url : "";
+        const prevUrl = el.dataset.asyncImageUrl ?? "";
+        if (newUrl && newUrl !== prevUrl) {
+          const nodeId = el.dataset.id ?? "";
+          if (nodeId) this.startAsyncImageLoad(nodeId, newUrl);
+        }
       }
     } else if (kind === "ProgressView") {
       // The bar is the element itself (no label) or the wrapped `.progress-bar`.

@@ -85,6 +85,12 @@ pub struct Session<'i, 'w> {
     /// an eagerly-built destination view). A link tap appends; a `back` event
     /// pops. Each render appends the realized screens as children of the stack.
     nav_stack: HashMap<String, Vec<SwiftValue>>,
+    /// Per-`AsyncImage` phase state (ADR-0013 §4), keyed by the node's
+    /// structural id. Each entry is `(phase, url)` where `phase` is
+    /// `"empty"` | `"success"` | `"failure"` and `url` is the URL at the time
+    /// of the last `imagePhase` event (used to detect URL changes, which reset
+    /// the phase back to `"empty"`).
+    image_phase: HashMap<String, (String, String)>,
 }
 
 impl<'i, 'w> Session<'i, 'w> {
@@ -97,6 +103,7 @@ impl<'i, 'w> Session<'i, 'w> {
             current: None,
             tab_selection: HashMap::new(),
             nav_stack: HashMap::new(),
+            image_phase: HashMap::new(),
         })
     }
 
@@ -112,8 +119,101 @@ impl<'i, 'w> Session<'i, 'w> {
         // no-binding case): the freshly evaluated `body` defaults each such tab
         // view to its first tab, so the session's stored selection overrides it.
         let tree = self.apply_tab_selection(tree, "0");
+        // Resolve each `AsyncImage` node's phase-appropriate children (ADR-0013
+        // §4): evaluate content/placeholder/phase closures from session state.
+        let tree = self.apply_image_phase(tree, "0")?;
+        // Prune phase state for node ids that no longer appear in the tree so
+        // the map does not accumulate stale entries across renders (Fix #3).
+        self.prune_image_phase(&tree);
         self.current = Some(tree.clone());
         Ok(tree)
+    }
+
+    /// Resolve `AsyncImage` nodes' phase-appropriate children (ADR-0013 §4).
+    /// Walks the tree; for each `AsyncImage` node that has closure fields
+    /// (`_asyncContent`, `_asyncPlaceholder`, or `_asyncPhaseContent`),
+    /// evaluates the appropriate closure based on the session’s stored phase
+    /// (keyed by the node’s structural id, default `"empty"`) and updates the
+    /// node’s `_children` and `phase` arg. URL changes (URL arg differs from
+    /// the stored phase’s URL) reset the phase back to `"empty"`.
+    fn apply_image_phase(&mut self, node: SwiftValue, id: &str) -> Result<SwiftValue, EvalError> {
+        let SwiftValue::Struct(obj) = node else {
+            return Ok(node);
+        };
+        let mut obj = (*obj).clone();
+
+        // Recurse into existing children first, using their structural ids.
+        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
+                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
+                let mut mapped = Vec::with_capacity(kids.len());
+                for (i, c) in kids.into_iter().enumerate() {
+                    let cid = child_id(id, i, &c);
+                    mapped.push(self.apply_image_phase(c, &cid)?);
+                }
+                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
+            }
+        }
+
+        // Only act on AsyncImage nodes that have captured closures (v1.5).
+        if obj.type_name == "AsyncImage" && crate::has_async_image_closures(&obj) {
+            // Retrieve the current URL from the node’s args.
+            let url = match obj.get("url") {
+                Some(SwiftValue::Str(s)) => s.clone(),
+                _ => String::new(),
+            };
+
+            // Determine the effective phase: use stored state when the URL
+            // hasn’t changed; reset to `"empty"` on URL change.
+            let effective_phase: String = match self.image_phase.get(id) {
+                Some((phase, stored_url)) if stored_url == &url => phase.clone(),
+                Some(_) => {
+                    // URL changed — reset phase so the host re-fires load events.
+                    let owned = id.to_string();
+                    self.image_phase.remove(&owned);
+                    "empty".to_string()
+                }
+                None => "empty".to_string(),
+            };
+
+            // Update the serialized `phase` arg.
+            if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == "phase") {
+                slot.1 = SwiftValue::Str(effective_phase.clone());
+            }
+
+            // Evaluate the closure and inject the result as children.
+            let node_val = SwiftValue::Struct(Rc::new(obj.clone()));
+            let child =
+                crate::realize_async_image_child(self.interp, &node_val, &effective_phase, &url)
+                    .map_err(crate::std_error_to_eval)?;
+
+            let new_children = match child {
+                Some(c) => vec![c],
+                None => Vec::new(),
+            };
+            if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+                obj.fields[pos].1 = SwiftValue::Array(Rc::new(new_children));
+            } else {
+                obj.fields.push((
+                    CHILDREN_FIELD.into(),
+                    SwiftValue::Array(Rc::new(new_children)),
+                ));
+            }
+        }
+
+        Ok(SwiftValue::Struct(Rc::new(obj)))
+    }
+
+    /// Remove entries from `image_phase` whose structural ids no longer appear
+    /// in `tree`. Called after each render so the map does not accumulate
+    /// phantom entries for nodes that were removed from the view tree (e.g. an
+    /// `AsyncImage` inside a pushed screen that was popped).
+    fn prune_image_phase(&mut self, tree: &SwiftValue) {
+        if self.image_phase.is_empty() {
+            return;
+        }
+        let live = collect_async_image_ids(tree);
+        self.image_phase.retain(|id, _| live.contains(id));
     }
 
     /// Override the `selection` arg of every `TabView` node lacking a
@@ -339,6 +439,22 @@ impl<'i, 'w> Session<'i, 'w> {
                     }
                 } else if let Some(value) = &event.value {
                     self.tab_selection.insert(event.id.clone(), value.clone());
+                }
+            }
+            // An `AsyncImage` load-phase update (ADR-0013 §4): the host reports
+            // `"empty"` / `"success"` / `"failure"` as the image URL loads.
+            // The phase is stored keyed by node id; the next render evaluates
+            // the content/placeholder/phase closure accordingly. An unknown id
+            // or a node that is no longer an AsyncImage is silently ignored.
+            "imagePhase" => {
+                let phase = match &event.value {
+                    Some(SwiftValue::Str(s)) => s.clone(),
+                    Some(v) => v.to_string(),
+                    None => String::new(),
+                };
+                if !phase.is_empty() {
+                    let url = find_async_image_url(&tree, &event.id).unwrap_or_default();
+                    self.image_phase.insert(event.id.clone(), (phase, url));
                 }
             }
             // A `NavigationStack` back affordance (ADR-0013 §1): pop the topmost
@@ -649,6 +765,58 @@ pub fn find_binding(tree: &SwiftValue, target: &str) -> Option<SwiftValue> {
         };
         if id == target {
             return obj.get(BINDING_FIELD).cloned();
+        }
+        let prefix = format!("{id}.");
+        if !target.starts_with(&prefix) {
+            return None;
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                if let Some(found) = walk(child, &child_id(id, i, child), target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(tree, "0", target)
+}
+
+/// Collect the structural ids of all v1.5 `AsyncImage` nodes (those with
+/// closure fields) that appear in `tree`. Used by `prune_image_phase`.
+fn collect_async_image_ids(tree: &SwiftValue) -> std::collections::HashSet<String> {
+    fn walk(node: &SwiftValue, id: &str, out: &mut std::collections::HashSet<String>) {
+        let SwiftValue::Struct(obj) = node else {
+            return;
+        };
+        if obj.type_name == "AsyncImage" && crate::has_async_image_closures(obj) {
+            out.insert(id.to_string());
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                let cid = child_id(id, i, child);
+                walk(child, &cid, out);
+            }
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    walk(tree, "0", &mut out);
+    out
+}
+
+/// Find the `url` arg string of the `AsyncImage` node at structural path
+/// `target`. Returns `None` when the id is not found or the node is not an
+/// `AsyncImage` with a `url` arg.
+fn find_async_image_url(tree: &SwiftValue, target: &str) -> Option<String> {
+    fn walk(node: &SwiftValue, id: &str, target: &str) -> Option<String> {
+        let SwiftValue::Struct(obj) = node else {
+            return None;
+        };
+        if id == target {
+            return match obj.get("url") {
+                Some(SwiftValue::Str(s)) => Some(s.clone()),
+                _ => None,
+            };
         }
         let prefix = format!("{id}.");
         if !target.starts_with(&prefix) {
@@ -1639,6 +1807,275 @@ struct RootView: View {
             uiir::to_json(&after).contains("Row 5"),
             "typed-array path append pushes: {}",
             uiir::to_json(&after)
+        );
+    }
+
+    // ── AsyncImage (ADR-0013 §4) ──────────────────────────────────────────────
+
+    fn async_image_interp(extra: &str) -> Interpreter<'static> {
+        // AsyncImage requires tswift-foundation's URL type; mirror the CLI
+        // host that installs both foundation and SwiftUI layers.
+        events_interp_with_foundation(extra)
+    }
+
+    fn events_interp_with_foundation(program: &str) -> Interpreter<'static> {
+        let src = format!("{PRELUDE}\n{program}");
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        tswift_std::install(&mut interp);
+        tswift_foundation::install(&mut interp);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn async_image_bare_v1_serializes_url() {
+        // A bare `AsyncImage(url:)` serializes the URL string as a `url` arg
+        // with no `phase` arg and no children — the host loads natively.
+        let mut interp = async_image_interp(
+            r#"
+struct AView: View {
+    var body: some View {
+        AsyncImage(url: URL(string: "https://example.com/img.jpg"))
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "AView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        assert!(
+            json.contains(r#""kind":"AsyncImage""#),
+            "AsyncImage node: {json}"
+        );
+        assert!(
+            json.contains(r#""url":"https://example.com/img.jpg""#),
+            "url serialized: {json}"
+        );
+        assert!(
+            !json.contains(r#""phase""#),
+            "v1 bare has no phase arg: {json}"
+        );
+    }
+
+    #[test]
+    fn async_image_phase_event_swaps_placeholder_to_content() {
+        // `imagePhase` success: session swaps the placeholder for the content
+        // closure’s result. Initial render shows ProgressView (placeholder);
+        // after success, shows the content image.
+        // Note: uses labeled-closure form (`content:`, `placeholder:`) because
+        // multi-trailing-closure syntax is not yet supported by the frontend.
+        let mut interp = async_image_interp(
+            r#"
+struct AView: View {
+    var body: some View {
+        AsyncImage(
+            url: URL(string: "https://example.com/img.jpg"),
+            content: { image in image },
+            placeholder: { Text("loading") }
+        )
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "AView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        // Initial render: phase=empty, child is placeholder.
+        assert!(
+            json.contains(r#""phase":"empty""#),
+            "initial phase is empty: {json}"
+        );
+        assert!(
+            json.contains(r#""verbatim":"loading""#),
+            "placeholder shown initially: {json}"
+        );
+
+        // Dispatch imagePhase success.
+        let event = Event {
+            id: "0".into(),
+            event: "imagePhase".into(),
+            value: Some(SwiftValue::Str("success".into())),
+        };
+        let after = session.dispatch(&event).expect("dispatch");
+        let json = uiir::to_json(&after);
+        // After success: phase=success, child is content(Image(url)).
+        assert!(
+            json.contains(r#""phase":"success""#),
+            "phase becomes success: {json}"
+        );
+        assert!(
+            json.contains(r#""kind":"Image""#),
+            "content image shown on success: {json}"
+        );
+        assert!(
+            json.contains(r#""url":"https://example.com/img.jpg""#),
+            "content image carries the URL: {json}"
+        );
+        assert!(
+            !json.contains(r#""verbatim":"loading""#),
+            "placeholder gone after success: {json}"
+        );
+    }
+
+    #[test]
+    fn async_image_unknown_id_is_noop() {
+        // An imagePhase event on an id that doesn’t exist in the tree is a
+        // no-op: the session stores nothing and re-renders cleanly.
+        let mut interp = async_image_interp(
+            r#"
+struct AView: View {
+    var body: some View {
+        AsyncImage(
+            url: URL(string: "https://example.com/img.jpg"),
+            content: { image in image },
+            placeholder: { Text("loading") }
+        )
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "AView").expect("session");
+        session.render().expect("render");
+
+        let event = Event {
+            id: "99.99".into(),
+            event: "imagePhase".into(),
+            value: Some(SwiftValue::Str("success".into())),
+        };
+        let after = session.dispatch(&event).expect("dispatch stays Ok");
+        let json = uiir::to_json(&after);
+        // Still shows placeholder; unknown id is ignored.
+        assert!(
+            json.contains(r#""phase":"empty""#),
+            "phase unchanged for unknown id: {json}"
+        );
+    }
+
+    #[test]
+    fn async_image_url_change_resets_phase() {
+        // When the URL arg changes between renders the stored phase is cleared
+        // so the host re-fires load events for the new URL.
+        let mut interp = async_image_interp(
+            r#"
+struct AView: View {
+    @State var which = true
+    var body: some View {
+        VStack {
+            Button("swap") { which = !which }
+            AsyncImage(
+                url: URL(string: which ? "https://a.com/1.jpg" : "https://b.com/2.jpg"),
+                content: { image in image },
+                placeholder: { Text("loading") }
+            )
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "AView").expect("session");
+        session.render().expect("render");
+
+        // Fire success for the first URL (node id 0.1).
+        let success1 = Event {
+            id: "0.1".into(),
+            event: "imagePhase".into(),
+            value: Some(SwiftValue::Str("success".into())),
+        };
+        let after = session.dispatch(&success1).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains(r#""phase":"success""#),
+            "phase is success: {}",
+            uiir::to_json(&after)
+        );
+
+        // Tap button to swap URL (id 0.0).
+        let tap = Event {
+            id: "0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        let json = uiir::to_json(&after);
+        // URL changed → phase reset to empty.
+        assert!(
+            json.contains(r#""phase":"empty""#),
+            "URL change resets phase: {json}"
+        );
+        assert!(
+            json.contains("https://b.com/2.jpg"),
+            "new URL present: {json}"
+        );
+    }
+
+    #[test]
+    fn async_image_phase_closure_form_renders_success_and_failure() {
+        // Phase-closure form: a single trailing closure receives an
+        // `AsyncImagePhase` struct; `isSuccess`/`isFailure` control branches.
+        let mut interp = async_image_interp(
+            r#"
+struct AView: View {
+    var body: some View {
+        AsyncImage(url: URL(string: "https://example.com/img.jpg")) { phase in
+            if phase.isSuccess {
+                Text("loaded")
+            } else if phase.isFailure {
+                Text("error")
+            } else {
+                Text("loading")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "AView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        assert!(
+            json.contains(r#""phase":"empty""#),
+            "initial phase empty: {json}"
+        );
+        assert!(
+            json.contains(r#""verbatim":"loading""#),
+            "empty phase shows loading branch: {json}"
+        );
+
+        // Success phase.
+        let success = Event {
+            id: "0".into(),
+            event: "imagePhase".into(),
+            value: Some(SwiftValue::Str("success".into())),
+        };
+        let after = session.dispatch(&success).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains(r#""phase":"success""#),
+            "phase becomes success: {json}"
+        );
+        assert!(
+            json.contains(r#""verbatim":"loaded""#),
+            "success shows loaded branch: {json}"
+        );
+
+        // Failure phase.
+        let failure = Event {
+            id: "0".into(),
+            event: "imagePhase".into(),
+            value: Some(SwiftValue::Str("failure".into())),
+        };
+        let after = session.dispatch(&failure).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains(r#""phase":"failure""#),
+            "phase becomes failure: {json}"
+        );
+        assert!(
+            json.contains(r#""verbatim":"error""#),
+            "failure shows error branch: {json}"
         );
     }
 

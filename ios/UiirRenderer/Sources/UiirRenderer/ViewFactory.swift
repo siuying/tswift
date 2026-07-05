@@ -214,10 +214,18 @@ public enum ViewFactory {
         case "Label":
             return AnyView(Label(str(node, "title"), systemImage: str(node, "systemImage")))
         case "Image":
+            // A remote image (from an AsyncImage content closure) carries a
+            // `url` arg; render it via SwiftUI AsyncImage for native loading.
+            if case let .string(urlString)? = arg(node, "url") {
+                return AnyView(AsyncImage(url: URL(string: urlString)))
+            }
             if case let .string(systemName)? = arg(node, "systemName") {
                 return AnyView(Image(systemName: systemName))
             }
             return AnyView(Image(str(node, "name")))
+
+        case "AsyncImage":
+            return AnyView(asyncImage(node, sink))
         case "ProgressView":
             // The optional title label uses the string-title initializers (#206).
             let progressLabel = arg(node, "label")?.stringValue
@@ -291,6 +299,58 @@ public enum ViewFactory {
         default:
             // Unknown kind: render its children transparently.
             return AnyView(renderChildren(node, sink))
+        }
+    }
+
+    /// An `AsyncImage` node (ADR-0013 §4).
+    ///
+    /// **v1 bare** (no `phase` arg): delegates to SwiftUI’s native `AsyncImage`
+    /// for host-side loading.
+    ///
+    /// **v1.5** (has `phase` arg): renders the runtime-evaluated children (the
+    /// phase-appropriate content already resolved by the session). A `URLSession`
+    /// HEAD request fires `imagePhase` events so the runtime can transition from
+    /// `"empty"` to `"success"` or `"failure"`.
+    @ViewBuilder
+    private static func asyncImage(_ node: UiirNode, _ sink: any UiirEventSink) -> some View {
+        let urlString = arg(node, "url")?.stringValue ?? ""
+        let parsedURL = URL(string: urlString)
+        let hasPhase = arg(node, "phase") != nil
+
+        if !hasPhase {
+            // v1 bare: native SwiftUI AsyncImage handles loading.
+            AsyncImage(url: parsedURL)
+        } else {
+            // v1.5: runtime-owned phase. Children are the phase-resolved
+            // content from the session. A URLSession task fires imagePhase
+            // events so the runtime can transition to success/failure.
+            //
+            // `.id(urlString)` tears down and recreates the view whenever the
+            // URL changes, which re-fires `.onAppear` with the new URL so
+            // fresh imagePhase events are dispatched (Fix #1 — URL change
+            // re-trigger).
+            Group { renderChildren(node, sink) }
+                .onAppear {
+                    guard let url = parsedURL else {
+                        sink.send(.imagePhase(node.id, "failure"))
+                        return
+                    }
+                    let nodeId = node.id
+                    URLSession.shared.dataTask(with: url) { _, response, error in
+                        let succeeded: Bool
+                        if error != nil {
+                            succeeded = false
+                        } else if let http = response as? HTTPURLResponse {
+                            succeeded = http.statusCode < 400
+                        } else {
+                            succeeded = true
+                        }
+                        DispatchQueue.main.async {
+                            sink.send(.imagePhase(nodeId, succeeded ? "success" : "failure"))
+                        }
+                    }.resume()
+                }
+                .id(urlString)
         }
     }
 

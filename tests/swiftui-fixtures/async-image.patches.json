@@ -1,0 +1,1 @@
+[[{"op":"setArgs","id":"0.1","args":{"url":"https://example.com/avatar.jpg","phase":"success"}},{"op":"replace","id":"0.1.0","node":{"id":"0.1.0","kind":"Image","args":{"url":"https://example.com/avatar.jpg"},"modifiers":[{"name":"resizable","value":null},{"name":"scaledToFit","value":null}],"children":[]}}]]

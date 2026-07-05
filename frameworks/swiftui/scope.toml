@@ -16,8 +16,13 @@ lifecycle are out of scope (deferred to a backlog ADR / never).
 # never appear in registered_keys.txt. List the ones the runtime provides here
 # (init(), append(_:), removeLast(_:), count, isEmpty — Codable/CodableRepresen-
 # tation forms and `==` remain out of reach v1).
+#
+# AsyncImage: 4/5 inits implemented (bare url, content+placeholder, phase-closure,
+# scale form NYI). AsyncImagePhase is a prelude struct (not the real SwiftUI enum);
+# .success/.failure/.empty cases are accessible via .isSuccess/.isFailure/.isEmpty.
 [core_members]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
+AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
 
 # ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
 [[tier]]

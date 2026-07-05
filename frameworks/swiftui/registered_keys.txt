@@ -1,3 +1,4 @@
+AsyncImage.init
 Button.init
 Capsule.init
 Circle.init
