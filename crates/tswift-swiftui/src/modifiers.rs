@@ -606,7 +606,7 @@ pub(crate) fn modifier_gesture(
             let marker_args = match g.get("count") {
                 Some(SwiftValue::Int(i)) if i.raw != 1 => vec![Arg {
                     label: Some("count".into()),
-                    value: SwiftValue::Int(i.clone()),
+                    value: SwiftValue::Int(*i),
                 }],
                 _ => Vec::new(),
             };
