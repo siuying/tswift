@@ -57,6 +57,36 @@ jobs:
         run: node test/wasm-smoke.mjs
         working-directory: website
 
+  wasm-full-rebuild:
+    name: wasm full rebuild smoke (fresh wasm32 artifact)
+    runs-on: ubuntu-latest
+    # The full wasm32 rebuild is too slow for the local presubmit, so it lives
+    # here: rebuild the runtime for wasm32 and smoke the freshly built artifact,
+    # catching wasm-only regressions (e.g. SystemTime::now aborting) that native
+    # cargo test can't see.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain (wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Rebuild wasm (full wasm32) and smoke fresh artifact
+        working-directory: website
+        run: |
+          npm run build:wasm
+          node test/wasm-smoke.mjs
+
   ios-playground-build:
     name: iOS playground build (demo, non-gating)
     runs-on: macos-26

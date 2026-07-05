@@ -1,4 +1,39 @@
 #!/usr/bin/env bash
+#
+# Fast local presubmit — run before every commit. Targets seconds on a warm
+# tree: native format + lint + tests, plus a lightweight wasm smoke against the
+# committed artifact.
+#
+# Deliberately NOT here (too slow / environment-specific — left to CI or an
+# explicit `scripts/validate` slice):
+#   - full wasm32 rebuild smoke (TSWIFT_WASM_SMOKE=1)  -> CI, `scripts/validate web`
+#   - iOS simulator + example app                      -> `scripts/validate ios`
+#   - website typecheck / build                        -> CI, `scripts/validate web`
 set -euo pipefail
 
-./scripts/validate rust
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+cd "$ROOT"
+
+section() { printf '\n==> %s\n' "$*"; }
+
+section "cargo fmt --check"
+cargo fmt --check
+
+section "cargo clippy --workspace"
+cargo clippy --workspace
+
+# `--all-targets` skips doctests (which compile a binary per example, ~1min).
+# CI runs plain `cargo test --workspace`, so doctests stay gated there.
+section "cargo test --workspace --all-targets"
+cargo test --workspace --all-targets
+
+# Lightweight wasm smoke: drive the *committed* production artifact through
+# Node (~0.2s). Catches wasm-only export/regression drift without a rebuild.
+# The full wasm32 rebuild smoke is a CI gate (see .github/workflows/ci.yml).
+section "wasm smoke (committed artifact)"
+if command -v node >/dev/null 2>&1 && [[ -f website/public/wasm/tswift_wasm_bg.wasm ]]; then
+  ( cd website && node test/wasm-smoke.mjs )
+else
+  echo "skipped: node or committed wasm artifact unavailable"
+fi
