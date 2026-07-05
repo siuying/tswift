@@ -11,11 +11,12 @@ enum ModifierApply {
     static func apply(
         _ modifiers: [UiirModifier],
         to view: AnyView,
+        nodeId: String = "",
         sink: any UiirEventSink = NoopEventSink()
     ) -> AnyView {
         var out = view
         for mod in modifiers {
-            out = applyOne(mod, to: out, sink: sink)
+            out = applyOne(mod, to: out, nodeId: nodeId, sink: sink)
         }
         return out
     }
@@ -23,9 +24,32 @@ enum ModifierApply {
     private static func applyOne(
         _ mod: UiirModifier,
         to view: AnyView,
+        nodeId: String,
         sink: any UiirEventSink
     ) -> AnyView {
         switch mod.name {
+        // Lifecycle / gesture / submit events (ADR-0013 §3): the runtime carries
+        // only these markers; the captured closures live in its handler map, so
+        // the host wires a real SwiftUI modifier that reports the event by name.
+        // (`onChange` is runtime-internal and never reaches the UIIR.)
+        case "onTapGesture":
+            let count = Int(mod.value.member("count")?.doubleValue ?? 1)
+            return AnyView(view.onTapGesture(count: max(1, count)) {
+                sink.send(.tap(nodeId))
+            })
+        case "onLongPressGesture":
+            let minDuration = mod.value.member("minimumDuration")?.doubleValue ?? 0.5
+            return AnyView(view.onLongPressGesture(minimumDuration: minDuration) {
+                sink.send(.named(nodeId, "longPress"))
+            })
+        case "onSubmit":
+            return AnyView(view.onSubmit(of: .text) {
+                sink.send(.named(nodeId, "submit"))
+            })
+        case "onAppear":
+            return AnyView(view.onAppear { sink.send(.named(nodeId, "appear")) })
+        case "onDisappear":
+            return AnyView(view.onDisappear { sink.send(.named(nodeId, "disappear")) })
         case "font":
             if case let .token(tag, name) = mod.value, tag == "textStyle" {
                 return AnyView(view.font(Tokens.font(name)))

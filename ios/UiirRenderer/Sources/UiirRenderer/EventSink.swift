@@ -25,6 +25,13 @@ public struct UiirEvent: Equatable, Sendable {
     public static func set(_ id: String, _ value: String) -> UiirEvent {
         UiirEvent(id: id, event: "set", value: value)
     }
+
+    /// A payload-less gesture/lifecycle/submit event on `id` (ADR-0013 §3):
+    /// `"longPress"`, `"appear"`, `"disappear"`, or `"submit"`. The runtime
+    /// routes these into the node's handler map by name.
+    public static func named(_ id: String, _ event: String) -> UiirEvent {
+        UiirEvent(id: id, event: event, value: "")
+    }
 }
 
 /// Receives interaction events from rendered controls. The default sink

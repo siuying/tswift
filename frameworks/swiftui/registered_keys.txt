@@ -54,6 +54,12 @@ View.lineLimit
 View.listStyle
 View.multilineTextAlignment
 View.offset
+View.onAppear
+View.onChange
+View.onDisappear
+View.onLongPressGesture
+View.onSubmit
+View.onTapGesture
 View.opacity
 View.overlay
 View.padding

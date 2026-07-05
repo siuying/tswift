@@ -40,6 +40,14 @@ export class PatchApplier {
    * base style from scratch and re-apply modifiers without ever capturing
    * modifier CSS into the base. */
   private mods = new Map<string, Modifier[]>();
+  /** Ids carrying an `.onDisappear` handler, so `remove`/`forget` can fire a
+   * `disappear` event as the host unmounts the node (ADR-0013 §3). */
+  private disappearIds = new Set<string>();
+  /** Per-node `AbortController` for the marker-modifier event listeners, so a
+   * `setModifiers` reconcile can detach the previous listeners before wiring the
+   * new marker set (a conditional `.onTapGesture`/`.onSubmit` toggled across a
+   * re-render must not leave stale listeners). */
+  private handlerAborts = new Map<string, AbortController>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -57,6 +65,9 @@ export class PatchApplier {
         this.root.replaceChildren();
         this.nodes.clear();
         this.mods.clear();
+        this.disappearIds.clear();
+        for (const ac of this.handlerAborts.values()) ac.abort();
+        this.handlerAborts.clear();
         this.root.appendChild(this.build(patch.node));
         break;
       }
@@ -132,6 +143,10 @@ export class PatchApplier {
           applyModifiers(el, patch.modifiers);
           this.mods.set(patch.id, patch.modifiers);
           this.applyComposites(el, patch.modifiers);
+          // Reconcile event listeners against the new marker set: attach markers
+          // that appeared, detach ones that were removed, and re-sync disappear
+          // tracking. Not a fresh mount, so `onAppear` does not re-fire.
+          this.attachHandlers(el, patch.id, patch.modifiers, false);
         }
         break;
       }
@@ -250,13 +265,108 @@ export class PatchApplier {
     return fresh;
   }
 
-  /** Drop `id` and any descendant ids from the node map. */
+  /** Drop `id` and any descendant ids from the node map, firing `disappear`
+   * for any unmounted node that registered `.onDisappear` (ADR-0013 §3). */
   private forget(id: string): void {
     const prefix = `${id}.`;
     for (const key of [...this.nodes.keys()]) {
       if (key === id || key.startsWith(prefix)) {
         this.nodes.delete(key);
         this.mods.delete(key);
+        this.handlerAborts.get(key)?.abort();
+        this.handlerAborts.delete(key);
+        if (this.disappearIds.delete(key)) this.emit(key, "disappear", null);
+      }
+    }
+  }
+
+  /** Wire the lifecycle/gesture/submit marker modifiers on a node to DOM
+   * listeners that report the corresponding runtime event (ADR-0013 §3). The
+   * runtime carries only markers — the captured closures live in its handler
+   * map — so the host's only job is to attach listeners and fire event names.
+   * (`onChange` is runtime-internal and never appears here.)
+   *
+   * Idempotent + reconciling: each call first aborts the node's previous handler
+   * listeners (so a marker removed across a `setModifiers` re-render detaches its
+   * listener) and re-syncs `disappearIds`. `fireAppear` is true only on the
+   * initial mount — a persisted node that merely *gains* an `onAppear` marker
+   * mid-life is already on screen, so re-firing `appear` would be spurious. */
+  private attachHandlers(
+    el: HTMLElement,
+    id: string,
+    modifiers: Modifier[],
+    fireAppear: boolean,
+  ): void {
+    // Detach any listeners from a prior build/reconcile, then re-sync tracking.
+    this.handlerAborts.get(id)?.abort();
+    const ac = new AbortController();
+    this.handlerAborts.set(id, ac);
+    const { signal } = ac;
+    this.disappearIds.delete(id);
+    // A `Button` already emits `tap` from its own click listener and owns the
+    // `tap` event authoritatively (the runtime keeps the Button action, see
+    // `modifier_on_tap_gesture`), so wiring a gesture `click` here would
+    // double-emit `tap`; skip tap wiring on a Button.
+    const isButton = el instanceof HTMLButtonElement;
+    for (const mod of modifiers) {
+      switch (mod.name) {
+        case "onTapGesture": {
+          if (isButton) break;
+          // Honor `count:` — a multi-tap (count >= 2) fires on `dblclick` to
+          // match SwiftUI's `.onTapGesture(count:)`; the default is a click.
+          const count = Number(
+            (mod.value as { count?: number } | null)?.count ?? 1,
+          );
+          const eventName = count >= 2 ? "dblclick" : "click";
+          el.addEventListener(eventName, () => this.emit(id, "tap", null), { signal });
+          el.style.cursor = "pointer";
+          break;
+        }
+        case "onLongPressGesture": {
+          // Press-and-hold: emit `longPress` once the pointer is held past the
+          // minimum duration (default 0.5s) without lifting.
+          const min =
+            typeof (mod.value as { minimumDuration?: number } | null)?.minimumDuration ===
+            "number"
+              ? (mod.value as { minimumDuration: number }).minimumDuration * 1000
+              : 500;
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const cancel = () => {
+            if (timer !== undefined) clearTimeout(timer);
+            timer = undefined;
+          };
+          el.addEventListener(
+            "pointerdown",
+            () => {
+              cancel();
+              timer = setTimeout(() => this.emit(id, "longPress", null), min);
+            },
+            { signal },
+          );
+          el.addEventListener("pointerup", cancel, { signal });
+          el.addEventListener("pointerleave", cancel, { signal });
+          el.style.cursor = "pointer";
+          break;
+        }
+        case "onSubmit":
+          // A text field submit: Enter in the input, matching `.submitLabel`.
+          el.addEventListener(
+            "keydown",
+            (e) => {
+              if ((e as KeyboardEvent).key === "Enter") this.emit(id, "submit", null);
+            },
+            { signal },
+          );
+          break;
+        case "onAppear":
+          // Fire once the node is mounted; defer so the whole batch lands first.
+          if (fireAppear) queueMicrotask(() => this.emit(id, "appear", null));
+          break;
+        case "onDisappear":
+          this.disappearIds.add(id);
+          break;
+        default:
+          break;
       }
     }
   }
@@ -276,6 +386,7 @@ export class PatchApplier {
     applyModifiers(el, node.modifiers);
     this.mods.set(node.id, node.modifiers);
     this.applyComposites(el, node.modifiers);
+    this.attachHandlers(el, node.id, node.modifiers, true);
     this.nodes.set(node.id, el);
     if (node.kind === "Picker" && el instanceof HTMLSelectElement) {
       // A Picker's tagged children become <option>s, not nested views.

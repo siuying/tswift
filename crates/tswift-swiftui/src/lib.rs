@@ -32,7 +32,23 @@ pub const MODIFIERS_FIELD: &str = "_modifiers";
 /// Field name holding a container view's ordered child views.
 pub const CHILDREN_FIELD: &str = "_children";
 /// Field name holding a view's primary action closure (`Button`'s `action`).
+/// Retained as the canonical event key `"tap"` inside [`HANDLERS_FIELD`].
 pub const ACTION_FIELD: &str = "_action";
+/// Field name holding a view's event-handler map (event name → captured
+/// closure): the generalization of `Button`'s `_action` (ADR-0013 §3). A
+/// `Button` stores its action under `"tap"`; gesture/lifecycle/submit modifiers
+/// add `"tap"`/`"longPress"`/`"appear"`/`"disappear"`/`"submit"`. Never
+/// serialized (leading `_`); hosts learn which listeners to attach from the
+/// marker modifiers instead.
+pub const HANDLERS_FIELD: &str = "_handlers";
+/// Type name of the [`HANDLERS_FIELD`] record (a bare event→closure map).
+pub const HANDLERS_TYPE: &str = "_Handlers";
+/// Field name holding a view's runtime-internal `onChange(of:)` watchers: an
+/// ordered list of `_Watch { value, action }` records. Compared across renders
+/// by the session (ADR-0013 §3); never serialized and never host-visible.
+pub const WATCH_FIELD: &str = "_watch";
+/// Type name of a [`WATCH_FIELD`] record (`{ value, action }`).
+pub const WATCH_TYPE: &str = "_Watch";
 /// Type name of an appended modifier record (`_Modifier { name, <args> }`).
 pub const MODIFIER_TYPE: &str = "_Modifier";
 /// Field name holding a `ForEach`-generated child's stable identity key. When
@@ -248,6 +264,13 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("accessibilityValue", modifier_accessibility_value),
     ("accessibilityIdentifier", modifier_accessibility_identifier),
     ("environmentObject", modifier_environment_object),
+    // Lifecycle / gesture / submit event handlers (ADR-0013 §3).
+    ("onTapGesture", modifier_on_tap_gesture),
+    ("onLongPressGesture", modifier_on_long_press_gesture),
+    ("onSubmit", modifier_on_submit),
+    ("onAppear", modifier_on_appear),
+    ("onDisappear", modifier_on_disappear),
+    ("onChange", modifier_on_change),
 ];
 
 /// SwiftUI token namespaces, defined in Swift so `Color.blue` / `.largeTitle` /
@@ -1484,8 +1507,9 @@ fn input_field_init(ctx: &mut dyn StdContext, args: Vec<Arg>, kind: &str) -> Std
 }
 
 /// `Button(_ title) { action }` — a titled button. The leading positional is
-/// the title string; the trailing closure is the tap action, stored as an
-/// `_action` closure value the dispatch loop invokes on a `tap` event.
+/// the title string; the trailing closure is the tap action, stored under the
+/// `"tap"` key of the view's [`HANDLERS_FIELD`] map (ADR-0013 §3) which the
+/// dispatch loop invokes on a `tap` event.
 fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut title = String::new();
     let mut action: Option<SwiftValue> = None;
@@ -1499,9 +1523,254 @@ fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     }
     let mut fields = vec![("title".into(), SwiftValue::Str(title))];
     if let Some(action) = action {
-        fields.push((ACTION_FIELD.into(), action));
+        fields.push((HANDLERS_FIELD.into(), handlers_map(vec![("tap", action)])));
     }
     Ok(view_value("Button", fields))
+}
+
+/// Build a [`HANDLERS_TYPE`] record from `(event, closure)` pairs. Only closure
+/// values are kept (a missing/`nil` handler is dropped), so the map is empty
+/// exactly when nothing is bound.
+fn handlers_map(entries: Vec<(&str, SwiftValue)>) -> SwiftValue {
+    let fields = entries
+        .into_iter()
+        .filter(|(_, v)| matches!(v, SwiftValue::Closure(_)))
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: HANDLERS_TYPE.into(),
+        fields,
+    }))
+}
+
+/// Whether `view` already binds a closure for `event` in its [`HANDLERS_FIELD`]
+/// map (e.g. a `Button` owns `"tap"` via its action).
+fn has_handler(view: &SwiftValue, event: &str) -> bool {
+    let SwiftValue::Struct(obj) = view else {
+        return false;
+    };
+    matches!(
+        obj.get(HANDLERS_FIELD),
+        Some(SwiftValue::Struct(h)) if matches!(h.get(event), Some(SwiftValue::Closure(_)))
+    )
+}
+
+/// Merge an event handler into a view's [`HANDLERS_FIELD`] map (copy-on-write),
+/// creating the map if absent. A non-closure handler is a no-op (the caller may
+/// pass an optional `perform:` that was omitted).
+fn set_handler(view: SwiftValue, event: &str, closure: Option<SwiftValue>) -> StdResult {
+    let Some(closure @ SwiftValue::Closure(_)) = closure else {
+        return Ok(view);
+    };
+    let SwiftValue::Struct(obj) = &view else {
+        return Err(type_error(format!(
+            "event handler applied to non-view value `{}`",
+            view.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    if !fields.iter().any(|(k, _)| k == HANDLERS_FIELD) {
+        fields.push((HANDLERS_FIELD.into(), handlers_map(Vec::new())));
+    }
+    let slot = fields
+        .iter_mut()
+        .find(|(k, _)| k == HANDLERS_FIELD)
+        .map(|(_, v)| v)
+        .expect("_handlers slot ensured above");
+    let mut map = match slot {
+        SwiftValue::Struct(h) => (**h).clone(),
+        _ => StructObj {
+            type_name: HANDLERS_TYPE.into(),
+            fields: Vec::new(),
+        },
+    };
+    map.fields.retain(|(k, _)| k != event);
+    map.fields.push((event.to_string(), closure));
+    *slot = SwiftValue::Struct(Rc::new(map));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
+/// Attach a lifecycle/gesture/submit event to a view: append the marker
+/// modifier (so hosts know which listener to wire) and register the handler
+/// closure under `event` (ADR-0013 §3). Closures never serialize — only the
+/// marker reaches the UIIR.
+fn attach_event(
+    recv: SwiftValue,
+    marker: &str,
+    event: &str,
+    marker_args: Vec<Arg>,
+    closure: Option<SwiftValue>,
+) -> StdResult {
+    let recv = append_modifier(recv, make_modifier(marker, marker_args))?;
+    set_handler(recv, event, closure)
+}
+
+/// `.onTapGesture(count:perform:)` — fire `perform` on a tap (ADR-0013 §3).
+/// Emits an `onTapGesture` marker (carrying `count` when > 1) and binds the
+/// action under the `"tap"` event.
+fn modifier_on_tap_gesture(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut count: Option<SwiftValue> = None;
+    let mut action: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("count") => count = Some(arg.value),
+            Some("perform") => action = Some(arg.value),
+            _ => match arg.value {
+                v @ SwiftValue::Closure(_) => action = Some(v),
+                v @ SwiftValue::Int(_) if count.is_none() => count = Some(v),
+                _ => {}
+            },
+        }
+    }
+    // A `Button` already owns the `tap` event through its action. Adding
+    // `.onTapGesture` to a Button must not clobber that action via the shared
+    // `tap` key, nor add a second marker that would make hosts double-emit
+    // `tap` (Button click + gesture listener). Keep the Button action
+    // authoritative and drop the gesture — matching SwiftUI, where the Button
+    // intercepts the tap before a `.onTapGesture` sees it.
+    if has_handler(&recv, "tap") {
+        return Ok(recv);
+    }
+    // A default single-tap emits a bare marker; a multi-tap records its count.
+    let marker_args = match count {
+        Some(SwiftValue::Int(i)) if i.raw != 1 => vec![Arg {
+            label: Some("count".into()),
+            value: SwiftValue::Int(i),
+        }],
+        _ => Vec::new(),
+    };
+    attach_event(recv, "onTapGesture", "tap", marker_args, action)
+}
+
+/// `.onLongPressGesture(minimumDuration:maximumDistance:perform:onPressingChanged:)`
+/// — fire `perform` on a long press. The optional `onPressingChanged` callback
+/// is out of scope (no host press-state stream); `minimumDuration`/
+/// `maximumDistance` are recorded on the marker when non-default so hosts can
+/// tune the gesture.
+fn modifier_on_long_press_gesture(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut action: Option<SwiftValue> = None;
+    let mut marker_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("perform") => action = Some(arg.value),
+            Some("minimumDuration") => marker_args.push(Arg {
+                label: Some("minimumDuration".into()),
+                value: arg.value,
+            }),
+            Some("maximumDistance") => marker_args.push(Arg {
+                label: Some("maximumDistance".into()),
+                value: arg.value,
+            }),
+            // The `onPressingChanged:` callback (a `(Bool) -> Void`) has no host
+            // press-state event; accept it but drop it.
+            Some("onPressingChanged") => {}
+            _ => {
+                if let v @ SwiftValue::Closure(_) = arg.value {
+                    if action.is_none() {
+                        action = Some(v);
+                    }
+                }
+            }
+        }
+    }
+    attach_event(recv, "onLongPressGesture", "longPress", marker_args, action)
+}
+
+/// `.onSubmit(of:_:)` — fire `action` when the user submits a text field. The
+/// `of:` `SubmitTriggers` token is out of scope (all submits route the same);
+/// binds the action under the `"submit"` event.
+fn modifier_on_submit(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let action = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+    attach_event(recv, "onSubmit", "submit", Vec::new(), action)
+}
+
+/// `.onAppear(perform:)` — the host fires an `appear` event on mount; binds the
+/// (optional) action under the `"appear"` event.
+fn modifier_on_appear(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let action = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+    attach_event(recv, "onAppear", "appear", Vec::new(), action)
+}
+
+/// `.onDisappear(perform:)` — the host fires a `disappear` event on unmount;
+/// binds the (optional) action under the `"disappear"` event.
+fn modifier_on_disappear(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let action = args
+        .into_iter()
+        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+    attach_event(recv, "onDisappear", "disappear", Vec::new(), action)
+}
+
+/// `.onChange(of:initial:_:)` — runtime-internal (ADR-0013 §3): record the
+/// watched value plus the action into the view's [`WATCH_FIELD`] list. The
+/// session compares the watched value across renders and invokes the action
+/// with `(oldValue, newValue)`; no host involvement and no serialized modifier.
+fn modifier_on_change(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let mut value: Option<SwiftValue> = None;
+    let mut action: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            // `initial:` (fire once on appear) is out of scope; accept + drop.
+            Some("initial") => {}
+            Some("of") => value = Some(arg.value),
+            _ => match arg.value {
+                v @ SwiftValue::Closure(_) => action = Some(v),
+                v if value.is_none() => value = Some(v),
+                _ => {}
+            },
+        }
+    }
+    match (value, action) {
+        (Some(value), Some(action)) => add_watch(recv, value, action),
+        _ => Ok(recv),
+    }
+}
+
+/// Append an `onChange` watcher (`_Watch { value, action }`) to a view's
+/// [`WATCH_FIELD`] list (copy-on-write).
+fn add_watch(view: SwiftValue, value: SwiftValue, action: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(obj) = &view else {
+        return Err(type_error(format!(
+            "onChange applied to non-view value `{}`",
+            view.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    if !fields.iter().any(|(k, _)| k == WATCH_FIELD) {
+        fields.push((WATCH_FIELD.into(), SwiftValue::Array(Rc::new(Vec::new()))));
+    }
+    let slot = fields
+        .iter_mut()
+        .find(|(k, _)| k == WATCH_FIELD)
+        .map(|(_, v)| v)
+        .expect("_watch slot ensured above");
+    let mut list = match slot {
+        SwiftValue::Array(items) => (**items).clone(),
+        _ => Vec::new(),
+    };
+    list.push(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: WATCH_TYPE.into(),
+        fields: vec![("value".into(), value), ("action".into(), action)],
+    })));
+    *slot = SwiftValue::Array(Rc::new(list));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
 }
 
 /// Resolve a container's `@ViewBuilder` content into an ordered child list.
@@ -1860,6 +2129,12 @@ mod tests {
                 "View.listStyle",
                 "View.multilineTextAlignment",
                 "View.offset",
+                "View.onAppear",
+                "View.onChange",
+                "View.onDisappear",
+                "View.onLongPressGesture",
+                "View.onSubmit",
+                "View.onTapGesture",
                 "View.opacity",
                 "View.overlay",
                 "View.padding",
@@ -1908,9 +2183,42 @@ struct V: View {
             panic!("expected struct");
         };
         assert_eq!(obj.get("title"), Some(&SwiftValue::Str("Increment".into())));
+        let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+            panic!("button should carry a _handlers map");
+        };
         assert!(
-            matches!(obj.get(ACTION_FIELD), Some(SwiftValue::Closure(_))),
-            "button should capture its action closure"
+            matches!(handlers.get("tap"), Some(SwiftValue::Closure(_))),
+            "button should capture its action closure under the `tap` event"
+        );
+    }
+
+    #[test]
+    fn on_tap_gesture_on_button_keeps_action_and_emits_no_marker() {
+        // `.onTapGesture` on a Button must not overwrite the Button's action
+        // (shared `tap` key) nor add an `onTapGesture` marker (hosts would
+        // otherwise double-emit `tap`). The Button action stays authoritative.
+        let src = r#"
+struct V: View {
+    var body: some View {
+        Button("Inc") { }.onTapGesture { }
+    }
+}
+"#;
+        let view = render_to_string(src, "V");
+        let json = uiir::to_json(&view);
+        assert!(
+            !json.contains("onTapGesture"),
+            "no gesture marker on a Button: {json}"
+        );
+        let SwiftValue::Struct(obj) = &view else {
+            panic!("expected struct");
+        };
+        let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+            panic!("button should keep its _handlers map");
+        };
+        assert!(
+            matches!(handlers.get("tap"), Some(SwiftValue::Closure(_))),
+            "button action stays authoritative under `tap`"
         );
     }
 

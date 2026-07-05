@@ -1,0 +1,7 @@
+[
+  { "id": "0", "event": "appear" },
+  { "id": "0.1", "event": "tap" },
+  { "id": "0.1", "event": "tap" },
+  { "id": "0.2", "event": "set", "value": "Ada" },
+  { "id": "0.2", "event": "submit" }
+]

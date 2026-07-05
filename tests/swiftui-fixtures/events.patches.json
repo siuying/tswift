@@ -1,0 +1,1 @@
+[[{"op":"setText","id":"0.0","text":"taps=0 doubled=0 status=appeared"}],[{"op":"setText","id":"0.0","text":"taps=1 doubled=2 status=d0->2"}],[{"op":"setText","id":"0.0","text":"taps=2 doubled=4 status=d2->4"}],[{"op":"setArgs","id":"0.2","args":{"title":"Name","text":"Ada"}}],[{"op":"setText","id":"0.0","text":"taps=2 doubled=4 status=submitted:Ada"}]]

@@ -11,7 +11,12 @@
 
 use tswift_core::{EvalError, Interpreter, SwiftValue};
 
-use crate::{child_id, ACTION_FIELD, BINDING_FIELD, CHILDREN_FIELD};
+use crate::{child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, WATCH_FIELD};
+
+/// Maximum `onChange` cascade passes per dispatch: a watcher's action may mutate
+/// state a *second* watcher observes (chained state). We re-render and re-scan
+/// until quiescent, bounded so a watcher toggling its own source cannot hang.
+const MAX_WATCH_PASSES: usize = 64;
 
 /// Coerce a host `set` payload to the binding's current value type, so each
 /// control writes a well-typed value (and a `Toggle<Bool>` can't be corrupted
@@ -90,20 +95,21 @@ impl<'i, 'w> Session<'i, 'w> {
         self.current.as_ref()
     }
 
-    /// Route `event` to the matching node's action and re-render. Unknown ids or
-    /// nodes without an action are a no-op that still re-renders (the runtime
-    /// stays the single source of truth).
+    /// Route `event` to the matching node and re-render. `set` writes a control's
+    /// value through its `Binding`; every other event name (`tap`, `longPress`,
+    /// `appear`, `disappear`, `submit`, …) routes into the node's `_handlers`
+    /// map (ADR-0013 §3). Unknown ids or nodes without a matching handler are a
+    /// no-op that still re-renders (the runtime stays the single source of
+    /// truth). After the state mutation, `onChange(of:)` watchers are compared
+    /// against the pre-event tree and fired before the caller diffs.
     pub fn dispatch(&mut self, event: &Event) -> Result<SwiftValue, EvalError> {
         let tree = match &self.current {
             Some(tree) => tree.clone(),
             None => self.render()?,
         };
+        // Snapshot the watched-value baseline from the pre-event tree.
+        let baseline = collect_watch_values(&tree);
         match event.event.as_str() {
-            "tap" => {
-                if let Some(closure_id) = find_action(&tree, &event.id) {
-                    self.interp.invoke_closure(closure_id, Vec::new())?;
-                }
-            }
             // A control's new value (a `Toggle` bool, a `TextField` string, a
             // `Slider`/`Stepper` number) written through its `Binding`, so the
             // bound `@State` updates before re-render. The payload is coerced to
@@ -117,22 +123,124 @@ impl<'i, 'w> Session<'i, 'w> {
                     }
                 }
             }
-            _ => {}
+            // Any other event routes to the node's handler map by name.
+            name => {
+                if let Some(closure_id) = find_handler(&tree, &event.id, name) {
+                    self.interp.invoke_closure(closure_id, Vec::new())?;
+                }
+            }
         }
-        self.render()
+        let tree = self.render()?;
+        self.run_watchers(baseline, tree)
+    }
+
+    /// Fire `onChange(of:)` watchers whose watched value differs from `baseline`
+    /// (the pre-event snapshot), invoking each action with `(oldValue,
+    /// newValue)`. A fired action may mutate state a *second* watcher observes,
+    /// so we re-render and re-scan until quiescent (bounded by
+    /// [`MAX_WATCH_PASSES`]). Returns the final rendered tree.
+    fn run_watchers(
+        &mut self,
+        mut baseline: Vec<(String, usize, SwiftValue)>,
+        mut tree: SwiftValue,
+    ) -> Result<SwiftValue, EvalError> {
+        for _ in 0..MAX_WATCH_PASSES {
+            let current = collect_watchers(&tree);
+            let mut fired = false;
+            for (id, index, value, closure) in &current {
+                if let Some((_, _, old)) = baseline
+                    .iter()
+                    .find(|(bid, bidx, _)| bid == id && bidx == index)
+                {
+                    if !values_equal(old, value) {
+                        self.interp
+                            .invoke_closure(*closure, vec![old.clone(), value.clone()])?;
+                        fired = true;
+                    }
+                }
+            }
+            // Advance the baseline to the values just observed so an unchanged
+            // watcher never re-fires and a fired one settles.
+            baseline = current
+                .into_iter()
+                .map(|(id, index, value, _)| (id, index, value))
+                .collect();
+            if !fired {
+                return Ok(tree);
+            }
+            tree = self.render()?;
+        }
+        Ok(tree)
     }
 }
 
-/// Find the action closure id for the node at structural path `target` in
-/// `tree`, matching the id scheme used by `uiir`.
-pub fn find_action(tree: &SwiftValue, target: &str) -> Option<usize> {
-    fn walk(node: &SwiftValue, id: &str, target: &str) -> Option<usize> {
+/// Compare two Swift values for `onChange` equality. Covers the scalar cases a
+/// watched value realistically takes (`Int`/`Double`/`Bool`/`Str`/`Nil`); any
+/// richer value falls back to its display string.
+fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
+    match (a, b) {
+        (SwiftValue::Bool(x), SwiftValue::Bool(y)) => x == y,
+        (SwiftValue::Int(x), SwiftValue::Int(y)) => x.raw == y.raw,
+        (SwiftValue::Double(x), SwiftValue::Double(y)) => x == y,
+        (SwiftValue::Str(x), SwiftValue::Str(y)) => x == y,
+        (SwiftValue::Nil, SwiftValue::Nil) => true,
+        _ => a.to_string() == b.to_string(),
+    }
+}
+
+/// Collect every `onChange` watcher in `tree` as `(node id, watcher index,
+/// value, action closure id)`, in structural order.
+fn collect_watchers(tree: &SwiftValue) -> Vec<(String, usize, SwiftValue, usize)> {
+    fn walk(node: &SwiftValue, id: &str, out: &mut Vec<(String, usize, SwiftValue, usize)>) {
+        let SwiftValue::Struct(obj) = node else {
+            return;
+        };
+        if let Some(SwiftValue::Array(watchers)) = obj.get(WATCH_FIELD) {
+            for (i, w) in watchers.iter().enumerate() {
+                if let SwiftValue::Struct(rec) = w {
+                    let value = rec.get("value").cloned().unwrap_or(SwiftValue::Nil);
+                    if let Some(SwiftValue::Closure(cid)) = rec.get("action") {
+                        out.push((id.to_string(), i, value, *cid));
+                    }
+                }
+            }
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                walk(child, &child_id(id, i, child), out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, "0", &mut out);
+    out
+}
+
+/// Collect just the `(id, index, value)` baseline of every watcher (the action
+/// closure is irrelevant for the pre-event snapshot).
+fn collect_watch_values(tree: &SwiftValue) -> Vec<(String, usize, SwiftValue)> {
+    collect_watchers(tree)
+        .into_iter()
+        .map(|(id, index, value, _)| (id, index, value))
+        .collect()
+}
+
+/// Find the handler closure id for `event` on the node at structural path
+/// `target` in `tree`, matching the id scheme used by `uiir`. Looks up the
+/// node's `_handlers` map (ADR-0013 §3): `tap` for a `Button` or
+/// `.onTapGesture`, `longPress`/`appear`/`disappear`/`submit` for the
+/// corresponding modifiers.
+pub fn find_handler(tree: &SwiftValue, target: &str, event: &str) -> Option<usize> {
+    fn walk(node: &SwiftValue, id: &str, target: &str, event: &str) -> Option<usize> {
         let SwiftValue::Struct(obj) = node else {
             return None;
         };
         if id == target {
-            return match obj.get(ACTION_FIELD) {
-                Some(SwiftValue::Closure(cid)) => Some(*cid),
+            return match obj.get(HANDLERS_FIELD) {
+                Some(SwiftValue::Struct(handlers)) => match handlers.get(event) {
+                    Some(SwiftValue::Closure(cid)) => Some(*cid),
+                    _ => None,
+                },
                 _ => None,
             };
         }
@@ -143,14 +251,14 @@ pub fn find_action(tree: &SwiftValue, target: &str) -> Option<usize> {
         }
         if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
             for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target) {
+                if let Some(found) = walk(child, &child_id(id, i, child), target, event) {
                     return Some(found);
                 }
             }
         }
         None
     }
-    walk(tree, "0", target)
+    walk(tree, "0", target, event)
 }
 
 /// Find the `Binding` value stashed on the control node at structural path
@@ -619,6 +727,135 @@ struct RowsView: View {
         assert_eq!(
             coerce_binding_value(&i, Some(&SwiftValue::Double(2.0))),
             Some(SwiftValue::int(2))
+        );
+    }
+
+    /// Build a session over `body` inside a `View` named `V` with the given
+    /// stored `@State` declarations prepended.
+    fn events_interp(program: &str) -> Interpreter<'static> {
+        let src = format!("{PRELUDE}\n{program}");
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn on_tap_gesture_routes_a_tap_to_the_handler() {
+        let mut interp = events_interp(
+            r#"
+struct TapView: View {
+    @State private var count = 0
+    var body: some View {
+        VStack {
+            Text("\(count)")
+            Text("tap me").onTapGesture { count += 1 }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TapView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        // The tappable Text carries the marker modifier, no serialized closure.
+        assert!(
+            json.contains(r#"{"name":"onTapGesture","value":null}"#),
+            "marker modifier present: {json}"
+        );
+        assert!(
+            !json.contains("_handlers"),
+            "handlers never serialize: {json}"
+        );
+        // Tapping the second child (id "0.1") bumps the counter.
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains(r#""verbatim":"1""#),
+            "tap gesture bumps state: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn lifecycle_and_submit_events_route_to_handlers() {
+        let mut interp = events_interp(
+            r#"
+struct LifecycleView: View {
+    @State private var log = ""
+    @State private var name = ""
+    var body: some View {
+        VStack {
+            Text(log)
+            TextField("Name", text: $name)
+                .onSubmit { log = "submit" }
+        }
+        .onAppear { log = "appear" }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "LifecycleView").expect("session");
+        session.render().expect("render");
+        // The host fires `appear` on the root (id "0").
+        let appear = Event {
+            id: "0".into(),
+            event: "appear".into(),
+            value: None,
+        };
+        let after = session.dispatch(&appear).expect("dispatch");
+        assert!(uiir::to_json(&after).contains("appear"), "onAppear fired");
+        // Submitting the field (id "0.1") routes to its onSubmit handler.
+        let submit = Event {
+            id: "0.1".into(),
+            event: "submit".into(),
+            value: None,
+        };
+        let after = session.dispatch(&submit).expect("dispatch");
+        assert!(uiir::to_json(&after).contains("submit"), "onSubmit fired");
+    }
+
+    #[test]
+    fn on_change_fires_with_old_and_new_and_chains() {
+        // Toggling `count` runs an onChange that mirrors it into `doubled`; a
+        // second onChange watches `doubled` and records the transition. One
+        // dispatch must cascade through both watchers before diffing.
+        let mut interp = events_interp(
+            r#"
+struct ChangeView: View {
+    @State private var count = 0
+    @State private var doubled = 0
+    @State private var log = ""
+    var body: some View {
+        VStack {
+            Text("c=\(count) d=\(doubled) \(log)")
+            Button("Inc") { count += 1 }
+        }
+        .onChange(of: count) { old, new in doubled = new * 2 }
+        .onChange(of: doubled) { old, new in log = "\(old)->\(new)" }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "ChangeView").expect("session");
+        session.render().expect("render");
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains("c=1 d=2 0-&gt;2") || json.contains("c=1 d=2 0->2"),
+            "chained onChange should run both watchers with old/new: {json}"
         );
     }
 
