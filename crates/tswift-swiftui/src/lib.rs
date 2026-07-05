@@ -19,6 +19,7 @@ use std::rc::Rc;
 
 pub mod diff;
 pub mod session;
+pub(crate) mod tree;
 pub mod uiir;
 
 use tswift_core::{

@@ -15,8 +15,8 @@ use std::rc::Rc;
 use tswift_core::{EvalError, Interpreter, StructObj, SwiftValue};
 
 use crate::{
-    child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATIONS_FIELD,
-    NAV_DESTINATION_FIELD, NAV_VALUE_FIELD, WATCH_FIELD,
+    BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATIONS_FIELD, NAV_DESTINATION_FIELD,
+    NAV_VALUE_FIELD, WATCH_FIELD,
 };
 
 /// Maximum `onChange` cascade passes per dispatch: a watcher's action may mutate
@@ -112,16 +112,23 @@ impl<'i, 'w> Session<'i, 'w> {
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {
         let body = self.interp.get_member(&self.instance, "body")?;
         let tree = crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?;
-        // Append each `NavigationStack`'s pushed screens (ADR-0013 §1) before the
-        // tab-selection pass, so the tab pass sees the full (root + pushed) tree.
-        let tree = self.apply_nav_stack(tree, "0")?;
-        // Re-apply any per-node `TabView` selection owned by the session (the
-        // no-binding case): the freshly evaluated `body` defaults each such tab
-        // view to its first tab, so the session's stored selection overrides it.
-        let tree = self.apply_tab_selection(tree, "0");
-        // Resolve each `AsyncImage` node's phase-appropriate children (ADR-0013
-        // §4): evaluate content/placeholder/phase closures from session state.
-        let tree = self.apply_image_phase(tree, "0")?;
+        // Three separate full-tree rewrites, deliberately not merged into one
+        // pass: the nav pass appends pushed screens as new children which the
+        // tab and image passes must still visit (session tab selection or
+        // image phase inside a pushed screen), and a single post-order pass
+        // never re-walks children a node transform appends.
+        //
+        // 1. Append each `NavigationStack`'s pushed screens (ADR-0013 §1).
+        let tree = crate::tree::rewrite(tree, "0", &mut |obj, id| self.nav_stack_node(obj, id))?;
+        // 2. Re-apply any per-node `TabView` selection owned by the session
+        // (the no-binding case): the freshly evaluated `body` defaults each
+        // such tab view to its first tab, so the stored selection overrides it.
+        let tree =
+            crate::tree::rewrite(tree, "0", &mut |obj, id| self.tab_selection_node(obj, id))?;
+        // 3. Resolve each `AsyncImage` node's phase-appropriate children
+        // (ADR-0013 §4): evaluate content/placeholder/phase closures from
+        // session state.
+        let tree = crate::tree::rewrite(tree, "0", &mut |obj, id| self.image_phase_node(obj, id))?;
         // Prune phase state for node ids that no longer appear in the tree so
         // the map does not accumulate stale entries across renders (Fix #3).
         self.prune_image_phase(&tree);
@@ -129,79 +136,61 @@ impl<'i, 'w> Session<'i, 'w> {
         Ok(tree)
     }
 
-    /// Resolve `AsyncImage` nodes' phase-appropriate children (ADR-0013 §4).
-    /// Walks the tree; for each `AsyncImage` node that has closure fields
+    /// Resolve an `AsyncImage` node's phase-appropriate children (ADR-0013
+    /// §4). For each `AsyncImage` node that has closure fields
     /// (`_asyncContent`, `_asyncPlaceholder`, or `_asyncPhaseContent`),
     /// evaluates the appropriate closure based on the session’s stored phase
     /// (keyed by the node’s structural id, default `"empty"`) and updates the
     /// node’s `_children` and `phase` arg. URL changes (URL arg differs from
-    /// the stored phase’s URL) reset the phase back to `"empty"`.
-    fn apply_image_phase(&mut self, node: SwiftValue, id: &str) -> Result<SwiftValue, EvalError> {
-        let SwiftValue::Struct(obj) = node else {
-            return Ok(node);
-        };
-        let mut obj = (*obj).clone();
-
-        // Recurse into existing children first, using their structural ids.
-        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
-                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
-                let mut mapped = Vec::with_capacity(kids.len());
-                for (i, c) in kids.into_iter().enumerate() {
-                    let cid = child_id(id, i, &c);
-                    mapped.push(self.apply_image_phase(c, &cid)?);
-                }
-                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
-            }
-        }
-
+    /// the stored phase’s URL) reset the phase back to `"empty"`. Any other
+    /// node passes through untouched.
+    fn image_phase_node(&mut self, obj: &mut StructObj, id: &str) -> Result<(), EvalError> {
         // Only act on AsyncImage nodes that have captured closures (v1.5).
-        if obj.type_name == "AsyncImage" && crate::has_async_image_closures(&obj) {
-            // Retrieve the current URL from the node’s args.
-            let url = match obj.get("url") {
-                Some(SwiftValue::Str(s)) => s.clone(),
-                _ => String::new(),
-            };
+        if obj.type_name != "AsyncImage" || !crate::has_async_image_closures(obj) {
+            return Ok(());
+        }
+        // Retrieve the current URL from the node’s args.
+        let url = match obj.get("url") {
+            Some(SwiftValue::Str(s)) => s.clone(),
+            _ => String::new(),
+        };
 
-            // Determine the effective phase: use stored state when the URL
-            // hasn’t changed; reset to `"empty"` on URL change.
-            let effective_phase: String = match self.image_phase.get(id) {
-                Some((phase, stored_url)) if stored_url == &url => phase.clone(),
-                Some(_) => {
-                    // URL changed — reset phase so the host re-fires load events.
-                    let owned = id.to_string();
-                    self.image_phase.remove(&owned);
-                    "empty".to_string()
-                }
-                None => "empty".to_string(),
-            };
-
-            // Update the serialized `phase` arg.
-            if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == "phase") {
-                slot.1 = SwiftValue::Str(effective_phase.clone());
+        // Determine the effective phase: use stored state when the URL
+        // hasn’t changed; reset to `"empty"` on URL change.
+        let effective_phase: String = match self.image_phase.get(id) {
+            Some((phase, stored_url)) if stored_url == &url => phase.clone(),
+            Some(_) => {
+                // URL changed — reset phase so the host re-fires load events.
+                self.image_phase.remove(id);
+                "empty".to_string()
             }
+            None => "empty".to_string(),
+        };
 
-            // Evaluate the closure and inject the result as children.
-            let node_val = SwiftValue::Struct(Rc::new(obj.clone()));
-            let child =
-                crate::realize_async_image_child(self.interp, &node_val, &effective_phase, &url)
-                    .map_err(crate::std_error_to_eval)?;
-
-            let new_children = match child {
-                Some(c) => vec![c],
-                None => Vec::new(),
-            };
-            if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-                obj.fields[pos].1 = SwiftValue::Array(Rc::new(new_children));
-            } else {
-                obj.fields.push((
-                    CHILDREN_FIELD.into(),
-                    SwiftValue::Array(Rc::new(new_children)),
-                ));
-            }
+        // Update the serialized `phase` arg.
+        if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == "phase") {
+            slot.1 = SwiftValue::Str(effective_phase.clone());
         }
 
-        Ok(SwiftValue::Struct(Rc::new(obj)))
+        // Evaluate the closure and inject the result as children.
+        let node_val = SwiftValue::Struct(Rc::new(obj.clone()));
+        let child =
+            crate::realize_async_image_child(self.interp, &node_val, &effective_phase, &url)
+                .map_err(crate::std_error_to_eval)?;
+
+        let new_children = match child {
+            Some(c) => vec![c],
+            None => Vec::new(),
+        };
+        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            obj.fields[pos].1 = SwiftValue::Array(Rc::new(new_children));
+        } else {
+            obj.fields.push((
+                CHILDREN_FIELD.into(),
+                SwiftValue::Array(Rc::new(new_children)),
+            ));
+        }
+        Ok(())
     }
 
     /// Remove entries from `image_phase` whose structural ids no longer appear
@@ -216,15 +205,11 @@ impl<'i, 'w> Session<'i, 'w> {
         self.image_phase.retain(|id, _| live.contains(id));
     }
 
-    /// Override the `selection` arg of every `TabView` node lacking a
-    /// `selection:` binding with the session's stored per-node selection (if
-    /// any). Bound tab views read their selection from the binding, so they are
-    /// left untouched. Walks with the same structural ids as `uiir`.
-    fn apply_tab_selection(&self, node: SwiftValue, id: &str) -> SwiftValue {
-        let SwiftValue::Struct(obj) = node else {
-            return node;
-        };
-        let mut obj = (*obj).clone();
+    /// Override the `selection` arg of a `TabView` node lacking a `selection:`
+    /// binding with the session's stored per-node selection (if any). Bound tab
+    /// views read their selection from the binding, so they are left untouched,
+    /// as is every other node.
+    fn tab_selection_node(&self, obj: &mut StructObj, id: &str) -> Result<(), EvalError> {
         if obj.type_name == "TabView" && !obj.fields.iter().any(|(k, _)| k == BINDING_FIELD) {
             if let Some(selected) = self.tab_selection.get(id) {
                 if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == "selection") {
@@ -232,77 +217,48 @@ impl<'i, 'w> Session<'i, 'w> {
                 }
             }
         }
-        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
-                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
-                let mapped: Vec<SwiftValue> = kids
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        let cid = child_id(id, i, &c);
-                        self.apply_tab_selection(c, &cid)
-                    })
-                    .collect();
-                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
-            }
-        }
-        SwiftValue::Struct(Rc::new(obj))
+        Ok(())
     }
 
-    /// Append every `NavigationStack`'s pushed screens (ADR-0013 §1) as ordinary
-    /// children, keyed by the stack's structural id. Each pushed destination is
-    /// realized fresh — a `@ViewBuilder` closure is re-evaluated so the screen
-    /// re-reads `@State`; an eager destination view is expanded as-is — and
-    /// appended after the stack's root content (root first, topmost last). Walks
-    /// with the same structural ids as `uiir`.
-    fn apply_nav_stack(&mut self, node: SwiftValue, id: &str) -> Result<SwiftValue, EvalError> {
-        let SwiftValue::Struct(obj) = node else {
-            return Ok(node);
+    /// Append a `NavigationStack` node's pushed screens (ADR-0013 §1) as
+    /// ordinary children, keyed by the stack's structural id. A path-bound
+    /// stack (`NavigationStack(path:)`) derives them from the bound path's
+    /// items, each matched to a `.navigationDestination(for:)` registration in
+    /// the stack's subtree; a session-owned stack uses the per-stack
+    /// `nav_stack` state. Each pushed destination is realized fresh — a
+    /// `@ViewBuilder` closure is re-evaluated so the screen re-reads `@State`;
+    /// an eager destination view is expanded as-is — and appended after the
+    /// stack's root content (root first, topmost last). Non-stack nodes pass
+    /// through untouched.
+    fn nav_stack_node(&mut self, obj: &mut StructObj, id: &str) -> Result<(), EvalError> {
+        if obj.type_name != "NavigationStack" {
+            return Ok(());
+        }
+        let screens = if let Some(binding) = obj.get(BINDING_FIELD).cloned() {
+            self.realize_path_screens(obj, &binding)?
+        } else {
+            self.realize_session_screens(id)?
         };
-        let mut obj = (*obj).clone();
-        // Recurse into the existing children first (mapping to their ids).
-        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
-                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
-                let mut mapped = Vec::with_capacity(kids.len());
-                for (i, c) in kids.into_iter().enumerate() {
-                    let cid = child_id(id, i, &c);
-                    mapped.push(self.apply_nav_stack(c, &cid)?);
-                }
-                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
-            }
+        if screens.is_empty() {
+            return Ok(());
         }
-        // Then, if this is a stack, append its pushed screens as children. A
-        // path-bound stack (`NavigationStack(path:)`) derives them from the
-        // bound path's items, each matched to a `.navigationDestination(for:)`
-        // registration in the stack's subtree (ADR-0013 §1); a session-owned
-        // stack uses the per-stack `nav_stack` state.
-        if obj.type_name == "NavigationStack" {
-            let screens = if let Some(binding) = obj.get(BINDING_FIELD).cloned() {
-                self.realize_path_screens(&obj, &binding)?
-            } else {
-                self.realize_session_screens(id)?
-            };
-            if !screens.is_empty() {
-                let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-                    Some(pos) => pos,
-                    None => {
-                        obj.fields.push((
-                            CHILDREN_FIELD.into(),
-                            SwiftValue::Array(Rc::new(Vec::new())),
-                        ));
-                        obj.fields.len() - 1
-                    }
-                };
-                let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
-                    SwiftValue::Array(a) => a.iter().cloned().collect(),
-                    _ => Vec::new(),
-                };
-                kids.extend(screens);
-                obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
+        let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            Some(pos) => pos,
+            None => {
+                obj.fields.push((
+                    CHILDREN_FIELD.into(),
+                    SwiftValue::Array(Rc::new(Vec::new())),
+                ));
+                obj.fields.len() - 1
             }
-        }
-        Ok(SwiftValue::Struct(Rc::new(obj)))
+        };
+        let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
+            SwiftValue::Array(a) => a.iter().cloned().collect(),
+            _ => Vec::new(),
+        };
+        kids.extend(screens);
+        obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
+        Ok(())
     }
 
     /// Realize a session-owned `NavigationStack`'s pushed screens from its
@@ -565,10 +521,8 @@ fn values_equal(a: &SwiftValue, b: &SwiftValue) -> bool {
 /// Collect every `onChange` watcher in `tree` as `(node id, watcher index,
 /// value, action closure id)`, in structural order.
 fn collect_watchers(tree: &SwiftValue) -> Vec<(String, usize, SwiftValue, usize)> {
-    fn walk(node: &SwiftValue, id: &str, out: &mut Vec<(String, usize, SwiftValue, usize)>) {
-        let SwiftValue::Struct(obj) = node else {
-            return;
-        };
+    let mut out = Vec::new();
+    crate::tree::walk(tree, &mut |id, _, obj| {
         if let Some(SwiftValue::Array(watchers)) = obj.get(WATCH_FIELD) {
             for (i, w) in watchers.iter().enumerate() {
                 if let SwiftValue::Struct(rec) = w {
@@ -579,14 +533,7 @@ fn collect_watchers(tree: &SwiftValue) -> Vec<(String, usize, SwiftValue, usize)
                 }
             }
         }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                walk(child, &child_id(id, i, child), out);
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(tree, "0", &mut out);
+    });
     out
 }
 
@@ -605,34 +552,16 @@ fn collect_watch_values(tree: &SwiftValue) -> Vec<(String, usize, SwiftValue)> {
 /// `.onTapGesture`, `longPress`/`appear`/`disappear`/`submit` for the
 /// corresponding modifiers.
 pub fn find_handler(tree: &SwiftValue, target: &str, event: &str) -> Option<usize> {
-    fn walk(node: &SwiftValue, id: &str, target: &str, event: &str) -> Option<usize> {
-        let SwiftValue::Struct(obj) = node else {
-            return None;
-        };
-        if id == target {
-            return match obj.get(HANDLERS_FIELD) {
-                Some(SwiftValue::Struct(handlers)) => match handlers.get(event) {
-                    Some(SwiftValue::Closure(cid)) => Some(*cid),
-                    _ => None,
-                },
-                _ => None,
-            };
-        }
-        // Only descend when `target` lies under this node's subtree.
-        let prefix = format!("{id}.");
-        if !target.starts_with(&prefix) {
-            return None;
-        }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target, event) {
-                    return Some(found);
-                }
-            }
-        }
-        None
+    let SwiftValue::Struct(obj) = crate::tree::find(tree, target)? else {
+        return None;
+    };
+    match obj.get(HANDLERS_FIELD)? {
+        SwiftValue::Struct(handlers) => match handlers.get(event) {
+            Some(SwiftValue::Closure(cid)) => Some(*cid),
+            _ => None,
+        },
+        _ => None,
     }
-    walk(tree, "0", target, event)
 }
 
 /// The resolved target of a tapped `NavigationLink` (ADR-0013 §1): either a
@@ -654,76 +583,31 @@ pub enum NavLinkTarget {
 /// value-based. The nearest ancestor `NavigationStack` id is threaded down the
 /// walk.
 pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<NavLinkTarget> {
-    fn walk(
-        node: &SwiftValue,
-        id: &str,
-        target: &str,
-        stack_id: Option<&str>,
-    ) -> Option<NavLinkTarget> {
-        let SwiftValue::Struct(obj) = node else {
-            return None;
-        };
-        let this_stack = if obj.type_name == "NavigationStack" {
-            Some(id)
-        } else {
-            stack_id
-        };
-        if id == target {
-            let sid = this_stack?.to_string();
-            if let Some(dest) = obj.get(NAV_DESTINATION_FIELD) {
-                return Some(NavLinkTarget::Destination {
-                    stack_id: sid,
-                    destination: dest.clone(),
-                });
-            }
-            if let Some(value) = obj.get(NAV_VALUE_FIELD) {
-                return Some(NavLinkTarget::Value {
-                    stack_id: sid,
-                    value: value.clone(),
-                });
-            }
-            return None;
-        }
-        let prefix = format!("{id}.");
-        if !target.starts_with(&prefix) {
-            return None;
-        }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target, this_stack) {
-                    return Some(found);
-                }
-            }
-        }
-        None
+    let (node, stack_id) =
+        crate::tree::find_with_ancestor(tree, target, |obj| obj.type_name == "NavigationStack")?;
+    let SwiftValue::Struct(obj) = node else {
+        return None;
+    };
+    let sid = stack_id?;
+    if let Some(dest) = obj.get(NAV_DESTINATION_FIELD) {
+        return Some(NavLinkTarget::Destination {
+            stack_id: sid,
+            destination: dest.clone(),
+        });
     }
-    walk(tree, "0", target, None)
+    if let Some(value) = obj.get(NAV_VALUE_FIELD) {
+        return Some(NavLinkTarget::Value {
+            stack_id: sid,
+            value: value.clone(),
+        });
+    }
+    None
 }
 
 /// Find the node at structural path `target` in `tree` (id scheme shared with
 /// `uiir`).
 pub fn find_node<'a>(tree: &'a SwiftValue, target: &str) -> Option<&'a SwiftValue> {
-    fn walk<'a>(node: &'a SwiftValue, id: &str, target: &str) -> Option<&'a SwiftValue> {
-        if id == target {
-            return Some(node);
-        }
-        let SwiftValue::Struct(obj) = node else {
-            return None;
-        };
-        let prefix = format!("{id}.");
-        if !target.starts_with(&prefix) {
-            return None;
-        }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target) {
-                    return Some(found);
-                }
-            }
-        }
-        None
-    }
-    walk(tree, "0", target)
+    crate::tree::find(tree, target)
 }
 
 /// Collect every `.navigationDestination(for:)` registration within `subtree`
@@ -731,76 +615,40 @@ pub fn find_node<'a>(tree: &'a SwiftValue, target: &str) -> Option<&'a SwiftValu
 /// registration wins over a deeper duplicate of the same type, matching
 /// SwiftUI's "nearest enclosing" resolution.
 pub fn collect_nav_destinations(subtree: &SwiftValue) -> HashMap<String, usize> {
-    fn walk(node: &SwiftValue, depth: usize, out: &mut HashMap<String, (usize, usize)>) {
-        let SwiftValue::Struct(obj) = node else {
-            return;
-        };
+    let mut acc: HashMap<String, (usize, usize)> = HashMap::new();
+    crate::tree::walk(subtree, &mut |_, depth, obj| {
         if let Some(SwiftValue::Struct(map)) = obj.get(NAV_DESTINATIONS_FIELD) {
             for (ty, closure) in &map.fields {
                 if let SwiftValue::Closure(cid) = closure {
-                    let entry = out.entry(ty.clone()).or_insert((depth, *cid));
+                    let entry = acc.entry(ty.clone()).or_insert((depth, *cid));
                     if depth < entry.0 {
                         *entry = (depth, *cid);
                     }
                 }
             }
         }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for child in children.iter() {
-                walk(child, depth + 1, out);
-            }
-        }
-    }
-    let mut acc: HashMap<String, (usize, usize)> = HashMap::new();
-    walk(subtree, 0, &mut acc);
+    });
     acc.into_iter().map(|(k, (_, cid))| (k, cid)).collect()
 }
 
 /// Find the `Binding` value stashed on the control node at structural path
 /// `target` (the `_binding` field a `Toggle`/input writes through).
 pub fn find_binding(tree: &SwiftValue, target: &str) -> Option<SwiftValue> {
-    fn walk(node: &SwiftValue, id: &str, target: &str) -> Option<SwiftValue> {
-        let SwiftValue::Struct(obj) = node else {
-            return None;
-        };
-        if id == target {
-            return obj.get(BINDING_FIELD).cloned();
-        }
-        let prefix = format!("{id}.");
-        if !target.starts_with(&prefix) {
-            return None;
-        }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target) {
-                    return Some(found);
-                }
-            }
-        }
-        None
-    }
-    walk(tree, "0", target)
+    let SwiftValue::Struct(obj) = crate::tree::find(tree, target)? else {
+        return None;
+    };
+    obj.get(BINDING_FIELD).cloned()
 }
 
 /// Collect the structural ids of all v1.5 `AsyncImage` nodes (those with
 /// closure fields) that appear in `tree`. Used by `prune_image_phase`.
 fn collect_async_image_ids(tree: &SwiftValue) -> std::collections::HashSet<String> {
-    fn walk(node: &SwiftValue, id: &str, out: &mut std::collections::HashSet<String>) {
-        let SwiftValue::Struct(obj) = node else {
-            return;
-        };
+    let mut out = std::collections::HashSet::new();
+    crate::tree::walk(tree, &mut |id, _, obj| {
         if obj.type_name == "AsyncImage" && crate::has_async_image_closures(obj) {
             out.insert(id.to_string());
         }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                let cid = child_id(id, i, child);
-                walk(child, &cid, out);
-            }
-        }
-    }
-    let mut out = std::collections::HashSet::new();
-    walk(tree, "0", &mut out);
+    });
     out
 }
 
@@ -808,30 +656,13 @@ fn collect_async_image_ids(tree: &SwiftValue) -> std::collections::HashSet<Strin
 /// `target`. Returns `None` when the id is not found or the node is not an
 /// `AsyncImage` with a `url` arg.
 fn find_async_image_url(tree: &SwiftValue, target: &str) -> Option<String> {
-    fn walk(node: &SwiftValue, id: &str, target: &str) -> Option<String> {
-        let SwiftValue::Struct(obj) = node else {
-            return None;
-        };
-        if id == target {
-            return match obj.get("url") {
-                Some(SwiftValue::Str(s)) => Some(s.clone()),
-                _ => None,
-            };
-        }
-        let prefix = format!("{id}.");
-        if !target.starts_with(&prefix) {
-            return None;
-        }
-        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
-            for (i, child) in children.iter().enumerate() {
-                if let Some(found) = walk(child, &child_id(id, i, child), target) {
-                    return Some(found);
-                }
-            }
-        }
-        None
+    let SwiftValue::Struct(obj) = crate::tree::find(tree, target)? else {
+        return None;
+    };
+    match obj.get("url") {
+        Some(SwiftValue::Str(s)) => Some(s.clone()),
+        _ => None,
     }
-    walk(tree, "0", target)
 }
 
 #[cfg(test)]
