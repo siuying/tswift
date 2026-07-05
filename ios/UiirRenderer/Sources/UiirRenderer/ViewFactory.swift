@@ -336,19 +336,24 @@ public enum ViewFactory {
                         return
                     }
                     let nodeId = node.id
-                    URLSession.shared.dataTask(with: url) { _, response, error in
+                    // Await the probe on the main actor so `sink` (a
+                    // @MainActor-isolated, non-Sendable existential) is never
+                    // captured by a @Sendable completion handler — which Swift 6
+                    // strict concurrency rejects as a data race.
+                    Task { @MainActor in
                         let succeeded: Bool
-                        if error != nil {
+                        do {
+                            let (_, response) = try await URLSession.shared.data(from: url)
+                            if let http = response as? HTTPURLResponse {
+                                succeeded = http.statusCode < 400
+                            } else {
+                                succeeded = true
+                            }
+                        } catch {
                             succeeded = false
-                        } else if let http = response as? HTTPURLResponse {
-                            succeeded = http.statusCode < 400
-                        } else {
-                            succeeded = true
                         }
-                        DispatchQueue.main.async {
-                            sink.send(.imagePhase(nodeId, succeeded ? "success" : "failure"))
-                        }
-                    }.resume()
+                        sink.send(.imagePhase(nodeId, succeeded ? "success" : "failure"))
+                    }
                 }
                 .id(urlString)
         }
