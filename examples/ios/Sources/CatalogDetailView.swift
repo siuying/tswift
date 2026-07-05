@@ -4,7 +4,8 @@ import SwiftUI
 ///
 /// - `.console` items: `SplitDemoView` with an editable `TextEditor` on the
 ///   left and `ConsoleDemoView` (stdout / diagnostics) on the right.
-/// - `.swiftUI` items: placeholder — implemented in slice 3.
+/// - `.swiftUI` items: `SplitDemoView` with an editable `TextEditor` on the
+///   left and `SwiftUIDemoView` (live interactive preview) on the right.
 ///
 /// The `@State` source is seeded from `item.source` on first appearance and
 /// reset whenever the selected item changes (via `.onChange(of:)`).
@@ -49,22 +50,14 @@ struct CatalogDetailView: View {
             .id(item.id)
 
         case .swiftUI:
-            swiftUIPlaceholder
+            // `needsNetwork` is ignored this slice (HN networking is slice 6);
+            // a plain PreviewSession suffices.
+            SplitDemoView(source: $editableSource) {
+                SwiftUIDemoView(source: editableSource)
+            }
+            // New identity per item ⟹ PreviewSession is recreated and
+            // onAppear fires, recompiling the new source.
+            .id(item.id)
         }
-    }
-
-    // MARK: - Placeholders
-
-    private var swiftUIPlaceholder: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "swift")
-                .font(.system(size: 48))
-                .foregroundStyle(.orange)
-            Text("SwiftUI Demo")
-                .font(.title3.bold())
-            Text("Coming in slice 3.")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
