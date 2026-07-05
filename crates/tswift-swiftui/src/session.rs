@@ -9,6 +9,9 @@
 //! Node identity is the structural path (`"0"`, `"0.1"`, …) shared with
 //! `uiir`, so an event `id` from a host maps back to the same node.
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use tswift_core::{EvalError, Interpreter, SwiftValue};
 
 use crate::{child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, WATCH_FIELD};
@@ -68,6 +71,11 @@ pub struct Session<'i, 'w> {
     instance: SwiftValue,
     /// The most recently rendered UIIR tree (for event routing).
     current: Option<SwiftValue>,
+    /// Per-node `TabView` selection for tab views *without* a `selection:`
+    /// binding (ADR-0013 §2), keyed by structural node id. A `select` event on
+    /// such a node records its tag-or-index here; each render re-applies it into
+    /// the node's `selection` arg (mirrors NavigationStack per-stack state).
+    tab_selection: HashMap<String, SwiftValue>,
 }
 
 impl<'i, 'w> Session<'i, 'w> {
@@ -78,6 +86,7 @@ impl<'i, 'w> Session<'i, 'w> {
             interp,
             instance,
             current: None,
+            tab_selection: HashMap::new(),
         })
     }
 
@@ -86,8 +95,45 @@ impl<'i, 'w> Session<'i, 'w> {
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {
         let body = self.interp.get_member(&self.instance, "body")?;
         let tree = crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?;
+        // Re-apply any per-node `TabView` selection owned by the session (the
+        // no-binding case): the freshly evaluated `body` defaults each such tab
+        // view to its first tab, so the session's stored selection overrides it.
+        let tree = self.apply_tab_selection(tree, "0");
         self.current = Some(tree.clone());
         Ok(tree)
+    }
+
+    /// Override the `selection` arg of every `TabView` node lacking a
+    /// `selection:` binding with the session's stored per-node selection (if
+    /// any). Bound tab views read their selection from the binding, so they are
+    /// left untouched. Walks with the same structural ids as `uiir`.
+    fn apply_tab_selection(&self, node: SwiftValue, id: &str) -> SwiftValue {
+        let SwiftValue::Struct(obj) = node else {
+            return node;
+        };
+        let mut obj = (*obj).clone();
+        if obj.type_name == "TabView" && !obj.fields.iter().any(|(k, _)| k == BINDING_FIELD) {
+            if let Some(selected) = self.tab_selection.get(id) {
+                if let Some(slot) = obj.fields.iter_mut().find(|(k, _)| k == "selection") {
+                    slot.1 = selected.clone();
+                }
+            }
+        }
+        if let Some(pos) = obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            if let SwiftValue::Array(children) = &obj.fields[pos].1 {
+                let kids: Vec<SwiftValue> = children.iter().cloned().collect();
+                let mapped: Vec<SwiftValue> = kids
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let cid = child_id(id, i, &c);
+                        self.apply_tab_selection(c, &cid)
+                    })
+                    .collect();
+                obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
+            }
+        }
+        SwiftValue::Struct(Rc::new(obj))
     }
 
     /// The most recently rendered UIIR tree, if any (for diffing).
@@ -121,6 +167,21 @@ impl<'i, 'w> Session<'i, 'w> {
                     if let Some(new) = coerce_binding_value(&current, event.value.as_ref()) {
                         self.interp.set_member(&binding, "wrappedValue", new)?;
                     }
+                }
+            }
+            // A `TabView` tab selection (ADR-0013 §2): with a `selection:`
+            // binding, write the new tag-or-index through it (the same binding
+            // route `set` uses); without one, record it in the session's
+            // per-node tab-selection state. Either way the next render reflects
+            // it as the node's `selection` arg.
+            "select" => {
+                if let Some(binding) = find_binding(&tree, &event.id) {
+                    let current = self.interp.get_member(&binding, "wrappedValue")?;
+                    if let Some(new) = coerce_binding_value(&current, event.value.as_ref()) {
+                        self.interp.set_member(&binding, "wrappedValue", new)?;
+                    }
+                } else if let Some(value) = &event.value {
+                    self.tab_selection.insert(event.id.clone(), value.clone());
                 }
             }
             // Any other event routes to the node's handler map by name.
@@ -857,6 +918,87 @@ struct ChangeView: View {
             json.contains("c=1 d=2 0-&gt;2") || json.contains("c=1 d=2 0->2"),
             "chained onChange should run both watchers with old/new: {json}"
         );
+    }
+
+    #[test]
+    fn tabview_select_writes_tag_through_binding() {
+        // `TabView(selection:)` with tagged tabs: a `select` event carrying a
+        // tag writes it through the binding, so the `selection` arg follows.
+        let mut interp = events_interp(
+            r#"
+struct TabsView: View {
+    @State private var tab = "home"
+    var body: some View {
+        TabView(selection: $tab) {
+            Text("Home").tabItem { Text("Home") }.tag("home")
+            Text("Settings").tabItem { Text("Settings") }.tag("settings")
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TabsView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        assert!(json.contains(r#""selection":"home""#), "initial: {json}");
+        // The tab bar label + tag serialize as modifiers on each child.
+        assert!(
+            json.contains(r#"{"name":"tabItem","value":{"id":"0""#),
+            "tabItem marker present: {json}"
+        );
+
+        let select = Event {
+            id: "0".into(),
+            event: "select".into(),
+            value: Some(SwiftValue::Str("settings".into())),
+        };
+        let after = session.dispatch(&select).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains(r#""selection":"settings""#),
+            "select writes tag through binding: {json}"
+        );
+    }
+
+    #[test]
+    fn tabview_select_without_binding_keeps_session_state() {
+        // A `TabView` with no `selection:` binding defaults to its first tab
+        // (index 0); a `select` event is remembered in per-node session state
+        // and re-applied to the `selection` arg on the next render.
+        let mut interp = events_interp(
+            r#"
+struct TabsView: View {
+    var body: some View {
+        TabView {
+            Text("One").tabItem { Text("One") }
+            Text("Two").tabItem { Text("Two") }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TabsView").expect("session");
+        let first = session.render().expect("render");
+        assert!(
+            uiir::to_json(&first).contains(r#""selection":0"#),
+            "defaults to index 0: {}",
+            uiir::to_json(&first)
+        );
+
+        let select = Event {
+            id: "0".into(),
+            event: "select".into(),
+            value: Some(SwiftValue::int(1)),
+        };
+        let after = session.dispatch(&select).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains(r#""selection":1"#),
+            "session keeps per-node selection: {}",
+            uiir::to_json(&after)
+        );
+        // The stored selection survives a subsequent unrelated re-render.
+        let again = session.render().expect("render");
+        assert!(uiir::to_json(&again).contains(r#""selection":1"#));
     }
 
     #[test]

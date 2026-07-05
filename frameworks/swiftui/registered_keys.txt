@@ -26,6 +26,7 @@ SecureField.init
 Slider.init
 Spacer.init
 Stepper.init
+TabView.init
 Text.init
 TextField.init
 Toggle.init
@@ -73,6 +74,7 @@ View.scaledToFill
 View.scaledToFit
 View.shadow
 View.strikethrough
+View.tabItem
 View.tag
 View.textCase
 View.textFieldStyle

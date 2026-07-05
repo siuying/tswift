@@ -394,6 +394,8 @@ export class PatchApplier {
         el.appendChild(this.buildOption(child));
       }
       if (typeof node.args.selection === "string") el.value = node.args.selection;
+    } else if (node.kind === "TabView") {
+      this.buildTabView(el, node);
     } else {
       for (const child of node.children) {
         const childEl = this.build(child);
@@ -403,6 +405,60 @@ export class PatchApplier {
       }
     }
     return el;
+  }
+
+  /** Build a `TabView` (ADR-0013 §2): every tab renders eagerly as a child;
+   * only the selected one is shown. A synthetic bottom `.tab-bar` (excluded from
+   * patch addressing, like a Section header) carries one button per tab, built
+   * from the child's `tabItem` marker; a click emits `select` with the tab's
+   * tag-or-index. `selection` updates arrive via `setArgs` → `syncTabView`. */
+  private buildTabView(el: HTMLElement, node: UiirNode): void {
+    const tags = node.children.map((c, i) => tabTagOrIndex(c, i));
+    el.dataset.tabTags = JSON.stringify(tags);
+    for (const child of node.children) {
+      el.appendChild(this.build(child));
+    }
+    const bar = document.createElement("div");
+    bar.className = "tab-bar";
+    bar.style.cssText =
+      "display:flex;flex-direction:row;justify-content:space-around;" +
+      "border-top:1px solid #e0e0e0;";
+    node.children.forEach((child, i) => {
+      const item = document.createElement("button");
+      item.className = "tab-item";
+      item.style.cssText =
+        "display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;" +
+        "border:none;background:none;padding:6px;cursor:pointer;";
+      const marker = child.modifiers.find((m) => m.name === "tabItem");
+      const comp = marker ? compositeOf(marker.value) : undefined;
+      if (comp) item.appendChild(this.buildDetached(comp.node));
+      const tag = tags[i];
+      item.addEventListener("click", () => this.emit(node.id, "select", tag));
+      bar.appendChild(item);
+    });
+    el.appendChild(bar);
+    this.syncTabView(el, node.args.selection);
+  }
+
+  /** Reflect a `TabView`'s current `selection` (a tag-or-index): show only the
+   * matching content child and highlight its tab-bar button. Falls back to the
+   * first tab when the selection matches none. */
+  private syncTabView(el: HTMLElement, selection: unknown): void {
+    const tags = JSON.parse(el.dataset.tabTags ?? "[]") as unknown[];
+    const contents = Array.from(el.children).filter(
+      (c) => !c.classList.contains("tab-bar"),
+    ) as HTMLElement[];
+    let active = tags.findIndex((t) => t === selection);
+    if (active < 0) active = 0;
+    contents.forEach((c, i) => {
+      c.style.display = i === active ? "" : "none";
+    });
+    const bar = el.querySelector(":scope > .tab-bar");
+    if (bar) {
+      Array.from(bar.children).forEach((b, i) => {
+        (b as HTMLElement).style.opacity = i === active ? "1" : "0.5";
+      });
+    }
   }
 
   /** Build a Picker `<option>` from a tagged child view (label + tag value). */
@@ -631,6 +687,13 @@ export class PatchApplier {
         sel.addEventListener("change", () => this.emit(node.id, "set", sel.value));
         return sel;
       }
+      case "TabView": {
+        // A tabbed container: a content stack above a synthetic bottom tab bar
+        // (built in `buildTabView`). Runtime owns selection (ADR-0013 §2).
+        const el = document.createElement("div");
+        el.style.cssText = "display:flex;flex-direction:column;position:relative;";
+        return el;
+      }
       case "Text":
       default:
         return document.createElement("span");
@@ -776,6 +839,9 @@ export class PatchApplier {
     } else if (kind === "Picker" && el instanceof HTMLSelectElement) {
       // Options are built in `build`; here we only reflect the active tag.
       if (typeof args.selection === "string") el.value = args.selection;
+    } else if (kind === "TabView") {
+      // Reflect the runtime-owned selection: swap the visible tab + highlight.
+      this.syncTabView(el, args.selection);
     } else if (kind === "Stepper") {
       // Stash the live value/step/bounds for the button handlers; reflect label.
       el.dataset.value = String(typeof args.value === "number" ? args.value : 0);
@@ -842,6 +908,17 @@ function compositeOf(value: UiirValue): { node: UiirNode; alignment?: string } |
     return { node: inner as unknown as UiirNode, alignment: align?.name };
   }
   return undefined;
+}
+
+/** A tab's selection identity (ADR-0013 §2): its `.tag(_)` value if present,
+ * else its structural index. Used to build the tab bar and to match the
+ * TabView's `selection` arg against the shown child. */
+function tabTagOrIndex(child: UiirNode, index: number): string | number {
+  const tag = child.modifiers.find((m) => m.name === "tag");
+  if (tag && (typeof tag.value === "string" || typeof tag.value === "number")) {
+    return tag.value;
+  }
+  return index;
 }
 
 /** CSS `justify-items`/`align-items` keyword for a lazy-grid `alignment:` token
@@ -919,6 +996,8 @@ function patchRef(
     (c) =>
       c !== exclude &&
       !c.classList.contains("section-header") &&
+      // A TabView's synthetic bottom tab bar is not a patch-addressed child.
+      !c.classList.contains("tab-bar") &&
       // Composite background/overlay layers are not patch-addressed children.
       !c.classList.contains("composite-layer"),
   );

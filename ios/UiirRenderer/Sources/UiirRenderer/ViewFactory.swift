@@ -183,6 +183,9 @@ public enum ViewFactory {
                 }
             )
 
+        case "TabView":
+            return AnyView(tabView(node, sink))
+
         case "VStack":
             return AnyView(
                 VStack(alignment: hAlignment(node), spacing: optLength(node, "spacing")) {
@@ -293,6 +296,67 @@ public enum ViewFactory {
             return AnyView(shape.fill(fill))
         }
         return AnyView(shape)
+    }
+
+    /// A native `TabView` driven by the children + their `tabItem` labels
+    /// (ADR-0013 §2). Selection is runtime-owned: the binding reflects the
+    /// node's `selection` arg and forwards a `select` event on change. Tabs are
+    /// tagged with a canonical `type:value` key so a `String` selection binding
+    /// matches whether the runtime tag is a string or a number/index.
+    private static func tabView(_ node: UiirNode, _ sink: any UiirEventSink) -> some View {
+        let currentKey = tabKey(node.args["selection"] ?? .null)
+        let selection = Binding<String>(
+            get: { currentKey },
+            set: { newKey in sink.send(.select(node.id, decodeTabKey(newKey))) }
+        )
+        return TabView(selection: selection) {
+            ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                render(child, eventSink: sink)
+                    .tabItem { tabItemLabel(child) }
+                    .tag(tabChildKey(child, index))
+            }
+        }
+    }
+
+    /// A tab's bar label from its `.tabItem { … }` marker (a nested view node).
+    @ViewBuilder
+    private static func tabItemLabel(_ child: UiirNode) -> some View {
+        if let marker = child.modifiers.first(where: { $0.name == "tabItem" }),
+           let node = marker.value.asNode {
+            render(node, eventSink: NoopEventSink())
+        } else {
+            EmptyView()
+        }
+    }
+
+    /// A canonical `type:value` selection key for a tab identity value, so a
+    /// `String`-typed native selection matches whether the runtime carries a
+    /// string tag or a number/index (`s:home`, `n:1.0`).
+    private static func tabKey(_ v: UiirValue) -> String {
+        switch v {
+        case let .string(s): return "s:" + s
+        case let .number(n): return "n:" + String(n)
+        default: return ""
+        }
+    }
+
+    /// A tab child's selection key: its `.tag(_)` value if present, else its
+    /// index (as a number key, matching the runtime's index selection default).
+    private static func tabChildKey(_ child: UiirNode, _ index: Int) -> String {
+        if let tag = child.modifiers.first(where: { $0.name == "tag" }) {
+            let key = tabKey(tag.value)
+            if !key.isEmpty { return key }
+        }
+        return "n:" + String(Double(index))
+    }
+
+    /// Decode a tab key back into the raw JSON scalar the runtime expects for a
+    /// `select` event: a string tag as a quoted JSON string, a number/index as
+    /// its bare numeric literal.
+    private static func decodeTabKey(_ key: String) -> String {
+        if key.hasPrefix("s:") { return jsonString(String(key.dropFirst(2))) }
+        if key.hasPrefix("n:") { return String(key.dropFirst(2)) }
+        return "\"\""
     }
 
     /// A Picker option's tag value (string from the `tag` modifier).

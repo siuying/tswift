@@ -32,6 +32,13 @@ public struct UiirEvent: Equatable, Sendable {
     public static func named(_ id: String, _ event: String) -> UiirEvent {
         UiirEvent(id: id, event: event, value: "")
     }
+
+    /// A `TabView` tab selection (ADR-0013 §2): `value` is the chosen tab's
+    /// tag-or-index as a raw JSON scalar (`"\"home\""`, `"1"`). The runtime
+    /// writes it through the `selection:` binding, or keeps per-node state.
+    public static func select(_ id: String, _ value: String) -> UiirEvent {
+        UiirEvent(id: id, event: "select", value: value)
+    }
 }
 
 /// Receives interaction events from rendered controls. The default sink

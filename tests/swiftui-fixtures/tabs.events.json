@@ -1,0 +1,5 @@
+[
+  { "id": "0", "event": "select", "value": "settings" },
+  { "id": "0", "event": "select", "value": "search" },
+  { "id": "0", "event": "select", "value": "home" }
+]

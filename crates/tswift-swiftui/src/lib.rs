@@ -78,6 +78,10 @@ modifier!(modifier_foreground_color, "foregroundColor");
 // thread an optional `alignment:` — see `compose_modifier`.
 modifier!(modifier_fill, "fill");
 modifier!(modifier_tag, "tag");
+// `.tabItem { ... }` is not a plain `modifier!`: its argument is a nested label
+// view (a `Label`, or a `Text`/`Image` pair) built from a trailing
+// `@ViewBuilder` closure, serialized like `background`/`overlay` — see
+// `modifier_tab_item`.
 // C1 — text & universal styling modifiers (no new node kinds).
 modifier!(modifier_bold, "bold");
 modifier!(modifier_italic, "italic");
@@ -248,6 +252,7 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("overlay", modifier_overlay),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
+    ("tabItem", modifier_tab_item),
     ("bold", modifier_bold),
     ("italic", modifier_italic),
     ("underline", modifier_underline),
@@ -651,6 +656,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Slider", slider_init);
     interp.register_free_fn("Stepper", stepper_init);
     interp.register_free_fn("Picker", picker_init);
+    interp.register_free_fn("TabView", tabview_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -757,7 +763,7 @@ pub fn registered_keys() -> Vec<String> {
             | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
             | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "ProgressView"
             | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form" | "LazyVGrid"
-            | "LazyHGrid" => Some(format!("{key}.init")),
+            | "LazyHGrid" | "TabView" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -1017,6 +1023,108 @@ fn flatten_picker_options(children: Vec<SwiftValue>) -> Vec<SwiftValue> {
         out.push(child);
     }
     out
+}
+
+/// `TabView { ... }` / `TabView(selection: $binding) { ... }` — a tabbed
+/// container (ADR-0013 §2). Every tab renders eagerly as a child; each child
+/// carries a `.tabItem { … }` bar label and an optional `.tag(_)`. The runtime
+/// owns the selection: with a `selection:` binding it reads the bound value
+/// (and the `select` dispatch writes it back through the binding, reusing the
+/// `set` binding route); without one the session keeps per-node selection
+/// state. The current selection is serialized as a `selection` arg so a change
+/// flows through `setArgs`; the host shows only the selected child and builds
+/// the tab bar from the children's `tabItem` markers. Selection value: a
+/// child's `.tag(_)` when present, else its index.
+///
+/// This models the classic `.tabItem` API; the iOS 18 `Tab { }` struct API is
+/// out of scope.
+fn tabview_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut binding: Option<SwiftValue> = None;
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("selection") => binding = Some(arg.value),
+            _ => content_args.push(arg),
+        }
+    }
+    let children = collect_children(ctx, content_args)?;
+    // The active selection: the bound value when a `selection:` binding is
+    // given, else the first tab's identity (its `.tag(_)` or index 0). Without
+    // a binding the session overrides this from its per-node state after each
+    // render (mirrors NavigationStack per-stack state).
+    let selection = match &binding {
+        Some(b) => ctx.get_member(b, "wrappedValue")?,
+        None => default_tab_selection(&children),
+    };
+    let mut fields = vec![
+        ("selection".into(), selection),
+        (CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))),
+    ];
+    if let Some(b) = binding {
+        fields.push((BINDING_FIELD.into(), b));
+    }
+    Ok(view_value("TabView", fields))
+}
+
+/// The default selection identity for a `TabView` without a `selection:`
+/// binding: the first tab's `.tag(_)` value if present, else index `0`.
+fn default_tab_selection(children: &[SwiftValue]) -> SwiftValue {
+    match children.first().and_then(child_tag) {
+        Some(tag) => tag,
+        None => SwiftValue::int(0),
+    }
+}
+
+/// A tab child's `.tag(_)` modifier value, if it carries one (the identity a
+/// `TabView` selection matches against).
+fn child_tag(child: &SwiftValue) -> Option<SwiftValue> {
+    let SwiftValue::Struct(obj) = child else {
+        return None;
+    };
+    let Some(SwiftValue::Array(mods)) = obj.get(MODIFIERS_FIELD) else {
+        return None;
+    };
+    mods.iter().rev().find_map(|m| {
+        let SwiftValue::Struct(mo) = m else {
+            return None;
+        };
+        let is_tag = matches!(mo.get("name"), Some(SwiftValue::Str(n)) if n == "tag");
+        is_tag.then(|| mo.get("value").cloned()).flatten()
+    })
+}
+
+/// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
+/// The trailing `@ViewBuilder` produces the label subtree (classic API: a
+/// `Label`, or a `Text` + `Image` pair); it is serialized as the modifier's
+/// value like other nested-view modifiers (cf. `background`/`overlay`), so the
+/// host builds the tab-bar item from this marker. (The iOS 18 `Tab` struct API
+/// is out of scope.)
+fn modifier_tab_item(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let mut views = Vec::new();
+    for arg in args {
+        match arg.value {
+            SwiftValue::Closure(id) => {
+                let block = ctx.eval_block_values(id)?;
+                expand_into(ctx, block, &mut views, 0, &[])?;
+            }
+            other => expand_into(ctx, other, &mut views, 0, &[])?,
+        }
+    }
+    // A single label view is stored directly; a `Text` + `Image` pair composes
+    // as a `Group` the host renders as the tab item (icon + title).
+    let content = match views.len() {
+        0 => None,
+        1 => Some(views.into_iter().next().expect("len checked")),
+        _ => Some(container_value("Group", views)),
+    };
+    let margs = match content {
+        Some(view) => vec![Arg {
+            label: None,
+            value: view,
+        }],
+        None => Vec::new(),
+    };
+    append_modifier(recv, make_modifier("tabItem", margs))
 }
 
 /// `Slider(value: Binding<Double>, in: range, step:)` — a continuous value
@@ -2136,6 +2244,7 @@ mod tests {
                 "Slider.init",
                 "Spacer.init",
                 "Stepper.init",
+                "TabView.init",
                 "Text.init",
                 "TextField.init",
                 "Toggle.init",
@@ -2183,6 +2292,7 @@ mod tests {
                 "View.scaledToFit",
                 "View.shadow",
                 "View.strikethrough",
+                "View.tabItem",
                 "View.tag",
                 "View.textCase",
                 "View.textFieldStyle",

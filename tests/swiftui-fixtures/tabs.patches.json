@@ -1,0 +1,1 @@
+[[{"op":"setArgs","id":"0","args":{"selection":"settings"}},{"op":"setText","id":"0.0.1","text":"selected: settings"}],[{"op":"setArgs","id":"0","args":{"selection":"search"}},{"op":"setText","id":"0.0.1","text":"selected: search"}],[{"op":"setArgs","id":"0","args":{"selection":"home"}},{"op":"setText","id":"0.0.1","text":"selected: home"}]]

@@ -155,9 +155,10 @@ enum ModifierApply {
             if let c = mod.value.asColor {
                 return AnyView(view.foregroundColor(c))
             }
-        case "tag":
-            // Picker option identity — applied via `.tag(...)` in the factory,
-            // not as a visual modifier; ignore here.
+        case "tag", "tabItem":
+            // Picker/TabView identity + a TabView's tab-bar label — consumed by
+            // the ViewFactory (`.tag(...)`/`.tabItem { }`), not visual modifiers;
+            // ignore here.
             break
         // C7 — control styling + disabled. Accessibility modifiers are accepted
         // and ignored (no-op) so snippets using them still render.
