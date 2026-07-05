@@ -181,6 +181,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "HorizontalAlignment" => "hAlign",
             "VerticalAlignment" => "vAlign",
             "Edge" => "edge",
+            "ContentMode" => "contentMode",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -447,6 +448,36 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Button","args":{"title":"Save"},"modifiers":[{"name":"buttonStyle","value":{"$":"style","name":"borderedProminent"}},{"name":"disabled","value":true},{"name":"accessibilityLabel","value":"save button"}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn tier2_scale_aspect_layout_modifiers_serialize() {
+        // scaledToFit / scaledToFill (no-arg markers).
+        let json = render_json(r#"Image("photo").resizable().scaledToFit().scaledToFill()"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Image","args":{"name":"photo"},"modifiers":[{"name":"resizable","value":null},{"name":"scaledToFit","value":null},{"name":"scaledToFill","value":null}],"children":[]}"#
+        );
+        // aspectRatio with ContentMode token.
+        let json2 = render_json(r#"Rectangle().aspectRatio(1.777, contentMode: .fit)"#);
+        assert_eq!(
+            json2,
+            r#"{"id":"0","kind":"Rectangle","args":{},"modifiers":[{"name":"aspectRatio","value":{"value":1.777,"contentMode":{"$":"contentMode","name":"fit"}}}],"children":[]}"#
+        );
+        // fixedSize no-arg vs horizontal/vertical.
+        let json3 =
+            render_json(r#"Text("hi").fixedSize().fixedSize(horizontal: true, vertical: false)"#);
+        assert_eq!(
+            json3,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"fixedSize","value":null},{"name":"fixedSize","value":{"horizontal":true,"vertical":false}}],"children":[]}"#
+        );
+        // layoutPriority, zIndex, navigationTitle.
+        let json4 =
+            render_json(r#"Text("x").layoutPriority(1.0).zIndex(2.0).navigationTitle("MyTitle")"#);
+        assert_eq!(
+            json4,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"layoutPriority","value":1.0},{"name":"zIndex","value":2.0},{"name":"navigationTitle","value":"MyTitle"}],"children":[]}"#
         );
     }
 

@@ -216,4 +216,15 @@ extension UiirValue {
         default: return nil
         }
     }
+
+    /// Resolve a `{ "$": "contentMode", "name": ... }` token to `ContentMode`.
+    var asContentMode: ContentMode? {
+        guard case let .token(tag, name) = self, tag == "contentMode" else { return nil }
+        switch name {
+        case "fit": return .fit
+        case "fill": return .fill
+        default: return .fit
+        }
+    }
+
 }

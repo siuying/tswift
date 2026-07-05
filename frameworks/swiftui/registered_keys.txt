@@ -34,6 +34,7 @@ View.accessibilityHint
 View.accessibilityIdentifier
 View.accessibilityLabel
 View.accessibilityValue
+View.aspectRatio
 View.background
 View.bold
 View.border
@@ -44,15 +45,18 @@ View.cornerRadius
 View.disabled
 View.environmentObject
 View.fill
+View.fixedSize
 View.font
 View.fontWeight
 View.foregroundColor
 View.foregroundStyle
 View.frame
 View.italic
+View.layoutPriority
 View.lineLimit
 View.listStyle
 View.multilineTextAlignment
+View.navigationTitle
 View.offset
 View.onAppear
 View.onChange
@@ -64,6 +68,9 @@ View.opacity
 View.overlay
 View.padding
 View.pickerStyle
+View.resizable
+View.scaledToFill
+View.scaledToFit
 View.shadow
 View.strikethrough
 View.tag
@@ -71,4 +78,5 @@ View.textCase
 View.textFieldStyle
 View.tint
 View.underline
+View.zIndex
 ZStack.init

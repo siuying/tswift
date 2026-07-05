@@ -109,6 +109,15 @@ modifier!(modifier_accessibility_label, "accessibilityLabel");
 modifier!(modifier_accessibility_hint, "accessibilityHint");
 modifier!(modifier_accessibility_value, "accessibilityValue");
 modifier!(modifier_accessibility_identifier, "accessibilityIdentifier");
+// Tier 2 — scale/aspect/layout modifiers.
+modifier!(modifier_scaled_to_fit, "scaledToFit");
+modifier!(modifier_scaled_to_fill, "scaledToFill");
+modifier!(modifier_aspect_ratio, "aspectRatio");
+modifier!(modifier_fixed_size, "fixedSize");
+modifier!(modifier_layout_priority, "layoutPriority");
+modifier!(modifier_z_index, "zIndex");
+modifier!(modifier_navigation_title, "navigationTitle");
+modifier!(modifier_resizable, "resizable");
 
 /// Field holding the `ObservableObject`s a view provides to its subtree via
 /// `.environmentObject(_)`. Unlike a visual modifier this never reaches the
@@ -264,6 +273,15 @@ const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("accessibilityValue", modifier_accessibility_value),
     ("accessibilityIdentifier", modifier_accessibility_identifier),
     ("environmentObject", modifier_environment_object),
+    // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
+    ("scaledToFit", modifier_scaled_to_fit),
+    ("scaledToFill", modifier_scaled_to_fill),
+    ("aspectRatio", modifier_aspect_ratio),
+    ("fixedSize", modifier_fixed_size),
+    ("layoutPriority", modifier_layout_priority),
+    ("zIndex", modifier_z_index),
+    ("navigationTitle", modifier_navigation_title),
+    ("resizable", modifier_resizable),
     // Lifecycle / gesture / submit event handlers (ADR-0013 §3).
     ("onTapGesture", modifier_on_tap_gesture),
     ("onLongPressGesture", modifier_on_long_press_gesture),
@@ -459,6 +477,12 @@ struct Edge {
     static let vertical = Edge(token: "vertical")
     static let all = Edge(token: "all")
 }
+// `.aspectRatio(_:contentMode:)` — content-mode token namespace.
+struct ContentMode {
+    let token: String
+    static let fit = ContentMode(token: "fit")
+    static let fill = ContentMode(token: "fill")
+}
 // `LazyVGrid(columns: [.flexible(), .fixed(80)])` — a grid track sizer. Declared
 // as a Swift type so `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)` resolve and
 // carry their parameters; serialized as `{kind,value,spacing?}` (issue #205).
@@ -520,6 +544,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "HorizontalAlignment"
             | "VerticalAlignment"
             | "Edge"
+            | "ContentMode"
     ) {
         return None;
     }
@@ -687,6 +712,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
         vec![
             BuiltinParam::positional("View"),
             BuiltinParam::labeled("alignment", "Alignment"),
+        ],
+    );
+    // Tier 2 — `aspectRatio(_:contentMode:)` typed so `.fit`/`.fill` resolve
+    // against `ContentMode` (issue #203).
+    interp.register_struct_method_typed(
+        "aspectRatio",
+        modifier_aspect_ratio,
+        vec![
+            BuiltinParam::positional("CGFloat"),
+            BuiltinParam::labeled("contentMode", "ContentMode"),
         ],
     );
 }
@@ -2109,6 +2144,7 @@ mod tests {
                 "View.accessibilityIdentifier",
                 "View.accessibilityLabel",
                 "View.accessibilityValue",
+                "View.aspectRatio",
                 "View.background",
                 "View.bold",
                 "View.border",
@@ -2119,15 +2155,18 @@ mod tests {
                 "View.disabled",
                 "View.environmentObject",
                 "View.fill",
+                "View.fixedSize",
                 "View.font",
                 "View.fontWeight",
                 "View.foregroundColor",
                 "View.foregroundStyle",
                 "View.frame",
                 "View.italic",
+                "View.layoutPriority",
                 "View.lineLimit",
                 "View.listStyle",
                 "View.multilineTextAlignment",
+                "View.navigationTitle",
                 "View.offset",
                 "View.onAppear",
                 "View.onChange",
@@ -2139,6 +2178,9 @@ mod tests {
                 "View.overlay",
                 "View.padding",
                 "View.pickerStyle",
+                "View.resizable",
+                "View.scaledToFill",
+                "View.scaledToFit",
                 "View.shadow",
                 "View.strikethrough",
                 "View.tag",
@@ -2146,6 +2188,7 @@ mod tests {
                 "View.textFieldStyle",
                 "View.tint",
                 "View.underline",
+                "View.zIndex",
                 "ZStack.init",
             ]
         );

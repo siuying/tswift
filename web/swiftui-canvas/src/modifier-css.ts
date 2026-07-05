@@ -420,6 +420,76 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
       case "pickerStyle":
       case "textFieldStyle":
         break;
+      // Tier 2 — scale / aspect / layout / z-order / navigation.
+      case "scaledToFit": {
+        // On image elements use `object-fit: contain`; on all elements set the
+        // display hint so the host can stretch or contain the content.
+        if (el.dataset.kind === "Image" || el.tagName === "IMG") {
+          (el as HTMLImageElement).style.objectFit = "contain";
+        }
+        el.style.maxWidth = "100%";
+        el.style.maxHeight = "100%";
+        break;
+      }
+      case "scaledToFill": {
+        if (el.dataset.kind === "Image" || el.tagName === "IMG") {
+          (el as HTMLImageElement).style.objectFit = "cover";
+        }
+        el.style.width = "100%";
+        el.style.height = "100%";
+        break;
+      }
+      case "aspectRatio": {
+        // `{ value: <ratio>, contentMode: <token> }` or bare ratio token.
+        const o = (value && typeof value === "object" ? value : {}) as Record<string, UiirValue>;
+        const ratio = typeof o.value === "number" ? o.value : typeof value === "number" ? value : undefined;
+        const mode = isToken(o.contentMode, "contentMode") ? o.contentMode.name : undefined;
+        if (ratio !== undefined && ratio > 0) {
+          el.style.aspectRatio = String(ratio);
+        }
+        if (el.dataset.kind === "Image" || el.tagName === "IMG") {
+          (el as HTMLImageElement).style.objectFit = mode === "fill" ? "cover" : "contain";
+        }
+        break;
+      }
+      case "fixedSize": {
+        // No args: both axes fixed. `{ horizontal: bool, vertical: bool }`.
+        const o = (value && typeof value === "object" ? value : {}) as Record<string, UiirValue>;
+        const hasArgs = typeof o.horizontal === "boolean" || typeof o.vertical === "boolean";
+        const h = hasArgs ? o.horizontal !== false : true;
+        const v = hasArgs ? o.vertical !== false : true;
+        if (h) { el.style.width = "fit-content"; el.style.flexShrink = "0"; }
+        if (v) { el.style.height = "fit-content"; el.style.flexShrink = "0"; }
+        break;
+      }
+      case "layoutPriority": {
+        // Higher priority → higher flex-grow (proportional allocation).
+        if (typeof value === "number") {
+          el.style.flexGrow = String(Math.max(0, value));
+        }
+        break;
+      }
+      case "zIndex": {
+        if (typeof value === "number") {
+          el.style.position = "relative";
+          el.style.zIndex = String(value);
+        }
+        break;
+      }
+      case "navigationTitle": {
+        // Record-only for now; hosts render it when NavigationStack lands.
+        // Store as a data attribute so a NavigationStack host can read it.
+        if (typeof value === "string") {
+          el.dataset.navigationTitle = value;
+        }
+        break;
+      }
+      case "resizable": {
+        // Mark the image as resizable so later scale modifiers take effect.
+        el.style.width = "100%";
+        el.style.height = "auto";
+        break;
+      }
       default:
         // Unknown modifier — ignored (forward-compatible with new tiers).
         break;

@@ -242,6 +242,47 @@ enum ModifierApply {
             if let c = mod.value.asTextCase {
                 return AnyView(view.textCase(c))
             }
+        // Tier 2 — scale / aspect / layout / z-order / navigation.
+        case "scaledToFit":
+            return AnyView(view.scaledToFit())
+        case "scaledToFill":
+            return AnyView(view.scaledToFill())
+        case "aspectRatio":
+            let ratio: CGFloat? = mod.value.member("value")?.asLength
+                ?? (mod.value.asLength)
+            let cm = mod.value.member("contentMode")?.asContentMode
+                ?? (mod.value.asContentMode)
+                ?? .fit
+            if let r = ratio {
+                return AnyView(view.aspectRatio(r, contentMode: cm))
+            } else {
+                return AnyView(view.aspectRatio(contentMode: cm))
+            }
+        case "fixedSize":
+            // `{ horizontal: bool, vertical: bool }` or bare null (both axes).
+            let hasAxes = mod.value.member("horizontal") != nil
+            if hasAxes {
+                let h = mod.value.member("horizontal")?.boolValue ?? true
+                let v = mod.value.member("vertical")?.boolValue ?? true
+                return AnyView(view.fixedSize(horizontal: h, vertical: v))
+            }
+            return AnyView(view.fixedSize())
+        case "layoutPriority":
+            if case let .number(n) = mod.value {
+                return AnyView(view.layoutPriority(n))
+            }
+        case "zIndex":
+            if case let .number(n) = mod.value {
+                return AnyView(view.zIndex(n))
+            }
+        case "navigationTitle":
+            if case let .string(s) = mod.value {
+                return AnyView(view.navigationTitle(s))
+            }
+        case "resizable":
+            // `.resizable()` is an Image-specific modifier; applied via
+            // ViewFactory for Image nodes. As a chained modifier, no-op.
+            break
         default:
             break
         }
