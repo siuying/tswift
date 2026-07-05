@@ -122,10 +122,27 @@ impl Drop for SwiftUiSession {
 /// Compile a SwiftUI program, render its root view, and install the live
 /// session into `slot` (replacing any prior one). Returns the UIIR envelope
 /// `{"ok":bool,"root":string|null,"tree":<uiir>|null,"error":string|null}`.
+/// Compile without a network transport (offline). Retained for tests; the FFI
+/// entrypoint uses [`compile_with_transport`] to carry the host's handler.
+#[cfg(test)]
 pub(crate) fn compile(slot: &mut Option<SwiftUiSession>, source: &str) -> String {
+    compile_with_transport(slot, source, None, None)
+}
+
+/// Like [`compile`], but installs the host's `URLSession` transport into the
+/// session interpreter so networked views (e.g. a `.task { await URLSession… }`
+/// fetch) can resolve requests. Used by the FFI entrypoint, which has the
+/// context's HTTP handler; the plain [`compile`] keeps a no-transport session
+/// for offline callers and tests.
+pub(crate) fn compile_with_transport(
+    slot: &mut Option<SwiftUiSession>,
+    source: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> String {
     // Drop any prior session first, so a failed recompile leaves no stale tree.
     *slot = None;
-    match build(source) {
+    match build(source, http, stream_http) {
         Ok((bundle, tree_json, root)) => {
             *slot = Some(bundle);
             format!(
@@ -140,7 +157,11 @@ pub(crate) fn compile(slot: &mut Option<SwiftUiSession>, source: &str) -> String
 
 /// Build the reclaimable bundle. On any failure every allocation made so far is
 /// freed (via the partially-initialised bundle's `Drop`), so no path leaks.
-fn build(source: &str) -> Result<(SwiftUiSession, String, String), String> {
+fn build(
+    source: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> Result<(SwiftUiSession, String, String), String> {
     let program = format!("{PRELUDE}\n{source}");
     let analysis = Analysis::analyze(&program, "main.swift").map_err(|e| e.to_string())?;
 
@@ -177,6 +198,16 @@ fn build(source: &str) -> Result<(SwiftUiSession, String, String), String> {
     tswift_foundation::install(&mut interp);
     tswift_swiftui::install(&mut interp);
     interp.set_filename("main.swift");
+    // Wire the host's URLSession transport (if any) so scripts' network calls —
+    // including those fired from `.task {}` via `run_mount_tasks` — resolve.
+    // Streaming config wins when both are present, matching the `run` path.
+    if let Some(config) = stream_http {
+        interp.set_http_transport(Box::new(crate::http::StreamingHostHttpHandler::from(
+            config,
+        )));
+    } else if let Some(handler) = http {
+        interp.set_http_transport(Box::new(handler));
+    }
     if let Err(error) = interp.run(analysis_ref) {
         // Stringify and drop the error *before* tearing down: it may hold the
         // faked-'static refs into `interp`/`analysis`, so its `Display`/`Drop`

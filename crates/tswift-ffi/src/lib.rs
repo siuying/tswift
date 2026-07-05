@@ -226,7 +226,12 @@ pub unsafe extern "C" fn tswift_swiftui_compile(
             "source is null or not valid UTF-8",
         ));
     };
-    into_json_ptr(swiftui::compile(&mut ctx.swiftui, source))
+    into_json_ptr(swiftui::compile_with_transport(
+        &mut ctx.swiftui,
+        source,
+        ctx.http,
+        ctx.stream_http,
+    ))
 }
 
 /// Route a host event into `ctx`'s live render session and return an owned
@@ -427,6 +432,61 @@ mod tests {
         unsafe { tswift_string_free(out) };
         unsafe { tswift_context_free(ctx) };
         assert!(json.contains("200\\nhello"), "unexpected result: {json}");
+    }
+
+    #[test]
+    fn swiftui_task_with_http_handler_updates_preview() {
+        // Regression: the SwiftUI session interpreter must receive the context's
+        // URLSession transport, so a `.task { await URLSession... }` fetch
+        // resolves and `run_mount_tasks` patches the preview. Before the fix the
+        // session had no transport, the fetch errored, and the view stayed on
+        // its initial "loading" state.
+        unsafe extern "C" fn handler(
+            _userdata: *mut c_void,
+            _request_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            // "b2sh" is base64 for "ok!".
+            let response = CString::new(
+                r#"{"status": 200, "headers": [["Content-Type", "text/plain"]], "bodyBase64": "b2sh"}"#,
+            )
+            .unwrap();
+            tswift_http_respond(call, response.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        unsafe { tswift_set_http_handler(ctx, Some(handler), std::ptr::null_mut()) };
+        let source = CString::new(
+            "struct V: View {\n\
+            \x20   @State private var label = \"loading\"\n\
+            \x20   func load() async {\n\
+            \x20       if let (data, _) = try? await URLSession.shared.data(from: URL(string: \"https://x.example/\")!),\n\
+            \x20          let s = String(data: data, encoding: .utf8) { label = s }\n\
+            \x20   }\n\
+            \x20   var body: some View { Text(label).task { await load() } }\n\
+            }\n",
+        )
+        .unwrap();
+        let compiled = unsafe { tswift_swiftui_compile(ctx, source.as_ptr()) };
+        let compiled_json = unsafe { CStr::from_ptr(compiled) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { tswift_string_free(compiled) };
+        assert!(
+            compiled_json.contains("\"ok\":true") && compiled_json.contains("loading"),
+            "initial tree should show loading: {compiled_json}"
+        );
+        let patches = unsafe { tswift_swiftui_run_mount_tasks(ctx) };
+        let patches_json = unsafe { CStr::from_ptr(patches) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { tswift_string_free(patches) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(
+            patches_json.contains("ok!"),
+            "task fetch should patch the preview with the fetched body: {patches_json}"
+        );
     }
 
     #[test]
