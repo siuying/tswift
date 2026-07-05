@@ -59,6 +59,7 @@ View.layoutPriority
 View.lineLimit
 View.listStyle
 View.multilineTextAlignment
+View.navigationDestination
 View.navigationTitle
 View.offset
 View.onAppear

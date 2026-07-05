@@ -11,6 +11,14 @@ tabs, UI3–UI8 = the staged tiers. Animation/gestures/graphics and app/scene
 lifecycle are out of scope (deferred to a backlog ADR / never).
 """
 
+# NavigationPath is a prelude value type (crates/tswift-swiftui PRELUDE): its
+# members are implemented in Swift, not the free-fn/modifier registry, so they
+# never appear in registered_keys.txt. List the ones the runtime provides here
+# (init(), append(_:), removeLast(_:), count, isEmpty — Codable/CodableRepresen-
+# tation forms and `==` remain out of reach v1).
+[core_members]
+NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
+
 # ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
 [[tier]]
 id = "UI1"

@@ -621,6 +621,7 @@ version = "0.0.0"
 dependencies = [
  "tswift-core",
  "tswift-frontend",
+ "tswift-std",
 ]
 
 [[package]]

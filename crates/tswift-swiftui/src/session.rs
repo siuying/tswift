@@ -12,10 +12,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use tswift_core::{EvalError, Interpreter, SwiftValue};
+use tswift_core::{EvalError, Interpreter, StructObj, SwiftValue};
 
 use crate::{
-    child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATION_FIELD, WATCH_FIELD,
+    child_id, BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATIONS_FIELD,
+    NAV_DESTINATION_FIELD, NAV_VALUE_FIELD, WATCH_FIELD,
 };
 
 /// Maximum `onChange` cascade passes per dispatch: a watcher's action may mutate
@@ -171,36 +172,125 @@ impl<'i, 'w> Session<'i, 'w> {
                 obj.fields[pos].1 = SwiftValue::Array(Rc::new(mapped));
             }
         }
-        // Then, if this is a stack with pushed screens, append them as children.
+        // Then, if this is a stack, append its pushed screens as children. A
+        // path-bound stack (`NavigationStack(path:)`) derives them from the
+        // bound path's items, each matched to a `.navigationDestination(for:)`
+        // registration in the stack's subtree (ADR-0013 §1); a session-owned
+        // stack uses the per-stack `nav_stack` state.
         if obj.type_name == "NavigationStack" {
-            if let Some(pushed) = self.nav_stack.get(id).cloned() {
-                if !pushed.is_empty() {
-                    let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
-                        Some(pos) => pos,
-                        None => {
-                            obj.fields.push((
-                                CHILDREN_FIELD.into(),
-                                SwiftValue::Array(Rc::new(Vec::new())),
-                            ));
-                            obj.fields.len() - 1
-                        }
-                    };
-                    let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
-                        SwiftValue::Array(a) => a.iter().cloned().collect(),
-                        _ => Vec::new(),
-                    };
-                    for dest in pushed {
-                        if let Some(screen) = crate::realize_pushed_screen(self.interp, &dest)
-                            .map_err(crate::std_error_to_eval)?
-                        {
-                            kids.push(screen);
-                        }
+            let screens = if let Some(binding) = obj.get(BINDING_FIELD).cloned() {
+                self.realize_path_screens(&obj, &binding)?
+            } else {
+                self.realize_session_screens(id)?
+            };
+            if !screens.is_empty() {
+                let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+                    Some(pos) => pos,
+                    None => {
+                        obj.fields.push((
+                            CHILDREN_FIELD.into(),
+                            SwiftValue::Array(Rc::new(Vec::new())),
+                        ));
+                        obj.fields.len() - 1
                     }
-                    obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
-                }
+                };
+                let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
+                    SwiftValue::Array(a) => a.iter().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                kids.extend(screens);
+                obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
             }
         }
         Ok(SwiftValue::Struct(Rc::new(obj)))
+    }
+
+    /// Realize a session-owned `NavigationStack`'s pushed screens from its
+    /// per-stack `nav_stack` state (destination-based links and value-based
+    /// pushes both live here). Each entry is realized fresh for `@State`
+    /// liveness.
+    fn realize_session_screens(&mut self, id: &str) -> Result<Vec<SwiftValue>, EvalError> {
+        let Some(pushed) = self.nav_stack.get(id).cloned() else {
+            return Ok(Vec::new());
+        };
+        let mut screens = Vec::new();
+        for dest in pushed {
+            if let Some(screen) = crate::realize_pushed_screen(self.interp, &dest)
+                .map_err(crate::std_error_to_eval)?
+            {
+                screens.push(screen);
+            }
+        }
+        Ok(screens)
+    }
+
+    /// Realize a path-bound `NavigationStack`'s screens (ADR-0013 §1): read the
+    /// bound path's items, match each to a `.navigationDestination(for:)`
+    /// registration in the stack's subtree (by the value's runtime type), and
+    /// evaluate that closure with the value. The path binding is the source of
+    /// truth, so external mutation (a `Button` appending to `path`) re-renders
+    /// to the new depth. Unmatched items produce no screen.
+    fn realize_path_screens(
+        &mut self,
+        stack: &StructObj,
+        binding: &SwiftValue,
+    ) -> Result<Vec<SwiftValue>, EvalError> {
+        let items =
+            match crate::read_path_items(self.interp, binding).map_err(crate::std_error_to_eval)? {
+                Some(items) => items,
+                None => return Ok(Vec::new()),
+            };
+        // Collect the stack subtree's destination registrations once.
+        let destinations = collect_nav_destinations(&SwiftValue::Struct(Rc::new(stack.clone())));
+        let mut screens = Vec::new();
+        for item in items {
+            let ty = item.type_name();
+            if let Some(closure) = destinations.get(&ty) {
+                let record = crate::pushed_value(SwiftValue::Closure(*closure), item);
+                if let Some(screen) = crate::realize_pushed_screen(self.interp, &record)
+                    .map_err(crate::std_error_to_eval)?
+                {
+                    screens.push(screen);
+                }
+            }
+        }
+        Ok(screens)
+    }
+
+    /// Push a value-based link's value onto its enclosing stack (ADR-0013 §1).
+    /// Resolves the nearest `.navigationDestination(for:)` in the stack subtree
+    /// matching the value's runtime type; with no match the tap is a no-op. A
+    /// path-bound stack appends to the bound path (its source of truth); a
+    /// session-owned stack stores the resolved closure + value for fresh
+    /// re-realization each render.
+    fn push_value_link(
+        &mut self,
+        tree: &SwiftValue,
+        stack_id: &str,
+        value: SwiftValue,
+    ) -> Result<(), EvalError> {
+        let Some(stack) = find_node(tree, stack_id) else {
+            return Ok(());
+        };
+        let SwiftValue::Struct(stack_obj) = stack else {
+            return Ok(());
+        };
+        let ty = value.type_name();
+        let destinations = collect_nav_destinations(stack);
+        let Some(closure) = destinations.get(&ty).copied() else {
+            // Unmatched value → no-op (no matching destination registered).
+            return Ok(());
+        };
+        if let Some(binding) = stack_obj.get(BINDING_FIELD).cloned() {
+            crate::path_append(self.interp, &binding, value).map_err(crate::std_error_to_eval)?;
+        } else {
+            let record = crate::pushed_value(SwiftValue::Closure(closure), value);
+            self.nav_stack
+                .entry(stack_id.to_string())
+                .or_default()
+                .push(record);
+        }
+        Ok(())
     }
 
     /// The most recently rendered UIIR tree, if any (for diffing).
@@ -252,10 +342,15 @@ impl<'i, 'w> Session<'i, 'w> {
                 }
             }
             // A `NavigationStack` back affordance (ADR-0013 §1): pop the topmost
-            // pushed screen off the stack keyed by the event id. A `back` on a
-            // stack with no pushed screens (only the root child) is a no-op.
+            // pushed screen off the stack keyed by the event id. A path-bound
+            // stack pops the bound path (the source of truth); a session-owned
+            // stack pops its per-stack state. A `back` on an empty stack is a
+            // no-op.
             "back" => {
-                if let Some(stack) = self.nav_stack.get_mut(&event.id) {
+                if let Some(binding) = find_binding(&tree, &event.id) {
+                    crate::path_remove_last(self.interp, &binding)
+                        .map_err(crate::std_error_to_eval)?;
+                } else if let Some(stack) = self.nav_stack.get_mut(&event.id) {
                     stack.pop();
                     if stack.is_empty() {
                         self.nav_stack.remove(&event.id);
@@ -263,18 +358,30 @@ impl<'i, 'w> Session<'i, 'w> {
                 }
             }
             // Any other event routes to the node's handler map by name. A `tap`
-            // on a `NavigationLink` is special-cased first (ADR-0013 §1): it
-            // captures the link's destination onto the enclosing stack's pushed
-            // state instead of running a handler.
+            // on a `NavigationLink` is special-cased first (ADR-0013 §1): a
+            // destination-based link captures its destination onto the enclosing
+            // stack's pushed state; a value-based link resolves the nearest
+            // matching `.navigationDestination(for:)` and pushes that.
             name => {
                 if name == "tap" {
-                    if let Some((stack_id, destination)) = find_nav_link(&tree, &event.id) {
-                        self.nav_stack
-                            .entry(stack_id)
-                            .or_default()
-                            .push(destination);
-                    } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
-                        self.interp.invoke_closure(closure_id, Vec::new())?;
+                    match find_nav_link(&tree, &event.id) {
+                        Some(NavLinkTarget::Destination {
+                            stack_id,
+                            destination,
+                        }) => {
+                            self.nav_stack
+                                .entry(stack_id)
+                                .or_default()
+                                .push(destination);
+                        }
+                        Some(NavLinkTarget::Value { stack_id, value }) => {
+                            self.push_value_link(&tree, &stack_id, value)?;
+                        }
+                        None => {
+                            if let Some(closure_id) = find_handler(&tree, &event.id, name) {
+                                self.interp.invoke_closure(closure_id, Vec::new())?;
+                            }
+                        }
                     }
                 } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
                     self.interp.invoke_closure(closure_id, Vec::new())?;
@@ -412,17 +519,31 @@ pub fn find_handler(tree: &SwiftValue, target: &str, event: &str) -> Option<usiz
     walk(tree, "0", target, event)
 }
 
+/// The resolved target of a tapped `NavigationLink` (ADR-0013 §1): either a
+/// destination-based link carrying its captured destination, or a value-based
+/// link carrying its `value:` payload. Both name the enclosing stack.
+pub enum NavLinkTarget {
+    /// A `NavigationLink(destination:)` — push the captured destination.
+    Destination {
+        stack_id: String,
+        destination: SwiftValue,
+    },
+    /// A `NavigationLink(value:)` — resolve the value against the stack's
+    /// `.navigationDestination(for:)` registrations, then push.
+    Value { stack_id: String, value: SwiftValue },
+}
+
 /// Find the tapped `NavigationLink` at structural path `target` and its
-/// enclosing `NavigationStack` (ADR-0013 §1). Returns `(stack id, captured
-/// destination)` so the session can push the destination onto that stack. The
-/// nearest ancestor `NavigationStack` id is threaded down the walk.
-pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<(String, SwiftValue)> {
+/// enclosing `NavigationStack` (ADR-0013 §1), classifying it as destination- or
+/// value-based. The nearest ancestor `NavigationStack` id is threaded down the
+/// walk.
+pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<NavLinkTarget> {
     fn walk(
         node: &SwiftValue,
         id: &str,
         target: &str,
         stack_id: Option<&str>,
-    ) -> Option<(String, SwiftValue)> {
+    ) -> Option<NavLinkTarget> {
         let SwiftValue::Struct(obj) = node else {
             return None;
         };
@@ -432,8 +553,20 @@ pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<(String, SwiftVa
             stack_id
         };
         if id == target {
-            let dest = obj.get(NAV_DESTINATION_FIELD)?;
-            return this_stack.map(|sid| (sid.to_string(), dest.clone()));
+            let sid = this_stack?.to_string();
+            if let Some(dest) = obj.get(NAV_DESTINATION_FIELD) {
+                return Some(NavLinkTarget::Destination {
+                    stack_id: sid,
+                    destination: dest.clone(),
+                });
+            }
+            if let Some(value) = obj.get(NAV_VALUE_FIELD) {
+                return Some(NavLinkTarget::Value {
+                    stack_id: sid,
+                    value: value.clone(),
+                });
+            }
+            return None;
         }
         let prefix = format!("{id}.");
         if !target.starts_with(&prefix) {
@@ -449,6 +582,62 @@ pub fn find_nav_link(tree: &SwiftValue, target: &str) -> Option<(String, SwiftVa
         None
     }
     walk(tree, "0", target, None)
+}
+
+/// Find the node at structural path `target` in `tree` (id scheme shared with
+/// `uiir`).
+pub fn find_node<'a>(tree: &'a SwiftValue, target: &str) -> Option<&'a SwiftValue> {
+    fn walk<'a>(node: &'a SwiftValue, id: &str, target: &str) -> Option<&'a SwiftValue> {
+        if id == target {
+            return Some(node);
+        }
+        let SwiftValue::Struct(obj) = node else {
+            return None;
+        };
+        let prefix = format!("{id}.");
+        if !target.starts_with(&prefix) {
+            return None;
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for (i, child) in children.iter().enumerate() {
+                if let Some(found) = walk(child, &child_id(id, i, child), target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(tree, "0", target)
+}
+
+/// Collect every `.navigationDestination(for:)` registration within `subtree`
+/// as a type-name → closure-id map (ADR-0013 §1). A shallower (nearer-the-stack)
+/// registration wins over a deeper duplicate of the same type, matching
+/// SwiftUI's "nearest enclosing" resolution.
+pub fn collect_nav_destinations(subtree: &SwiftValue) -> HashMap<String, usize> {
+    fn walk(node: &SwiftValue, depth: usize, out: &mut HashMap<String, (usize, usize)>) {
+        let SwiftValue::Struct(obj) = node else {
+            return;
+        };
+        if let Some(SwiftValue::Struct(map)) = obj.get(NAV_DESTINATIONS_FIELD) {
+            for (ty, closure) in &map.fields {
+                if let SwiftValue::Closure(cid) = closure {
+                    let entry = out.entry(ty.clone()).or_insert((depth, *cid));
+                    if depth < entry.0 {
+                        *entry = (depth, *cid);
+                    }
+                }
+            }
+        }
+        if let Some(SwiftValue::Array(children)) = obj.get(CHILDREN_FIELD) {
+            for child in children.iter() {
+                walk(child, depth + 1, out);
+            }
+        }
+    }
+    let mut acc: HashMap<String, (usize, usize)> = HashMap::new();
+    walk(subtree, 0, &mut acc);
+    acc.into_iter().map(|(k, (_, cid))| (k, cid)).collect()
 }
 
 /// Find the `Binding` value stashed on the control node at structural path
@@ -928,6 +1117,10 @@ struct RowsView: View {
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
         let mut interp = Interpreter::new(out);
+        // Mirror the CLI host: stdlib intrinsics (`Array.append`/`removeLast`,
+        // needed by `NavigationPath` and typed-array path bindings) plus the
+        // SwiftUI view layer.
+        tswift_std::install(&mut interp);
         install(&mut interp);
         interp.run(analysis).expect("run");
         interp
@@ -1248,6 +1441,203 @@ struct RootView: View {
         assert!(
             uiir::to_json(&after).contains("Count: 1"),
             "pushed screen re-reads @State: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn value_link_resolves_nearest_matching_destination() {
+        // A value-based `NavigationLink(value:)` resolves the enclosing stack's
+        // `.navigationDestination(for: Int.self)` and pushes the screen the
+        // closure builds from the value.
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    var body: some View {
+        NavigationStack {
+            VStack {
+                NavigationLink("Go", value: 42)
+            }
+            .navigationDestination(for: Int.self) { n in
+                Text("Number: \(n)")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        let first = session.render().expect("render");
+        let json = uiir::to_json(&first);
+        assert!(
+            !json.contains("_navValue"),
+            "value never serialized: {json}"
+        );
+        assert!(
+            !json.contains("Number:"),
+            "destination not realized before tap: {json}"
+        );
+        // Tap the value link (stack 0 > VStack 0.0 > link 0.0.0).
+        let tap = Event {
+            id: "0.0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Number: 42"),
+            "value link pushes matched destination: {}",
+            uiir::to_json(&after)
+        );
+        // `back` pops it.
+        let back = Event {
+            id: "0".into(),
+            event: "back".into(),
+            value: None,
+        };
+        let after = session.dispatch(&back).expect("dispatch");
+        assert!(
+            !uiir::to_json(&after).contains("Number: 42"),
+            "back pops the value screen: {}",
+            uiir::to_json(&after)
+        );
+    }
+
+    #[test]
+    fn value_link_with_no_matching_destination_is_noop() {
+        // A value whose type has no registered destination pushes nothing.
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    var body: some View {
+        NavigationStack {
+            VStack {
+                NavigationLink("Go", value: "hi")
+            }
+            .navigationDestination(for: Int.self) { n in
+                Text("Number: \(n)")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        session.render().expect("render");
+        let tap = Event {
+            id: "0.0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        // Only the root VStack child remains; nothing pushed.
+        let json = uiir::to_json(&after);
+        assert!(
+            !json.contains("Number:"),
+            "unmatched String value is a no-op: {json}"
+        );
+    }
+
+    #[test]
+    fn path_binding_reflects_push_pop_and_programmatic_append() {
+        // A `NavigationStack(path:)` bound to a `NavigationPath`: a value link
+        // appends to the path; a `Button` appending to the path pushes too;
+        // `back` pops the path. The bound path is the source of truth.
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    @State private var path = NavigationPath()
+    var body: some View {
+        NavigationStack(path: $path) {
+            VStack {
+                NavigationLink("Go", value: 7)
+                Button("Push99") { path.append(99) }
+            }
+            .navigationDestination(for: Int.self) { n in
+                Text("N: \(n)")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        let first = session.render().expect("render");
+        assert!(
+            !uiir::to_json(&first).contains("N: "),
+            "empty path pushes nothing: {}",
+            uiir::to_json(&first)
+        );
+        // Tap the value link → path.append(7).
+        let tap = Event {
+            id: "0.0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("N: 7"),
+            "value link appends to bound path: {}",
+            uiir::to_json(&after)
+        );
+        // Programmatic append via the Button (id 0.0.1) pushes a second screen.
+        let push = Event {
+            id: "0.0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&push).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains("N: 7") && json.contains("N: 99"),
+            "programmatic path.append pushes: {json}"
+        );
+        // `back` pops the last path item (99), leaving 7.
+        let back = Event {
+            id: "0".into(),
+            event: "back".into(),
+            value: None,
+        };
+        let after = session.dispatch(&back).expect("dispatch");
+        let json = uiir::to_json(&after);
+        assert!(
+            json.contains("N: 7") && !json.contains("N: 99"),
+            "back pops the bound path: {json}"
+        );
+    }
+
+    #[test]
+    fn path_binding_accepts_typed_array() {
+        // A typed-array binding (`path: $ints`) works too (v1 array form): each
+        // element is matched to the `Int` destination.
+        let mut interp = events_interp(
+            r#"
+struct RootView: View {
+    @State private var ints: [Int] = []
+    var body: some View {
+        NavigationStack(path: $ints) {
+            VStack {
+                Button("Push5") { ints.append(5) }
+            }
+            .navigationDestination(for: Int.self) { n in
+                Text("Row \(n)")
+            }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "RootView").expect("session");
+        session.render().expect("render");
+        let push = Event {
+            id: "0.0.0".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&push).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("Row 5"),
+            "typed-array path append pushes: {}",
             uiir::to_json(&after)
         );
     }

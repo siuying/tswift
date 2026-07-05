@@ -9,3 +9,9 @@ description = "tswift SwiftUI render host: view primitives evaluated into a host
 [dependencies]
 tswift-core.workspace = true
 tswift-frontend.workspace = true
+
+[dev-dependencies]
+# Session tests exercising array/`NavigationPath` mutation need the stdlib
+# `Array` intrinsics (`append`/`removeLast`); the CLI installs these alongside
+# the SwiftUI host, so tests mirror that setup.
+tswift-std.workspace = true
