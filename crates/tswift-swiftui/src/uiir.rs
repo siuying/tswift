@@ -426,39 +426,39 @@ mod tests {
     use crate::{install, render_root, PRELUDE};
     use tswift_core::Interpreter;
 
-    /// Serialize a bare `Animation` expression through `write_value` (the path a
-    /// future `.animation` modifier arg will take). Builds a probe struct whose
-    /// computed property returns the animation, then evaluates it.
-    fn anim_json(expr: &str) -> String {
-        let src = format!("{PRELUDE}\nstruct Probe {{ var anim: Animation {{ {expr} }} }}\n");
+    /// Prepend the `PRELUDE`, analyze + run `src`, and hand the ready
+    /// interpreter to `f`. The single scaffolding all the golden helpers share.
+    fn with_interp<R>(src: &str, f: impl FnOnce(&mut Interpreter) -> R) -> R {
+        let src = format!("{PRELUDE}\n{src}\n");
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
         let mut interp = Interpreter::new(&mut sink);
         install(&mut interp);
         interp.run(analysis).expect("run");
-        let probe = interp.make_struct("Probe", &[]).expect("probe");
-        let anim = interp.get_member(&probe, "anim").expect("anim");
-        let mut out = String::new();
-        write_value(&anim, &mut out);
-        out
+        f(&mut interp)
     }
 
-    /// Serialize a bare `AnyTransition` expression through `write_value` (the
-    /// path the `.transition(_:)` modifier arg takes).
+    /// Serialize a bare value expression through `write_value`: build a `Probe`
+    /// struct whose computed `member: ty` returns `expr`, then evaluate it. The
+    /// path a modifier arg of that type takes (`Animation`, `AnyTransition`, …).
+    fn probe_json(member: &str, ty: &str, expr: &str) -> String {
+        let decl = format!("struct Probe {{ var {member}: {ty} {{ {expr} }} }}");
+        with_interp(&decl, |interp| {
+            let probe = interp.make_struct("Probe", &[]).expect("probe");
+            let value = interp.get_member(&probe, member).expect("member");
+            let mut out = String::new();
+            write_value(&value, &mut out);
+            out
+        })
+    }
+
+    fn anim_json(expr: &str) -> String {
+        probe_json("anim", "Animation", expr)
+    }
+
     fn transition_json(expr: &str) -> String {
-        let src = format!("{PRELUDE}\nstruct Probe {{ var t: AnyTransition {{ {expr} }} }}\n");
-        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
-        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
-        let mut sink = std::io::sink();
-        let mut interp = Interpreter::new(&mut sink);
-        install(&mut interp);
-        interp.run(analysis).expect("run");
-        let probe = interp.make_struct("Probe", &[]).expect("probe");
-        let t = interp.get_member(&probe, "t").expect("t");
-        let mut out = String::new();
-        write_value(&t, &mut out);
-        out
+        probe_json("t", "AnyTransition", expr)
     }
 
     #[test]
@@ -559,29 +559,19 @@ mod tests {
         );
     }
 
-    fn render_json(body: &str) -> String {
-        let src = format!("{PRELUDE}\nstruct V: View {{ var body: some View {{ {body} }} }}\n");
-        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
-        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
-        let mut sink = std::io::sink();
-        let mut interp = Interpreter::new(&mut sink);
-        install(&mut interp);
-        interp.run(analysis).expect("run");
-        let view = render_root(&mut interp, "V").expect("render");
-        to_json(&view)
-    }
-
     /// Render a full `View` struct source (with its own `@State`) and serialize.
     fn render_source_json(src: &str, root: &str) -> String {
-        let src = format!("{PRELUDE}\n{src}\n");
-        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
-        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
-        let mut sink = std::io::sink();
-        let mut interp = Interpreter::new(&mut sink);
-        install(&mut interp);
-        interp.run(analysis).expect("run");
-        let view = render_root(&mut interp, root).expect("render");
-        to_json(&view)
+        with_interp(src, |interp| {
+            to_json(&render_root(interp, root).expect("render"))
+        })
+    }
+
+    /// Render a `body` expression wrapped in a minimal stateless `View`.
+    fn render_json(body: &str) -> String {
+        render_source_json(
+            &format!("struct V: View {{ var body: some View {{ {body} }} }}"),
+            "V",
+        )
     }
 
     #[test]

@@ -730,6 +730,37 @@ pub fn install(interp: &mut Interpreter<'_>) {
         modifier_transition,
         vec![BuiltinParam::positional("AnyTransition")],
     );
+    // `withAnimation` — executes the trailing closure immediately and returns
+    // its value.  The animation argument (if any) is accepted and dropped;
+    // hosts that want to animate will read `.animation` modifiers and diff
+    // state transitions themselves (v1 simplification).
+    interp.register_free_fn_typed(
+        "withAnimation",
+        with_animation,
+        vec![BuiltinParam::positional("Animation")],
+    );
+}
+
+/// `withAnimation(_:_:)` — runs the trailing closure immediately, drops the
+/// animation argument, and returns the closure's result value.  The runtime
+/// has no animation transaction or clock; state mutations inside the body
+/// take effect as usual and the next render reflects them (v1 simplification).
+fn with_animation(ctx: &mut dyn StdContext, args: Vec<tswift_core::Arg>) -> tswift_core::StdResult {
+    // The trailing closure is always the last arg (and may be the only one
+    // when called as `withAnimation { … }` without an explicit animation).
+    let closure_arg = args
+        .into_iter()
+        .rev()
+        .find(|a| matches!(a.value, SwiftValue::Closure(_)));
+    match closure_arg {
+        Some(a) => {
+            let SwiftValue::Closure(id) = a.value else {
+                unreachable!()
+            };
+            ctx.call_closure(id, vec![])
+        }
+        None => Ok(SwiftValue::Void),
+    }
 }
 
 /// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
@@ -1879,5 +1910,74 @@ struct V: View {
         };
         assert_eq!(obj.fields[0].0, "verbatim");
         assert_eq!(obj.fields[1].0, MODIFIERS_FIELD);
+    }
+
+    // ----- withAnimation tests -----
+
+    #[test]
+    fn with_animation_no_arg_executes_body() {
+        // `withAnimation { flag = true }` — no animation arg; body runs and
+        // state change is reflected in next render.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation { x = 99 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"99""#),
+            "withAnimation body must have run: {json}"
+        );
+    }
+
+    #[test]
+    fn with_animation_with_linear_arg_executes_body() {
+        // `withAnimation(.linear) { ... }` — animation arg present; body still runs.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation(.linear) { x = 42 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"42""#),
+            "withAnimation(.linear) body must have run: {json}"
+        );
+    }
+
+    #[test]
+    fn with_animation_easing_executes_body() {
+        // `withAnimation(.easeInOut(duration:0.3)) { ... }` — real-world form.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation(.easeInOut(duration: 0.3)) { x = 7 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"7""#),
+            "withAnimation(.easeInOut) body must have run: {json}"
+        );
     }
 }

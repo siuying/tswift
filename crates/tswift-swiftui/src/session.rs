@@ -2053,4 +2053,57 @@ struct AView: View {
         assert!(json.contains(r#""isOn":true"#), "state unchanged: {json}");
         assert!(json.contains("Good evening."), "{json}");
     }
+
+    fn with_animation_interp() -> Interpreter<'static> {
+        let src = format!(
+            "{PRELUDE}\n{}",
+            r#"
+struct FlagView: View {
+    @State var flag = false
+    var body: some View {
+        VStack {
+            Text(flag ? "on" : "off")
+            Button("Toggle") { withAnimation(.easeInOut(duration: 0.3)) { flag = !flag } }
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn with_animation_button_tap_mutates_state() {
+        // Slice 4: `withAnimation(.easeInOut(...)) { flag.toggle() }` inside a
+        // Button action must execute the body immediately so the @State changes
+        // and the next render reflects the new value.
+        let mut interp = with_animation_interp();
+        let mut session = Session::new(&mut interp, "FlagView").expect("session");
+
+        let first = session.render().expect("render");
+        assert!(
+            uiir::to_json(&first).contains(r#""verbatim":"off""#),
+            "initial state is off: {}",
+            uiir::to_json(&first)
+        );
+
+        // Button is the second child of VStack: structural id "0.1".
+        let tap = Event {
+            id: "0.1".into(),
+            event: "tap".into(),
+            value: None,
+        };
+        let after = session.dispatch(&tap).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains(r#""verbatim":"on""#),
+            "withAnimation tap must flip flag to true: {}",
+            uiir::to_json(&after)
+        );
+    }
 }
