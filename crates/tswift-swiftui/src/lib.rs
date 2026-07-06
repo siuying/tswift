@@ -804,6 +804,8 @@ pub fn registered_keys() -> Vec<String> {
     // Gesture method — not a View modifier, coverage key is per gesture type.
     keys.push("TapGesture.onEnded".into());
     keys.push("LongPressGesture.onEnded".into());
+    // Free functions (no `.` → coverage's free-function section).
+    keys.push("withAnimation".into());
     keys.sort();
     keys.dedup();
     keys
@@ -1100,6 +1102,7 @@ mod tests {
                 "View.underline",
                 "View.zIndex",
                 "ZStack.init",
+                "withAnimation",
             ]
         );
     }

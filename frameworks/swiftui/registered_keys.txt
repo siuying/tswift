@@ -94,3 +94,4 @@ View.transition
 View.underline
 View.zIndex
 ZStack.init
+withAnimation
