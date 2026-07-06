@@ -3,6 +3,8 @@
 // (`{"$":"color","name":"white"}`); the web host owns the token→CSS tables, so
 // iOS-vs-web color/typography drift lives here by design.
 
+import { applyAnimation, applyTransition } from "./animation-css.js";
+
 /** A UIIR modifier value: a tagged-union token, a scalar, or an object. */
 export type UiirValue =
   | null
@@ -488,6 +490,20 @@ export function applyModifiers(el: HTMLElement, modifiers: Modifier[]): void {
         // Mark the image as resizable so later scale modifiers take effect.
         el.style.width = "100%";
         el.style.height = "auto";
+        break;
+      }
+      // Animation — arm a CSS transition so the *next* render's style change
+      // tweens (SwiftUI `.animation(_:value:)` semantics on the web). Repeating
+      // animations degrade to an injected opacity pulse; `null` disables.
+      case "animation": {
+        applyAnimation(el, value);
+        break;
+      }
+      // Transition — record the insert/remove effect and arm the relevant
+      // property transition. Full mount/unmount animation lives in apply-patch
+      // (out of scope here); this is the cheap, non-crashing v1.
+      case "transition": {
+        applyTransition(el, value);
         break;
       }
       default:

@@ -95,6 +95,44 @@ enum Samples {
             }
             """
         ),
+        Sample(
+            label: "Animation",
+            code: """
+            struct AnimatedCard: View {
+                @State private var expanded = false
+
+                var body: some View {
+                    VStack(spacing: 24) {
+                        Text("Tap the button to animate")
+                            .font(.headline)
+
+                        Circle()
+                            .fill(expanded ? Color.orange : Color.blue)
+                            .frame(width: expanded ? 160 : 90, height: expanded ? 160 : 90)
+                            .animation(.spring(duration: 0.5, bounce: 0.4), value: expanded)
+
+                        if expanded {
+                            Text("✨ Expanded!")
+                                .font(.title2)
+                                .foregroundColor(.orange)
+                                .transition(.scale.combined(with: .opacity))
+                        }
+
+                        Button(expanded ? "Collapse" : "Expand") {
+                            withAnimation(.spring(duration: 0.5, bounce: 0.4)) {
+                                expanded = !expanded
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                    }
+                    .padding()
+                }
+            }
+            """
+        ),
     ]
 
     /// The snippet the app opens with.

@@ -284,6 +284,21 @@ enum ModifierApply {
             // `.resizable()` is an Image-specific modifier; applied via
             // ViewFactory for Image nodes. As a chained modifier, no-op.
             break
+        case "animation":
+            // `{ animation: ANIM|null, value: observed? }` (see
+            // anim-uiir-schema.md). Modern `.animation(_:value:)` recomposes
+            // when the observed scalar changes; the deprecated single-arg form
+            // omits `value`.
+            let animValue = mod.value.member("animation") ?? .null
+            let anim: Animation? = AnimationDecode.animation(animValue)
+            if let observed = mod.value.member("value") {
+                return AnyView(view.animation(anim, value: observed.asObservedHashable))
+            }
+            // Deprecated form (no trigger): fall back to the legacy overload.
+            return AnyView(view.animation(anim))
+        case "transition":
+            // `{ name: "transition", value: TRANS }` — a recursive AnyTransition.
+            return AnyView(view.transition(AnimationDecode.transition(mod.value)))
         default:
             break
         }

@@ -223,6 +223,10 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         }
         // A `GridItem` track sizer serializes as `{kind,value,spacing?}`.
         SwiftValue::Struct(obj) if obj.type_name == "GridItem" => write_grid_item(obj, out),
+        // An `Animation` curve serializes as a tagged `{"$":"animation",…}`.
+        SwiftValue::Struct(obj) if obj.type_name == "Animation" => write_animation(obj, out),
+        // An `AnyTransition` serializes as a tagged `{"$":"transition",…}`.
+        SwiftValue::Struct(obj) if obj.type_name == "AnyTransition" => write_transition(obj, out),
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),
@@ -269,6 +273,136 @@ fn write_grid_item(obj: &StructObj, out: &mut String) {
     out.push('}');
 }
 
+/// Serialize an `Animation` value as `{"$":"animation","kind":…,…}`. Only the
+/// set fields are emitted, in a fixed order: `kind`, curve params (`duration`
+/// then the spring family), then the chained `delay`/`speed`/`repeat` modifiers.
+/// `repeat` is `"forever"` (string) for `.repeatForever` or the integer count
+/// for `.repeatCount`, and is followed by `autoreverses` when a repeat is set.
+fn write_animation(obj: &StructObj, out: &mut String) {
+    let field = |name: &str| obj.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    let num = |name: &str| match field(name) {
+        Some(SwiftValue::Double(d)) => Some(*d),
+        Some(SwiftValue::Int(i)) => Some(i.raw as f64),
+        _ => None,
+    };
+    let kind = match field("kind") {
+        Some(SwiftValue::Str(s)) => s.as_str(),
+        _ => "default",
+    };
+    out.push_str("{\"$\":\"animation\",\"kind\":");
+    write_string(kind, out);
+    for (src, json) in [
+        ("duration", "duration"),
+        ("response", "response"),
+        ("dampingFraction", "dampingFraction"),
+        ("blendDuration", "blendDuration"),
+        ("bounce", "bounce"),
+        ("extraBounce", "extraBounce"),
+        ("delayValue", "delay"),
+        ("speedValue", "speed"),
+    ] {
+        if let Some(v) = num(src) {
+            out.push(',');
+            write_string(json, out);
+            out.push(':');
+            out.push_str(&tswift_core::format_double(v));
+        }
+    }
+    if let Some(SwiftValue::Str(rk)) = field("repeatKind") {
+        out.push_str(",\"repeat\":");
+        if rk == "forever" {
+            out.push_str("\"forever\"");
+        } else if let Some(SwiftValue::Int(c)) = field("repeatCountValue") {
+            out.push_str(&c.raw.to_string());
+        } else {
+            out.push('0');
+        }
+        if let Some(SwiftValue::Bool(b)) = field("autoreversesValue") {
+            out.push_str(",\"autoreverses\":");
+            out.push_str(if *b { "true" } else { "false" });
+        }
+    }
+    out.push('}');
+}
+
+/// Serialize an `AnyTransition` as `{"$":"transition","type":…,…}`. Fields are
+/// emitted in a fixed order per type: `type`, then the type-specific payload
+/// (`edge` for move/push, `scale`/`anchor?` for a parameterized scale, `x`/`y`
+/// for offset), and the recursive combinators (`transitions` for combined,
+/// `insertion`/`removal` for asymmetric). See notes.md for the full schema.
+fn write_transition(obj: &StructObj, out: &mut String) {
+    let field = |name: &str| obj.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    let ty = match field("transitionType") {
+        Some(SwiftValue::Str(s)) => s.as_str(),
+        _ => "identity",
+    };
+    out.push_str("{\"$\":\"transition\",\"type\":");
+    write_string(ty, out);
+    match ty {
+        "scale" => {
+            if let Some(SwiftValue::Double(d)) = field("scaleValue") {
+                out.push_str(",\"scale\":");
+                out.push_str(&tswift_core::format_double(*d));
+            }
+            if let Some(SwiftValue::Str(a)) = field("anchor") {
+                out.push_str(",\"anchor\":");
+                write_string(a, out);
+            }
+        }
+        "move" | "push" => {
+            if let Some(SwiftValue::Str(e)) = field("edge") {
+                out.push_str(",\"edge\":");
+                write_string(e, out);
+            }
+        }
+        "offset" => {
+            out.push_str(",\"x\":");
+            out.push_str(&tswift_core::format_double(
+                num_field(field("offsetX")).unwrap_or(0.0),
+            ));
+            out.push_str(",\"y\":");
+            out.push_str(&tswift_core::format_double(
+                num_field(field("offsetY")).unwrap_or(0.0),
+            ));
+        }
+        "combined" => {
+            out.push_str(",\"transitions\":[");
+            if let Some(SwiftValue::Array(items)) = field("transitions") {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_value(item, out);
+                }
+            }
+            out.push(']');
+        }
+        "asymmetric" => {
+            out.push_str(",\"insertion\":");
+            match field("insertion") {
+                Some(v) => write_value(v, out),
+                None => out.push_str("null"),
+            }
+            out.push_str(",\"removal\":");
+            match field("removal") {
+                Some(v) => write_value(v, out),
+                None => out.push_str("null"),
+            }
+        }
+        _ => {}
+    }
+    out.push('}');
+}
+
+/// Read a Swift numeric field as `f64` (int widened, double as-is).
+fn num_field(value: Option<&SwiftValue>) -> Option<f64> {
+    match value {
+        Some(SwiftValue::Double(d)) => Some(*d),
+        Some(SwiftValue::Int(i)) => Some(i.raw as f64),
+        _ => None,
+    }
+}
+
 /// Write a JSON string literal with the minimal required escaping.
 fn write_string(s: &str, out: &mut String) {
     out.push('"');
@@ -292,16 +426,202 @@ mod tests {
     use crate::{install, render_root, PRELUDE};
     use tswift_core::Interpreter;
 
-    fn render_json(body: &str) -> String {
-        let src = format!("{PRELUDE}\nstruct V: View {{ var body: some View {{ {body} }} }}\n");
+    /// Prepend the `PRELUDE`, analyze + run `src`, and hand the ready
+    /// interpreter to `f`. The single scaffolding all the golden helpers share.
+    fn with_interp<R>(src: &str, f: impl FnOnce(&mut Interpreter) -> R) -> R {
+        let src = format!("{PRELUDE}\n{src}\n");
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
         let mut interp = Interpreter::new(&mut sink);
         install(&mut interp);
         interp.run(analysis).expect("run");
-        let view = render_root(&mut interp, "V").expect("render");
-        to_json(&view)
+        f(&mut interp)
+    }
+
+    /// Serialize a bare value expression through `write_value`: build a `Probe`
+    /// struct whose computed `member: ty` returns `expr`, then evaluate it. The
+    /// path a modifier arg of that type takes (`Animation`, `AnyTransition`, …).
+    fn probe_json(member: &str, ty: &str, expr: &str) -> String {
+        let decl = format!("struct Probe {{ var {member}: {ty} {{ {expr} }} }}");
+        with_interp(&decl, |interp| {
+            let probe = interp.make_struct("Probe", &[]).expect("probe");
+            let value = interp.get_member(&probe, member).expect("member");
+            let mut out = String::new();
+            write_value(&value, &mut out);
+            out
+        })
+    }
+
+    fn anim_json(expr: &str) -> String {
+        probe_json("anim", "Animation", expr)
+    }
+
+    fn transition_json(expr: &str) -> String {
+        probe_json("t", "AnyTransition", expr)
+    }
+
+    #[test]
+    fn transition_opacity_serializes() {
+        assert_eq!(
+            transition_json("AnyTransition.opacity"),
+            r#"{"$":"transition","type":"opacity"}"#
+        );
+    }
+
+    #[test]
+    fn transition_move_edge_serializes() {
+        assert_eq!(
+            transition_json("AnyTransition.move(edge: .leading)"),
+            r#"{"$":"transition","type":"move","edge":"leading"}"#
+        );
+    }
+
+    #[test]
+    fn transition_combined_serializes() {
+        assert_eq!(
+            transition_json("AnyTransition.opacity.combined(with: .scale)"),
+            r#"{"$":"transition","type":"combined","transitions":[{"$":"transition","type":"opacity"},{"$":"transition","type":"scale"}]}"#
+        );
+    }
+
+    #[test]
+    fn transition_asymmetric_serializes() {
+        assert_eq!(
+            transition_json("AnyTransition.asymmetric(insertion: .scale, removal: .opacity)"),
+            r#"{"$":"transition","type":"asymmetric","insertion":{"$":"transition","type":"scale"},"removal":{"$":"transition","type":"opacity"}}"#
+        );
+    }
+
+    #[test]
+    fn transition_modifier_forms_serialize() {
+        let opacity = render_json(r#"Text("x").transition(.opacity)"#);
+        assert_eq!(
+            opacity,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"transition","value":{"$":"transition","type":"opacity"}}],"children":[]}"#
+        );
+        let mv = render_json(r#"Text("x").transition(.move(edge: .leading))"#);
+        assert_eq!(
+            mv,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"transition","value":{"$":"transition","type":"move","edge":"leading"}}],"children":[]}"#
+        );
+        let combined = render_json(r#"Text("x").transition(.opacity.combined(with: .scale))"#);
+        assert_eq!(
+            combined,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"transition","value":{"$":"transition","type":"combined","transitions":[{"$":"transition","type":"opacity"},{"$":"transition","type":"scale"}]}}],"children":[]}"#
+        );
+        let asym = render_json(
+            r#"Text("x").transition(.asymmetric(insertion: .scale, removal: .opacity))"#,
+        );
+        assert_eq!(
+            asym,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"transition","value":{"$":"transition","type":"asymmetric","insertion":{"$":"transition","type":"scale"},"removal":{"$":"transition","type":"opacity"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn animation_ease_in_out_duration_serializes() {
+        assert_eq!(
+            anim_json("Animation.easeInOut(duration: 0.3)"),
+            r#"{"$":"animation","kind":"easeInOut","duration":0.3}"#
+        );
+    }
+
+    #[test]
+    fn animation_linear_repeat_forever_serializes() {
+        assert_eq!(
+            anim_json("Animation.linear.repeatForever(autoreverses: false)"),
+            r#"{"$":"animation","kind":"linear","repeat":"forever","autoreverses":false}"#
+        );
+    }
+
+    #[test]
+    fn animation_spring_defaults_serialize() {
+        assert_eq!(
+            anim_json("Animation.spring()"),
+            r#"{"$":"animation","kind":"spring","response":0.5,"dampingFraction":0.825,"blendDuration":0.0}"#
+        );
+    }
+
+    #[test]
+    fn animation_spring_duration_bounce_serializes() {
+        assert_eq!(
+            anim_json("Animation.spring(duration: 0.4, bounce: 0.3)"),
+            r#"{"$":"animation","kind":"spring","duration":0.4,"bounce":0.3}"#
+        );
+    }
+
+    #[test]
+    fn animation_delay_speed_chain_serializes() {
+        assert_eq!(
+            anim_json("Animation.easeInOut.delay(0.2).speed(2)"),
+            r#"{"$":"animation","kind":"easeInOut","delay":0.2,"speed":2.0}"#
+        );
+    }
+
+    /// Render a full `View` struct source (with its own `@State`) and serialize.
+    fn render_source_json(src: &str, root: &str) -> String {
+        with_interp(src, |interp| {
+            to_json(&render_root(interp, root).expect("render"))
+        })
+    }
+
+    /// Render a `body` expression wrapped in a minimal stateless `View`.
+    fn render_json(body: &str) -> String {
+        render_source_json(
+            &format!("struct V: View {{ var body: some View {{ {body} }} }}"),
+            "V",
+        )
+    }
+
+    #[test]
+    fn animation_modifier_modern_and_deprecated_forms_serialize() {
+        // Modern `.animation(_:value:)` — the curve plus the observed operand.
+        let json = render_source_json(
+            r#"struct V: View {
+    @State private var flag = false
+    var body: some View { Text("x").animation(.easeInOut(duration: 0.3), value: flag) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"easeInOut","duration":0.3},"value":false}}],"children":[]}"#
+        );
+        // A spring curve with a numeric observed value.
+        let json2 = render_source_json(
+            r#"struct V: View {
+    @State private var n = 0
+    var body: some View { Text("x").animation(.spring(), value: n) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json2,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"spring","response":0.5,"dampingFraction":0.825,"blendDuration":0.0},"value":0}}],"children":[]}"#
+        );
+        // Deprecated single-arg `.animation(_:)` — curve only, no observed value.
+        let json3 = render_json(r#"Text("x").animation(.linear)"#);
+        assert_eq!(
+            json3,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"linear"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn animation_modifier_nil_disables_without_crashing() {
+        // `.animation(nil, value:)` must serialize the curve as JSON `null`.
+        let json = render_source_json(
+            r#"struct V: View {
+    @State private var flag = false
+    var body: some View { Text("x").animation(nil, value: flag) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":null,"value":false}}],"children":[]}"#
+        );
     }
 
     #[test]

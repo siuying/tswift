@@ -37,9 +37,9 @@ pub(crate) use views::{
 pub(crate) use async_image::async_image_init;
 pub use async_image::{async_image_url_image, has_async_image_closures, realize_async_image_child};
 pub(crate) use modifiers::{
-    gesture_on_ended, handlers_map, long_press_gesture_init, modifier_aspect_ratio,
-    modifier_background, modifier_frame, modifier_multiline_text_alignment, modifier_overlay,
-    modifier_padding, tap_gesture_init, MODIFIER_FNS,
+    gesture_on_ended, handlers_map, long_press_gesture_init, modifier_animation,
+    modifier_aspect_ratio, modifier_background, modifier_frame, modifier_multiline_text_alignment,
+    modifier_overlay, modifier_padding, modifier_transition, tap_gesture_init, MODIFIER_FNS,
 };
 pub(crate) use navigation::{navigation_link_init, navigation_stack_init};
 pub use navigation::{
@@ -390,6 +390,147 @@ struct AsyncImagePhase {
     var isSuccess: Bool { return checkCase("success") }
     var isFailure: Bool { return checkCase("failure") }
 }
+// `Animation` — a timing/spring curve value for `.animation`/`withAnimation`
+// (SwiftUI's `Animation`). Modeled as a struct carrying a `kind` token plus the
+// optional numeric params of each curve family and the chainable modifiers
+// (`delay`/`speed`/`repeat`). Serialized as a tagged object
+// `{"$":"animation","kind":…,…}` via a dedicated `write_value` branch (only the
+// set fields are emitted, in a fixed order). See notes.md for the full schema.
+struct Animation {
+    var kind: String
+    var duration: Double? = nil
+    var response: Double? = nil
+    var dampingFraction: Double? = nil
+    var blendDuration: Double? = nil
+    var bounce: Double? = nil
+    var extraBounce: Double? = nil
+    var delayValue: Double? = nil
+    var speedValue: Double? = nil
+    var repeatKind: String? = nil
+    var repeatCountValue: Int? = nil
+    var autoreversesValue: Bool? = nil
+
+    // NOTE: SwiftUI's `.default` cannot be declared here yet — `default` is a
+    // reserved keyword and the lexer has no backtick-identifier escape, so a
+    // member literally named `default` neither lexes nor parses. Deferred to a
+    // lexer slice (see notes.md). All other curve factories are available.
+
+    static let linear = Animation(kind: "linear")
+    static func linear(duration: Double) -> Animation {
+        Animation(kind: "linear", duration: duration)
+    }
+
+    static let easeIn = Animation(kind: "easeIn")
+    static func easeIn(duration: Double) -> Animation {
+        Animation(kind: "easeIn", duration: duration)
+    }
+
+    static let easeOut = Animation(kind: "easeOut")
+    static func easeOut(duration: Double) -> Animation {
+        Animation(kind: "easeOut", duration: duration)
+    }
+
+    static let easeInOut = Animation(kind: "easeInOut")
+    static func easeInOut(duration: Double) -> Animation {
+        Animation(kind: "easeInOut", duration: duration)
+    }
+
+    static let spring = Animation(kind: "spring")
+    static func spring(response: Double = 0.5, dampingFraction: Double = 0.825, blendDuration: Double = 0) -> Animation {
+        Animation(kind: "spring", response: response, dampingFraction: dampingFraction, blendDuration: blendDuration)
+    }
+    // `duration:` is required (no default) so the bare `.spring()` stays
+    // unambiguously the response/dampingFraction overload above; `bounce`/
+    // `blendDuration` default so `.spring(duration: 0.4)` compiles.
+    static func spring(duration: Double, bounce: Double = 0.0, blendDuration: Double = 0.0) -> Animation {
+        Animation(kind: "spring", duration: duration, bounce: bounce)
+    }
+
+    static let bouncy = Animation(kind: "bouncy")
+    static func bouncy(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "bouncy", duration: duration, extraBounce: extraBounce)
+    }
+
+    static let smooth = Animation(kind: "smooth")
+    static func smooth(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "smooth", duration: duration)
+    }
+
+    static let snappy = Animation(kind: "snappy")
+    static func snappy(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "snappy", duration: duration)
+    }
+
+    func delay(_ delay: Double) -> Animation {
+        var a = self
+        a.delayValue = delay
+        return a
+    }
+    func speed(_ speed: Double) -> Animation {
+        var a = self
+        a.speedValue = speed
+        return a
+    }
+    func repeatCount(_ count: Int, autoreverses: Bool = true) -> Animation {
+        var a = self
+        a.repeatKind = "count"
+        a.repeatCountValue = count
+        a.autoreversesValue = autoreverses
+        return a
+    }
+    func repeatForever(autoreverses: Bool = true) -> Animation {
+        var a = self
+        a.repeatKind = "forever"
+        a.autoreversesValue = autoreverses
+        return a
+    }
+}
+// `AnyTransition` — the insert/remove transition for `.transition(_:)`
+// (SwiftUI's `AnyTransition`). Modeled as a struct carrying a `transitionType`
+// token plus the optional params of each transition and the recursive
+// combinators (`combined`/`asymmetric`). The recursive slots are typed `Any`
+// (not `AnyTransition`) so a value type may hold its own kind without a
+// recursive-size error; the serializer reads the nested `AnyTransition` structs
+// regardless. Serialized as a tagged object `{"$":"transition","type":…,…}` via
+// a dedicated `write_value` branch. See notes.md for the full schema.
+struct AnyTransition {
+    var transitionType: String
+    var scaleValue: Double? = nil
+    var anchor: String? = nil
+    var edge: String? = nil
+    var offsetX: Double? = nil
+    var offsetY: Double? = nil
+    var transitions: [Any]? = nil
+    var insertion: Any? = nil
+    var removal: Any? = nil
+
+    static let opacity = AnyTransition(transitionType: "opacity")
+    static let identity = AnyTransition(transitionType: "identity")
+    static let slide = AnyTransition(transitionType: "slide")
+    static let scale = AnyTransition(transitionType: "scale")
+
+    static func scale(scale: Double, anchor: Alignment? = nil) -> AnyTransition {
+        var t = AnyTransition(transitionType: "scale", scaleValue: scale)
+        if let a = anchor { t.anchor = a.token }
+        return t
+    }
+    static func move(edge: Edge) -> AnyTransition {
+        AnyTransition(transitionType: "move", edge: edge.token)
+    }
+    static func offset(x: Double, y: Double = 0) -> AnyTransition {
+        AnyTransition(transitionType: "offset", offsetX: x, offsetY: y)
+    }
+    static func push(from edge: Edge) -> AnyTransition {
+        AnyTransition(transitionType: "push", edge: edge.token)
+    }
+
+    func combined(with other: AnyTransition) -> AnyTransition {
+        AnyTransition(transitionType: "combined", transitions: [self, other])
+    }
+    static func asymmetric(insertion: AnyTransition, removal: AnyTransition) -> AnyTransition {
+        AnyTransition(transitionType: "asymmetric", insertion: insertion, removal: removal)
+    }
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier
@@ -572,6 +713,54 @@ pub fn install(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("contentMode", "ContentMode"),
         ],
     );
+    // `.animation(_:value:)` — the positional curve is typed `Animation` so a
+    // leading-dot factory (`.easeInOut(…)`, `.linear`) resolves against it. The
+    // `value:` operand is any Equatable and carries its own type, so it needs no
+    // contextual hint (hence no declared parameter for it).
+    interp.register_struct_method_typed(
+        "animation",
+        modifier_animation,
+        vec![BuiltinParam::positional("Animation")],
+    );
+    // `.transition(_:)` — the positional arg is typed `AnyTransition` so a
+    // leading-dot factory/static (`.opacity`, `.move(edge:)`, `.asymmetric(…)`)
+    // resolves against it.
+    interp.register_struct_method_typed(
+        "transition",
+        modifier_transition,
+        vec![BuiltinParam::positional("AnyTransition")],
+    );
+    // `withAnimation` — executes the trailing closure immediately and returns
+    // its value.  The animation argument (if any) is accepted and dropped;
+    // hosts that want to animate will read `.animation` modifiers and diff
+    // state transitions themselves (v1 simplification).
+    interp.register_free_fn_typed(
+        "withAnimation",
+        with_animation,
+        vec![BuiltinParam::positional("Animation")],
+    );
+}
+
+/// `withAnimation(_:_:)` — runs the trailing closure immediately, drops the
+/// animation argument, and returns the closure's result value.  The runtime
+/// has no animation transaction or clock; state mutations inside the body
+/// take effect as usual and the next render reflects them (v1 simplification).
+fn with_animation(ctx: &mut dyn StdContext, args: Vec<tswift_core::Arg>) -> tswift_core::StdResult {
+    // The trailing closure is always the last arg (and may be the only one
+    // when called as `withAnimation { … }` without an explicit animation).
+    let closure_arg = args
+        .into_iter()
+        .rev()
+        .find(|a| matches!(a.value, SwiftValue::Closure(_)));
+    match closure_arg {
+        Some(a) => {
+            let SwiftValue::Closure(id) = a.value else {
+                unreachable!()
+            };
+            ctx.call_closure(id, vec![])
+        }
+        None => Ok(SwiftValue::Void),
+    }
 }
 
 /// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
@@ -615,6 +804,8 @@ pub fn registered_keys() -> Vec<String> {
     // Gesture method — not a View modifier, coverage key is per gesture type.
     keys.push("TapGesture.onEnded".into());
     keys.push("LongPressGesture.onEnded".into());
+    // Free functions (no `.` → coverage's free-function section).
+    keys.push("withAnimation".into());
     keys.sort();
     keys.dedup();
     keys
@@ -859,6 +1050,7 @@ mod tests {
                 "View.accessibilityIdentifier",
                 "View.accessibilityLabel",
                 "View.accessibilityValue",
+                "View.animation",
                 "View.aspectRatio",
                 "View.background",
                 "View.bold",
@@ -906,9 +1098,11 @@ mod tests {
                 "View.textCase",
                 "View.textFieldStyle",
                 "View.tint",
+                "View.transition",
                 "View.underline",
                 "View.zIndex",
                 "ZStack.init",
+                "withAnimation",
             ]
         );
     }
@@ -1719,5 +1913,74 @@ struct V: View {
         };
         assert_eq!(obj.fields[0].0, "verbatim");
         assert_eq!(obj.fields[1].0, MODIFIERS_FIELD);
+    }
+
+    // ----- withAnimation tests -----
+
+    #[test]
+    fn with_animation_no_arg_executes_body() {
+        // `withAnimation { flag = true }` — no animation arg; body runs and
+        // state change is reflected in next render.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation { x = 99 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"99""#),
+            "withAnimation body must have run: {json}"
+        );
+    }
+
+    #[test]
+    fn with_animation_with_linear_arg_executes_body() {
+        // `withAnimation(.linear) { ... }` — animation arg present; body still runs.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation(.linear) { x = 42 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"42""#),
+            "withAnimation(.linear) body must have run: {json}"
+        );
+    }
+
+    #[test]
+    fn with_animation_easing_executes_body() {
+        // `withAnimation(.easeInOut(duration:0.3)) { ... }` — real-world form.
+        let view = render_to_string(
+            r#"
+struct V: View {
+    @State var x = 0
+    var body: some View {
+        let _ = withAnimation(.easeInOut(duration: 0.3)) { x = 7 }
+        Text("\(x)")
+    }
+}
+"#,
+            "V",
+        );
+        let json = uiir::to_json(&view);
+        assert!(
+            json.contains(r#""verbatim":"7""#),
+            "withAnimation(.easeInOut) body must have run: {json}"
+        );
     }
 }

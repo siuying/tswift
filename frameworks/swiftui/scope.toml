@@ -7,8 +7,8 @@ container concepts the runtime evaluates into a host-neutral UIIR (see
 docs/adr/0006-swiftui-render-host.md and docs/plan/swiftui-support.md). View
 modifiers (.font/.padding/.foregroundColor/…) are measured as members of `View`.
 Tiers mirror the plan roadmap: UI1 = v1 Counter slice, UI2 = the remaining demo
-tabs, UI3–UI8 = the staged tiers. Animation/gestures/graphics and app/scene
-lifecycle are out of scope (deferred to a backlog ADR / never).
+tabs, UI3–UI8 = the staged tiers, UI9 = animation. Gestures/graphics and
+app/scene lifecycle remain out of scope (deferred to a backlog ADR / never).
 """
 
 # NavigationPath is a prelude value type (crates/tswift-swiftui PRELUDE): its
@@ -27,6 +27,17 @@ AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:co
 # DragGesture/streaming gestures remain out of scope (need async event channel).
 TapGesture = ["init", "onEnded"]
 LongPressGesture = ["init", "onEnded"]
+# Animation & AnyTransition are prelude value types (crates/tswift-swiftui
+# PRELUDE): factories + chainable methods are implemented in Swift, not the
+# modifier registry, so they never appear in registered_keys.txt. List the
+# implemented members here. `.default` is deferred (lexer lacks backtick-
+# identifier escape); interactiveSpring/interpolatingSpring/timingCurve and the
+# velocity/animate/shouldMerge internals remain out of reach v1.
+Animation = ["easeIn", "easeInOut", "easeOut", "linear", "spring", "bouncy", "smooth", "snappy", "delay", "speed", "repeatCount", "repeatForever"]
+# AnyTransition: opacity/identity/slide/scale + move/push/offset/scale(_:) +
+# combined/asymmetric. `.animation(_:)` on a transition and the ViewModifier
+# `modifier(active:identity:)` form remain out of scope.
+AnyTransition = ["opacity", "identity", "slide", "scale", "move", "push", "offset", "combined", "asymmetric"]
 
 # ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
 [[tier]]
@@ -76,9 +87,15 @@ id = "UI8"
 title = "Navigation & presentation"
 types = ["NavigationStack", "NavigationLink", "NavigationSplitView", "NavigationPath", "TabView", "Form", "Group"]
 
+# UI9 — animation (implicit .animation, .transition, withAnimation)
+[[tier]]
+id = "UI9"
+title = "Animation & transitions"
+types = ["Animation", "AnyTransition"]
+
 # ── Explicitly excluded (keeps the denominator honest) ────────────────────────
 [out_of_scope]
-animation = ["Animation", "AnyTransition", "Namespace", "MatchedGeometryEffect", "PhaseAnimator", "KeyframeAnimator"]
+animation = ["Namespace", "MatchedGeometryEffect", "PhaseAnimator", "KeyframeAnimator"]
 gestures = ["DragGesture", "MagnificationGesture", "RotationGesture", "GestureState", "SpatialEventGesture"]
 graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
 platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
