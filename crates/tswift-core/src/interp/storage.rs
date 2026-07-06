@@ -1629,6 +1629,23 @@ impl<'w> Interpreter<'w> {
         }
 
         let value = self.eval(&base)?;
+        // Declared-type-aware `Optional` dispatch (#242): `debugDescription` is
+        // an `Optional` member, so route to it when the receiver's static type
+        // is optional. Runs before the Nil short-circuit so a `nil` optional
+        // renders `"nil"` (not nil-propagating). Only plain `.member` access
+        // hits the Optional override; `?.` optional chaining already unwraps and
+        // must dispatch to the WRAPPED type's member.
+        if member == "debugDescription"
+            && !node.is_optional_chain()
+            && self.receiver_is_optional(&base)
+        {
+            if let Some(func) = self
+                .builtins
+                .property(BuiltinReceiver::Optional, "debugDescription")
+            {
+                return func(value).map_err(Self::std_error_to_signal);
+            }
+        }
         // Optional chaining: a nil base short-circuits the whole access to nil.
         if matches!(value, SwiftValue::Nil) {
             return Ok(SwiftValue::Nil);

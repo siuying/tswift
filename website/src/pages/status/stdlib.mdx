@@ -43,7 +43,7 @@ exercised by a passing golden fixture.
 | 🟡 | `Bool` | 9 / 13 | `!`, `toggle`, `init(String)` failable, `random` |
 | 🟡 🛡️ | `String` | 29 / 53 | `String.Index` with grapheme-cluster stepping, slicing, `insert`/`remove`/`replaceSubrange` — hardened vs Apple `StringIndex` tests |
 | 🟡 🛡️ | `Substring` | 19 / 33 | Real view type (base + range), base-relative indices, detach-on-mutate — hardened vs Apple `Substring` tests |
-| 🟡 | `Optional<Wrapped>` | 10 / 15 | Binding, chaining, coalescing, `Optional(x)` init, `some`/`none` patterns |
+| 🟡 | `Optional<Wrapped>` | 12 / 15 | Binding, chaining, coalescing, `Optional(x)` init, `some`/`none` patterns, declared-type-aware `take()` / `debugDescription` |
 | 🟡 🛡️ | `Range` | 15 / 21 | For-in, `contains`, `clamped`, `overlaps` — hardened vs Apple range tests |
 | 🟡 🛡️ | `ClosedRange` | 15 / 21 | Traps on inverted bounds (`1...0`) like real Swift |
 
@@ -106,8 +106,6 @@ Documented honestly rather than papered over:
 
 - **Fitzpatrick skin-tone modifiers** — grapheme segmenter treats
   emoji + modifier as two Characters (ZWJ families work correctly).
-- `Optional.take()` / `.debugDescription` on present optionals need
-  declared-type-aware dispatch (deferred).
 
 ---
 

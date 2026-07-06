@@ -2994,6 +2994,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
+        // Set when a `?` optional-chaining marker was just consumed, so the
+        // following `.member` MemberExpr is tagged as optional-chained.
+        let mut optional_chain_next = false;
         loop {
             match self.peek().kind {
                 // A user-declared postfix operator (`90.0°`), hugging its
@@ -3085,9 +3088,11 @@ impl<'a> Parser<'a> {
                     self.ast.append_child(node, expr);
                     expr = node;
                 }
-                // Optional chaining `expr?.member`: drop the `?`, let `.` handle it.
+                // Optional chaining `expr?.member`: drop the `?`, let `.` handle
+                // it, but remember to tag the following member as chained.
                 TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
                     self.bump();
+                    optional_chain_next = true;
                 }
                 // Optional-chained call `f?(args)` / subscript `a?[i]`: the `?`
                 // must hug both its expression and the `(`/`[` (Swift's
@@ -3221,6 +3226,9 @@ impl<'a> Parser<'a> {
                         self.ast
                             .add(NodeKind::MemberExpr, Some(name.text), dot.line, dot.col);
                     self.ast.append_child(member, expr);
+                    if std::mem::take(&mut optional_chain_next) {
+                        self.ast.add_modifier(member, "?.");
+                    }
                     expr = member;
                 }
                 _ => break,

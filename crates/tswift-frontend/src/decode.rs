@@ -31,6 +31,10 @@ pub(crate) const CONVENIENCE: u32 = 1 << 18;
 pub(crate) const DYNAMIC: u32 = 1 << 19;
 /// `@objc optional` protocol requirement.
 pub(crate) const OPTIONAL_REQ: u32 = 1 << 20;
+/// A `MemberExpr` reached through optional chaining (`base?.member`), as
+/// opposed to a plain `base.member` access. Lets the runtime distinguish the
+/// two so an `Optional`-owned member override applies only to plain access.
+pub(crate) const OPTIONAL_CHAIN: u32 = 1 << 21;
 pub(crate) const ESCAPING: u32 = 1 << 26;
 pub(crate) const AUTOCLOSURE: u32 = 1 << 27;
 pub(crate) const VARIADIC: u32 = 1 << 28;
@@ -98,6 +102,7 @@ pub(crate) fn modifier_bits(modifiers: &[String]) -> u32 {
             "convenience" => CONVENIENCE,
             "dynamic" => DYNAMIC,
             "optional" => OPTIONAL_REQ,
+            "?." => OPTIONAL_CHAIN,
             // Parameter type attributes carried for the runtime.
             "escaping" => ESCAPING,
             "autoclosure" => AUTOCLOSURE,

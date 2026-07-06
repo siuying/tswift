@@ -6,25 +6,23 @@
 //! (`Int`/`Double`/`Bool`/`String`) have no other `map`, so registering it there
 //! is unambiguous; `nil` itself dispatches as the `Optional` receiver.
 //!
-//! **Known dispatch limitation** — `take()` and `debugDescription` are NOT
-//! registered because both would require knowing the *declared* type of the
-//! receiver variable at call time:
-//!
-//! * A present `Optional<Int>` is stored as `SwiftValue::Int(n)` at runtime,
-//!   indistinguishable from a plain `Int`.  Routing `take()` to an Optional
-//!   implementation via wrapped-kind registration would allow `var x = 1;
-//!   x.take()` (non-optional) to silently corrupt `x` to `nil`.
-//! * The `Binding` struct in `env.rs` stores only the current value and
-//!   mutability flag — no declared type.  Declared-type-aware dispatch would
-//!   require storing the type annotation in every binding and threading it
-//!   through ~20 `env.declare()` call sites — deferred to a future slice.
+//! **Declared-type-aware members** — `take()` and `debugDescription` belong to
+//! `Optional` itself, not the wrapped type, so they must NOT be reached by
+//! wrapped-kind registration (that would let `var x = 1; x.take()` corrupt a
+//! non-optional `Int`). Instead they are registered on the `Optional` receiver
+//! and the interpreter routes to them only when the *static* type of the
+//! receiver expression is optional (via the per-binding declared-type map added
+//! in #241). Dispatch on a present optional stored flat as its wrapped value is
+//! decided at the member-access site in `interp` (`eval_method_call` /
+//! `eval_member`), which consults `static_type_of` before the wrapped-type path.
 //!
 //! Known gap: a present `Optional<[T]>` is an `Array` receiver, where `map`
 //! means `Sequence.map`; the two are indistinguishable in this value model, so
 //! the sequence meaning wins (same root cause).
 
 use tswift_core::{
-    BuiltinReceiver, Interpreter, MethodEntry, Outcome, StdContext, StdError, StdResult, SwiftValue,
+    describe_with_type, BuiltinReceiver, Interpreter, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, SwiftValue,
 };
 
 /// Receiver kinds a present optional's wrapped value can take (excluding Array).
@@ -45,9 +43,45 @@ pub fn install(interp: &mut Interpreter<'_>) {
         // follows the interpreter's optional-member semantics on `Nil`.)
         interp.register_property(kind, "unsafelyUnwrapped", unsafely_unwrapped);
     }
-    // NOTE: `take()` and `debugDescription` are intentionally NOT registered.
-    // See module-level doc comment for the full rationale (declared-type-aware
-    // dispatch is required but not yet implemented).
+    // `take()` and `debugDescription` are registered on the `Optional` receiver
+    // ONLY. The interpreter routes to them from the member-access site when the
+    // receiver's static type is optional (see the module-level doc comment).
+    interp.register_intrinsic(
+        BuiltinReceiver::Optional,
+        "take",
+        MethodEntry {
+            mutating: true,
+            func: take,
+        },
+    );
+    interp.register_property(
+        BuiltinReceiver::Optional,
+        "debugDescription",
+        debug_description,
+    );
+}
+
+/// `Optional.take()` — `mutating func take() -> Wrapped?`.
+///
+/// Returns the current value and resets the receiver to `nil`. In the flattened
+/// model the present value *is* the result; the write-back sets the receiver to
+/// `SwiftValue::Nil`. A `nil` receiver yields `nil` and stays `nil`.
+fn take(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    Ok(Outcome {
+        result: recv,
+        receiver: SwiftValue::Nil,
+    })
+}
+
+/// `Optional.debugDescription` — `Optional(<wrapped debugDescription>)` for a
+/// present value, `"nil"` for an absent one. The `"_?"` spelling drives
+/// [`describe_with_type`] to render the wrapped value as a quoted element.
+fn debug_description(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::Str(describe_with_type(&recv, Some("_?"))))
 }
 
 /// `Optional.unsafelyUnwrapped` — the wrapped value of a present optional.
@@ -131,6 +165,38 @@ mod tests {
         assert_eq!(
             unsafely_unwrapped(SwiftValue::Str("hi".into())).unwrap(),
             SwiftValue::Str("hi".into())
+        );
+    }
+
+    #[test]
+    fn take_present_returns_value_and_resets_receiver() {
+        let mut c = Doubler;
+        let out = take(&mut c, SwiftValue::int(5), Vec::new()).unwrap();
+        assert_eq!(out.result, SwiftValue::int(5));
+        assert_eq!(out.receiver, SwiftValue::Nil);
+    }
+
+    #[test]
+    fn take_nil_stays_nil() {
+        let mut c = Doubler;
+        let out = take(&mut c, SwiftValue::Nil, Vec::new()).unwrap();
+        assert_eq!(out.result, SwiftValue::Nil);
+        assert_eq!(out.receiver, SwiftValue::Nil);
+    }
+
+    #[test]
+    fn debug_description_wraps_present_quotes_strings() {
+        assert_eq!(
+            debug_description(SwiftValue::Str("x".into())).unwrap(),
+            SwiftValue::Str("Optional(\"x\")".into())
+        );
+        assert_eq!(
+            debug_description(SwiftValue::int(5)).unwrap(),
+            SwiftValue::Str("Optional(5)".into())
+        );
+        assert_eq!(
+            debug_description(SwiftValue::Nil).unwrap(),
+            SwiftValue::Str("nil".into())
         );
     }
 

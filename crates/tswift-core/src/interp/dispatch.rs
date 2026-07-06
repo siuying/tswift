@@ -1265,6 +1265,34 @@ impl<'w> Interpreter<'w> {
 
         let base_value = self.eval(&base)?;
 
+        // Declared-type-aware `Optional` dispatch (#242): when the receiver's
+        // static type is optional, `Optional`'s own mutating members (`take`)
+        // win over the wrapped type's. Runs before the Nil short-circuit so
+        // `nil.take()` on an optional-typed binding still dispatches (returning
+        // nil, leaving the receiver nil) rather than nil-propagating.
+        // Only plain `.take()` access hits the Optional override; a `?.take()`
+        // optional-chained call already unwraps and dispatches to the wrapped
+        // type.
+        if method == "take" && !member.is_optional_chain() && self.receiver_is_optional(&base) {
+            if let Some(entry) = self.builtins.intrinsic(BuiltinReceiver::Optional, "take") {
+                // `take()` takes no arguments; reject `take(x)` (matches Swift's
+                // arity) rather than silently ignoring the extra argument.
+                if !arg_nodes.is_empty() {
+                    return Err(EvalError::Type(
+                        "argument passed to call that takes no arguments".into(),
+                    )
+                    .into());
+                }
+                let args = self.eval_args(arg_nodes)?;
+                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                let place = self.resolve_place(&base);
+                return match (entry.func)(self, base_value.clone(), plain) {
+                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                    Err(err) => Err(Self::std_error_to_signal(err)),
+                };
+            }
+        }
+
         // An optional-chained method call on an absent base (`none?.f()`)
         // nil-propagates. Type-qualified and implicit-member bases were
         // handled above, so a Nil here is a real absent value.

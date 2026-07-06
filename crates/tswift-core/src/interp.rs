@@ -1605,7 +1605,17 @@ impl<'w> Interpreter<'w> {
         let decl_ty = node
             .children()
             .find(|c| c.kind() == NodeKind::TypeRef)
-            .and_then(|c| c.text());
+            .and_then(|c| c.text())
+            // No explicit annotation: infer the static type from the
+            // initializer, but record it only when optional so declared-type
+            // aware dispatch (`x.take()`) and optional-aware printing see it
+            // without over-tagging plain scalars.
+            .or_else(|| {
+                init_expr.and_then(|init| {
+                    self.static_type_of(&init)
+                        .filter(|ty| TypeRepr::parse(ty).is_optional())
+                })
+            });
         self.env.declare(&name, value, mutable);
         if let Some(ty) = decl_ty {
             self.env.set_declared_type(&name, ty);
@@ -2206,12 +2216,62 @@ impl<'w> Interpreter<'w> {
             NodeKind::IdentExpr => node.text().and_then(|n| self.env.declared_type(&n)),
             NodeKind::CallExpr => self.static_type_of_call(node),
             NodeKind::ArrayLiteral => self.static_type_of_array(node),
+            NodeKind::MemberExpr if node.is_optional_chain() => {
+                // Optional chaining yields an optional result (`s?.count` is
+                // `Int?`), so print renders it `Optional(...)`. Use the member's
+                // own declared type when known, else the unknown-optional base.
+                let base = self
+                    .static_type_of_member(node)
+                    .map(|t| TypeRepr::parse(&t).strip_optionals().text().to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                Some(format!("{base}?"))
+            }
+            NodeKind::MemberExpr => self.static_type_of_member(node),
             _ => None,
         }
     }
 
-    /// Static type of a call expression — currently only `Optional(x)`, whose
-    /// result is the wrapped argument's type made optional.
+    /// Static type of a `base.member` access, recovered from `base`'s
+    /// struct/class stored-property declaration (whose written TypeRef spelling
+    /// — e.g. `Int?` — is preserved on the `StoredProp`). Lets `b.x.take()` and
+    /// `self.x.take()` enter Optional dispatch. Plain (non-`?.`) access only.
+    fn static_type_of_member(&self, node: &Node<'static>) -> Option<String> {
+        let member = self.member_name(node)?;
+        let base = node.first_child()?;
+        let type_name = self.receiver_type_name(&base)?;
+        let stored_ty = |props: &[StoredProp]| {
+            props
+                .iter()
+                .find(|p| p.name == member)
+                .and_then(|p| p.ty.clone())
+        };
+        if let Some(def) = self.types.struct_def(&type_name) {
+            return stored_ty(&def.stored);
+        }
+        if let Some(def) = self.types.class_def(&type_name) {
+            return stored_ty(&def.stored);
+        }
+        None
+    }
+
+    /// The runtime type name of a receiver expression, when it can be read
+    /// without side effects — an in-scope binding (`b`, `self`) or a nested
+    /// member whose declared type names a known struct/class.
+    fn receiver_type_name(&self, node: &Node<'static>) -> Option<String> {
+        match node.kind() {
+            NodeKind::IdentExpr => Some(self.env.get(&node.text()?)?.type_name()),
+            NodeKind::MemberExpr => {
+                let ty = self.static_type_of_member(node)?;
+                let stripped = TypeRepr::parse(&ty).strip_optionals().text().to_string();
+                Some(stripped)
+            }
+            _ => None,
+        }
+    }
+
+    /// Static type of a call expression — `Optional(x)` (wrapped type made
+    /// optional) and `opt.take()` (returns `Wrapped?`, i.e. the receiver's own
+    /// optional type), so `let t = x.take()` renders as `Optional(...)`.
     fn static_type_of_call(&self, node: &Node<'static>) -> Option<String> {
         let children: Vec<Node<'static>> = node.children().collect();
         let callee = children.first()?;
@@ -2222,7 +2282,33 @@ impl<'w> Interpreter<'w> {
                 .unwrap_or_else(|| "_".to_string());
             return Some(format!("{base}?"));
         }
+        // `receiver.take()` yields the receiver's own optional type.
+        if callee.kind() == NodeKind::MemberExpr
+            && self.member_name(callee).as_deref() == Some("take")
+        {
+            if let Some(recv) = callee.first_child() {
+                let ty = self.static_type_of(&recv)?;
+                if TypeRepr::parse(&ty).is_optional() {
+                    return Some(ty);
+                }
+            }
+        }
         None
+    }
+
+    /// The member name of a `MemberExpr`, resolving the bare-`.` operator slot.
+    fn member_name(&self, member: &Node<'static>) -> Option<String> {
+        match member.text() {
+            Some(name) if name == "." => member.op_text(),
+            other => other,
+        }
+    }
+
+    /// Whether a receiver expression's static type is a (top-level) optional.
+    /// Gates declared-type-aware `Optional` member dispatch (#242).
+    fn receiver_is_optional(&self, base: &Node<'static>) -> bool {
+        self.static_type_of(base)
+            .is_some_and(|ty| TypeRepr::parse(&ty).is_optional())
     }
 
     /// Static type of an array literal. Prefers a contextual array type; else
