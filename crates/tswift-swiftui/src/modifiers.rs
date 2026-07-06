@@ -185,6 +185,39 @@ fn compose_modifier(
     append_modifier(recv, make_modifier(name, margs))
 }
 
+/// `.animation(_ animation: Animation?, value:)` (modern) and the deprecated
+/// `.animation(_ animation: Animation?)` (no `value:`). Records an `animation`
+/// modifier whose serialized value is an object with `animation` (the curve, or
+/// JSON `null` to disable) plus, for the modern form, `value` — the current
+/// observed operand the host diffs across renders to know when to animate.
+/// Mirrors https://developer.apple.com/documentation/swiftui/view/animation(_:value:).
+pub(crate) fn modifier_animation(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut animation: SwiftValue = SwiftValue::Nil;
+    let mut observed: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("value") => observed = Some(arg.value),
+            // The leading positional is the `Animation?` (possibly `nil`).
+            _ => animation = arg.value,
+        }
+    }
+    let mut margs = vec![Arg {
+        label: Some("animation".into()),
+        value: animation,
+    }];
+    if let Some(value) = observed {
+        margs.push(Arg {
+            label: Some("value".into()),
+            value,
+        });
+    }
+    append_modifier(recv, make_modifier("animation", margs))
+}
+
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
     recv: SwiftValue,
@@ -261,6 +294,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
     // same marker+handler route as `.onTapGesture`/`.onLongPressGesture`.
     ("gesture", modifier_gesture),
+    // `.animation(_:value:)` / deprecated `.animation(_:)` (Slice 2).
+    ("animation", modifier_animation),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).

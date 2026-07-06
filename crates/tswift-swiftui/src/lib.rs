@@ -37,9 +37,9 @@ pub(crate) use views::{
 pub(crate) use async_image::async_image_init;
 pub use async_image::{async_image_url_image, has_async_image_closures, realize_async_image_child};
 pub(crate) use modifiers::{
-    gesture_on_ended, handlers_map, long_press_gesture_init, modifier_aspect_ratio,
-    modifier_background, modifier_frame, modifier_multiline_text_alignment, modifier_overlay,
-    modifier_padding, tap_gesture_init, MODIFIER_FNS,
+    gesture_on_ended, handlers_map, long_press_gesture_init, modifier_animation,
+    modifier_aspect_ratio, modifier_background, modifier_frame, modifier_multiline_text_alignment,
+    modifier_overlay, modifier_padding, tap_gesture_init, MODIFIER_FNS,
 };
 pub(crate) use navigation::{navigation_link_init, navigation_stack_init};
 pub use navigation::{
@@ -667,6 +667,17 @@ pub fn install(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("contentMode", "ContentMode"),
         ],
     );
+    // `.animation(_:value:)` — the positional curve is typed `Animation` so a
+    // leading-dot factory (`.easeInOut(…)`, `.linear`) resolves against it; the
+    // `value:` operand is any Equatable, resolved from its own expression.
+    interp.register_struct_method_typed(
+        "animation",
+        modifier_animation,
+        vec![
+            BuiltinParam::positional("Animation"),
+            BuiltinParam::labeled("value", "Any"),
+        ],
+    );
 }
 
 /// Render `root_type`'s `body` into a view-value tree (the UIIR root). The
@@ -954,6 +965,7 @@ mod tests {
                 "View.accessibilityIdentifier",
                 "View.accessibilityLabel",
                 "View.accessibilityValue",
+                "View.animation",
                 "View.aspectRatio",
                 "View.background",
                 "View.bold",

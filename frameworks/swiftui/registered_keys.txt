@@ -42,6 +42,7 @@ View.accessibilityHint
 View.accessibilityIdentifier
 View.accessibilityLabel
 View.accessibilityValue
+View.animation
 View.aspectRatio
 View.background
 View.bold

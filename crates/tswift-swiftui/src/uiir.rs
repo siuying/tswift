@@ -416,6 +416,69 @@ mod tests {
         to_json(&view)
     }
 
+    /// Render a full `View` struct source (with its own `@State`) and serialize.
+    fn render_source_json(src: &str, root: &str) -> String {
+        let src = format!("{PRELUDE}\n{src}\n");
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let view = render_root(&mut interp, root).expect("render");
+        to_json(&view)
+    }
+
+    #[test]
+    fn animation_modifier_modern_and_deprecated_forms_serialize() {
+        // Modern `.animation(_:value:)` — the curve plus the observed operand.
+        let json = render_source_json(
+            r#"struct V: View {
+    @State private var flag = false
+    var body: some View { Text("x").animation(.easeInOut(duration: 0.3), value: flag) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"easeInOut","duration":0.3},"value":false}}],"children":[]}"#
+        );
+        // A spring curve with a numeric observed value.
+        let json2 = render_source_json(
+            r#"struct V: View {
+    @State private var n = 0
+    var body: some View { Text("x").animation(.spring(), value: n) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json2,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"spring","response":0.5,"dampingFraction":0.825,"blendDuration":0.0},"value":0}}],"children":[]}"#
+        );
+        // Deprecated single-arg `.animation(_:)` — curve only, no observed value.
+        let json3 = render_json(r#"Text("x").animation(.linear)"#);
+        assert_eq!(
+            json3,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":{"$":"animation","kind":"linear"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn animation_modifier_nil_disables_without_crashing() {
+        // `.animation(nil, value:)` must serialize the curve as JSON `null`.
+        let json = render_source_json(
+            r#"struct V: View {
+    @State private var flag = false
+    var body: some View { Text("x").animation(nil, value: flag) }
+}"#,
+            "V",
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"animation","value":{"animation":null,"value":false}}],"children":[]}"#
+        );
+    }
+
     #[test]
     fn text_with_token_modifier_serializes_canonically() {
         let json = render_json(r#"Text("hi").font(.largeTitle).foregroundColor(.white)"#);
