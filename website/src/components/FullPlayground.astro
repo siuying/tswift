@@ -384,7 +384,7 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'SwiftUI',      label: 'Animation',        code: `struct AnimatedCard: View {
+    { group: 'Animation',    label: 'Spring Card',      code: `struct AnimatedCard: View {
     @State private var expanded = false
 
     var body: some View {
@@ -413,6 +413,86 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
             .padding()
             .background(Color.blue)
             .cornerRadius(10)
+        }
+        .padding()
+    }
+}` },
+
+    { group: 'Animation',    label: 'Pulse',            code: `// Repeating animations play the moment you hit Run —
+// no interaction needed. A repeatForever() animation
+// pulses continuously.
+struct PulseView: View {
+    @State private var beating = true
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Live pulse")
+                .font(.headline)
+
+            Text("❤️")
+                .font(.largeTitle)
+                .animation(.easeInOut(duration: 0.7).repeatForever(), value: beating)
+
+            Text("tswift ♥ SwiftUI")
+                .foregroundColor(.secondary)
+        }
+        .padding()
+    }
+}` },
+
+    { group: 'Animation',    label: 'Spinner',          code: `// Three dots pulsing on a staggered delay — the classic
+// loading indicator. Each dot repeats forever with an
+// increasing .delay().
+struct LoadingView: View {
+    @State private var animating = true
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Loading…")
+                .font(.headline)
+
+            HStack(spacing: 14) {
+                Circle().fill(Color.blue)
+                    .frame(width: 22, height: 22)
+                    .animation(.easeInOut(duration: 0.6).repeatForever(), value: animating)
+                Circle().fill(Color.purple)
+                    .frame(width: 22, height: 22)
+                    .animation(.easeInOut(duration: 0.6).delay(0.2).repeatForever(), value: animating)
+                Circle().fill(Color.pink)
+                    .frame(width: 22, height: 22)
+                    .animation(.easeInOut(duration: 0.6).delay(0.4).repeatForever(), value: animating)
+            }
+        }
+        .padding()
+    }
+}` },
+
+    { group: 'Animation',    label: 'Transition',       code: `// .transition(_:) animates a view in and out as it is
+// inserted or removed. Tap Reveal and watch it slide up
+// while fading in.
+struct RevealView: View {
+    @State private var shown = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Button(shown ? "Hide" : "Reveal") {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    shown = !shown
+                }
+            }
+            .foregroundColor(.white)
+            .padding()
+            .background(Color.blue)
+            .cornerRadius(10)
+
+            if shown {
+                Text("Hello! 👋")
+                    .font(.title)
+                    .padding()
+                    .background(Color.yellow)
+                    .cornerRadius(12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .padding()
     }
