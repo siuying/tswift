@@ -2469,6 +2469,8 @@ mod tests {
             vec![Arg {
                 label: Some("timeIntervalSince1970".into()),
                 value: SwiftValue::Double(REFERENCE_DATE_UNIX_OFFSET + 25.0),
+
+                static_ty: None,
             }],
         )
         .expect("Date(timeIntervalSince1970:)");
@@ -2480,10 +2482,14 @@ mod tests {
                 Arg {
                     label: Some("timeInterval".into()),
                     value: SwiftValue::Double(5.0),
+
+                    static_ty: None,
                 },
                 Arg {
                     label: Some("since".into()),
                     value: unix.clone(),
+
+                    static_ty: None,
                 },
             ],
         )
@@ -2589,6 +2595,8 @@ mod tests {
             vec![Arg {
                 label: Some("uuidString".into()),
                 value: SwiftValue::Str("e2b8be3f-4c7d-41f3-8d5f-b8d43c343111".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap();
@@ -2597,6 +2605,8 @@ mod tests {
             vec![Arg {
                 label: Some("uuidString".into()),
                 value: SwiftValue::Str("E2B8BE3F-4C7D-41F3-8D5F-B8D43C343111".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap();
@@ -2659,6 +2669,8 @@ mod tests {
         Arg {
             label: Some(label.into()),
             value: SwiftValue::int(value),
+
+            static_ty: None,
         }
     }
 

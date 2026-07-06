@@ -111,6 +111,8 @@ pub(crate) fn navigation_link_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> 
             vec![Arg {
                 label: None,
                 value: closure,
+
+                static_ty: None,
             }],
         )?,
         None => Vec::new(),

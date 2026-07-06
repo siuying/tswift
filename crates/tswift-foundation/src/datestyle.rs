@@ -555,6 +555,8 @@ mod tests {
                 case: "iso8601".into(),
                 payload: vec![],
             })),
+
+            static_ty: None,
         }];
         assert_eq!(fmt(d, args), "2024-06-21T15:30:45Z");
     }
@@ -570,6 +572,8 @@ mod tests {
                     case: "abbreviated".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -578,6 +582,8 @@ mod tests {
                     case: "shortened".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "Jun 21, 2024 at 3:30 PM");
@@ -594,6 +600,8 @@ mod tests {
                     case: "numeric".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -602,6 +610,8 @@ mod tests {
                     case: "omitted".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "6/21/2024");
@@ -618,6 +628,8 @@ mod tests {
                     case: "long".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -626,6 +638,8 @@ mod tests {
                     case: "standard".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "June 21, 2024 at 3:30:45 AM");
@@ -642,6 +656,8 @@ mod tests {
                     case: "complete".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -650,6 +666,8 @@ mod tests {
                     case: "complete".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "Friday, June 21, 2024 at 3:30:45 PM GMT");
@@ -666,6 +684,8 @@ mod tests {
         let args = vec![Arg {
             label: None,
             value: make_format_style(components),
+
+            static_ty: None,
         }];
         assert_eq!(fmt(d, args), "Jun 21, 2024");
     }
@@ -681,6 +701,8 @@ mod tests {
         let args = vec![Arg {
             label: None,
             value: make_format_style(components),
+
+            static_ty: None,
         }];
         assert_eq!(fmt(d, args), "3:30:45 PM");
     }
@@ -697,6 +719,8 @@ mod tests {
                     case: "numeric".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -705,6 +729,8 @@ mod tests {
                     case: "omitted".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "2/29/2000");
@@ -723,6 +749,8 @@ mod tests {
                     case: "omitted".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -731,6 +759,8 @@ mod tests {
                     case: "shortened".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "12:00 AM");
@@ -748,6 +778,8 @@ mod tests {
                     case: "omitted".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
             Arg {
                 label: Some("time".into()),
@@ -756,6 +788,8 @@ mod tests {
                     case: "shortened".into(),
                     payload: vec![],
                 })),
+
+                static_ty: None,
             },
         ];
         assert_eq!(fmt(d, args), "12:00 PM");

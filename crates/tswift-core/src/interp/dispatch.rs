@@ -242,6 +242,9 @@ impl<'w> Interpreter<'w> {
         for (i, p) in params.iter().enumerate() {
             let v = args.get(i).cloned().unwrap_or(SwiftValue::Nil);
             self.env.declare(&p.name, v, false);
+            if let Some(ty) = p.ty.clone() {
+                self.env.set_declared_type(&p.name, ty);
+            }
         }
         for (i, v) in shorthand_args.iter().enumerate() {
             self.env.declare(&format!("${i}"), v.clone(), false);
@@ -523,6 +526,25 @@ impl<'w> Interpreter<'w> {
             // `Self(...)` constructs an instance of the enclosing type.
             let name = self.resolve_self_keyword(name);
 
+            // `String(describing:)` / `String(reflecting:)` on a statically
+            // optional argument: render `Optional(…)`/`nil` like Swift. Only
+            // overrides the optional case; everything else falls through to the
+            // normal conversion ctor unchanged.
+            if name == "String" && self.is_unshadowed("String") {
+                if let Some(idx) = args.iter().position(|a| {
+                    matches!(a.label.as_deref(), Some("describing") | Some("reflecting"))
+                }) {
+                    let ty = arg_nodes.get(idx).and_then(|n| self.static_type_of(n));
+                    if ty
+                        .as_deref()
+                        .is_some_and(|t| TypeRepr::parse(t).contains_optional())
+                    {
+                        let rendered = crate::describe_with_type(&args[idx].value, ty.as_deref());
+                        return Ok(SwiftValue::Str(rendered));
+                    }
+                }
+            }
+
             // `type(of: x)` — the dynamic type of `x` as a metatype value.
             if name == "type" && self.is_unshadowed("type") {
                 if let Some(arg) = args
@@ -666,7 +688,24 @@ impl<'w> Interpreter<'w> {
 
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.globals.free_fn(&name).map(|e| e.f) {
-                let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
+                // Attach each argument's statically inferred type spelling so
+                // `print`/`debugPrint` can render optionals as Swift does. Only
+                // valid when args line up 1:1 with the syntactic arg nodes (no
+                // pack expansion / autoclosure rewriting occurred).
+                let tys: Vec<Option<String>> = if args.len() == arg_nodes.len() {
+                    arg_nodes.iter().map(|n| self.static_type_of(n)).collect()
+                } else {
+                    vec![None; args.len()]
+                };
+                let labeled: Vec<Arg> = args
+                    .into_iter()
+                    .zip(tys)
+                    .map(|(a, ty)| {
+                        let mut arg = Arg::from(a);
+                        arg.static_ty = ty;
+                        arg
+                    })
+                    .collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
             if let Some(native) = self.globals.native(&name) {
@@ -893,6 +932,7 @@ impl<'w> Interpreter<'w> {
                         let index_args = vec![Arg {
                             label: Some("after".to_string()),
                             value: after_arg.value.clone(),
+                            static_ty: None,
                         }];
                         if let Some(entry) = self.builtins.labeled_intrinsic(kind, "index") {
                             let outcome = (entry.func)(self, base_value.clone(), index_args);

@@ -1191,11 +1191,17 @@ mod tests {
         Arg {
             label: Some(label.to_string()),
             value,
+
+            static_ty: None,
         }
     }
 
     fn arg_pos(value: SwiftValue) -> Arg {
-        Arg { label: None, value }
+        Arg {
+            label: None,
+            value,
+            static_ty: None,
+        }
     }
 
     fn is_trap(e: &StdError) -> bool {

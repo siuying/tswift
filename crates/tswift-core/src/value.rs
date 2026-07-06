@@ -9,6 +9,7 @@ use std::fmt;
 use std::rc::{Rc, Weak};
 
 use crate::regex::Regex;
+use tswift_frontend::TypeRepr;
 
 /// The bit width and signedness of an integer value, mirroring Swift's fixed
 /// width integer family. `Int`/`UInt` map to the 64-bit arms on the platforms
@@ -496,6 +497,111 @@ fn fmt_element(v: &SwiftValue, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     }
 }
 
+/// A `SwiftValue` rendered with *collection-element* semantics (strings and
+/// substrings quoted and escaped), usable through `Display`/`to_string`.
+struct ElementDisplay<'a>(&'a SwiftValue);
+
+impl fmt::Display for ElementDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_element(self.0, f)
+    }
+}
+
+/// The element type of a `Set<E>` spelling, if `repr` names one.
+fn set_element<'a>(repr: &'a TypeRepr<'a>) -> Option<&'a TypeRepr<'a>> {
+    match repr.kind() {
+        tswift_frontend::TypeReprKind::Named { name, args }
+            if (*name == "Set" || name.ends_with(".Set")) && args.len() == 1 =>
+        {
+            args.first()
+        }
+        _ => None,
+    }
+}
+
+/// Materialize an array/array-slice value into its elements, if it is one.
+fn array_like_items(value: &SwiftValue) -> Option<Vec<SwiftValue>> {
+    match value {
+        SwiftValue::Array(items) => Some(items.as_ref().clone()),
+        SwiftValue::ArraySlice { base, start, end } => Some(base[*start..*end].to_vec()),
+        _ => None,
+    }
+}
+
+/// Render `value` for `print`/`String(describing:)` given its statically
+/// inferred type spelling `ty`.
+///
+/// The runtime flattens optionals — a present `Optional<T>` is stored as a bare
+/// `T`, an absent one as [`SwiftValue::Nil`] — so "this was an optional" is
+/// erased from the value alone. When `ty` names an optional (directly, or as a
+/// collection element), this re-derives Swift's rendering: a present value is
+/// wrapped `Optional(<debugDescription>)` and an absent value renders `nil`.
+/// With `ty == None`, or a non-optional type, the value renders exactly as its
+/// plain [`Display`].
+pub fn describe_with_type(value: &SwiftValue, ty: Option<&str>) -> String {
+    match ty {
+        Some(t) => describe_with_repr(value, &TypeRepr::parse(t), false),
+        None => value.to_string(),
+    }
+}
+
+/// Core of [`describe_with_type`]. `as_element` selects collection-element
+/// rendering (quoted strings) — true inside an `Optional(...)` wrapper or a
+/// collection, false at the top level (so `print(nonOptionalString)` stays
+/// unquoted).
+fn describe_with_repr(value: &SwiftValue, repr: &TypeRepr, as_element: bool) -> String {
+    if repr.is_optional() {
+        return match value {
+            SwiftValue::Nil => "nil".to_string(),
+            _ => format!(
+                "Optional({})",
+                describe_with_repr(value, repr.unwrap_optional(), true)
+            ),
+        };
+    }
+    if let Some(elem) = repr.array_element() {
+        if let Some(items) = array_like_items(value) {
+            let inner: Vec<String> = items
+                .iter()
+                .map(|v| describe_with_repr(v, elem, true))
+                .collect();
+            return format!("[{}]", inner.join(", "));
+        }
+    }
+    if let Some((key_ty, val_ty)) = repr.dictionary() {
+        if let SwiftValue::Dict(pairs) = value {
+            if pairs.is_empty() {
+                return "[:]".to_string();
+            }
+            let inner: Vec<String> = pairs
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "{}: {}",
+                        describe_with_repr(k, key_ty, true),
+                        describe_with_repr(v, val_ty, true)
+                    )
+                })
+                .collect();
+            return format!("[{}]", inner.join(", "));
+        }
+    }
+    if let Some(elem) = set_element(repr) {
+        if let SwiftValue::Set(items) = value {
+            let inner: Vec<String> = items
+                .iter()
+                .map(|v| describe_with_repr(v, elem, true))
+                .collect();
+            return format!("[{}]", inner.join(", "));
+        }
+    }
+    if as_element {
+        ElementDisplay(value).to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 impl fmt::Display for SwiftValue {
     /// Renders a value the way Swift's `print` would for these scalar cases.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -765,6 +871,58 @@ fn fmt_decimal(neg: bool, digits: &str, exp: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn describe_optional_present_and_absent() {
+        assert_eq!(
+            describe_with_type(&SwiftValue::Str("x".into()), Some("String?")),
+            "Optional(\"x\")"
+        );
+        assert_eq!(describe_with_type(&SwiftValue::Nil, Some("String?")), "nil");
+        assert_eq!(
+            describe_with_type(&SwiftValue::int(1), Some("Int?")),
+            "Optional(1)"
+        );
+        assert_eq!(
+            describe_with_type(&SwiftValue::Bool(true), Some("Bool?")),
+            "Optional(true)"
+        );
+    }
+
+    #[test]
+    fn describe_array_of_optionals() {
+        let arr = SwiftValue::Array(Rc::new(vec![
+            SwiftValue::int(1),
+            SwiftValue::Nil,
+            SwiftValue::int(3),
+        ]));
+        assert_eq!(
+            describe_with_type(&arr, Some("[Int?]")),
+            "[Optional(1), nil, Optional(3)]"
+        );
+    }
+
+    #[test]
+    fn describe_nested_array_of_optionals() {
+        let inner = SwiftValue::Array(Rc::new(vec![SwiftValue::int(1), SwiftValue::Nil]));
+        let outer = SwiftValue::Array(Rc::new(vec![inner]));
+        assert_eq!(
+            describe_with_type(&outer, Some("[[Int?]]")),
+            "[[Optional(1), nil]]"
+        );
+    }
+
+    #[test]
+    fn describe_non_optional_unchanged() {
+        let arr = SwiftValue::Array(Rc::new(vec![SwiftValue::Str("x".into())]));
+        assert_eq!(describe_with_type(&arr, Some("[String]")), "[\"x\"]");
+        assert_eq!(describe_with_type(&arr, None), "[\"x\"]");
+        // A plain (non-optional) scalar at top level stays unquoted.
+        assert_eq!(
+            describe_with_type(&SwiftValue::Str("x".into()), Some("String")),
+            "x"
+        );
+    }
 
     /// Copy-on-write: assigning shares the `Rc`; mutating one side clones it,
     /// leaving the other's storage uniquely owned and unchanged.

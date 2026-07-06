@@ -16,9 +16,20 @@ use std::io::BufRead;
 use std::rc::Rc;
 
 use tswift_core::{
-    ops, Arg, EvalError, IntValue, IntWidth, Interpreter, StdContext, StdError, StdResult,
-    SwiftValue,
+    describe_with_type, ops, Arg, EvalError, IntValue, IntWidth, Interpreter, StdContext, StdError,
+    StdResult, SwiftValue, TypeRepr,
 };
+
+/// An output item paired with its statically inferred type spelling (if any).
+type Item = (SwiftValue, Option<String>);
+
+/// Whether a type spelling names an optional anywhere (directly or as a
+/// collection element) — the only case that changes rendering. Matches both
+/// the `T?` sugar and the generic `Optional<T>` spelling.
+fn ty_is_optional(ty: &Option<String>) -> bool {
+    ty.as_deref()
+        .is_some_and(|t| TypeRepr::parse(t).contains_optional())
+}
 
 /// Register the free functions of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
@@ -64,7 +75,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
 /// `print(_:separator:terminator:)` — display each item, default `" "`/`"\n"`.
 fn print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let (items, sep, term) = output_parts(args, " ", "\n");
-    let rendered: Vec<String> = items.iter().map(|v| ctx.display(v)).collect();
+    let rendered: Vec<String> = items
+        .iter()
+        .map(|(v, ty)| {
+            if ty_is_optional(ty) {
+                describe_with_type(v, ty.as_deref())
+            } else {
+                ctx.display(v)
+            }
+        })
+        .collect();
     let line = rendered.join(&sep);
     let _ = write!(ctx.out(), "{line}{term}");
     Ok(SwiftValue::Void)
@@ -76,7 +96,13 @@ fn debug_print(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let (items, sep, term) = output_parts(args, " ", "\n");
     let line = items
         .iter()
-        .map(debug_format)
+        .map(|(v, ty)| {
+            if ty_is_optional(ty) {
+                describe_with_type(v, ty.as_deref())
+            } else {
+                debug_format(v)
+            }
+        })
         .collect::<Vec<_>>()
         .join(&sep);
     let _ = write!(ctx.out(), "{line}{term}");
@@ -113,11 +139,7 @@ fn dump(ctx: &mut dyn StdContext, mut args: Vec<Arg>) -> StdResult {
 
 /// Split output args into `(items, separator, terminator)`, honouring the
 /// `separator:`/`terminator:` labels.
-fn output_parts(
-    args: Vec<Arg>,
-    def_sep: &str,
-    def_term: &str,
-) -> (Vec<SwiftValue>, String, String) {
+fn output_parts(args: Vec<Arg>, def_sep: &str, def_term: &str) -> (Vec<Item>, String, String) {
     let mut items = Vec::new();
     let mut sep = def_sep.to_string();
     let mut term = def_term.to_string();
@@ -125,7 +147,7 @@ fn output_parts(
         match arg.label.as_deref() {
             Some("separator") => sep = arg.value.to_string(),
             Some("terminator") => term = arg.value.to_string(),
-            _ => items.push(arg.value),
+            _ => items.push((arg.value, arg.static_ty)),
         }
     }
     (items, sep, term)
@@ -702,6 +724,7 @@ mod tests {
         Arg {
             label: Some(l.into()),
             value: v,
+            static_ty: None,
         }
     }
 
@@ -786,5 +809,55 @@ mod tests {
     fn debug_format_quotes_strings() {
         assert_eq!(debug_format(&SwiftValue::Str("hi".into())), "\"hi\"");
         assert_eq!(debug_format(&SwiftValue::int(42)), "42");
+    }
+
+    fn opt_arg(value: SwiftValue, ty: &str) -> Arg {
+        Arg {
+            label: None,
+            value,
+            static_ty: Some(ty.to_string()),
+        }
+    }
+
+    #[test]
+    fn print_renders_optional_from_static_type() {
+        let mut c = MockCtx { sink: vec![] };
+        print(
+            &mut c,
+            vec![opt_arg(SwiftValue::Str("x".into()), "String?")],
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(c.sink).unwrap(), "Optional(\"x\")\n");
+    }
+
+    #[test]
+    fn print_renders_nil_optional() {
+        let mut c = MockCtx { sink: vec![] };
+        print(&mut c, vec![opt_arg(SwiftValue::Nil, "String?")]).unwrap();
+        assert_eq!(String::from_utf8(c.sink).unwrap(), "nil\n");
+    }
+
+    #[test]
+    fn print_array_of_optionals() {
+        let mut c = MockCtx { sink: vec![] };
+        let arr = SwiftValue::Array(std::rc::Rc::new(vec![
+            SwiftValue::int(1),
+            SwiftValue::Nil,
+            SwiftValue::int(3),
+        ]));
+        print(&mut c, vec![opt_arg(arr, "[Int?]")]).unwrap();
+        assert_eq!(
+            String::from_utf8(c.sink).unwrap(),
+            "[Optional(1), nil, Optional(3)]\n"
+        );
+    }
+
+    #[test]
+    fn print_non_optional_unchanged() {
+        let mut c = MockCtx { sink: vec![] };
+        let arr = SwiftValue::Array(std::rc::Rc::new(vec![SwiftValue::Str("x".into())]));
+        // No static type, and a non-optional type, both render as before.
+        print(&mut c, vec![pos(arr)]).unwrap();
+        assert_eq!(String::from_utf8(c.sink).unwrap(), "[\"x\"]\n");
     }
 }

@@ -176,12 +176,16 @@ fn compose_modifier(
         margs.push(Arg {
             label: None,
             value: content,
+
+            static_ty: None,
         });
     }
     if let Some(alignment) = alignment {
         margs.push(Arg {
             label: Some("alignment".into()),
             value: alignment,
+
+            static_ty: None,
         });
     }
     append_modifier(recv, make_modifier(name, margs))
@@ -210,11 +214,15 @@ pub(crate) fn modifier_animation(
     let mut margs = vec![Arg {
         label: Some("animation".into()),
         value: animation,
+
+        static_ty: None,
     }];
     if let Some(value) = observed {
         margs.push(Arg {
             label: Some("value".into()),
             value,
+
+            static_ty: None,
         });
     }
     append_modifier(recv, make_modifier("animation", margs))
@@ -330,6 +338,8 @@ fn modifier_tab_item(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>)
         Some(view) => vec![Arg {
             label: None,
             value: view,
+
+            static_ty: None,
         }],
         None => Vec::new(),
     };
@@ -451,6 +461,8 @@ fn modifier_on_tap_gesture(
         Some(SwiftValue::Int(i)) if i.raw != 1 => vec![Arg {
             label: Some("count".into()),
             value: SwiftValue::Int(i),
+
+            static_ty: None,
         }],
         _ => Vec::new(),
     };
@@ -475,10 +487,14 @@ fn modifier_on_long_press_gesture(
             Some("minimumDuration") => marker_args.push(Arg {
                 label: Some("minimumDuration".into()),
                 value: arg.value,
+
+                static_ty: None,
             }),
             Some("maximumDistance") => marker_args.push(Arg {
                 label: Some("maximumDistance".into()),
                 value: arg.value,
+
+                static_ty: None,
             }),
             // The `onPressingChanged:` callback (a `(Bool) -> Void`) has no host
             // press-state event; accept it but drop it.
@@ -661,6 +677,8 @@ pub(crate) fn modifier_gesture(
                 Some(SwiftValue::Int(i)) if i.raw != 1 => vec![Arg {
                     label: Some("count".into()),
                     value: SwiftValue::Int(*i),
+
+                    static_ty: None,
                 }],
                 _ => Vec::new(),
             };
@@ -672,6 +690,8 @@ pub(crate) fn modifier_gesture(
                 marker_args.push(Arg {
                     label: Some("minimumDuration".into()),
                     value: v.clone(),
+
+                    static_ty: None,
                 });
             }
             attach_event(recv, "onLongPressGesture", "longPress", marker_args, action)

@@ -143,7 +143,15 @@ impl<'a> TypeRepr<'a> {
         }
 
         // Otherwise a nominal name, possibly generic.
-        let (name, args) = parse_named(t);
+        let (name, mut args) = parse_named(t);
+        // The generic spelling `Optional<T>` (or `Swift.Optional<T>`) is exactly
+        // `T?`; normalise it so every optionality check treats them alike.
+        if args.len() == 1 && (name == "Optional" || name.ends_with(".Optional")) {
+            return TypeRepr {
+                text: t,
+                kind: TypeReprKind::Optional(Box::new(args.pop().expect("one arg"))),
+            };
+        }
         TypeRepr {
             text: t,
             kind: TypeReprKind::Named { name, args },
@@ -163,6 +171,29 @@ impl<'a> TypeRepr<'a> {
     /// Whether this is an optional `T?`.
     pub fn is_optional(&self) -> bool {
         matches!(self.kind, TypeReprKind::Optional(_))
+    }
+
+    /// Whether an optional `T?` appears anywhere in this type — directly, or
+    /// nested inside a collection element, dictionary value/key, tuple, etc.
+    /// This is the shape-aware replacement for ad-hoc `contains('?')` /
+    /// `contains("Optional<")` string checks: because it works over the parsed
+    /// shape, spaced/generic spellings (`Optional < Int >`) are handled
+    /// uniformly with the `T?` sugar.
+    pub fn contains_optional(&self) -> bool {
+        match &self.kind {
+            TypeReprKind::Optional(_) => true,
+            TypeReprKind::Array(inner) => inner.contains_optional(),
+            TypeReprKind::Dictionary { key, value } => {
+                key.contains_optional() || value.contains_optional()
+            }
+            TypeReprKind::Tuple(items) | TypeReprKind::Composition(items) => {
+                items.iter().any(|t| t.contains_optional())
+            }
+            TypeReprKind::Function { params, ret } => {
+                ret.contains_optional() || params.iter().any(|t| t.contains_optional())
+            }
+            TypeReprKind::Named { args, .. } => args.iter().any(|t| t.contains_optional()),
+        }
     }
 
     /// The wrapped type if this is an optional, removing a single `?` layer;
@@ -370,6 +401,16 @@ mod tests {
         assert!(r.is_optional());
         assert_eq!(r.unwrap_optional().name(), Some("Int"));
         assert_eq!(r.strip_optionals().text(), "Int");
+    }
+
+    #[test]
+    fn generic_optional_normalizes_to_sugar() {
+        let r = TypeRepr::parse("Optional<String>");
+        assert!(r.is_optional());
+        assert_eq!(r.unwrap_optional().name(), Some("String"));
+        assert_eq!(r.strip_optionals().text(), "String");
+        // Qualified spelling too.
+        assert!(TypeRepr::parse("Swift.Optional<Int>").is_optional());
     }
 
     #[test]

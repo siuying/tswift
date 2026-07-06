@@ -892,10 +892,14 @@ mod tests {
             Arg {
                 label: Some("contentsOf".into()),
                 value: SwiftValue::Array(std::rc::Rc::new(vec![iv(3)])),
+
+                static_ty: None,
             },
             Arg {
                 label: None, // extra positional arg
                 value: iv(4),
+
+                static_ty: None,
             },
         ];
         let err = append_labeled(&mut ctx, s, args).unwrap_err();

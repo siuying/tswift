@@ -805,6 +805,8 @@ mod tests {
             vec![Arg {
                 label: Some("after".to_string()),
                 value: di0.clone(),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -818,6 +820,8 @@ mod tests {
             vec![Arg {
                 label: Some("after".to_string()),
                 value: di1.clone(),
+
+                static_ty: None,
             }],
         )
         .is_err());
@@ -829,6 +833,8 @@ mod tests {
             vec![Arg {
                 label: Some("forKey".to_string()),
                 value: SwiftValue::Str("a".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -841,6 +847,8 @@ mod tests {
             vec![Arg {
                 label: Some("forKey".to_string()),
                 value: SwiftValue::Str("z".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -854,6 +862,8 @@ mod tests {
             vec![Arg {
                 label: Some("at".to_string()),
                 value: di0.clone(),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -874,6 +884,8 @@ mod tests {
             vec![Arg {
                 label: Some("at".to_string()),
                 value: di1.clone(),
+
+                static_ty: None,
             }],
         )
         .is_err());
@@ -891,6 +903,8 @@ mod tests {
             vec![Arg {
                 label: Some("at".to_string()),
                 value: old.clone(),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -903,6 +917,8 @@ mod tests {
                 vec![Arg {
                     label: Some("at".to_string()),
                     value: old,
+
+                    static_ty: None,
                 }],
             )
             .is_err(),
