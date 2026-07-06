@@ -390,6 +390,101 @@ struct AsyncImagePhase {
     var isSuccess: Bool { return checkCase("success") }
     var isFailure: Bool { return checkCase("failure") }
 }
+// `Animation` — a timing/spring curve value for `.animation`/`withAnimation`
+// (SwiftUI's `Animation`). Modeled as a struct carrying a `kind` token plus the
+// optional numeric params of each curve family and the chainable modifiers
+// (`delay`/`speed`/`repeat`). Serialized as a tagged object
+// `{"$":"animation","kind":…,…}` via a dedicated `write_value` branch (only the
+// set fields are emitted, in a fixed order). See notes.md for the full schema.
+struct Animation {
+    var kind: String
+    var duration: Double? = nil
+    var response: Double? = nil
+    var dampingFraction: Double? = nil
+    var blendDuration: Double? = nil
+    var bounce: Double? = nil
+    var extraBounce: Double? = nil
+    var delayValue: Double? = nil
+    var speedValue: Double? = nil
+    var repeatKind: String? = nil
+    var repeatCountValue: Int? = nil
+    var autoreversesValue: Bool? = nil
+
+    // NOTE: SwiftUI's `.default` cannot be declared here yet — `default` is a
+    // reserved keyword and the lexer has no backtick-identifier escape, so a
+    // member literally named `default` neither lexes nor parses. Deferred to a
+    // lexer slice (see notes.md). All other curve factories are available.
+
+    static let linear = Animation(kind: "linear")
+    static func linear(duration: Double) -> Animation {
+        Animation(kind: "linear", duration: duration)
+    }
+
+    static let easeIn = Animation(kind: "easeIn")
+    static func easeIn(duration: Double) -> Animation {
+        Animation(kind: "easeIn", duration: duration)
+    }
+
+    static let easeOut = Animation(kind: "easeOut")
+    static func easeOut(duration: Double) -> Animation {
+        Animation(kind: "easeOut", duration: duration)
+    }
+
+    static let easeInOut = Animation(kind: "easeInOut")
+    static func easeInOut(duration: Double) -> Animation {
+        Animation(kind: "easeInOut", duration: duration)
+    }
+
+    static let spring = Animation(kind: "spring")
+    static func spring(response: Double = 0.5, dampingFraction: Double = 0.825, blendDuration: Double = 0) -> Animation {
+        Animation(kind: "spring", response: response, dampingFraction: dampingFraction, blendDuration: blendDuration)
+    }
+    // `duration:` is required (no default) so the bare `.spring()` stays
+    // unambiguously the response/dampingFraction overload above; `bounce`/
+    // `blendDuration` default so `.spring(duration: 0.4)` compiles.
+    static func spring(duration: Double, bounce: Double = 0.0, blendDuration: Double = 0.0) -> Animation {
+        Animation(kind: "spring", duration: duration, bounce: bounce)
+    }
+
+    static let bouncy = Animation(kind: "bouncy")
+    static func bouncy(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "bouncy", duration: duration, extraBounce: extraBounce)
+    }
+
+    static let smooth = Animation(kind: "smooth")
+    static func smooth(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "smooth", duration: duration)
+    }
+
+    static let snappy = Animation(kind: "snappy")
+    static func snappy(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
+        Animation(kind: "snappy", duration: duration)
+    }
+
+    func delay(_ delay: Double) -> Animation {
+        var a = self
+        a.delayValue = delay
+        return a
+    }
+    func speed(_ speed: Double) -> Animation {
+        var a = self
+        a.speedValue = speed
+        return a
+    }
+    func repeatCount(_ count: Int, autoreverses: Bool = true) -> Animation {
+        var a = self
+        a.repeatKind = "count"
+        a.repeatCountValue = count
+        a.autoreversesValue = autoreverses
+        return a
+    }
+    func repeatForever(autoreverses: Bool = true) -> Animation {
+        var a = self
+        a.repeatKind = "forever"
+        a.autoreversesValue = autoreverses
+        return a
+    }
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier

@@ -223,6 +223,8 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         }
         // A `GridItem` track sizer serializes as `{kind,value,spacing?}`.
         SwiftValue::Struct(obj) if obj.type_name == "GridItem" => write_grid_item(obj, out),
+        // An `Animation` curve serializes as a tagged `{"$":"animation",…}`.
+        SwiftValue::Struct(obj) if obj.type_name == "Animation" => write_animation(obj, out),
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),
@@ -269,6 +271,58 @@ fn write_grid_item(obj: &StructObj, out: &mut String) {
     out.push('}');
 }
 
+/// Serialize an `Animation` value as `{"$":"animation","kind":…,…}`. Only the
+/// set fields are emitted, in a fixed order: `kind`, curve params (`duration`
+/// then the spring family), then the chained `delay`/`speed`/`repeat` modifiers.
+/// `repeat` is `"forever"` (string) for `.repeatForever` or the integer count
+/// for `.repeatCount`, and is followed by `autoreverses` when a repeat is set.
+fn write_animation(obj: &StructObj, out: &mut String) {
+    let field = |name: &str| obj.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    let num = |name: &str| match field(name) {
+        Some(SwiftValue::Double(d)) => Some(*d),
+        Some(SwiftValue::Int(i)) => Some(i.raw as f64),
+        _ => None,
+    };
+    let kind = match field("kind") {
+        Some(SwiftValue::Str(s)) => s.as_str(),
+        _ => "default",
+    };
+    out.push_str("{\"$\":\"animation\",\"kind\":");
+    write_string(kind, out);
+    for (src, json) in [
+        ("duration", "duration"),
+        ("response", "response"),
+        ("dampingFraction", "dampingFraction"),
+        ("blendDuration", "blendDuration"),
+        ("bounce", "bounce"),
+        ("extraBounce", "extraBounce"),
+        ("delayValue", "delay"),
+        ("speedValue", "speed"),
+    ] {
+        if let Some(v) = num(src) {
+            out.push(',');
+            write_string(json, out);
+            out.push(':');
+            out.push_str(&tswift_core::format_double(v));
+        }
+    }
+    if let Some(SwiftValue::Str(rk)) = field("repeatKind") {
+        out.push_str(",\"repeat\":");
+        if rk == "forever" {
+            out.push_str("\"forever\"");
+        } else if let Some(SwiftValue::Int(c)) = field("repeatCountValue") {
+            out.push_str(&c.raw.to_string());
+        } else {
+            out.push('0');
+        }
+        if let Some(SwiftValue::Bool(b)) = field("autoreversesValue") {
+            out.push_str(",\"autoreverses\":");
+            out.push_str(if *b { "true" } else { "false" });
+        }
+    }
+    out.push('}');
+}
+
 /// Write a JSON string literal with the minimal required escaping.
 fn write_string(s: &str, out: &mut String) {
     out.push('"');
@@ -291,6 +345,64 @@ mod tests {
     use super::*;
     use crate::{install, render_root, PRELUDE};
     use tswift_core::Interpreter;
+
+    /// Serialize a bare `Animation` expression through `write_value` (the path a
+    /// future `.animation` modifier arg will take). Builds a probe struct whose
+    /// computed property returns the animation, then evaluates it.
+    fn anim_json(expr: &str) -> String {
+        let src = format!("{PRELUDE}\nstruct Probe {{ var anim: Animation {{ {expr} }} }}\n");
+        let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        let probe = interp.make_struct("Probe", &[]).expect("probe");
+        let anim = interp.get_member(&probe, "anim").expect("anim");
+        let mut out = String::new();
+        write_value(&anim, &mut out);
+        out
+    }
+
+    #[test]
+    fn animation_ease_in_out_duration_serializes() {
+        assert_eq!(
+            anim_json("Animation.easeInOut(duration: 0.3)"),
+            r#"{"$":"animation","kind":"easeInOut","duration":0.3}"#
+        );
+    }
+
+    #[test]
+    fn animation_linear_repeat_forever_serializes() {
+        assert_eq!(
+            anim_json("Animation.linear.repeatForever(autoreverses: false)"),
+            r#"{"$":"animation","kind":"linear","repeat":"forever","autoreverses":false}"#
+        );
+    }
+
+    #[test]
+    fn animation_spring_defaults_serialize() {
+        assert_eq!(
+            anim_json("Animation.spring()"),
+            r#"{"$":"animation","kind":"spring","response":0.5,"dampingFraction":0.825,"blendDuration":0.0}"#
+        );
+    }
+
+    #[test]
+    fn animation_spring_duration_bounce_serializes() {
+        assert_eq!(
+            anim_json("Animation.spring(duration: 0.4, bounce: 0.3)"),
+            r#"{"$":"animation","kind":"spring","duration":0.4,"bounce":0.3}"#
+        );
+    }
+
+    #[test]
+    fn animation_delay_speed_chain_serializes() {
+        assert_eq!(
+            anim_json("Animation.easeInOut.delay(0.2).speed(2)"),
+            r#"{"$":"animation","kind":"easeInOut","delay":0.2,"speed":2.0}"#
+        );
+    }
 
     fn render_json(body: &str) -> String {
         let src = format!("{PRELUDE}\nstruct V: View {{ var body: some View {{ {body} }} }}\n");
