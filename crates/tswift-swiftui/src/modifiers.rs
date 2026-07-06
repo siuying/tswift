@@ -83,6 +83,8 @@ modifier!(modifier_layout_priority, "layoutPriority");
 modifier!(modifier_z_index, "zIndex");
 modifier!(modifier_navigation_title, "navigationTitle");
 modifier!(modifier_resizable, "resizable");
+// Slice 3 — `.transition(_:)` records an `AnyTransition` for insert/remove.
+modifier!(modifier_transition, "transition");
 
 /// `.environmentObject(_ object)` — provide an `ObservableObject` to this view
 /// and its subtree. The object is appended to the view's `_env` list (not
@@ -296,6 +298,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("gesture", modifier_gesture),
     // `.animation(_:value:)` / deprecated `.animation(_:)` (Slice 2).
     ("animation", modifier_animation),
+    // `.transition(_:)` — records an `AnyTransition` (Slice 3).
+    ("transition", modifier_transition),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).

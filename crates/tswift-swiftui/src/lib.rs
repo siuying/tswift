@@ -39,7 +39,7 @@ pub use async_image::{async_image_url_image, has_async_image_closures, realize_a
 pub(crate) use modifiers::{
     gesture_on_ended, handlers_map, long_press_gesture_init, modifier_animation,
     modifier_aspect_ratio, modifier_background, modifier_frame, modifier_multiline_text_alignment,
-    modifier_overlay, modifier_padding, tap_gesture_init, MODIFIER_FNS,
+    modifier_overlay, modifier_padding, modifier_transition, tap_gesture_init, MODIFIER_FNS,
 };
 pub(crate) use navigation::{navigation_link_init, navigation_stack_init};
 pub use navigation::{
@@ -485,6 +485,52 @@ struct Animation {
         return a
     }
 }
+// `AnyTransition` — the insert/remove transition for `.transition(_:)`
+// (SwiftUI's `AnyTransition`). Modeled as a struct carrying a `transitionType`
+// token plus the optional params of each transition and the recursive
+// combinators (`combined`/`asymmetric`). The recursive slots are typed `Any`
+// (not `AnyTransition`) so a value type may hold its own kind without a
+// recursive-size error; the serializer reads the nested `AnyTransition` structs
+// regardless. Serialized as a tagged object `{"$":"transition","type":…,…}` via
+// a dedicated `write_value` branch. See notes.md for the full schema.
+struct AnyTransition {
+    var transitionType: String
+    var scaleValue: Double? = nil
+    var anchor: String? = nil
+    var edge: String? = nil
+    var offsetX: Double? = nil
+    var offsetY: Double? = nil
+    var transitions: [Any]? = nil
+    var insertion: Any? = nil
+    var removal: Any? = nil
+
+    static let opacity = AnyTransition(transitionType: "opacity")
+    static let identity = AnyTransition(transitionType: "identity")
+    static let slide = AnyTransition(transitionType: "slide")
+    static let scale = AnyTransition(transitionType: "scale")
+
+    static func scale(scale: Double, anchor: Alignment? = nil) -> AnyTransition {
+        var t = AnyTransition(transitionType: "scale", scaleValue: scale)
+        if let a = anchor { t.anchor = a.token }
+        return t
+    }
+    static func move(edge: Edge) -> AnyTransition {
+        AnyTransition(transitionType: "move", edge: edge.token)
+    }
+    static func offset(x: Double, y: Double = 0) -> AnyTransition {
+        AnyTransition(transitionType: "offset", offsetX: x, offsetY: y)
+    }
+    static func push(from edge: Edge) -> AnyTransition {
+        AnyTransition(transitionType: "push", edge: edge.token)
+    }
+
+    func combined(with other: AnyTransition) -> AnyTransition {
+        AnyTransition(transitionType: "combined", transitions: [self, other])
+    }
+    static func asymmetric(insertion: AnyTransition, removal: AnyTransition) -> AnyTransition {
+        AnyTransition(transitionType: "asymmetric", insertion: insertion, removal: removal)
+    }
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier
@@ -668,15 +714,21 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ],
     );
     // `.animation(_:value:)` — the positional curve is typed `Animation` so a
-    // leading-dot factory (`.easeInOut(…)`, `.linear`) resolves against it; the
-    // `value:` operand is any Equatable, resolved from its own expression.
+    // leading-dot factory (`.easeInOut(…)`, `.linear`) resolves against it. The
+    // `value:` operand is any Equatable and carries its own type, so it needs no
+    // contextual hint (hence no declared parameter for it).
     interp.register_struct_method_typed(
         "animation",
         modifier_animation,
-        vec![
-            BuiltinParam::positional("Animation"),
-            BuiltinParam::labeled("value", "Any"),
-        ],
+        vec![BuiltinParam::positional("Animation")],
+    );
+    // `.transition(_:)` — the positional arg is typed `AnyTransition` so a
+    // leading-dot factory/static (`.opacity`, `.move(edge:)`, `.asymmetric(…)`)
+    // resolves against it.
+    interp.register_struct_method_typed(
+        "transition",
+        modifier_transition,
+        vec![BuiltinParam::positional("AnyTransition")],
     );
 }
 
@@ -1013,6 +1065,7 @@ mod tests {
                 "View.textCase",
                 "View.textFieldStyle",
                 "View.tint",
+                "View.transition",
                 "View.underline",
                 "View.zIndex",
                 "ZStack.init",

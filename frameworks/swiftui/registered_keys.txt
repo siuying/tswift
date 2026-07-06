@@ -90,6 +90,7 @@ View.task
 View.textCase
 View.textFieldStyle
 View.tint
+View.transition
 View.underline
 View.zIndex
 ZStack.init
