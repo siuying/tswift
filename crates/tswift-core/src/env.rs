@@ -17,6 +17,12 @@ use crate::value::SwiftValue;
 pub struct Binding {
     pub value: SwiftValue,
     pub mutable: bool,
+    /// The written type spelling of this binding (`String?`, `[Int?]`, …), when
+    /// the declaration carried one. Rides on the binding so it follows lexical
+    /// scope automatically — shadowing, scope exit, and function isolation all
+    /// work for free. The value model flattens optionals, so this is how a
+    /// later `print(x)` recovers that `x` was declared optional.
+    pub declared_ty: Option<String>,
 }
 
 /// A binding slot, shareable *individually*: a scope map can be cloned (e.g.
@@ -130,8 +136,35 @@ impl Env {
             .borrow_mut()
             .insert(
                 name.to_string(),
-                Rc::new(RefCell::new(Binding { value, mutable })),
+                Rc::new(RefCell::new(Binding {
+                    value,
+                    mutable,
+                    declared_ty: None,
+                })),
             );
+    }
+
+    /// Record the written type spelling for the *innermost* binding of `name`,
+    /// as set by its `let`/`var`/parameter declaration. No-op if `name` is not
+    /// bound in the current scope chain.
+    pub fn set_declared_type(&mut self, name: &str, ty: String) {
+        for scope in self.scopes.iter().rev() {
+            if let Some(c) = scope.borrow().get(name) {
+                c.borrow_mut().declared_ty = Some(ty);
+                return;
+            }
+        }
+    }
+
+    /// The written type spelling of the in-scope binding of `name`, searching
+    /// innermost-outward (so shadowing picks the nearest declaration).
+    pub fn declared_type(&self, name: &str) -> Option<String> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(c) = scope.borrow().get(name) {
+                return c.borrow().declared_ty.clone();
+            }
+        }
+        None
     }
 
     /// Look up a binding's value, searching innermost-outward.

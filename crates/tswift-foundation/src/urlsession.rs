@@ -440,6 +440,8 @@ fn delegate_probe_args(labels: &[Option<&str>]) -> Vec<Arg> {
         .map(|l| Arg {
             label: l.map(|s| s.to_string()),
             value: SwiftValue::Void,
+
+            static_ty: None,
         })
         .collect()
 }
@@ -474,18 +476,26 @@ fn dispatch_did_receive_response(
             Arg {
                 label: None,
                 value: session,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("dataTask".into()),
                 value: task,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("didReceive".into()),
                 value: response,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("completionHandler".into()),
                 value: SwiftValue::Closure(handler_id),
+
+                static_ty: None,
             },
         ],
     )?;
@@ -513,14 +523,20 @@ fn dispatch_did_receive_data(
             Arg {
                 label: None,
                 value: session,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("dataTask".into()),
                 value: task,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("didReceive".into()),
                 value: data,
+
+                static_ty: None,
             },
         ],
     )?;
@@ -547,14 +563,20 @@ fn dispatch_did_complete(
             Arg {
                 label: None,
                 value: session,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("task".into()),
                 value: task,
+
+                static_ty: None,
             },
             Arg {
                 label: Some("didCompleteWithError".into()),
                 value: error,
+
+                static_ty: None,
             },
         ],
     );
@@ -1561,6 +1583,8 @@ mod tests {
             vec![Arg {
                 label: Some("from".into()),
                 value: url_value("https://example.com/hello".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -1586,6 +1610,8 @@ mod tests {
             vec![Arg {
                 label: Some("from".into()),
                 value: url_value("https://nowhere.invalid/".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap_err();
@@ -1613,10 +1639,14 @@ mod tests {
                 Arg {
                     label: Some("for".into()),
                     value: request_value("https://example.com/up"),
+
+                    static_ty: None,
                 },
                 Arg {
                     label: Some("from".into()),
                     value: data_value(b"payload".to_vec()),
+
+                    static_ty: None,
                 },
             ],
         )
@@ -2271,10 +2301,14 @@ mod tests {
                 Arg {
                     label: Some("with".into()),
                     value: request_value("https://a.example.com/"),
+
+                    static_ty: None,
                 },
                 Arg {
                     label: None,
                     value: SwiftValue::Closure(0),
+
+                    static_ty: None,
                 },
             ],
         )
@@ -2287,10 +2321,14 @@ mod tests {
                 Arg {
                     label: Some("with".into()),
                     value: request_value("https://b.example.com/"),
+
+                    static_ty: None,
                 },
                 Arg {
                     label: None,
                     value: SwiftValue::Closure(1),
+
+                    static_ty: None,
                 },
             ],
         )
@@ -2372,6 +2410,8 @@ mod tests {
             vec![Arg {
                 label: Some("configuration".into()),
                 value: config.clone(),
+
+                static_ty: None,
             }],
         )
         .unwrap();

@@ -823,6 +823,8 @@ mod tests {
             vec![Arg {
                 label: Some("after".to_string()),
                 value: si0.clone(),
+
+                static_ty: None,
             }],
         )
         .unwrap()
@@ -836,6 +838,8 @@ mod tests {
             vec![Arg {
                 label: Some("after".to_string()),
                 value: si1.clone(),
+
+                static_ty: None,
             }],
         )
         .is_err());

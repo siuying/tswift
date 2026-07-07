@@ -568,10 +568,14 @@ mod tests {
         let from_arg = Arg {
             label: Some("from".into()),
             value: make_index(7),
+
+            static_ty: None,
         };
         let to_arg = Arg {
             label: Some("to".into()),
             value: make_index(13),
+
+            static_ty: None,
         };
         let out = sub_distance_labeled(&mut m, sv, vec![from_arg, to_arg])
             .unwrap()
@@ -588,10 +592,14 @@ mod tests {
         let from_arg = Arg {
             label: Some("from".into()),
             value: make_index(0),
+
+            static_ty: None,
         };
         let to_arg = Arg {
             label: Some("to".into()),
             value: make_index(13),
+
+            static_ty: None,
         };
         let err = sub_distance_labeled(&mut m, sv, vec![from_arg, to_arg]).unwrap_err();
         assert!(

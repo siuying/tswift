@@ -661,6 +661,8 @@ mod tests {
             vec![Arg {
                 label: Some("separator".into()),
                 value: SwiftValue::Str("-".into()),
+
+                static_ty: None,
             }],
         )
         .unwrap();

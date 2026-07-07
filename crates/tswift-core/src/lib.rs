@@ -36,8 +36,10 @@ pub use stdlib::{
     LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, PropertySetterFn, StaticFn, StdContext,
     StdError, StdResult, StructMethodFn,
 };
+pub use tswift_frontend::{TypeRepr, TypeReprKind};
 pub use value::{
-    format_double, format_double_json, ClassObj, EnumObj, IntValue, IntWidth, StructObj, SwiftValue,
+    describe_with_type, format_double, format_double_json, ClassObj, EnumObj, IntValue, IntWidth,
+    StructObj, SwiftValue,
 };
 
 /// Returns `true` when `s` is a non-empty string that contains no ASCII

@@ -244,6 +244,12 @@ impl<'a> Node<'a> {
         self.modifiers() & decode::OPTIONAL_CAST != 0
     }
 
+    /// For a `MemberExpr`, whether it was reached through optional chaining
+    /// (`base?.member`) rather than a plain `base.member` access.
+    pub fn is_optional_chain(&self) -> bool {
+        self.modifiers() & decode::OPTIONAL_CHAIN != 0
+    }
+
     /// For a `break`/`continue` statement, its target loop label, if any.
     pub fn jump_label(&self) -> Option<String> {
         self.text()

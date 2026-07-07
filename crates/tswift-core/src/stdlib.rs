@@ -518,12 +518,23 @@ pub type IntrinsicFn =
 pub struct Arg {
     pub label: Option<String>,
     pub value: SwiftValue,
+    /// The statically inferred type spelling of the argument expression
+    /// (`String?`, `[Int?]`, …), when the interpreter could recover one.
+    ///
+    /// The value model flattens optionals, so this is the only channel that
+    /// tells `print`/`debugPrint`/`String(describing:)` an argument *was*
+    /// optional — letting them render `Optional(…)`/`nil` like Swift.
+    pub static_ty: Option<String>,
 }
 
 impl Arg {
     /// A positional (unlabeled) argument.
     pub fn positional(value: SwiftValue) -> Arg {
-        Arg { label: None, value }
+        Arg {
+            label: None,
+            value,
+            static_ty: None,
+        }
     }
 }
 

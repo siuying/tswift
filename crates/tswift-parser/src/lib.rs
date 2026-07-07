@@ -1763,10 +1763,11 @@ impl<'a> Parser<'a> {
     fn try_closure_signature(&mut self, node: NodeId) -> bool {
         let save = self.pos;
         // Identifiers in name position become the closure's `Param` children;
-        // tokens after `:` (a type) or `->` (the return type) are skipped.
-        let mut names: Vec<(&'a str, u32, u32, bool)> = Vec::new();
+        // a `:`-introduced type is parsed and kept as the param's `TypeRef`
+        // child (so the runtime can honour a declared optional/collection
+        // type), while a `->` return type is parsed and discarded.
+        let mut names: Vec<(&'a str, u32, u32, bool, Option<NodeId>)> = Vec::new();
         let mut expect_name = true;
-        let mut in_type = false;
         // Parenthesis depth: the closure's `in` separator sits at depth 0. An
         // `in:` argument label inside a nested call (e.g. `Slider(value: x, in:
         // 0...1)`) is at depth > 0 and must not be mistaken for the separator.
@@ -1775,10 +1776,13 @@ impl<'a> Parser<'a> {
             let t = self.peek();
             if depth == 0 && t.kind == TokenKind::Keyword && t.text == "in" {
                 self.bump();
-                for (name, line, col, is_inout) in names {
+                for (name, line, col, is_inout, ty) in names {
                     let p = self.ast.add(NodeKind::Param, Some(name), line, col);
                     if is_inout {
                         self.ast.add_modifier(p, "inout");
+                    }
+                    if let Some(ty) = ty {
+                        self.ast.append_child(p, ty);
                     }
                     self.ast.append_child(node, p);
                 }
@@ -1799,8 +1803,8 @@ impl<'a> Parser<'a> {
                 return false;
             }
             match t.kind {
-                TokenKind::Identifier if expect_name && !in_type && t.text != "_" => {
-                    names.push((t.text, t.line, t.col, false));
+                TokenKind::Identifier if expect_name && t.text != "_" => {
+                    names.push((t.text, t.line, t.col, false, None));
                     expect_name = false;
                 }
                 // `inout` after the colon marks the current parameter.
@@ -1841,7 +1845,6 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::Comma => {
                     expect_name = true;
-                    in_type = false;
                 }
                 TokenKind::LParen => {
                     depth += 1;
@@ -1849,10 +1852,42 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::RParen => {
                     depth -= 1;
-                    in_type = false;
                 }
-                TokenKind::Colon => in_type = true,
-                TokenKind::Oper => in_type = true, // `->`
+                // A `:`-introduced parameter type is parsed in full and kept as
+                // the param's `TypeRef` child. A leading `inout` before the
+                // type marks the parameter mutable.
+                TokenKind::Colon => {
+                    self.bump(); // ':'
+                    let is_inout =
+                        self.peek().kind == TokenKind::Keyword && self.peek().text == "inout";
+                    if is_inout {
+                        self.bump();
+                    }
+                    let ty = match self.parse_type() {
+                        Ok(t) => t,
+                        Err(_) => {
+                            self.pos = save;
+                            return false;
+                        }
+                    };
+                    if let Some(last) = names.last_mut() {
+                        if is_inout {
+                            last.3 = true;
+                        }
+                        last.4 = Some(ty);
+                    }
+                    expect_name = false;
+                    continue;
+                }
+                // The `->` return type is parsed and discarded.
+                TokenKind::Oper => {
+                    self.bump(); // '->'
+                    if self.parse_type().is_err() {
+                        self.pos = save;
+                        return false;
+                    }
+                    continue;
+                }
                 _ => {}
             }
             self.bump();
@@ -2959,6 +2994,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_postfix(&mut self, mut expr: NodeId) -> Result<NodeId, ParseError> {
+        // Set when a `?` optional-chaining marker was just consumed, so the
+        // following `.member` MemberExpr is tagged as optional-chained.
+        let mut optional_chain_next = false;
         loop {
             match self.peek().kind {
                 // A user-declared postfix operator (`90.0°`), hugging its
@@ -3050,9 +3088,11 @@ impl<'a> Parser<'a> {
                     self.ast.append_child(node, expr);
                     expr = node;
                 }
-                // Optional chaining `expr?.member`: drop the `?`, let `.` handle it.
+                // Optional chaining `expr?.member`: drop the `?`, let `.` handle
+                // it, but remember to tag the following member as chained.
                 TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
                     self.bump();
+                    optional_chain_next = true;
                 }
                 // Optional-chained call `f?(args)` / subscript `a?[i]`: the `?`
                 // must hug both its expression and the `(`/`[` (Swift's
@@ -3186,6 +3226,9 @@ impl<'a> Parser<'a> {
                         self.ast
                             .add(NodeKind::MemberExpr, Some(name.text), dot.line, dot.col);
                     self.ast.append_child(member, expr);
+                    if std::mem::take(&mut optional_chain_next) {
+                        self.ast.add_modifier(member, "?.");
+                    }
                     expr = member;
                 }
                 _ => break,

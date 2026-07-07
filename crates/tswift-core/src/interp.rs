@@ -820,6 +820,7 @@ impl From<CallArg> for Arg {
         Arg {
             label: arg.label,
             value: arg.value,
+            static_ty: None,
         }
     }
 }
@@ -829,6 +830,7 @@ impl From<&CallArg> for Arg {
         Arg {
             label: arg.label.clone(),
             value: arg.value.clone(),
+            static_ty: None,
         }
     }
 }
@@ -1600,7 +1602,24 @@ impl<'w> Interpreter<'w> {
             }
             None => SwiftValue::Void,
         };
+        let decl_ty = node
+            .children()
+            .find(|c| c.kind() == NodeKind::TypeRef)
+            .and_then(|c| c.text())
+            // No explicit annotation: infer the static type from the
+            // initializer, but record it only when optional so declared-type
+            // aware dispatch (`x.take()`) and optional-aware printing see it
+            // without over-tagging plain scalars.
+            .or_else(|| {
+                init_expr.and_then(|init| {
+                    self.static_type_of(&init)
+                        .filter(|ty| TypeRepr::parse(ty).is_optional())
+                })
+            });
         self.env.declare(&name, value, mutable);
+        if let Some(ty) = decl_ty {
+            self.env.set_declared_type(&name, ty);
+        }
         Ok(SwiftValue::Void)
     }
 
@@ -2180,6 +2199,163 @@ impl<'w> Interpreter<'w> {
         self.type_hint.last().and_then(|o| o.as_deref())
     }
 
+    /// The statically inferred type *spelling* of an expression node, when one
+    /// can be recovered cheaply — enough for type-directed `print` rendering to
+    /// know an argument was optional. Returns `None` when nothing optional is
+    /// in play (callers then fall back to plain value rendering).
+    ///
+    /// Covered: identifiers (via the declared-type map), literals, `Optional(x)`
+    /// calls, and array literals whose elements are statically optional.
+    fn static_type_of(&self, node: &Node<'static>) -> Option<String> {
+        match node.kind() {
+            NodeKind::NilLiteral => Some("_?".to_string()),
+            NodeKind::StringLiteral => Some("String".to_string()),
+            NodeKind::IntegerLiteral => Some("Int".to_string()),
+            NodeKind::FloatLiteral => Some("Double".to_string()),
+            NodeKind::BoolLiteral => Some("Bool".to_string()),
+            NodeKind::IdentExpr => node.text().and_then(|n| self.env.declared_type(&n)),
+            NodeKind::CallExpr => self.static_type_of_call(node),
+            NodeKind::ArrayLiteral => self.static_type_of_array(node),
+            NodeKind::MemberExpr if node.is_optional_chain() => {
+                // Optional chaining yields an optional result (`s?.count` is
+                // `Int?`), so print renders it `Optional(...)`. Use the member's
+                // own declared type when known, else the unknown-optional base.
+                let base = self
+                    .static_type_of_member(node)
+                    .map(|t| TypeRepr::parse(&t).strip_optionals().text().to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                Some(format!("{base}?"))
+            }
+            NodeKind::MemberExpr => self.static_type_of_member(node),
+            _ => None,
+        }
+    }
+
+    /// Static type of a `base.member` access, recovered from `base`'s
+    /// struct/class stored-property declaration (whose written TypeRef spelling
+    /// — e.g. `Int?` — is preserved on the `StoredProp`). Lets `b.x.take()` and
+    /// `self.x.take()` enter Optional dispatch. Plain (non-`?.`) access only.
+    fn static_type_of_member(&self, node: &Node<'static>) -> Option<String> {
+        let member = self.member_name(node)?;
+        let base = node.first_child()?;
+        let type_name = self.receiver_type_name(&base)?;
+        let stored_ty = |props: &[StoredProp]| {
+            props
+                .iter()
+                .find(|p| p.name == member)
+                .and_then(|p| p.ty.clone())
+        };
+        if let Some(def) = self.types.struct_def(&type_name) {
+            return stored_ty(&def.stored);
+        }
+        if let Some(def) = self.types.class_def(&type_name) {
+            return stored_ty(&def.stored);
+        }
+        None
+    }
+
+    /// The runtime type name of a receiver expression, when it can be read
+    /// without side effects — an in-scope binding (`b`, `self`) or a nested
+    /// member whose declared type names a known struct/class.
+    fn receiver_type_name(&self, node: &Node<'static>) -> Option<String> {
+        match node.kind() {
+            NodeKind::IdentExpr => Some(self.env.get(&node.text()?)?.type_name()),
+            NodeKind::MemberExpr => {
+                let ty = self.static_type_of_member(node)?;
+                let stripped = TypeRepr::parse(&ty).strip_optionals().text().to_string();
+                Some(stripped)
+            }
+            _ => None,
+        }
+    }
+
+    /// Static type of a call expression — `Optional(x)` (wrapped type made
+    /// optional) and `opt.take()` (returns `Wrapped?`, i.e. the receiver's own
+    /// optional type), so `let t = x.take()` renders as `Optional(...)`.
+    fn static_type_of_call(&self, node: &Node<'static>) -> Option<String> {
+        let children: Vec<Node<'static>> = node.children().collect();
+        let callee = children.first()?;
+        if callee.kind() == NodeKind::IdentExpr && callee.text().as_deref() == Some("Optional") {
+            let inner = children.get(1);
+            let base = inner
+                .and_then(|n| self.static_type_of(n))
+                .unwrap_or_else(|| "_".to_string());
+            return Some(format!("{base}?"));
+        }
+        // `receiver.take()` yields the receiver's own optional type.
+        if callee.kind() == NodeKind::MemberExpr
+            && self.member_name(callee).as_deref() == Some("take")
+        {
+            if let Some(recv) = callee.first_child() {
+                let ty = self.static_type_of(&recv)?;
+                if TypeRepr::parse(&ty).is_optional() {
+                    return Some(ty);
+                }
+            }
+        }
+        None
+    }
+
+    /// The member name of a `MemberExpr`, resolving the bare-`.` operator slot.
+    fn member_name(&self, member: &Node<'static>) -> Option<String> {
+        match member.text() {
+            Some(name) if name == "." => member.op_text(),
+            other => other,
+        }
+    }
+
+    /// Whether a receiver expression's static type is a (top-level) optional.
+    /// Gates declared-type-aware `Optional` member dispatch (#242).
+    fn receiver_is_optional(&self, base: &Node<'static>) -> bool {
+        self.static_type_of(base)
+            .is_some_and(|ty| TypeRepr::parse(&ty).is_optional())
+    }
+
+    /// Static type of an array literal. Prefers a contextual array type; else
+    /// infers `[Base?]` when any element is statically optional (a `nil`
+    /// literal, an `Optional(…)` call, …). Returns `None` for a plainly
+    /// non-optional array so it renders unchanged.
+    fn static_type_of_array(&self, node: &Node<'static>) -> Option<String> {
+        if let Some(hint) = self.contextual_type() {
+            let repr = TypeRepr::parse(hint);
+            if repr.array_element().is_some() {
+                return Some(hint.to_string());
+            }
+        }
+        // Merge the element spellings. `any_direct_optional` means an element
+        // is itself optional (a `nil` / `Optional(…)` — append a `?` to the
+        // base); `any_optional_anywhere` also fires when the optionality is
+        // nested inside an element (e.g. `[Int?]` inside an outer array), which
+        // is already carried by the element spelling, so no extra `?`.
+        let mut any_direct_optional = false;
+        let mut any_optional_anywhere = false;
+        let mut base: Option<String> = None;
+        for elem in node.children() {
+            if let Some(t) = self.static_type_of(&elem) {
+                let repr = TypeRepr::parse(&t);
+                if repr.is_optional() {
+                    any_direct_optional = true;
+                }
+                if repr.contains_optional() {
+                    any_optional_anywhere = true;
+                }
+                let stripped = repr.strip_optionals().text();
+                if stripped != "_" {
+                    base = Some(stripped.to_string());
+                }
+            }
+        }
+        if !any_optional_anywhere {
+            return None;
+        }
+        let base = base.as_deref().unwrap_or("_");
+        if any_direct_optional {
+            Some(format!("[{base}?]"))
+        } else {
+            Some(format!("[{base}]"))
+        }
+    }
+
     /// Resolve the enum type for a shorthand `.case` member from the resolved
     /// type or call-site contextual type, falling back to the unique enum
     /// declaring that case.
@@ -2540,10 +2716,14 @@ impl<'w> Interpreter<'w> {
                     // trailing `in` keyword for an internal name).
                     let name = child.text().unwrap_or_default();
                     let info = child.param_info();
+                    let ty = child
+                        .children()
+                        .find(|c| c.kind() == NodeKind::TypeRef)
+                        .and_then(|c| c.text());
                     params.push(Param {
                         label: None,
                         name,
-                        ty: None,
+                        ty,
                         variadic: info.variadic,
                         inout_: info.is_inout,
                         autoclosure: false,
@@ -2658,6 +2838,7 @@ impl<'w> Interpreter<'w> {
                     StdRc::new(RefCell::new(crate::env::Binding {
                         value: v,
                         mutable: false,
+                        declared_ty: None,
                     })),
                 );
             }
@@ -4087,7 +4268,11 @@ impl<'w> Interpreter<'w> {
                 // `inout` params are mutable and write back to the caller.
                 // Coerce an integer literal argument into a floating parameter.
                 let value = coerce_numeric(arg.value.clone(), p.ty.as_deref());
+                let decl_ty = p.ty.clone();
                 self.env.declare(&p.name, value, p.inout_);
+                if let Some(ty) = decl_ty {
+                    self.env.set_declared_type(&p.name, ty);
+                }
                 if p.inout_ {
                     if let Some(place) = arg.place.clone() {
                         inout_binds.push((p.name.clone(), place));
@@ -4097,6 +4282,9 @@ impl<'w> Interpreter<'w> {
             } else if let Some(def) = p.default {
                 let v = self.eval(&def)?;
                 self.env.declare(&p.name, v, false);
+                if let Some(ty) = p.ty.clone() {
+                    self.env.set_declared_type(&p.name, ty);
+                }
             } else {
                 return Err(EvalError::Type(format!("missing argument for `{}`", p.name)).into());
             }
