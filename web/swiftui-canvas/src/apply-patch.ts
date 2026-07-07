@@ -5,6 +5,7 @@
 
 import { applyModifiers, FRAME_ALIGN } from "./modifier-css.js";
 import type { Modifier, UiirValue } from "./modifier-css.js";
+import { playTransitionEnter, playTransitionLeave } from "./animation-css.js";
 import { sfGlyph } from "./sf-symbols.js";
 
 /** A UIIR node from `tswift swiftui render` / patch payloads. */
@@ -82,6 +83,8 @@ export class PatchApplier {
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         parent.insertBefore(el, patchRef(parent, patch.index));
+        // If the node declares a `.transition`, tween it in (no-op otherwise).
+        playTransitionEnter(el);
         // A screen pushed onto a faux NavigationStack: re-sync bar + visibility.
         if (parent.dataset.kind === "NavigationStack") this.syncNavStack(parent);
         break;
@@ -89,10 +92,17 @@ export class PatchApplier {
       case "remove": {
         const el = this.nodes.get(patch.id);
         const parent = el?.parentElement ?? null;
-        el?.remove();
+        // Forget the id mapping now (the node is logically gone), but defer the
+        // DOM removal until a `.transition` leave tween finishes. Without a
+        // transition, `playTransitionLeave` calls back synchronously.
         this.forget(patch.id);
-        // A screen popped off a faux NavigationStack: re-sync bar + visibility.
-        if (parent?.dataset.kind === "NavigationStack") this.syncNavStack(parent);
+        const finalize = () => {
+          el?.remove();
+          // A screen popped off a faux NavigationStack: re-sync bar + visibility.
+          if (parent?.dataset.kind === "NavigationStack") this.syncNavStack(parent);
+        };
+        if (el) playTransitionLeave(el, finalize);
+        else finalize();
         break;
       }
       case "move": {

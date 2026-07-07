@@ -62,19 +62,32 @@ function asAnim(value: UiirValue): AnimObject | null {
 /** The id of the injected `<style>` sheet holding the repeat keyframes. */
 const KEYFRAME_STYLE_ID = "swiftui-canvas-anim-keyframes";
 
-/** Inject the shared repeat keyframes once (guarded by id). Repeating CSS
- * `transition` is impossible, so a repeating SwiftUI animation degrades to a
- * generic opacity pulse (see `applyAnimation`); this sheet defines it. */
-function ensureKeyframes(): void {
+/** Inject the shared repeat keyframes once per tree root (guarded by id).
+ * Repeating CSS `transition` is impossible, so a repeating SwiftUI animation
+ * degrades to a generic opacity pulse (see `applyAnimation`); this sheet
+ * defines it.
+ *
+ * CRITICAL: `@keyframes` names resolve *within the tree that contains the
+ * animated element*. The canvas renders inside a shadow root, so keyframes
+ * injected into `document.head` are invisible to it and the animation silently
+ * no-ops. We therefore inject into `el`'s own root node (its `ShadowRoot`, or
+ * the document when unhosted). */
+function ensureKeyframes(el: HTMLElement): void {
   if (typeof document === "undefined") return;
-  if (document.getElementById(KEYFRAME_STYLE_ID)) return;
+  // The shadow root (or document) that scopes this element's keyframe lookup.
+  // Guard with `querySelector` (present on both `Document` and `ShadowRoot`;
+  // `getElementById` is not reliably exposed on `ShadowRoot` in WebKit).
+  const root = el.getRootNode() as Document | ShadowRoot;
+  if (root.querySelector(`#${KEYFRAME_STYLE_ID}`)) return;
   const style = document.createElement("style");
   style.id = KEYFRAME_STYLE_ID;
   // A property-agnostic pulse: the only repeat we can express generically on an
   // arbitrary element without knowing which property SwiftUI intends to cycle.
   style.textContent =
     "@keyframes swiftui-pulse{0%{opacity:1}50%{opacity:0.4}100%{opacity:1}}";
-  (document.head ?? document.documentElement).appendChild(style);
+  // Append to the tree root itself (shadow root) or the document head.
+  const host = root instanceof Document ? (root.head ?? root.documentElement) : root;
+  host.appendChild(style);
 }
 
 /**
@@ -127,7 +140,7 @@ export function applyAnimation(el: HTMLElement, value: UiirValue): void {
     // target property, so a repeating animation maps to a generic opacity pulse
     // (covers the common spinner/pulse idiom; arbitrary-property cycling is not
     // expressible on the web without the property name).
-    ensureKeyframes();
+    ensureKeyframes(el);
     const iterations = anim.repeat === "forever" ? "infinite" : String(anim.repeat);
     const direction = anim.autoreverses === false ? "normal" : "alternate";
     el.style.transition = "";
@@ -158,64 +171,171 @@ function asTrans(value: UiirValue): TransObject | null {
 /**
  * Apply a `.transition` modifier value to `el` (plan Slice 6).
  *
- * DEGRADED TIER: a transition's visible effect fires on insert/remove, which
- * is `apply-patch`'s mount/unmount hook — not the modifier pass. Full insert/
- * remove animation is out of scope for this slice, so we do the cheap, safe
- * thing: arm a `transition` covering the property the transition animates
- * (opacity / transform) so any subsequent style change tweens, and record the
- * decoded transition on `el.dataset.transition` for a future apply-patch mount/
- * unmount integration to consume. Never crashes on unknown/missing types.
+ * A transition's visible effect fires on insert/remove, which is
+ * `apply-patch`'s mount/unmount hook — not the modifier pass. Here we only
+ * *record* the decoded transition on `el.dataset.transition`; the insert/remove
+ * handlers in `apply-patch` consume it via `playTransitionEnter` /
+ * `playTransitionLeave` to actually tween the node in and out. Never crashes on
+ * unknown/missing types.
  */
 export function applyTransition(el: HTMLElement, value: UiirValue): void {
   const trans = asTrans(value);
   if (!trans) return; // unknown shape — no-op, never crash.
 
-  // Record the raw transition so apply-patch can drive mount/unmount later.
+  // Record the raw transition so apply-patch's insert/remove can drive it.
   try {
     el.dataset.transition = JSON.stringify(value);
   } catch {
     // Non-serializable (shouldn't happen for UIIR) — skip silently.
   }
-
-  // Arm a transition on the property the effect touches, so a same-node style
-  // change (opacity/transform) animates even before the mount/unmount hook lands.
-  const props = transitionProps(trans);
-  if (props.size > 0) {
-    el.style.transition = [...props].map((p) => `${p} 0.35s ease-in-out`).join(", ");
-  }
 }
 
-/** Which CSS properties a transition's visible effect touches (best-effort,
- * recursing through `combined`/`asymmetric`). Used only to arm a transition. */
-function transitionProps(trans: TransObject, acc = new Set<string>()): Set<string> {
+/** Default insert/remove tween duration (seconds) and curve. A `.transition`
+ * carries no timing of its own — the ambient `withAnimation` supplies it — so
+ * we use SwiftUI's default ease for the common case. */
+const TRANSITION_DURATION = 0.35;
+const TRANSITION_TIMING = "ease-in-out";
+
+/** The offscreen/hidden style for a transition's active edge (`insertion` =
+ * where an inserted view starts, `removal` = where a removed view ends). Only
+ * the properties the transition animates are set; the rest stay at their
+ * natural value. Recurses through `combined`/`asymmetric`. */
+function hiddenStyle(
+  trans: TransObject,
+  phase: "insertion" | "removal",
+  acc: { opacity?: string; transform: string[] } = { transform: [] },
+): { opacity?: string; transform: string[] } {
   switch (trans.type) {
     case "opacity":
-      acc.add("opacity");
+      acc.opacity = "0";
       break;
+    case "scale": {
+      const s = typeof trans.scale === "number" ? trans.scale : 0.0001;
+      acc.transform.push(`scale(${s})`);
+      break;
+    }
     case "slide":
-    case "move":
-    case "push":
-    case "offset":
-    case "scale":
-      acc.add("transform");
+      // Slide: in from the leading edge, out toward the trailing edge.
+      acc.transform.push(phase === "insertion" ? "translateX(-100%)" : "translateX(100%)");
       break;
+    case "move": {
+      // Move: the view sits fully off toward `edge` at the hidden extreme.
+      const edge = typeof trans.edge === "string" ? trans.edge : "leading";
+      acc.transform.push(MOVE_OFFSET[edge] ?? "translateY(100%)");
+      break;
+    }
+    case "offset": {
+      const x = typeof trans.x === "number" ? trans.x : 0;
+      const y = typeof trans.y === "number" ? trans.y : 0;
+      acc.transform.push(`translate(${x}px, ${y}px)`);
+      break;
+    }
     case "combined": {
       const list = Array.isArray(trans.transitions) ? trans.transitions : [];
       for (const t of list) {
         const inner = asTrans(t as UiirValue);
-        if (inner) transitionProps(inner, acc);
+        if (inner) hiddenStyle(inner, phase, acc);
       }
       break;
     }
     case "asymmetric": {
-      for (const key of ["insertion", "removal"]) {
-        const inner = asTrans(trans[key] as UiirValue);
-        if (inner) transitionProps(inner, acc);
-      }
+      // Insertion uses the `insertion` leg; removal uses the `removal` leg.
+      const inner = asTrans(trans[phase] as UiirValue);
+      if (inner) hiddenStyle(inner, phase, acc);
       break;
     }
     default:
-      break; // identity / unknown → no property armed.
+      break; // identity / unknown → no offset.
   }
   return acc;
 }
+
+/** `.move(edge:)` → the transform that parks the view fully off that edge. */
+const MOVE_OFFSET: Record<string, string> = {
+  top: "translateY(-100%)",
+  bottom: "translateY(100%)",
+  leading: "translateX(-100%)",
+  trailing: "translateX(100%)",
+};
+
+/** Read + parse the transition recorded on `el.dataset.transition`, if any. */
+function readTransition(el: HTMLElement): TransObject | null {
+  const raw = el.dataset.transition;
+  if (!raw) return null;
+  try {
+    return asTrans(JSON.parse(raw) as UiirValue);
+  } catch {
+    return null;
+  }
+}
+
+/** Compose a hidden-state style string pair (opacity + transform) for `phase`. */
+function hiddenFor(trans: TransObject, phase: "insertion" | "removal") {
+  const h = hiddenStyle(trans, phase);
+  return {
+    opacity: h.opacity,
+    transform: h.transform.length ? h.transform.join(" ") : undefined,
+  };
+}
+
+/**
+ * Animate `el` *in* per its recorded `.transition` (called from `apply-patch`'s
+ * `insert`). The node is built in its final state; we snap it to the transition's
+ * hidden start, force a reflow, then tween back to the natural state. No-op when
+ * the node carries no transition, so plain inserts stay instant.
+ */
+export function playTransitionEnter(el: HTMLElement): void {
+  const trans = readTransition(el);
+  if (!trans) return;
+  const from = hiddenFor(trans, "insertion");
+  if (from.opacity === undefined && from.transform === undefined) return;
+
+  // Natural (target) values the tween lands on — whatever the modifiers set.
+  const toOpacity = el.style.opacity || "1";
+  const toTransform = el.style.transform || "none";
+
+  // Snap to the hidden start with transitions disabled, then force layout so the
+  // browser registers the start before we arm the tween.
+  el.style.transition = "none";
+  if (from.opacity !== undefined) el.style.opacity = from.opacity;
+  if (from.transform !== undefined) el.style.transform = from.transform;
+  void el.offsetWidth; // reflow
+
+  el.style.transition = `opacity ${TRANSITION_DURATION}s ${TRANSITION_TIMING}, transform ${TRANSITION_DURATION}s ${TRANSITION_TIMING}`;
+  requestAnimationFrame(() => {
+    el.style.opacity = toOpacity;
+    el.style.transform = toTransform;
+  });
+}
+
+/**
+ * Animate `el` *out* per its recorded `.transition`, invoking `done()` (the
+ * actual DOM removal) once the tween finishes. When the node carries no
+ * transition, `done()` runs synchronously so plain removes stay instant.
+ */
+export function playTransitionLeave(el: HTMLElement, done: () => void): void {
+  const trans = readTransition(el);
+  const to = trans ? hiddenFor(trans, "removal") : { opacity: undefined, transform: undefined };
+  if (!trans || (to.opacity === undefined && to.transform === undefined)) {
+    done();
+    return;
+  }
+
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    done();
+  };
+
+  el.style.transition = `opacity ${TRANSITION_DURATION}s ${TRANSITION_TIMING}, transform ${TRANSITION_DURATION}s ${TRANSITION_TIMING}`;
+  el.addEventListener("transitionend", finish, { once: true });
+  // Safety net: if `transitionend` never fires (e.g. no visual change), remove
+  // after the nominal duration anyway.
+  setTimeout(finish, TRANSITION_DURATION * 1000 + 80);
+  requestAnimationFrame(() => {
+    if (to.opacity !== undefined) el.style.opacity = to.opacity;
+    if (to.transform !== undefined) el.style.transform = to.transform;
+  });
+}
+
