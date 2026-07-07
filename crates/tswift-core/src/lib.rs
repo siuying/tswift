@@ -34,7 +34,7 @@ pub use stdlib::{
     collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,
     BuiltinReceiver, ContextualPropertyFn, FreeFn, IntrinsicFn, LabeledIntrinsicFn,
     LabeledMethodEntry, MethodEntry, Outcome, PropertyFn, PropertySetterFn, StaticFn, StdContext,
-    StdError, StdResult, StructMethodFn,
+    StdError, StdResult, StructMethodFn, TypedPropertyFn,
 };
 pub use tswift_frontend::{TypeRepr, TypeReprKind};
 pub use value::{

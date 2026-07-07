@@ -1,0 +1,7 @@
+Optional(Optional(5))
+Optional(Optional(5))
+nil
+nil
+[Optional(Optional(5)), nil]
+Optional(Optional(Optional("hi")))
+Optional(Optional(Optional("hi")))

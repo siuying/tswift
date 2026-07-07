@@ -54,7 +54,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: take,
         },
     );
-    interp.register_property(
+    interp.register_typed_property(
         BuiltinReceiver::Optional,
         "debugDescription",
         debug_description,
@@ -77,11 +77,10 @@ fn take(
     })
 }
 
-/// `Optional.debugDescription` — `Optional(<wrapped debugDescription>)` for a
-/// present value, `"nil"` for an absent one. The `"_?"` spelling drives
-/// [`describe_with_type`] to render the wrapped value as a quoted element.
-fn debug_description(recv: SwiftValue) -> StdResult {
-    Ok(SwiftValue::Str(describe_with_type(&recv, Some("_?"))))
+/// `Optional.debugDescription` — rendered through the same static-type-aware
+/// optional formatter used by `print`.
+fn debug_description(recv: SwiftValue, static_ty: Option<&str>) -> StdResult {
+    Ok(SwiftValue::Str(describe_with_type(&recv, static_ty)))
 }
 
 /// `Optional.unsafelyUnwrapped` — the wrapped value of a present optional.
@@ -187,15 +186,15 @@ mod tests {
     #[test]
     fn debug_description_wraps_present_quotes_strings() {
         assert_eq!(
-            debug_description(SwiftValue::Str("x".into())).unwrap(),
+            debug_description(SwiftValue::Str("x".into()), Some("String?")).unwrap(),
             SwiftValue::Str("Optional(\"x\")".into())
         );
         assert_eq!(
-            debug_description(SwiftValue::int(5)).unwrap(),
+            debug_description(SwiftValue::int(5), Some("Int?")).unwrap(),
             SwiftValue::Str("Optional(5)".into())
         );
         assert_eq!(
-            debug_description(SwiftValue::Nil).unwrap(),
+            debug_description(SwiftValue::Nil, Some("Int?")).unwrap(),
             SwiftValue::Str("nil".into())
         );
     }

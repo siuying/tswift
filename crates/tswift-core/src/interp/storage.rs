@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::rc::Rc as StdRc;
 
-use tswift_frontend::{Node, NodeKind};
+use tswift_frontend::{Node, NodeKind, TypeRepr};
 
 use crate::env::BindError;
 use crate::ops;
@@ -1635,15 +1635,18 @@ impl<'w> Interpreter<'w> {
         // renders `"nil"` (not nil-propagating). Only plain `.member` access
         // hits the Optional override; `?.` optional chaining already unwraps and
         // must dispatch to the WRAPPED type's member.
-        if member == "debugDescription"
-            && !node.is_optional_chain()
-            && self.receiver_is_optional(&base)
-        {
-            if let Some(func) = self
-                .builtins
-                .property(BuiltinReceiver::Optional, "debugDescription")
+        if member == "debugDescription" && !node.is_optional_chain() {
+            let static_ty = self.static_type_of(&base);
+            if static_ty
+                .as_deref()
+                .is_some_and(|ty| TypeRepr::parse(ty).is_optional())
             {
-                return func(value).map_err(Self::std_error_to_signal);
+                if let Some(func) = self
+                    .builtins
+                    .typed_property(BuiltinReceiver::Optional, "debugDescription")
+                {
+                    return func(value, static_ty.as_deref()).map_err(Self::std_error_to_signal);
+                }
             }
         }
         // Optional chaining: a nil base short-circuits the whole access to nil.

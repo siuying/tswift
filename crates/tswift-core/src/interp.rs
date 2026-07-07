@@ -17,7 +17,7 @@ use crate::ops;
 use crate::stdlib::{
     materialize_builtin_sequence, AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn,
     LabeledMethodEntry, MethodEntry, PropertyFn, PropertySetterFn, StaticFn, StdContext, StdError,
-    StructMethodFn,
+    StructMethodFn, TypedPropertyFn,
 };
 use std::cell::RefCell;
 use std::rc::Rc as StdRc;
@@ -543,6 +543,7 @@ struct BuiltinMembers {
     intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
     labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
     properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
+    typed_properties: HashMap<(BuiltinReceiver, String), TypedPropertyFn>,
     contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
     static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
     /// Built-in computed-property setters (validate + mutate the receiver).
@@ -564,6 +565,9 @@ impl BuiltinMembers {
     }
     fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.properties.insert((recv, name.to_string()), f);
+    }
+    fn add_typed_property(&mut self, recv: BuiltinReceiver, name: &str, f: TypedPropertyFn) {
+        self.typed_properties.insert((recv, name.to_string()), f);
     }
     fn add_contextual_property(
         &mut self,
@@ -595,6 +599,11 @@ impl BuiltinMembers {
     }
     fn property(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertyFn> {
         self.properties.get(&(recv, name.to_string())).copied()
+    }
+    fn typed_property(&self, recv: BuiltinReceiver, name: &str) -> Option<TypedPropertyFn> {
+        self.typed_properties
+            .get(&(recv, name.to_string()))
+            .copied()
     }
     fn contextual_property(
         &self,
@@ -1091,6 +1100,17 @@ impl<'w> Interpreter<'w> {
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
         self.builtins.add_property(recv, name, f);
+    }
+
+    /// Register a computed-property intrinsic that also receives the receiver's
+    /// static type spelling when the dispatch site can recover it.
+    pub fn register_typed_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: TypedPropertyFn,
+    ) {
+        self.builtins.add_typed_property(recv, name, f);
     }
 
     /// Register a computed-property **setter** on a builtin receiver type.

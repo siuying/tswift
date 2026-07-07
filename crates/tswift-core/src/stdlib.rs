@@ -566,6 +566,9 @@ pub type StaticFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
 /// `Int.magnitude`, …). Pure: no closures, no mutation, no output.
 pub type PropertyFn = fn(SwiftValue) -> StdResult;
 
+/// A computed-property intrinsic that needs the receiver's static type spelling.
+pub type TypedPropertyFn = fn(SwiftValue, Option<&str>) -> StdResult;
+
 /// A built-in computed-property **setter** for a registered builtin type.
 ///
 /// Arguments:
