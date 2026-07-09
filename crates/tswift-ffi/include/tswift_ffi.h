@@ -105,6 +105,41 @@ void tswift_set_http_stream_handler(TSwiftContext *ctx,
  * Multiple concurrent calls with the same token are safe (internally serialised). */
 void tswift_http_event(void *task_token, const char *event_json);
 
+/* ---- Host-native functions (Epic #246) --------------------------------- */
+
+/* The callback backing a registered host function. Invoked synchronously when
+ * interpreted Swift calls the function. `name` is the function's name;
+ * `args_json` is a NUL-terminated JSON array of the already-validated arguments
+ * in declared order. `call` is an opaque in-flight token. The callback MUST
+ * call tswift_host_respond(call, result_json) exactly once BEFORE returning.
+ *
+ * result_json is a JSON document decoded against the function's declared return
+ * type ("null" for a Void return), or a {"$thrown":"<message>"} object to raise
+ * a catchable Swift error naming the function. */
+typedef void (*tswift_host_fn)(void *userdata,
+                               const char *name,
+                               const char *args_json,
+                               void *call);
+
+/* Register (or replace, by name) a host function on `ctx`. `signature_json` is
+ * the compact schema {"name":..,"params":[{"label"?,"type"}..],"returns"?,
+ * "throws"?} (see crates/tswift-core/src/host_bridge.rs). `userdata` is passed
+ * through verbatim; it and `callback` must stay valid until the function is
+ * removed/replaced or the context is freed.
+ * Returns owned JSON: {"ok":true,"name":"<fn>","error":null} on success, or
+ * {"ok":false,"name":null,"error":"<why>"} on a malformed signature. */
+char *tswift_register_host_fn(TSwiftContext *ctx,
+                              const char *signature_json,
+                              tswift_host_fn callback,
+                              void *userdata);
+
+/* Remove the host function named `name` from `ctx` (no-op if absent). */
+void tswift_remove_host_fn(TSwiftContext *ctx, const char *name);
+
+/* Deliver the result for an in-flight host-function call. Copies `result_json`
+ * immediately; valid only during the callback invocation that received `call`. */
+void tswift_host_respond(void *call, const char *result_json);
+
 /* ---- TSwiftUI: stateful render session --------------------------------- */
 
 /* Compile a SwiftUI program and start a live render session, returning owned
