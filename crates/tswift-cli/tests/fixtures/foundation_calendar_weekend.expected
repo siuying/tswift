@@ -1,0 +1,7 @@
+nextWeekend(after Wed): 2024-6-29 hour=0 weekday=7 duration=172800.0
+nextWeekend(after Sat): 2024-7-6 hour=0 weekday=7 duration=172800.0
+weekendOf(Sat): 2024-6-29 hour=0 weekday=7 duration=172800.0
+weekendOf(Sun): 2024-6-29 hour=0 weekday=7 duration=172800.0
+weekendOf(Mon): nil
+weekendOf(Wed): nil
+true

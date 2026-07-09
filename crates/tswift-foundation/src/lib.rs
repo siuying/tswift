@@ -19,8 +19,9 @@ mod urlsession;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, LabeledMethodEntry,
-    MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, EvalError, IntValue, IntWidth, Interpreter, IntrinsicFn,
+    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj,
+    SwiftValue,
 };
 
 const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
@@ -177,6 +178,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
     interp.register_property(BuiltinReceiver::UUID, "debugDescription", uuid_description);
     interp.register_property(BuiltinReceiver::UUID, "hashValue", uuid_hash_value);
+    interp.register_property(BuiltinReceiver::UUID, "uuid", uuid_bytes_tuple);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -1528,6 +1530,34 @@ fn uuid_hash_value(recv: SwiftValue) -> StdResult {
         return Err(type_error("malformed UUID value"));
     };
     Ok(SwiftValue::int(fnv1a_hash(s.as_bytes())))
+}
+
+/// `UUID.uuid: uuid_t` — Darwin's `uuid_t` is a 16-element homogeneous
+/// `(UInt8, …, UInt8)` tuple of the raw bytes (network byte order). Decoded
+/// from the canonical hyphenated string.
+fn uuid_bytes_tuple(recv: SwiftValue) -> StdResult {
+    let SwiftValue::Str(s) = uuid_string(recv)? else {
+        return Err(type_error("malformed UUID value"));
+    };
+    let hex: String = s.chars().filter(|c| *c != '-').collect();
+    let bytes = hex.as_bytes();
+    if bytes.len() != 32 {
+        return Err(type_error("malformed UUID value"));
+    }
+    let mut elems = Vec::with_capacity(16);
+    for i in 0..16 {
+        let hi = (bytes[2 * i] as char).to_digit(16);
+        let lo = (bytes[2 * i + 1] as char).to_digit(16);
+        match (hi, lo) {
+            (Some(h), Some(l)) => {
+                let byte = (h * 16 + l) as i128;
+                elems.push(SwiftValue::Int(IntValue::new(byte, IntWidth::U8)));
+            }
+            _ => return Err(type_error("malformed UUID value")),
+        }
+    }
+    let labels = vec![None; 16];
+    Ok(SwiftValue::Tuple(elems, labels))
 }
 
 fn data_hash_value(recv: SwiftValue) -> StdResult {

@@ -1,10 +1,12 @@
 Calendar.amSymbol
+Calendar.autoupdatingCurrent
 Calendar.compare
 Calendar.component
 Calendar.current
 Calendar.date
 Calendar.dateComponents
 Calendar.dateInterval
+Calendar.dateIntervalOfWeekend
 Calendar.debugDescription
 Calendar.description
 Calendar.eraSymbols
@@ -24,6 +26,7 @@ Calendar.minimumDaysInFirstWeek
 Calendar.minimumRange
 Calendar.monthSymbols
 Calendar.nextDate
+Calendar.nextWeekend
 Calendar.ordinality
 Calendar.pmSymbol
 Calendar.quarterSymbols
@@ -465,4 +468,5 @@ UUID.debugDescription
 UUID.description
 UUID.hashValue
 UUID.init
+UUID.uuid
 UUID.uuidString
