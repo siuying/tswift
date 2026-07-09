@@ -109,6 +109,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     interp.register_property(
         BuiltinReceiver::DateComponents,
+        "isRepeatedDay",
+        date_components_is_repeated_day,
+    );
+    interp.register_property_setter(
+        BuiltinReceiver::DateComponents,
+        "isRepeatedDay",
+        date_components_set_is_repeated_day,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
         "description",
         date_components_description,
     );
@@ -695,8 +705,11 @@ pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
 ];
 
 /// Extra (non-integer) fields stored on a `DateComponents` value.
-/// `calendar` (Calendar?), `timeZone` (TimeZone?), `isLeapMonth` (Bool?).
-const DATE_COMPONENT_EXTRA_FIELDS: &[&str] = &["calendar", "timeZone", "isLeapMonth"];
+/// `calendar` (Calendar?), `timeZone` (TimeZone?), `isLeapMonth` (Bool?),
+/// `isRepeatedDay` (Bool?, always nil-defaulted here since this runtime does
+/// not model DST wall-clock transitions).
+const DATE_COMPONENT_EXTRA_FIELDS: &[&str] =
+    &["calendar", "timeZone", "isLeapMonth", "isRepeatedDay"];
 
 macro_rules! date_component_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
@@ -936,6 +949,39 @@ fn date_components_is_leap_month(recv: SwiftValue) -> StdResult {
     Ok(obj.get("isLeapMonth").cloned().unwrap_or(SwiftValue::Nil))
 }
 
+/// `DateComponents.isRepeatedDay` — `Bool?` (nil when not specified). Unlike
+/// `isLeapMonth` there is no initializer label for this on Darwin either; it
+/// is a plain settable var, defaulting to `nil` until assigned. This runtime
+/// doesn't model DST wall-clock transitions (no timezone-transition table),
+/// so it is stored verbatim rather than computed.
+fn date_components_is_repeated_day(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    Ok(obj.get("isRepeatedDay").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// `DateComponents.isRepeatedDay` setter — accepts `Bool` or `nil`.
+fn date_components_set_is_repeated_day(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    let value = match &new_value {
+        SwiftValue::Nil => SwiftValue::Nil,
+        SwiftValue::Bool(b) => SwiftValue::Bool(*b),
+        other => {
+            return Err(type_error(format!(
+                "DateComponents.isRepeatedDay expects Bool?, got {}",
+                other.type_name()
+            )))
+        }
+    };
+    let obj = date_components_obj(&recv)?;
+    let mut fields = obj.fields.clone();
+    if let Some(slot) = fields.iter_mut().find(|(n, _)| n == "isRepeatedDay") {
+        slot.1 = value;
+    }
+    Ok(date_components_value_struct(fields))
+}
+
 /// Description field order that matches Foundation's output:
 /// era, year, month, day, hour, minute, second, nanosecond,
 /// weekday, weekdayOrdinal, quarter, weekOfMonth, weekOfYear,
@@ -1005,9 +1051,12 @@ fn date_components_description(recv: SwiftValue) -> StdResult {
         }
     }
 
-    // Bool isLeapMonth at the end.
+    // Bool isLeapMonth, then isRepeatedDay, at the end.
     if let Some(SwiftValue::Bool(b)) = obj.get("isLeapMonth") {
         parts.push_str(&format!("isLeapMonth: {b} "));
+    }
+    if let Some(SwiftValue::Bool(b)) = obj.get("isRepeatedDay") {
+        parts.push_str(&format!("isRepeatedDay: {b} "));
     }
 
     Ok(SwiftValue::Str(parts))

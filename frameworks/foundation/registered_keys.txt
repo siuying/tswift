@@ -131,6 +131,7 @@ DateComponents.hashValue
 DateComponents.hour
 DateComponents.init
 DateComponents.isLeapMonth
+DateComponents.isRepeatedDay
 DateComponents.isValidDate
 DateComponents.minute
 DateComponents.month
