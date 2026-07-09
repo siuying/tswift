@@ -686,6 +686,17 @@ impl<'w> Interpreter<'w> {
                 }
             }
 
+            // Host-native function (Epic #246). A registered, unshadowed host
+            // fn routes through the shared trampoline: validate arguments,
+            // cross the JSON boundary, validate the result. Consulted after
+            // user-type/binding dispatch and gated by the shadow check so a
+            // same-named user type or binding wins (Swift shadowing).
+            if self.is_unshadowed(&name) && self.is_host_fn(&name) {
+                let host_args: Vec<(Option<String>, SwiftValue)> =
+                    args.into_iter().map(|a| (a.label, a.value)).collect();
+                return self.call_host_fn(&name, &host_args);
+            }
+
             // Free-function intrinsic served through the StdContext seam.
             if let Some(free) = self.globals.free_fn(&name).map(|e| e.f) {
                 // Attach each argument's statically inferred type spelling so

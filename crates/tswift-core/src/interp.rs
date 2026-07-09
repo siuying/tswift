@@ -933,6 +933,11 @@ pub struct Interpreter<'w> {
     /// The embedding-installed HTTP backend behind `URLSession` (see
     /// [`crate::http`]); `None` means network access is unavailable.
     http_transport: Option<Box<dyn crate::http::HttpTransport>>,
+    /// The host-native function bridge (Epic #246): the registry of host
+    /// functions callable from interpreted Swift, plus the shared trampoline
+    /// that validates arguments, crosses the JSON boundary, and validates the
+    /// result. See [`crate::host_bridge`].
+    host_bridge: crate::host_bridge::HostBridge,
     /// Last response disposition captured by the `ResponseDispositionCapture`
     /// synthetic closure (Foundation M4 delegate dispatch). `true` = allow,
     /// `false` = cancel.  Reset to `None` by `allocate_response_disposition_closure`
@@ -1012,6 +1017,7 @@ impl<'w> Interpreter<'w> {
             type_hint: Vec::new(),
             fragment_cache: FragmentCache::default(),
             http_transport: None,
+            host_bridge: crate::host_bridge::HostBridge::default(),
             response_disposition: None,
             response_disposition_token: 0,
         }
@@ -1027,6 +1033,53 @@ impl<'w> Interpreter<'w> {
     /// error rather than touching the network.
     pub fn set_http_transport(&mut self, transport: Box<dyn crate::http::HttpTransport>) {
         self.http_transport = Some(transport);
+    }
+
+    /// Install the default handler servicing host-native functions (Epic #246).
+    /// Mirrors [`set_http_transport`][Interpreter::set_http_transport]: host
+    /// functions registered without their own handler route through this one.
+    pub fn set_host_call_handler(
+        &mut self,
+        handler: std::sync::Arc<dyn crate::host_bridge::HostCallHandler>,
+    ) {
+        self.host_bridge.set_handler(handler);
+    }
+
+    /// Register a host-native function from its signature JSON, callable from
+    /// interpreted Swift by the signature's `name`. `handler` services this
+    /// function; pass `None` to use the default handler installed via
+    /// [`set_host_call_handler`][Interpreter::set_host_call_handler]. Returns
+    /// the registered name (see [`crate::host_bridge`] for the schema).
+    pub fn register_host_fn(
+        &mut self,
+        signature_json: &str,
+        handler: Option<std::sync::Arc<dyn crate::host_bridge::HostCallHandler>>,
+    ) -> Result<String, String> {
+        self.host_bridge.register(signature_json, handler)
+    }
+
+    /// Run the shared host-call trampoline for a registered host function.
+    /// `args` are the already-evaluated `(label, value)` call arguments. Maps
+    /// the bridge outcome onto the interpreter's control-flow channel: a
+    /// validated value, a thrown (catchable) Swift error, or a runtime type
+    /// error naming the function.
+    fn call_host_fn(&self, name: &str, args: &[(Option<String>, SwiftValue)]) -> Eval {
+        use crate::host_bridge::HostCallOutcome;
+        match self.host_bridge.invoke(name, args) {
+            Ok(HostCallOutcome::Value(v)) => Ok(v),
+            Ok(HostCallOutcome::Thrown(message)) => {
+                Err(Signal::Throw(SwiftValue::Struct(Rc::new(StructObj {
+                    type_name: "HostError".into(),
+                    fields: vec![("message".into(), SwiftValue::Str(message))],
+                }))))
+            }
+            Err(msg) => Err(EvalError::Type(msg).into()),
+        }
+    }
+
+    /// Whether `name` is a registered, unshadowed host function.
+    fn is_host_fn(&self, name: &str) -> bool {
+        self.host_bridge.contains(name)
     }
 
     /// Register a native function callable from Swift source by `name`.
@@ -7402,5 +7455,189 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
             disp_b,
             "request B disposition must be true (allow, default) — not poisoned by stale A handler"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Host-native function bridge (Epic #246) — end-to-end through the
+    // interpreter's call dispatch.
+    // -----------------------------------------------------------------------
+
+    /// A configurable mock host handler: replies with a canned JSON string, or
+    /// echoes the received `args_json` so a test can assert on the encoding.
+    struct MockHostHandler {
+        reply: std::sync::Mutex<Box<dyn Fn(&str, &str) -> Result<String, String> + Send>>,
+    }
+
+    impl MockHostHandler {
+        fn new(f: impl Fn(&str, &str) -> Result<String, String> + Send + 'static) -> Self {
+            MockHostHandler {
+                reply: std::sync::Mutex::new(Box::new(f)),
+            }
+        }
+    }
+
+    impl crate::host_bridge::HostCallHandler for MockHostHandler {
+        fn call(&self, name: &str, args_json: &str) -> Result<String, String> {
+            (self.reply.lock().unwrap())(name, args_json)
+        }
+    }
+
+    /// Run `src` against an interpreter with the given host functions installed.
+    fn run_with_host(
+        src: &str,
+        register: impl FnOnce(&mut Interpreter),
+    ) -> Result<String, EvalError> {
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            crate::install_test_print(&mut interp);
+            register(&mut interp);
+            interp.run(analysis)?;
+        }
+        Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn host_fn_success_round_trips_through_interpreter() {
+        let out = run_with_host("print(sum(2, 3))\n", |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_name, args| {
+                let crate::json::Json::Array(items) = crate::json::parse(args).unwrap() else {
+                    return Err("expected array".into());
+                };
+                let (crate::json::Json::Int(a), crate::json::Json::Int(b)) = (&items[0], &items[1])
+                else {
+                    return Err("expected ints".into());
+                };
+                Ok(format!("{}", a + b))
+            }));
+            interp
+                .register_host_fn(
+                    r#"{"name":"sum","params":[{"type":"Int"},{"type":"Int"}],"returns":"Int"}"#,
+                    Some(handler),
+                )
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(out, "5\n");
+    }
+
+    #[test]
+    fn host_fn_encodes_labels_and_string_return() {
+        let out = run_with_host("print(greet(name: \"Sam\"))\n", |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_name, args| {
+                let crate::json::Json::Array(items) = crate::json::parse(args).unwrap() else {
+                    return Err("expected array".into());
+                };
+                let crate::json::Json::Str(who) = &items[0] else {
+                    return Err("expected string".into());
+                };
+                Ok(format!("\"Hello, {who}\""))
+            }));
+            interp
+                .register_host_fn(
+                    r#"{"name":"greet","params":[{"label":"name","type":"String"}],"returns":"String"}"#,
+                    Some(handler),
+                )
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(out, "Hello, Sam\n");
+    }
+
+    #[test]
+    fn host_fn_wrong_result_type_is_runtime_type_error() {
+        let err = run_with_host("print(count())\n", |interp| {
+            let handler =
+                std::sync::Arc::new(MockHostHandler::new(|_n, _a| Ok(r#""nope""#.into())));
+            interp
+                .register_host_fn(r#"{"name":"count","returns":"Int"}"#, Some(handler))
+                .unwrap();
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Type(ref m) if m.contains("count") && m.contains("bad result")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn host_fn_handler_error_is_runtime_error_naming_fn() {
+        let err = run_with_host("ping()\n", |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| Err("kaboom".into())));
+            interp
+                .register_host_fn(r#"{"name":"ping","returns":"Void"}"#, Some(handler))
+                .unwrap();
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Type(ref m) if m.contains("ping") && m.contains("kaboom")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn host_fn_thrown_payload_is_catchable_swift_error() {
+        // The `{"$thrown": …}` payload becomes a catchable Swift error, so a
+        // do/catch around the call recovers and reads its message.
+        let src = concat!(
+            "struct HostError: Error { let message: String }\n",
+            "func go() {\n",
+            "  do { try risky() }\n",
+            "  catch let e as HostError { print(\"caught \\(e.message)\") }\n",
+            "  catch { print(\"other\") }\n",
+            "}\n",
+            "go()\n",
+        );
+        let out = run_with_host(src, |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| {
+                Ok(r#"{"$thrown":"disk full"}"#.into())
+            }));
+            interp
+                .register_host_fn(
+                    r#"{"name":"risky","returns":"Int","throws":true}"#,
+                    Some(handler),
+                )
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(out, "caught disk full\n");
+    }
+
+    #[test]
+    fn host_fn_arg_count_mismatch_is_runtime_error() {
+        // `sum` declared with two params, called with one.
+        let err = run_with_host("print(sum(1))\n", |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| Ok("0".into())));
+            interp
+                .register_host_fn(
+                    r#"{"name":"sum","params":[{"type":"Int"},{"type":"Int"}],"returns":"Int"}"#,
+                    Some(handler),
+                )
+                .unwrap();
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, EvalError::Type(ref m) if m.contains("sum") && m.contains("expects 2")),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn user_type_shadows_host_fn() {
+        // A same-named user struct must win over the registered host fn, so
+        // the host handler is never consulted (correct Swift shadowing).
+        let src = concat!("struct sum { let tag = \"S\" }\n", "print(sum().tag)\n",);
+        let out = run_with_host(src, |interp| {
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| {
+                Err("should not be called".into())
+            }));
+            interp
+                .register_host_fn(r#"{"name":"sum","returns":"Void"}"#, Some(handler))
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(out, "S\n");
     }
 }
