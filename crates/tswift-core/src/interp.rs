@@ -1134,6 +1134,35 @@ impl<'w> Interpreter<'w> {
         self.types.mark_builtin_enum(name);
     }
 
+    /// Register a builtin enum whose cases may carry positional associated
+    /// values (e.g. `JSONEncoder.NonConformingFloatEncodingStrategy` with
+    /// `.convertToString(positiveInfinity:negativeInfinity:nan:)`). Each entry
+    /// is `(case_name, &[payload_type_spelling])`; labels are dropped (payload
+    /// is positional). Like [`register_builtin_enum`], leading-dot resolution
+    /// falls back to these by unique case name.
+    pub fn register_builtin_enum_with_payloads(&mut self, name: &str, cases: &[(&str, &[&str])]) {
+        if self.types.is_enum(name) {
+            return;
+        }
+        let cases = cases
+            .iter()
+            .map(|(case, payloads)| EnumCaseDef {
+                name: (*case).to_string(),
+                raw: None,
+                payload_types: payloads.iter().map(|t| Some((*t).to_string())).collect(),
+            })
+            .collect();
+        self.types.insert_enum(
+            name.to_string(),
+            EnumDef {
+                cases,
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            },
+        );
+        self.types.mark_builtin_enum(name);
+    }
+
     /// The keys of every registered standard-library entry, for coverage
     /// tooling. Free functions are bare names; method/property intrinsics are
     /// `Type.member`; sequence algorithms are `Sequence.member`. Sorted and
@@ -4465,10 +4494,16 @@ impl<'w> Interpreter<'w> {
         name: &str,
         _args: &[CallArg],
     ) -> Result<Option<SwiftValue>, Signal> {
+        // Seed `userInfo` with an empty `[CodingUserInfoKey: Any]` dictionary
+        // so `coder.userInfo[key] = …` works before any explicit assignment
+        // (Foundation's default is an empty dictionary, not an unset member).
         Ok(Some(SwiftValue::Object(StdRc::new(RefCell::new(
             ClassObj {
                 class_name: name.to_string(),
-                fields: vec![],
+                fields: vec![(
+                    "userInfo".to_string(),
+                    SwiftValue::Dict(Rc::new(Vec::new())),
+                )],
             },
         )))))
     }

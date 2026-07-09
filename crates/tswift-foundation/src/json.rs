@@ -28,7 +28,9 @@
 //! `Date.FormatStyle` (alphabetically first) which is fine — the strategy
 //! readers dispatch on the case name, not the type name.
 
-use tswift_core::{Arg, BuiltinParam, Interpreter, StdContext, StdError, StdResult, SwiftValue};
+use tswift_core::{
+    Arg, BuiltinParam, Interpreter, StdContext, StdError, StdResult, StructObj, SwiftValue,
+};
 
 use crate::type_error;
 
@@ -92,6 +94,50 @@ pub fn install(interp: &mut Interpreter<'_>) {
         "JSONEncoder.OutputFormatting",
         &["prettyPrinted", "sortedKeys"],
     );
+
+    // Non-conforming-float strategies. These carry positional associated
+    // values (three replacement strings). The encoder case is
+    // `.convertToString`, the decoder case is `.convertFromString` — the two
+    // names differ in real Foundation, which keeps leading-dot resolution
+    // unambiguous (each case name lives in exactly one builtin enum).
+    interp.register_builtin_enum_with_payloads(
+        "JSONEncoder.NonConformingFloatEncodingStrategy",
+        &[
+            ("throw", &[]),
+            ("convertToString", &["String", "String", "String"]),
+        ],
+    );
+    interp.register_builtin_enum_with_payloads(
+        "JSONDecoder.NonConformingFloatDecodingStrategy",
+        &[
+            ("throw", &[]),
+            ("convertFromString", &["String", "String", "String"]),
+        ],
+    );
+
+    // `CodingUserInfoKey(rawValue:)` — a `Hashable` wrapper around a String,
+    // mirroring Foundation's real API. The failable initializer never fails in
+    // practice; we always return the struct value (force-unwrap is identity on
+    // a non-nil value). Stored in a `rawValue` field so `.rawValue` reads back
+    // through the generic struct-field path, and structural equality/hashing
+    // makes it usable as a dictionary key.
+    interp.register_free_fn_typed(
+        "CodingUserInfoKey",
+        coding_user_info_key_init,
+        vec![BuiltinParam::labeled("rawValue", "String")],
+    );
+}
+
+/// `CodingUserInfoKey(rawValue: String)` — builds the wrapper struct.
+fn coding_user_info_key_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let raw = match args.first().map(|a| &a.value) {
+        Some(SwiftValue::Str(s)) => s.clone(),
+        _ => return Err(type_error("CodingUserInfoKey(rawValue:) expects a String")),
+    };
+    Ok(SwiftValue::Struct(std::rc::Rc::new(StructObj {
+        type_name: "CodingUserInfoKey".into(),
+        fields: vec![("rawValue".into(), SwiftValue::Str(raw))],
+    })))
 }
 
 /// Returns the member keys exposed by this module (for coverage tracking).
@@ -101,12 +147,17 @@ pub fn registered_keys() -> Vec<String> {
         "JSONDecoder.dataDecodingStrategy".to_string(),
         "JSONDecoder.dateDecodingStrategy".to_string(),
         "JSONDecoder.keyDecodingStrategy".to_string(),
+        "JSONDecoder.assumesTopLevelDictionary".to_string(),
+        "JSONDecoder.nonConformingFloatDecodingStrategy".to_string(),
+        "JSONDecoder.userInfo".to_string(),
         "JSONDecoder.init".to_string(),
         "JSONEncoder.dataEncodingStrategy".to_string(),
         "JSONEncoder.dateEncodingStrategy".to_string(),
         "JSONEncoder.encode".to_string(),
         "JSONEncoder.init".to_string(),
         "JSONEncoder.keyEncodingStrategy".to_string(),
+        "JSONEncoder.nonConformingFloatEncodingStrategy".to_string(),
+        "JSONEncoder.userInfo".to_string(),
         "JSONEncoder.outputFormatting".to_string(),
         // Measurement.encode is handled via the JSON encoder's special-case path.
         "Measurement.encode".to_string(),

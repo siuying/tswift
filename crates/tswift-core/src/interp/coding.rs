@@ -138,6 +138,58 @@ impl DataDecoding {
 }
 
 // ---------------------------------------------------------------------------
+// Non-conforming-float strategy
+// ---------------------------------------------------------------------------
+
+/// Mirrors `JSONEncoder.NonConformingFloatEncodingStrategy` /
+/// `JSONDecoder.NonConformingFloatDecodingStrategy`.
+///
+/// The encoder case is `.convertToString(...)`, the decoder case is
+/// `.convertFromString(...)`; both carry three replacement strings for
+/// `+infinity`, `-infinity`, and `nan`. `Throw` is the Foundation default:
+/// encoding a non-finite `Double` throws `EncodingError.invalidValue`, and a
+/// JSON string in a `Double` slot is a `typeMismatch`.
+#[derive(Clone, Debug, Default)]
+pub(super) enum NonConformingFloat {
+    #[default]
+    Throw,
+    ConvertToString {
+        positive_infinity: String,
+        negative_infinity: String,
+        nan: String,
+    },
+}
+
+/// Read the associated three replacement strings from a `.convertToString` /
+/// `.convertFromString` enum value stored on a coder receiver field.
+fn nonconforming_float_from_field(recv: &SwiftValue, field: &str) -> NonConformingFloat {
+    match read_coder_field(recv, field) {
+        Some(SwiftValue::Enum(e))
+            if e.case == "convertToString" || e.case == "convertFromString" =>
+        {
+            let s = |i: usize| match e.payload.get(i) {
+                Some(SwiftValue::Str(s)) => s.clone(),
+                _ => String::new(),
+            };
+            NonConformingFloat::ConvertToString {
+                positive_infinity: s(0),
+                negative_infinity: s(1),
+                nan: s(2),
+            }
+        }
+        _ => NonConformingFloat::Throw,
+    }
+}
+
+fn encoder_float_strategy(recv: &SwiftValue) -> NonConformingFloat {
+    nonconforming_float_from_field(recv, "nonConformingFloatEncodingStrategy")
+}
+
+fn decoder_float_strategy(recv: &SwiftValue) -> NonConformingFloat {
+    nonconforming_float_from_field(recv, "nonConformingFloatDecodingStrategy")
+}
+
+// ---------------------------------------------------------------------------
 // Output-formatting and key-strategy enums
 // ---------------------------------------------------------------------------
 
@@ -564,12 +616,13 @@ impl<'w> Interpreter<'w> {
             let output_fmt = encoder_output_formatting(base_value);
             let key_enc = encoder_key_strategy(base_value);
             let data_enc = encoder_data_strategy(base_value);
+            let float_enc = encoder_float_strategy(base_value);
             let args = self.eval_args(arg_nodes)?;
             let value = args
                 .first()
                 .map(|a| a.value.clone())
                 .ok_or_else(|| EvalError::Type("encode expects a value".into()))?;
-            let json = self.json_encode(&value, date_enc, key_enc, data_enc)?;
+            let json = self.json_encode(&value, date_enc, key_enc, data_enc, &float_enc)?;
             let json_str = crate::json::to_string_fmt(&json, &output_fmt);
             let bytes: Vec<SwiftValue> = json_str
                 .bytes()
@@ -586,6 +639,11 @@ impl<'w> Interpreter<'w> {
             let date_dec = decoder_date_strategy(base_value);
             let key_dec = decoder_key_strategy(base_value);
             let data_dec = decoder_data_strategy(base_value);
+            let float_dec = decoder_float_strategy(base_value);
+            let assumes_top_dict = matches!(
+                read_coder_field(base_value, "assumesTopLevelDictionary"),
+                Some(SwiftValue::Bool(true))
+            );
             let type_name = arg_nodes
                 .first()
                 .and_then(metatype_name)
@@ -634,11 +692,19 @@ impl<'w> Interpreter<'w> {
                     .into())
                 }
             };
+            // `assumesTopLevelDictionary`: when the input lacks the outermost
+            // pair of braces, wrap it so a bare `"a": 1, "b": 2` payload parses
+            // as an object (matching Foundation's documented behaviour).
+            let text = if assumes_top_dict && !text.trim_start().starts_with('{') {
+                format!("{{{text}}}")
+            } else {
+                text
+            };
             let json = crate::json::parse(&text)
                 .map_err(|e| Signal::Throw(SwiftValue::Str(format!("decode error: {e}"))))?;
-            return Ok(Some(
-                self.json_decode(&type_name, &json, date_dec, key_dec, data_dec)?,
-            ));
+            return Ok(Some(self.json_decode(
+                &type_name, &json, date_dec, key_dec, data_dec, &float_dec,
+            )?));
         }
         Ok(None)
     }
@@ -713,6 +779,7 @@ impl<'w> Interpreter<'w> {
         date_enc: DateEncoding,
         key_enc: KeyEncoding,
         data_enc: DataEncoding,
+        float_enc: &NonConformingFloat,
     ) -> Result<Json, Signal> {
         // `URL` is encoded as its `absoluteString` (a JSON string).
         if let SwiftValue::Struct(o) = value {
@@ -792,7 +859,7 @@ impl<'w> Interpreter<'w> {
                     ("converter".into(), converter),
                     ("symbol".into(), Json::Str(symbol)),
                 ]);
-                let val_json = self.json_encode(val, date_enc, key_enc, data_enc)?;
+                let val_json = self.json_encode(val, date_enc, key_enc, data_enc, float_enc)?;
                 return Ok(Json::Object(vec![
                     ("value".into(), val_json),
                     ("unit".into(), unit_obj),
@@ -829,23 +896,42 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Bool(b) => Json::Bool(*b),
             SwiftValue::Int(i) => Json::Int(i.raw as i64),
             SwiftValue::Double(d) => {
-                // Match Swift semantics: JSONEncoder.encode throws
+                // Match Swift semantics: by default JSONEncoder.encode throws
                 // EncodingError.invalidValue for non-finite doubles. We model
                 // this as a thrown string so `try/catch` can intercept it;
                 // silently emitting `inf`/`nan` would produce invalid JSON.
+                // With `.convertToString`, substitute the configured strings.
                 if d.is_finite() {
                     Json::Double(*d)
                 } else {
-                    return Err(Signal::Throw(SwiftValue::Str(format!(
-                        "EncodingError: cannot encode non-finite Double ({d})"
-                    ))));
+                    match float_enc {
+                        NonConformingFloat::ConvertToString {
+                            positive_infinity,
+                            negative_infinity,
+                            nan,
+                        } => {
+                            let s = if d.is_nan() {
+                                nan
+                            } else if *d == f64::INFINITY {
+                                positive_infinity
+                            } else {
+                                negative_infinity
+                            };
+                            Json::Str(s.clone())
+                        }
+                        NonConformingFloat::Throw => {
+                            return Err(Signal::Throw(SwiftValue::Str(format!(
+                                "EncodingError: cannot encode non-finite Double ({d})"
+                            ))));
+                        }
+                    }
                 }
             }
             SwiftValue::Str(s) => Json::Str(s.clone()),
             SwiftValue::Array(items) => Json::Array(
                 items
                     .iter()
-                    .map(|v| self.json_encode(v, date_enc, key_enc, data_enc))
+                    .map(|v| self.json_encode(v, date_enc, key_enc, data_enc, float_enc))
                     .collect::<Result<_, _>>()?,
             ),
             SwiftValue::Struct(o) => {
@@ -863,7 +949,10 @@ impl<'w> Interpreter<'w> {
                         KeyEncoding::ConvertToSnakeCase => to_snake_case(k),
                         KeyEncoding::UseDefaultKeys => k.clone(),
                     };
-                    entries.push((key, self.json_encode(v, date_enc, key_enc, data_enc)?));
+                    entries.push((
+                        key,
+                        self.json_encode(v, date_enc, key_enc, data_enc, float_enc)?,
+                    ));
                 }
                 Json::Object(entries)
             }
@@ -878,7 +967,10 @@ impl<'w> Interpreter<'w> {
                             SwiftValue::Str(s) => s.clone(),
                             other => other.to_string(),
                         };
-                        Ok((key, self.json_encode(v, date_enc, key_enc, data_enc)?))
+                        Ok((
+                            key,
+                            self.json_encode(v, date_enc, key_enc, data_enc, float_enc)?,
+                        ))
                     })
                     .collect::<Result<_, Signal>>()?;
                 entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -893,7 +985,7 @@ impl<'w> Interpreter<'w> {
                     .and_then(|d| d.cases.iter().find(|c| c.name == e.case))
                     .and_then(|c| c.raw.clone());
                 match raw {
-                    Some(r) => self.json_encode(&r, date_enc, key_enc, data_enc)?,
+                    Some(r) => self.json_encode(&r, date_enc, key_enc, data_enc, float_enc)?,
                     None if e.payload.is_empty() => Json::Str(e.case.clone()),
                     None => {
                         return Err(EvalError::Type(format!(
@@ -923,6 +1015,7 @@ impl<'w> Interpreter<'w> {
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
         data_dec: DataDecoding,
+        float_dec: &NonConformingFloat,
     ) -> Result<SwiftValue, Signal> {
         // `Date` decoding: apply the chosen strategy.
         if type_name == "Date" {
@@ -937,6 +1030,7 @@ impl<'w> Interpreter<'w> {
                 date_dec,
                 key_dec,
                 data_dec,
+                float_dec,
             );
         }
         // A `Codable` enum decodes from its raw value, or — for a payload-free
@@ -978,8 +1072,9 @@ impl<'w> Interpreter<'w> {
                         }
                     });
                     let v = match json_val {
-                        Some(j) => self
-                            .json_decode_typed(full_ty, &p.name, j, date_dec, key_dec, data_dec)?,
+                        Some(j) => self.json_decode_typed(
+                            full_ty, &p.name, j, date_dec, key_dec, data_dec, float_dec,
+                        )?,
                         None if is_optional => SwiftValue::Nil,
                         None => {
                             return Err(Signal::Throw(SwiftValue::Str(format!(
@@ -1064,6 +1159,7 @@ impl<'w> Interpreter<'w> {
     /// * Named struct/enum types: delegate to [`json_decode`].
     /// * Array (`[T]`): delegate to [`json_decode_field`].
     /// * Unknown / no hint: fall back to shape-inferred [`json_value`].
+    #[allow(clippy::too_many_arguments)]
     fn json_decode_typed(
         &self,
         ty: Option<&str>,
@@ -1072,6 +1168,7 @@ impl<'w> Interpreter<'w> {
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
         data_dec: DataDecoding,
+        float_dec: &NonConformingFloat,
     ) -> Result<SwiftValue, Signal> {
         let Some(full) = ty else {
             return Ok(self.json_value(json));
@@ -1090,6 +1187,7 @@ impl<'w> Interpreter<'w> {
                 date_dec,
                 key_dec,
                 data_dec,
+                float_dec,
             );
         }
         // `Date` type: use the strategy.
@@ -1239,6 +1337,29 @@ impl<'w> Interpreter<'w> {
             "Double" | "Float" | "Float32" | "Float64" | "Float80" => match json {
                 Json::Int(i) => return Ok(SwiftValue::Double(*i as f64)),
                 Json::Double(d) => return Ok(SwiftValue::Double(*d)),
+                // With `.convertFromString`, a JSON string matching one of the
+                // configured sentinels decodes to the corresponding non-finite
+                // value; any other string is a typeMismatch.
+                Json::Str(s) => {
+                    if let NonConformingFloat::ConvertToString {
+                        positive_infinity,
+                        negative_infinity,
+                        nan,
+                    } = float_dec
+                    {
+                        if s == positive_infinity {
+                            return Ok(SwiftValue::Double(f64::INFINITY));
+                        } else if s == negative_infinity {
+                            return Ok(SwiftValue::Double(f64::NEG_INFINITY));
+                        } else if s == nan {
+                            return Ok(SwiftValue::Double(f64::NAN));
+                        }
+                    }
+                    return Err(Signal::Throw(SwiftValue::Str(format!(
+                        "DecodingError.typeMismatch: expected Double for '{}', got String",
+                        field
+                    ))));
+                }
                 other => {
                     return Err(Signal::Throw(SwiftValue::Str(format!(
                         "DecodingError.typeMismatch: expected Double for '{}', got {}",
@@ -1279,9 +1400,8 @@ impl<'w> Interpreter<'w> {
         // uniformly regardless of whether its element type is registered.
         if full.trim_start().starts_with('[') {
             return match json {
-                Json::Array(_) => {
-                    self.json_decode_field(inner, full, json, date_dec, key_dec, data_dec)
-                }
+                Json::Array(_) => self
+                    .json_decode_field(inner, full, json, date_dec, key_dec, data_dec, float_dec),
                 other => Err(Signal::Throw(SwiftValue::Str(format!(
                     "DecodingError.typeMismatch: expected array for '{}', got {}",
                     field,
@@ -1291,7 +1411,8 @@ impl<'w> Interpreter<'w> {
         }
         // Named struct/enum (non-array): delegate to field decoder.
         if self.types.is_struct(inner) || self.types.is_enum(inner) {
-            return self.json_decode_field(inner, full, json, date_dec, key_dec, data_dec);
+            return self
+                .json_decode_field(inner, full, json, date_dec, key_dec, data_dec, float_dec);
         }
         Ok(self.json_value(json))
     }
@@ -1299,6 +1420,7 @@ impl<'w> Interpreter<'w> {
     /// Decode a struct field whose declared type is `inner` (the element type)
     /// and full spelling `full` (e.g. `[User]`, `User?`). Handles arrays and
     /// optionals of a registered struct/enum element.
+    #[allow(clippy::too_many_arguments)]
     fn json_decode_field(
         &self,
         inner: &str,
@@ -1307,6 +1429,7 @@ impl<'w> Interpreter<'w> {
         date_dec: DateDecoding,
         key_dec: KeyDecoding,
         data_dec: DataDecoding,
+        float_dec: &NonConformingFloat,
     ) -> Result<SwiftValue, Signal> {
         match json {
             // `nil` only for an optional type; a non-optional field receiving
@@ -1336,12 +1459,13 @@ impl<'w> Interpreter<'w> {
                                 date_dec,
                                 key_dec,
                                 data_dec,
+                                float_dec,
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 )))
             }
-            _ => self.json_decode(inner, json, date_dec, key_dec, data_dec),
+            _ => self.json_decode(inner, json, date_dec, key_dec, data_dec, float_dec),
         }
     }
 
