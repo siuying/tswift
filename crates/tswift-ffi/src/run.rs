@@ -20,8 +20,9 @@ pub(crate) fn run_impl(
     source: &str,
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
+    host_fns: &[crate::host::HostFnRegistration],
 ) -> String {
-    run_impl_named(source, "main.swift", http, stream_http)
+    run_impl_named(source, "main.swift", http, stream_http, host_fns)
 }
 
 /// Like [`run_impl`] but with an explicit diagnostic `filename`.
@@ -30,6 +31,7 @@ fn run_impl_named(
     filename: &str,
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
+    host_fns: &[crate::host::HostFnRegistration],
 ) -> String {
     let started = now_ms();
 
@@ -93,6 +95,7 @@ fn run_impl_named(
     } else if let Some(handler) = http {
         interp.set_http_transport(Box::new(handler));
     }
+    crate::host::install(&mut interp, host_fns);
 
     // SAFETY: `interp.run` requires `&'static Analysis` (ADR-0003). `analysis`
     // is declared before `interp`, so it outlives `interp` and is dropped after
@@ -180,6 +183,7 @@ pub(crate) fn run_module_impl(
     module_json: &str,
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
+    host_fns: &[crate::host::HostFnRegistration],
 ) -> String {
     let module = match parse_module(module_json) {
         Ok(m) => m,
@@ -197,5 +201,5 @@ pub(crate) fn run_module_impl(
         }
     };
     let (source, filename) = module.merge();
-    run_impl_named(&source, filename, http, stream_http)
+    run_impl_named(&source, filename, http, stream_http, host_fns)
 }

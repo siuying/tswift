@@ -10,11 +10,13 @@
 
 use std::ffi::{c_char, c_void, CStr, CString};
 
+mod host;
 mod http;
 mod run;
 mod swiftui;
 mod util;
 
+pub use host::{tswift_host_respond, TswiftHostFn};
 pub use http::{
     tswift_http_event, tswift_http_respond, TswiftHttpCancelFn, TswiftHttpHandler,
     TswiftHttpStartFn,
@@ -35,6 +37,11 @@ pub struct Context {
     /// priority over `http`; each request uses the event-driven
     /// `start/next_event/cancel` seam with host-pushed JSON events.
     stream_http: Option<http::StreamingHandlerConfig>,
+    /// Registered host-native functions (Epic #246). Installed into the
+    /// interpreter in both the one-shot run and SwiftUI compile paths, the same
+    /// place the HTTP transport is wired. Owned by the context: dropped (and the
+    /// retained handler boxes released) when the context is freed.
+    host_fns: Vec<host::HostFnRegistration>,
 }
 
 impl Context {
@@ -43,6 +50,7 @@ impl Context {
             swiftui: None,
             http: None,
             stream_http: None,
+            host_fns: Vec::new(),
         }
     }
 }
@@ -145,7 +153,12 @@ pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) ->
     let Some(source) = borrow_str(source) else {
         return into_json_ptr(arg_error_json("source is null or not valid UTF-8"));
     };
-    into_json_ptr(run::run_impl(source, ctx.http, ctx.stream_http))
+    into_json_ptr(run::run_impl(
+        source,
+        ctx.http,
+        ctx.stream_http,
+        &ctx.host_fns,
+    ))
 }
 
 /// Register `handler` (with its opaque `userdata`) as the HTTP transport for
@@ -205,6 +218,78 @@ pub unsafe extern "C" fn tswift_set_http_stream_handler(
     };
 }
 
+/// Register a host-native function on `ctx`, callable from interpreted Swift by
+/// the name in its signature. `signature_json` is the compact schema documented
+/// in `crates/tswift-core/src/host_bridge.rs`
+/// (`{"name":…,"params":[…],"returns":…,"throws":…}`). `callback` is invoked
+/// synchronously when interpreted code calls the function; it receives the
+/// function name, a JSON array of validated arguments, and an in-flight `call`
+/// token it must answer with [`tswift_host_respond`] before returning.
+/// `userdata` is passed through verbatim. Registering the same name replaces the
+/// prior registration.
+///
+/// Returns owned result JSON: `{"ok":true,"name":"<fn>","error":null}` on
+/// success, or `{"ok":false,"name":null,"error":"<why>"}` if the signature is
+/// malformed or arguments are null. Release it with [`tswift_string_free`].
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `signature_json`
+/// must be null or a valid NUL-terminated C string. `callback` (when non-null)
+/// must remain callable, and `userdata` valid, until the function is
+/// removed/replaced or the context is freed. The returned pointer is owned by
+/// the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_register_host_fn(
+    ctx: *mut Context,
+    signature_json: *const c_char,
+    callback: Option<TswiftHostFn>,
+    userdata: *mut c_void,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(host_register_error("null context"));
+    };
+    let Some(signature_json) = borrow_str(signature_json) else {
+        return into_json_ptr(host_register_error(
+            "signature_json is null or not valid UTF-8",
+        ));
+    };
+    let Some(callback) = callback else {
+        return into_json_ptr(host_register_error("callback is null"));
+    };
+    match host::register(&mut ctx.host_fns, signature_json, callback, userdata) {
+        Ok(name) => into_json_ptr(format!(
+            "{{\"ok\":true,\"name\":\"{}\",\"error\":null}}",
+            tswift_core::result_json::escape(&name)
+        )),
+        Err(message) => into_json_ptr(host_register_error(&message)),
+    }
+}
+
+/// Remove the host-native function named `name` from `ctx` (a no-op if it was
+/// never registered). After removal, interpreted code can no longer call it.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `name` must be
+/// null or a valid NUL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn tswift_remove_host_fn(ctx: *mut Context, name: *const c_char) {
+    let Some(ctx) = ctx.as_mut() else {
+        return;
+    };
+    let Some(name) = borrow_str(name) else {
+        return;
+    };
+    host::remove(&mut ctx.host_fns, name);
+}
+
+/// Build the `{"ok":false,…}` result JSON for a failed host-fn registration.
+fn host_register_error(message: &str) -> String {
+    format!(
+        "{{\"ok\":false,\"name\":null,\"error\":\"{}\"}}",
+        tswift_core::result_json::escape(message)
+    )
+}
+
 /// Compile a SwiftUI program through `ctx`, render its root view, and start a
 /// live render session (replacing any prior one). Returns owned UIIR JSON;
 /// release it with [`tswift_string_free`].
@@ -231,6 +316,7 @@ pub unsafe extern "C" fn tswift_swiftui_compile(
         source,
         ctx.http,
         ctx.stream_http,
+        &ctx.host_fns,
     ))
 }
 
@@ -324,7 +410,12 @@ pub unsafe extern "C" fn tswift_run_module(
     let Some(module_json) = borrow_str(module_json) else {
         return into_json_ptr(arg_error_json("module_json is null or not valid UTF-8"));
     };
-    into_json_ptr(run::run_module_impl(module_json, ctx.http, ctx.stream_http))
+    into_json_ptr(run::run_module_impl(
+        module_json,
+        ctx.http,
+        ctx.stream_http,
+        &ctx.host_fns,
+    ))
 }
 
 /// Lint a multi-file Swift module and return owned diagnostics JSON (same
@@ -378,6 +469,7 @@ pub unsafe extern "C" fn tswift_swiftui_compile_module(
         module_json,
         ctx.http,
         ctx.stream_http,
+        &ctx.host_fns,
     ))
 }
 
@@ -420,6 +512,168 @@ mod tests {
             tswift_diagnostics_module;
         let _compile_module: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
             tswift_swiftui_compile_module;
+        // Host-native function registration (Epic #246)
+        let _register_host_fn: unsafe extern "C" fn(
+            *mut Context,
+            *const c_char,
+            Option<TswiftHostFn>,
+            *mut c_void,
+        ) -> *mut c_char = tswift_register_host_fn;
+        let _remove_host_fn: unsafe extern "C" fn(*mut Context, *const c_char) =
+            tswift_remove_host_fn;
+        let _host_respond: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_host_respond;
+    }
+
+    /// A host function `hostDeviceName() -> String` registered through the FFI
+    /// is callable from a one-shot `tswift_run` script.
+    #[test]
+    fn register_host_fn_callable_from_run() {
+        unsafe extern "C" fn device_name(
+            _userdata: *mut c_void,
+            _name: *const c_char,
+            _args_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            let reply = CString::new(r#""iPhone""#).unwrap();
+            tswift_host_respond(call, reply.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        let sig = CString::new(r#"{"name":"hostDeviceName","returns":"String"}"#).unwrap();
+        let reg = unsafe {
+            tswift_register_host_fn(ctx, sig.as_ptr(), Some(device_name), std::ptr::null_mut())
+        };
+        let reg_json = unsafe { CStr::from_ptr(reg) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(reg) };
+        assert!(reg_json.contains("\"ok\":true"), "{reg_json}");
+        assert!(reg_json.contains("hostDeviceName"), "{reg_json}");
+
+        let source = CString::new("print(hostDeviceName())").unwrap();
+        let out = unsafe { tswift_run(ctx, source.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("iPhone"), "unexpected result: {json}");
+    }
+
+    /// A host function that receives an argument and echoes a computed result,
+    /// exercising the argument-encoding half of the trampoline through the FFI.
+    #[test]
+    fn register_host_fn_receives_args() {
+        unsafe extern "C" fn haptic(
+            _userdata: *mut c_void,
+            _name: *const c_char,
+            args_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            let args = CStr::from_ptr(args_json).to_str().unwrap();
+            // Echo the received style string back so the script can print it.
+            let tswift_core::json::Json::Array(items) = tswift_core::json::parse(args).unwrap()
+            else {
+                panic!("expected array");
+            };
+            let tswift_core::json::Json::Str(style) = &items[0] else {
+                panic!("expected string");
+            };
+            let reply = CString::new(format!("{:?}", format!("did {style}"))).unwrap();
+            tswift_host_respond(call, reply.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        let sig = CString::new(
+            r#"{"name":"hostHaptic","params":[{"label":"style","type":"String"}],"returns":"String"}"#,
+        )
+        .unwrap();
+        unsafe {
+            tswift_register_host_fn(ctx, sig.as_ptr(), Some(haptic), std::ptr::null_mut());
+        }
+        let source = CString::new(r#"print(hostHaptic(style: "tap"))"#).unwrap();
+        let out = unsafe { tswift_run(ctx, source.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("did tap"), "unexpected result: {json}");
+    }
+
+    /// A registered host function is available in a SwiftUI preview session on
+    /// the same context, not just one-shot runs.
+    #[test]
+    fn register_host_fn_callable_from_swiftui_compile() {
+        unsafe extern "C" fn device_name(
+            _userdata: *mut c_void,
+            _name: *const c_char,
+            _args_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            let reply = CString::new(r#""iPad""#).unwrap();
+            tswift_host_respond(call, reply.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        let sig = CString::new(r#"{"name":"hostDeviceName","returns":"String"}"#).unwrap();
+        unsafe {
+            tswift_register_host_fn(ctx, sig.as_ptr(), Some(device_name), std::ptr::null_mut());
+        }
+        let source =
+            CString::new("struct V: View { var body: some View { Text(hostDeviceName()) } }")
+                .unwrap();
+        let compiled = unsafe { tswift_swiftui_compile(ctx, source.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(compiled) }
+            .to_str()
+            .unwrap()
+            .to_string();
+        unsafe { tswift_string_free(compiled) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(json.contains("iPad"), "unexpected tree: {json}");
+    }
+
+    /// Removing a registered host function makes subsequent script calls fail.
+    #[test]
+    fn removed_host_fn_is_not_callable() {
+        unsafe extern "C" fn device_name(
+            _userdata: *mut c_void,
+            _name: *const c_char,
+            _args_json: *const c_char,
+            call: *mut c_void,
+        ) {
+            let reply = CString::new(r#""iPhone""#).unwrap();
+            tswift_host_respond(call, reply.as_ptr());
+        }
+        let ctx = tswift_context_new();
+        let sig = CString::new(r#"{"name":"hostDeviceName","returns":"String"}"#).unwrap();
+        unsafe {
+            tswift_register_host_fn(ctx, sig.as_ptr(), Some(device_name), std::ptr::null_mut());
+        }
+        let name = CString::new("hostDeviceName").unwrap();
+        unsafe { tswift_remove_host_fn(ctx, name.as_ptr()) };
+        let source = CString::new("print(hostDeviceName())").unwrap();
+        let out = unsafe { tswift_run(ctx, source.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        // The call is now an unresolved function — the run must not succeed.
+        assert!(
+            !json.contains("iPhone"),
+            "should not call removed fn: {json}"
+        );
+    }
+
+    /// Registering a malformed signature returns an error envelope, not a panic.
+    #[test]
+    fn register_host_fn_malformed_signature_errors() {
+        unsafe extern "C" fn cb(
+            _u: *mut c_void,
+            _n: *const c_char,
+            _a: *const c_char,
+            _c: *mut c_void,
+        ) {
+        }
+        let ctx = tswift_context_new();
+        let sig = CString::new(r#"{"params":[]}"#).unwrap();
+        let reg =
+            unsafe { tswift_register_host_fn(ctx, sig.as_ptr(), Some(cb), std::ptr::null_mut()) };
+        let json = unsafe { CStr::from_ptr(reg) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(reg) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("\"ok\":false"), "{json}");
     }
 
     /// Integration test: streaming handler drives a full URLSession request via
