@@ -15,6 +15,13 @@ public final class TSwiftContext {
     /// borrowed pointer to it (see `TSwiftHTTP.swift`). Internal on purpose.
     var httpHandlerBox: AnyObject?
 
+    /// Retains the registered host-function handler boxes (keyed by name) while
+    /// the native side holds borrowed pointers to them (see
+    /// `TSwiftHostFunction.swift`). Released when the box is removed/replaced or
+    /// when the context deinits — so nothing leaks across runs. Internal on
+    /// purpose.
+    var hostFunctionBoxes: [String: AnyObject] = [:]
+
     public init() {
         guard let handle = tswift_context_new() else {
             fatalError("tswift_context_new returned null")
