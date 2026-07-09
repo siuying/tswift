@@ -23,6 +23,7 @@ use crate::url::url_string;
 /// `URLError.Code` cases in canonical order, with their `NSURLError*` raw
 /// values (`errorCode`).
 pub(crate) const URL_ERROR_CODES: &[(&str, i128)] = &[
+    ("unknown", -1),
     ("cancelled", -999),
     ("badURL", -1000),
     ("timedOut", -1001),
@@ -34,6 +35,7 @@ pub(crate) const URL_ERROR_CODES: &[(&str, i128)] = &[
     ("httpTooManyRedirects", -1007),
     ("resourceUnavailable", -1008),
     ("notConnectedToInternet", -1009),
+    ("redirectToNonExistentLocation", -1010),
     ("badServerResponse", -1011),
     ("userCancelledAuthentication", -1012),
     ("userAuthenticationRequired", -1013),
@@ -41,8 +43,34 @@ pub(crate) const URL_ERROR_CODES: &[(&str, i128)] = &[
     ("cannotDecodeRawData", -1015),
     ("cannotDecodeContentData", -1016),
     ("cannotParseResponse", -1017),
+    ("internationalRoamingOff", -1018),
+    ("callIsActive", -1019),
     ("dataNotAllowed", -1020),
+    ("requestBodyStreamExhausted", -1021),
+    ("appTransportSecurityRequiresSecureConnection", -1022),
+    ("fileDoesNotExist", -1100),
+    ("fileIsDirectory", -1101),
+    ("noPermissionsToReadFile", -1102),
+    ("dataLengthExceedsMaximum", -1103),
     ("secureConnectionFailed", -1200),
+    ("serverCertificateHasBadDate", -1201),
+    ("serverCertificateUntrusted", -1202),
+    ("serverCertificateHasUnknownRoot", -1203),
+    ("serverCertificateNotYetValid", -1204),
+    ("clientCertificateRejected", -1205),
+    ("clientCertificateRequired", -1206),
+    ("cannotLoadFromNetwork", -2000),
+    ("cannotCreateFile", -3000),
+    ("cannotOpenFile", -3001),
+    ("cannotCloseFile", -3002),
+    ("cannotWriteToFile", -3003),
+    ("cannotRemoveFile", -3004),
+    ("cannotMoveFile", -3005),
+    ("downloadDecodingFailedMidStream", -3006),
+    ("downloadDecodingFailedToComplete", -3007),
+    ("backgroundSessionRequiresSharedContainer", -995),
+    ("backgroundSessionInUseByAnotherProcess", -996),
+    ("backgroundSessionWasDisconnected", -997),
 ];
 
 /// Register the networking value types on `interp`.
@@ -149,9 +177,31 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("description", url_error_localized_description),
         ("failingURL", url_error_failing_url),
         ("hashValue", url_error_hash_value),
+        ("failureURLString", url_error_failure_url_string),
+        ("failureURLPeerTrust", url_error_failure_url_peer_trust),
+        (
+            "networkUnavailableReason",
+            url_error_network_unavailable_reason,
+        ),
+        (
+            "backgroundTaskCancelledReason",
+            url_error_background_task_cancelled_reason,
+        ),
+        (
+            "downloadTaskResumeData",
+            url_error_download_task_resume_data,
+        ),
+        ("uploadTaskResumeData", url_error_upload_task_resume_data),
     ] {
         interp.register_property(BuiltinReceiver::URLError, name, f);
     }
+    // `errorDomain` is a static constant (`NSErrorDomain`), always the same
+    // string; not a per-instance property.
+    interp.register_static_value(
+        "URLError",
+        "errorDomain",
+        SwiftValue::Str("NSURLErrorDomain".to_string()),
+    );
     // `URLError.Code.badURL` and contextual `.badURL` resolve via the builtin
     // enum registration above; also surface each case as `URLError.badURL`
     // (Foundation exposes the codes on `URLError` too).
@@ -168,6 +218,7 @@ pub(crate) fn extra_registered_keys() -> Vec<String> {
         .iter()
         .map(|(case, _)| format!("URLError.{case}"))
         .collect();
+    keys.push("URLError.errorDomain".to_string());
     keys.push("URLSession.shared".to_string());
     keys.push("URLSessionConfiguration.default".to_string());
     keys.push("URLSessionConfiguration.ephemeral".to_string());
@@ -808,6 +859,52 @@ fn url_error_localized_description(recv: SwiftValue) -> StdResult {
 fn url_error_hash_value(recv: SwiftValue) -> StdResult {
     let case = url_error_case(&recv)?;
     Ok(SwiftValue::int(crate::fnv1a_hash(case.as_bytes())))
+}
+
+/// `URLError.failureURLString` — the failing URL's `String` form. Honestly
+/// `nil`: the runtime has no `userInfo` dictionary to source
+/// `NSURLErrorFailingURLStringErrorKey` from independently of `failingURL`,
+/// and Foundation itself deprecated this key in favor of `failingURL`
+/// (macOS 15.4+); we don't model the redundant string form.
+fn url_error_failure_url_string(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "failingURL")?; // validate receiver type
+    Ok(SwiftValue::Nil)
+}
+
+/// `URLError.failureURLPeerTrust` — the `SecTrust` from a failed TLS
+/// handshake. Honestly `nil`: the runtime has no TLS/SecTrust stack.
+fn url_error_failure_url_peer_trust(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "code")?; // validate receiver type
+    Ok(SwiftValue::Nil)
+}
+
+/// `URLError.networkUnavailableReason` — why the network was unreachable
+/// (cellular/expensive/constrained). Honestly `nil`: the runtime has no
+/// reachability or network-constraint model.
+fn url_error_network_unavailable_reason(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "code")?; // validate receiver type
+    Ok(SwiftValue::Nil)
+}
+
+/// `URLError.backgroundTaskCancelledReason` — why a background
+/// `URLSessionTask` was cancelled. Honestly `nil`: the runtime has no
+/// background-session model.
+fn url_error_background_task_cancelled_reason(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "code")?; // validate receiver type
+    Ok(SwiftValue::Nil)
+}
+
+/// `URLError.downloadTaskResumeData` / `.uploadTaskResumeData` — resume data
+/// from a cancelled download/upload task. Honestly `nil`: the runtime has no
+/// `URLSessionDownloadTask`/upload-task resume-data model.
+fn url_error_download_task_resume_data(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "code")?; // validate receiver type
+    Ok(SwiftValue::Nil)
+}
+
+fn url_error_upload_task_resume_data(recv: SwiftValue) -> StdResult {
+    url_error_field(&recv, "code")?; // validate receiver type
+    Ok(SwiftValue::Nil)
 }
 
 #[cfg(test)]
