@@ -38,7 +38,7 @@ Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 Decimal = ["+", "+=", "-", "-=", "*", "*=", "/", "/=", "==", "<"]
 DateComponents = ["==", "!="]
 Calendar = ["==", "!="]
-IndexPath = ["<", "<=", ">", ">=", "==", "!="]
+IndexPath = ["<", "<=", ">", ">=", "==", "!=", "+", "+=", "subscript"]
 Measurement = ["+", "-", "*", "/", "==", "<"]
 Data = ["=="]
 UUID = ["=="]
@@ -75,6 +75,7 @@ URLRequest = ["=="]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
 decimal_special_values = "Decimal has no infinity or negative zero: isInfinite is always false, isFinite is !isNaN. nan.significand/exponent propagate NaN. greatestFiniteMagnitude and ulp are not modelled."
+decimal_form_truncating_remainder_unavailable = "Decimal.formTruncatingRemainder(dividingBy:) is NOT implemented: verified against real Apple swiftc 6.3.2 (multiple -target triples) that the real Foundation declares this FloatingPoint-conformance method `@available(*, unavailable, message: \"Decimal does not yet fully adopt FloatingPoint.\")` — it cannot be called from any real Swift program. Implementing a callable version here would diverge from Darwin, not converge with it. Tier B / permanent skip, same rationale class as the .infinity/.signalingNaN gap."
 numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
 urlsession_transport = "URLSession runs on the embedding's transport: mock (fixtures), ureq HTTPS (CLI --allow-network), host handler (ffi), tswiftHttp hook (wasm); no cache/cookies/redirect policy modelled"
 urlsession_delegates = "URLSessionDataDelegate/TaskDelegate callbacks modelled (M3/M4); URLSessionDataTask.cancel/resume/state/progress modelled; bytes/download/publisher members unmodelled"
