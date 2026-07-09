@@ -46,6 +46,18 @@ public final class PreviewSession: ObservableObject {
         let error: String?
     }
 
+    /// Compile a multi-file `module`, mount its initial UIIR tree, and start a
+    /// render session. Files are concatenated in order for analysis.
+    public func compile(module: TSwiftModule) {
+        let moduleJSON = module.toJSON()
+        let raw = moduleJSON.withCString { cJSON -> String in
+            guard let ptr = tswift_swiftui_compile_module(context.handle, cJSON) else { return "" }
+            defer { tswift_string_free(ptr) }
+            return String(cString: ptr)
+        }
+        applyCompileResult(raw: raw)
+    }
+
     /// Compile `source`, mount its initial UIIR tree, and start a render session.
     public func compile(_ source: String) {
         let raw = source.withCString { cSource -> String in
@@ -53,6 +65,11 @@ public final class PreviewSession: ObservableObject {
             defer { tswift_string_free(ptr) }
             return String(cString: ptr)
         }
+        applyCompileResult(raw: raw)
+    }
+
+    /// Decode the raw FFI result JSON and update session state.
+    private func applyCompileResult(raw: String) {
         let envelope: CompileEnvelope
         do {
             envelope = try JSONDecoder().decode(CompileEnvelope.self, from: Data(raw.utf8))
@@ -111,6 +128,19 @@ public final class PreviewSession: ObservableObject {
         let diagnostics: [Diagnostic]
     }
 
+    /// Lint a multi-file `module` and publish its diagnostics **without**
+    /// rendering — the editor's live error-feedback channel for multi-file
+    /// projects. Files are concatenated in order for analysis.
+    public func diagnose(module: TSwiftModule) {
+        let moduleJSON = module.toJSON()
+        let raw = moduleJSON.withCString { cJSON -> String in
+            guard let ptr = tswift_diagnostics_module(cJSON) else { return "" }
+            defer { tswift_string_free(ptr) }
+            return String(cString: ptr)
+        }
+        applyDiagnosticsResult(raw: raw)
+    }
+
     /// Lint `source` through the frontend and publish its diagnostics, **without**
     /// rendering — the editor's live error-feedback channel. Decode failures are
     /// surfaced as a single synthetic error so the UI never silently drops them.
@@ -120,6 +150,10 @@ public final class PreviewSession: ObservableObject {
             defer { tswift_string_free(ptr) }
             return String(cString: ptr)
         }
+        applyDiagnosticsResult(raw: raw)
+    }
+
+    private func applyDiagnosticsResult(raw: String) {
         guard let envelope = try? JSONDecoder().decode(
             DiagnosticsEnvelope.self, from: Data(raw.utf8)
         ) else {

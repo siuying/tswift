@@ -298,6 +298,89 @@ pub unsafe extern "C" fn tswift_diagnostics(source: *const c_char) -> *mut c_cha
     into_json_ptr(swiftui::diagnose(source))
 }
 
+// ── Module (multi-file) entry points ─────────────────────────────────────────────
+
+/// Compile and run a multi-file Swift module through `ctx`, returning owned
+/// result JSON (same envelope as [`tswift_run`]). Release with
+/// [`tswift_string_free`].
+///
+/// `module_json` is a NUL-terminated JSON string:
+/// `{"files":[{"path":"…","contents":"…"},…]}`. Files are analyzed in order;
+/// the first file's path is used as the diagnostic source path. The existing
+/// `tswift_run` single-string entry point is unchanged (additive).
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `module_json`
+/// must be null or a valid NUL-terminated C string. The returned pointer is
+/// owned by the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_run_module(
+    ctx: *mut Context,
+    module_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(arg_error_json("null context"));
+    };
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(arg_error_json("module_json is null or not valid UTF-8"));
+    };
+    into_json_ptr(run::run_module_impl(module_json, ctx.http, ctx.stream_http))
+}
+
+/// Lint a multi-file Swift module and return owned diagnostics JSON (same
+/// envelope as [`tswift_diagnostics`]). Stateless: takes no context. Release
+/// with [`tswift_string_free`].
+///
+/// `module_json` is a NUL-terminated JSON string:
+/// `{"files":[{"path":"…","contents":"…"},…]}`.
+///
+/// # Safety
+/// `module_json` must be null or a valid NUL-terminated C string. The returned
+/// pointer is owned by the caller and must be freed once with
+/// [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_diagnostics_module(module_json: *const c_char) -> *mut c_char {
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(
+            "{\"ok\":false,\"diagnostics\":[{\"line\":1,\"col\":1,\"severity\":\"error\",\"message\":\"module_json is null or not valid UTF-8\"}]}"
+                .to_string(),
+        );
+    };
+    into_json_ptr(swiftui::diagnose_module(module_json))
+}
+
+/// Compile a multi-file SwiftUI module through `ctx` and start a live render
+/// session. Returns owned UIIR JSON (same envelope as
+/// [`tswift_swiftui_compile`]); release with [`tswift_string_free`].
+///
+/// `module_json` is a NUL-terminated JSON string:
+/// `{"files":[{"path":"…","contents":"…"},…]}`.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `module_json`
+/// must be null or a valid NUL-terminated C string. The returned pointer is
+/// owned by the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_swiftui_compile_module(
+    ctx: *mut Context,
+    module_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(swiftui::compile_error_json("null context"));
+    };
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(swiftui::compile_error_json(
+            "module_json is null or not valid UTF-8",
+        ));
+    };
+    into_json_ptr(swiftui::compile_module_with_transport(
+        &mut ctx.swiftui,
+        module_json,
+        ctx.http,
+        ctx.stream_http,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +413,13 @@ mod tests {
             *mut c_void,
         ) = tswift_set_http_stream_handler;
         let _http_event: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_http_event;
+        // Module (multi-file) entry points
+        let _run_module: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
+            tswift_run_module;
+        let _diagnostics_module: unsafe extern "C" fn(*const c_char) -> *mut c_char =
+            tswift_diagnostics_module;
+        let _compile_module: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
+            tswift_swiftui_compile_module;
     }
 
     /// Integration test: streaming handler drives a full URLSession request via
@@ -607,5 +697,111 @@ mod tests {
         unsafe { tswift_string_free(ptr) };
         assert!(json.contains("\"ok\":false"), "{json}");
         assert!(json.contains("\"severity\":\"error\""), "{json}");
+    }
+
+    // ── Module (multi-file) entry points ───────────────────────────────────────
+
+    /// Call `tswift_run_module` and return the (owned-then-freed) JSON as a `String`.
+    fn run_module(ctx: *mut Context, module_json: &str) -> String {
+        let cjson = CString::new(module_json).unwrap();
+        let ptr = unsafe { tswift_run_module(ctx, cjson.as_ptr()) };
+        assert!(!ptr.is_null());
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        json
+    }
+
+    /// Cross-file reference: file B declares `greet()`, file A calls it.
+    /// Verifies that multi-file concatenation resolves symbols across files.
+    #[test]
+    fn run_module_cross_file_reference_works() {
+        let ctx = tswift_context_new();
+        let module_json = r#"{"files":[
+            {"path":"helpers.swift","contents":"func greet() -> String { return \"hello from module\" }"},
+            {"path":"main.swift","contents":"print(greet())"}
+        ]}"#;
+        let json = run_module(ctx, module_json);
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(
+            json.contains("hello from module"),
+            "cross-file call must see the function: {json}"
+        );
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn run_module_single_file_matches_run() {
+        let ctx = tswift_context_new();
+        let module_json = r#"{"files":[{"path":"main.swift","contents":"print(42)"}]}"#;
+        let json = run_module(ctx, module_json);
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(json.contains("42"), "{json}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn run_module_null_context_is_error_json() {
+        let cjson = CString::new(r#"{"files":[]}"#).unwrap();
+        let ptr = unsafe { tswift_run_module(std::ptr::null_mut(), cjson.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("null context"), "{json}");
+    }
+
+    #[test]
+    fn run_module_malformed_json_is_error() {
+        let ctx = tswift_context_new();
+        let json = run_module(ctx, "not json");
+        assert!(json.contains("\"ok\":false"), "{json}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    /// Call `tswift_diagnostics_module` and return the (owned-then-freed) JSON.
+    fn diagnostics_module(module_json: &str) -> String {
+        let cjson = CString::new(module_json).unwrap();
+        let ptr = unsafe { tswift_diagnostics_module(cjson.as_ptr()) };
+        assert!(!ptr.is_null());
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        json
+    }
+
+    #[test]
+    fn diagnostics_module_clean_source_is_ok() {
+        let module_json = r#"{"files":[{"path":"main.swift","contents":"struct V: View {\n  var body: some View { Text(\"hi\") }\n}"}]}"#;
+        let json = diagnostics_module(module_json);
+        assert!(json.contains("\"ok\":true"), "{json}");
+    }
+
+    #[test]
+    fn diagnostics_module_null_json_is_structured_error() {
+        let ptr = unsafe { tswift_diagnostics_module(std::ptr::null()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"severity\":\"error\""), "{json}");
+    }
+
+    #[test]
+    fn swiftui_compile_module_works() {
+        let ctx = tswift_context_new();
+        let module_json = r#"{"files":[{"path":"main.swift","contents":"struct V: View {\n  var body: some View { Text(\"hi\") }\n}"}]}"#;
+        let cjson = CString::new(module_json).unwrap();
+        let ptr = unsafe { tswift_swiftui_compile_module(ctx, cjson.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(json.contains("\"root\":\"V\""), "{json}");
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn swiftui_compile_module_null_context_is_error() {
+        let cjson = CString::new(r#"{"files":[]}"#).unwrap();
+        let ptr = unsafe { tswift_swiftui_compile_module(std::ptr::null_mut(), cjson.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("null context"), "{json}");
     }
 }

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use tswift_core::json::{self, Json};
 use tswift_core::result_json::{self, escape, CompileReport, RunReport};
 use tswift_core::Interpreter;
 use tswift_frontend::{Analysis, Severity};
@@ -99,6 +100,50 @@ mod swiftui;
 
 const BACKEND: &str = "wasm";
 
+// ── Module helpers ──────────────────────────────────────────────────────────
+
+struct Module {
+    files: Vec<(String, String)>,
+}
+
+impl Module {
+    fn merge(&self) -> (String, &str) {
+        let filename = self
+            .files
+            .first()
+            .map(|(p, _)| p.as_str())
+            .unwrap_or("main.swift");
+        let source = self
+            .files
+            .iter()
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        (source, filename)
+    }
+}
+
+fn parse_module(module_json: &str) -> Result<Module, String> {
+    let root = json::parse(module_json).map_err(|e| format!("module JSON parse error: {e}"))?;
+    let arr = match root.get("files") {
+        Some(Json::Array(a)) => a.clone(),
+        _ => return Err("module JSON must have a \"files\" array".to_string()),
+    };
+    let mut files = Vec::with_capacity(arr.len());
+    for item in &arr {
+        let path = match item.get("path") {
+            Some(Json::Str(s)) => s.clone(),
+            _ => return Err("each file entry must have a \"path\" string".to_string()),
+        };
+        let contents = match item.get("contents") {
+            Some(Json::Str(s)) => s.clone(),
+            _ => return Err("each file entry must have a \"contents\" string".to_string()),
+        };
+        files.push((path, contents));
+    }
+    Ok(Module { files })
+}
+
 /// Compile and run a single Swift source string, returning a JSON result.
 ///
 /// This is the wasm entry point. The heavy lifting lives in [`run_swift_impl`],
@@ -122,6 +167,50 @@ pub fn run_swift(source: &str) -> String {
 pub fn swift_diagnostics(source: &str) -> String {
     install_panic_hook();
     diagnose_impl(source)
+}
+
+/// Compile and run a multi-file Swift module, returning a JSON result.
+///
+/// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`. Files are
+/// concatenated in order; the first file's path is used for diagnostics.
+/// Additive — `runSwift` remains unchanged.
+#[wasm_bindgen(js_name = runSwiftModule)]
+pub fn run_swift_module(module_json: &str) -> String {
+    install_panic_hook();
+    let module = match parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return result_json::result(
+                BACKEND,
+                tswift_core::result_json::CompileReport {
+                    ok: false,
+                    diagnostics: &e,
+                    ast_preview: "",
+                    elapsed_ms: 0,
+                },
+                None,
+            );
+        }
+    };
+    let (source, filename) = module.merge();
+    run_swift_impl_named(&source, filename)
+}
+
+/// Lint a multi-file Swift module and return diagnostics JSON.
+///
+/// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.
+/// Additive — `swiftDiagnostics` remains unchanged.
+#[wasm_bindgen(js_name = swiftDiagnosticsModule)]
+pub fn swift_diagnostics_module(module_json: &str) -> String {
+    install_panic_hook();
+    let module = match parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &e)]);
+        }
+    };
+    let (source, _filename) = module.merge();
+    diagnose_impl(&source)
 }
 
 fn diagnose_impl(source: &str) -> String {
@@ -162,9 +251,13 @@ fn diagnostics_json(ok: bool, items: &[String]) -> String {
 }
 
 fn run_swift_impl(source: &str) -> String {
+    run_swift_impl_named(source, "main.swift")
+}
+
+fn run_swift_impl_named(source: &str, filename: &str) -> String {
     let started = now_ms();
 
-    let analysis = match Analysis::analyze(source, "main.swift") {
+    let analysis = match Analysis::analyze(source, filename) {
         Ok(analysis) => analysis,
         Err(error) => {
             return result_json::result(
@@ -219,7 +312,7 @@ fn run_swift_impl(source: &str) -> String {
     let mut interp = Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
-    interp.set_filename("main.swift");
+    interp.set_filename(filename);
     platform::install_http_transport(&mut interp);
 
     let run_result = interp.run(analysis);
