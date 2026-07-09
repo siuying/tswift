@@ -23,13 +23,13 @@ Apple toolchain, outputs matched byte-for-byte in golden fixtures).
 
 ## Overall coverage
 
-<CoverageBar label="Foundation" done={366} total={612} />
+<CoverageBar label="Foundation" done={430} total={612} />
 
 Member-level coverage from `tools/framework-inventory/coverage.py --framework
-foundation`: **366 / 612** public members implemented across the in-scope types
-(59.8%). The bar tracks members, not whole types. A member is **verified** only
-when it is registered in the live runtime *and* exercised by a passing golden
-fixture.
+foundation`: **430 / 612** public members implemented across the in-scope types
+(70.3%; 398 / 612, 65.0%, verified). The bar tracks members, not whole types. A
+member is **verified** only when it is registered in the live runtime *and*
+exercised by a passing golden fixture.
 
 ---
 
@@ -63,12 +63,12 @@ flowchart TD
     partial --> IndexSet["IndexSet\\nset algebra, rangeView, shift"]
     partial --> URL["URL / URLComponents 🛡️\\npath ops + percent-encoding"]
     partial --> DateT["Date / Calendar / DateComponents 🛡️\\ndate math, formatted(), ISO8601"]
-    partial --> URLNet["URLRequest 🛡️\\nheaders, body, timeout"]
     partial --> URLSess["URLSession\\nshared, data(from:), upload(for:from:), dataTask"]
     partial --> URLTask["URLSessionDataTask\\ncancel/resume/state/progress/counters"]
     partial --> URLDel["URLSessionDataDelegate\\nresponse/chunk/complete callbacks"]
+    done --> URLNet["URLRequest 🛡️\\nheaders, body, timeout, cache/access policy props"]
     done --> URLResp["URLResponse / HTTPURLResponse 🛡️\\nstatus, headers, mime"]
-    done --> URLErr["URLError 🛡️\\n20 codes, NSURLError mapping"]
+    done --> URLErr["URLError 🛡️\\n58/58 codes, NSURLError mapping"]
 
     style done fill:#1e3a2a,stroke:#6ddf9f,color:#eeeef5
     style partial fill:#2a2512,stroke:#f5d06e,color:#eeeef5
@@ -86,9 +86,9 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
 | 🟡 🛡️ | `Data` | 19 / 35 | byte subscript get/set (validated 0–255), for-in, `replaceSubrange`, `resetBytes`, `range(of:)`, base64 encode/decode |
-| 🟡 | `UUID` | 7 / 11 | `init()`, `init(uuidString:)`, `uuidString`, `Comparable` (byte-tuple order), Codable |
-| ✅ | `IndexPath` | 18 / 24 | `+`/`+=`, `compare`, for-in, subscript get/set, Codable with strict decode |
-| 🟡 | `IndexSet` | 28 / 42 | full set algebra, `rangeView`, `intersects`, `shift`, for-in, `"N indexes"` description |
+| 🟡 | `UUID` | 8 / 11 | `init()`, `init(uuidString:)`, `uuidString`, `uuid` (16-byte tuple), `Comparable` (byte-tuple order), Codable |
+| ✅ | `IndexPath` | 21 / 24 | `+`/`+=`, `compare`, for-in, subscript get/set, Codable with strict decode |
+| 🟡 | `IndexSet` | 29 / 42 | full set algebra, `rangeView`, `intersects`, `shift`, for-in, `"N indexes"` description |
 
 ### F2 — URLs
 
@@ -102,15 +102,15 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| 🟡 🛡️ | `Date` | 34 / 87 | arithmetic/comparison operators, `formatted()` family (date/time styles, `.dateTime` chain, `.iso8601`), Codable with all four date strategies |
-| 🟡 🛡️ | `Calendar` | 37 / 55 | Gregorian/UTC: component extraction, `date(byAdding:)`, `compare(toGranularity:)`, `dateInterval`, `range`, `ordinality`, `nextDate` |
-| 🟡 🛡️ | `DateComponents` | 26 / 41 | all components, `date`, `calendar`/`timeZone`, Foundation-exact `description` |
+| 🟡 🛡️ | `Date` | 36 / 87 | arithmetic/comparison operators, `formatted()` family (date/time styles, `.dateTime` chain, `.iso8601`), Codable with all four date strategies |
+| 🟡 🛡️ | `Calendar` | 50 / 55 | Gregorian/UTC: component extraction, `date(byAdding:)`, `compare(toGranularity:)`, `dateInterval`, `range`, `ordinality`, `nextDate`, `autoupdatingCurrent`, `nextWeekend`/`dateIntervalOfWeekend` (Sat–Sun) |
+| 🟡 🛡️ | `DateComponents` | 28 / 41 | all components incl. `isRepeatedDay`, `date`, `calendar`/`timeZone`, Foundation-exact `description` |
 
 ### F4 — Numbers & measurement
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| ✅ 🛡️ | `Decimal` | 49 / 59 | 38-digit arithmetic, rounding, magnitude constants, `ulp`/`nextUp`/`nextDown`, `isTotallyOrdered`, `formatted()` — constants ground-truthed vs Swift 6.3 |
+| ✅ 🛡️ | `Decimal` | 51 / 59 | 38-digit arithmetic, rounding, magnitude constants, `ulp`/`nextUp`/`nextDown`, `isTotallyOrdered`, `formatted()` — constants ground-truthed vs Swift 6.3 (`.infinity`/`.signalingNaN`/`formTruncatingRemainder` intentionally unimplemented — see Out of scope) |
 | 🟡 | `NumberFormatter` | — | basic styles |
 | ✅ | `Measurement` / `Unit` | 15 / 20 | value/unit, conversion, arithmetic, Codable |
 
@@ -118,21 +118,27 @@ Member counts below come from `coverage.py --framework foundation <Type>`.
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| ✅ 🛡️ | `JSONEncoder` | 6 / 8 | `encode` → `Data`, `outputFormatting` (`.prettyPrinted`/`.sortedKeys`), date/data/key strategies (snake_case per Apple's algorithm), nil-omission |
-| 🟡 🛡️ | `JSONDecoder` | 5 / 9 | strict `typeMismatch`/`keyNotFound`/`valueNotFound`, typed arrays, all date/data/key strategies |
-| ✅ | `PropertyListEncoder` | 3 / 4 | XML plist output (`outputFormat = .xml`), Date/Data/nested containers |
+| ✅ 🛡️ | `JSONEncoder` | 8 / 8 | `encode` → `Data`, `outputFormatting` (`.prettyPrinted`/`.sortedKeys`), date/data/key/`nonConformingFloat` strategies (snake_case per Apple's algorithm), `userInfo`, nil-omission |
+| ✅ 🛡️ | `JSONDecoder` | 8 / 9 | strict `typeMismatch`/`keyNotFound`/`valueNotFound`, typed arrays, all date/data/key/`nonConformingFloat` strategies, `userInfo`, `assumesTopLevelDictionary` (`allowsJSON5` out of scope — see below) |
+| ✅ | `PropertyListEncoder` | 4 / 4 | XML plist output (`outputFormat = .xml`), Date/Data/nested containers, `userInfo` |
 
 ### F6 — Networking
 
 | Status | Type | Members | APIs implemented |
 |--------|------|---------|----------------|
-| 🟡 🛡️ | `URLRequest` | 10 / 25 | `init(url:)`, `init(url:cachePolicy:timeoutInterval:)`, `httpMethod` get/set, `url`, `httpBody` get/set, `setValue(_:forHTTPHeaderField:)`, `addValue(_:forHTTPHeaderField:)`, `value(forHTTPHeaderField:)`, `allHTTPHeaderFields`, `timeoutInterval` (coerced to f64) |
-| ✅ 🛡️ | `URLResponse` | 8 / 14 | `init(url:mimeType:expectedContentLength:textEncodingName:)`, `url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `suggestedFilename` |
-| ✅ 🛡️ | `HTTPURLResponse` | 9 / 16 | all `URLResponse` members, `statusCode`, `allHeaderFields`, `value(forHTTPHeaderField:)`, `localizedString(forStatusCode:)` (standard phrases for 1xx–5xx) |
-| ✅ 🛡️ | `URLError` | 20 / 25 | 20 error codes (`notConnectedToInternet`, `timedOut`, `cannotFindHost`, …), `NSURLError*` constant mapping, `code`, throwable / catchable in `do-catch` |
-| 🟡 | `URLSession` | 6 / 40 | `shared`, `data(from:)`, `data(for:)`, `upload(for:with:)`, `upload(for:from:)`, `dataTask(with:completionHandler:)` — backed by pluggable `HttpTransport` (mock in tests, `ureq`/rustls with `--allow-network`, Apple URLSession via C ABI embed, wasm `globalThis.tswiftHttp` hook) |
+| ✅ 🛡️ | `URLRequest` | 27 / 30 | `init(url:)`, `init(url:cachePolicy:timeoutInterval:)`, `httpMethod`/`url`/`httpBody` get/set, header accessors, `timeoutInterval`, `cachePolicy`/`networkServiceType`/`attribution` enums, cellular/constrained/expensive-access flags, `mainDocumentURL`, `cookiePartitionIdentifier`, `==` (policy properties are stored but **not enforced** by the transport — see scope.toml) |
+| ✅ 🛡️ | `URLResponse`¹ | 8 / 14 | `init(url:mimeType:expectedContentLength:textEncodingName:)`, `url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `suggestedFilename` |
+| ✅ 🛡️ | `HTTPURLResponse`¹ | 9 / 16 | all `URLResponse` members, `statusCode`, `allHeaderFields`, `value(forHTTPHeaderField:)`, `localizedString(forStatusCode:)` (standard phrases for 1xx–5xx) |
+| ✅ 🛡️ | `URLError` | 58 / 58 | all `.Code` cases (`notConnectedToInternet`, `timedOut`, `cannotFindHost`, background-session/certificate/file codes, …), `NSURLError*` constant mapping, `errorDomain`, `code`, throwable / catchable in `do-catch` (peer-trust/resume-data/reachability-reason accessors return honest `nil` — not modeled) |
+| 🟡 | `URLSession` | 2 / 5 | `shared`, `data(from:)`, `data(for:)`, `upload(for:with:)`, `upload(for:from:)`, `dataTask(with:completionHandler:)` — backed by pluggable `HttpTransport` (mock in tests, `ureq`/rustls with `--allow-network`, Apple URLSession via C ABI embed, wasm `globalThis.tswiftHttp` hook); `bytes`/`download`/`dataTaskPublisher` out of scope (async streaming/Combine not modeled) |
 | 🟡 | `URLSessionDataTask` | — | `cancel()`, `resume()`, `state` (`.running/.suspended/.canceling/.completed`), `progress.fractionCompleted`, `countOfBytesReceived`, `countOfBytesExpectedToReceive` — reference type (`Object`-backed); `let` bindings legal; aliases and closure captures observe state changes; `===` identity holds |
 | 🟡 | `URLSessionDataDelegate` / `URLSessionTaskDelegate` | — | `urlSession(_:dataTask:didReceive:completionHandler:)` (response disposition), `urlSession(_:dataTask:didReceive:)` (chunk), `urlSession(_:task:didCompleteWithError:)` — dispatched per event; `URLSession.ResponseDisposition` enum (`.allow/.cancel/.becomeDownload/.becomeStream`) |
+
+¹ `URLResponse`/`HTTPURLResponse` are ObjC classes absent from the generated
+`.swiftinterface` inventory, so `coverage.py --framework foundation` doesn't
+track them and their member counts above aren't drawn from that tool — they
+are implemented and golden-tested nonetheless (see
+`frameworks/foundation/scope.toml`).
 
 **Transport matrix**
 
@@ -185,6 +191,49 @@ Platform- and device-specific APIs are intentionally excluded (see
 members are largely locale-dependent format styles, `rangeOf*` string-range
 APIs, and resource/bookmark filesystem members.
 
+A 2026-07 coverage pass (59.8% → 70.3% implemented) closed the mechanical
+gaps and re-confirmed, member by member, why the rest are intentionally out
+of scope rather than simply missing:
+
+- **`customMirror` / explicit `hash(into:)` / `encode(to:)`** across every
+  type — no `Mirror` reflection subsystem in this runtime; `Hashable`/
+  `Encodable` conformance is already exercised indirectly via `==` and the
+  `JSONEncoder`/`PropertyListEncoder` machinery.
+- **`Date`/`DateComponents` `FormatStyle`/`ISO8601FormatStyle`/`ParseStrategy`
+  symbol-builder DSL** (`attributedStyle`, `conversational*`, `dateSeparator`,
+  `era`, `genericLocation`, chained `.day()`/`.month()`/`.year()` symbol
+  builders, `parse`/`parseStrategy`, …) — a locale-aware, ICU-shaped
+  formatting DSL; consistent with the existing Gregorian/UTC/en_US-only
+  stance for `Calendar`/`DateFormatter`.
+- **`URL` filesystem members** (`documentsDirectory`/`cachesDirectory`/…
+  well-known directories, `bookmarkData`, security-scoped resource access,
+  `resourceValues`/`setResourceValues`) — need real filesystem/sandbox
+  semantics this runtime doesn't model.
+- **`Data` raw-memory APIs** (`span`/`mutableSpan`, `withUnsafeBytes`,
+  `withUnsafeMutableBytes`, `copyBytes`, `enumerateBytes`) — no raw memory
+  model.
+- **`IndexSet.Index` `Collection` conformance** (`startIndex`/`endIndex`/
+  `index(after:)`/`formIndex`/opaque-`Index` subscript/comparison) —
+  `for x in indexSet` element iteration already works, which covers real
+  usage; the opaque-`Index` API surface only calls itself. Tripwire: if a
+  real need for `indexSet[someIndex]`-style access appears, model `Index` as
+  a `(range_ordinal, offset)` pair.
+- **`JSONDecoder.allowsJSON5`** — honoring the flag means writing a real
+  JSON5 parser (comments, unquoted keys, single quotes, trailing commas);
+  a flag that silently still parses strict JSON would be a semantic lie, so
+  it's tracked separately rather than stubbed.
+- **`Decimal.infinity` / `.signalingNaN` / `formTruncatingRemainder`** — the
+  first two contradict this runtime's documented invariant that `Decimal` has
+  no infinity representation; `formTruncatingRemainder` was confirmed against
+  real Apple swiftc 6.3.2 to be declared
+  `@available(*, unavailable, message: "Decimal does not yet fully adopt FloatingPoint.")`
+  — it isn't callable from any real Swift program either, so implementing it
+  here would diverge from Darwin, not converge with it.
+- **`Calendar.enumerateDates` / `.dates`** — deferred (not skipped): they need
+  inout `stop`-flag write-back through closure invocation and a lazy
+  `Sequence<Date>` return type respectively, neither of which exist in this
+  runtime yet.
+
 ---
 
 ## Hardening
@@ -203,9 +252,13 @@ strategy-enum API surface.
 
 Next coverage pushes (daily-use weighted):
 
-1. Locale-aware format styles for `Date` / `Decimal` (`FormatStyle` tokens)
+1. `Calendar.dates` / `enumerateDates` sequence APIs (needs closure
+   stop-flag write-back + a lazy `Sequence<Date>` primitive)
 2. `URLComponents.rangeOf*` members (needs `Range<String.Index>` bridging)
-3. `Calendar.dates` / `enumerateDates` sequence APIs
-4. Remaining `Data` / `IndexSet` / `URL` member gaps
-5. `URLSession` `bytes(for:)` async streaming and `downloadTask` support
-6. `URLError` additional codes and background session configuration
+3. `URLSession` `bytes(for:)` async streaming and `downloadTask` support
+4. Remaining `Data` / `URL` member gaps (byte-buffer and filesystem APIs,
+   scoped down per the Out-of-scope notes above)
+
+Locale-aware `FormatStyle` DSLs, filesystem/bookmark APIs, and reflection
+(`customMirror`) are tracked as permanent out-of-scope items (see above),
+not roadmap items.
