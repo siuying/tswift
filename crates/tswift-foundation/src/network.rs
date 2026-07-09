@@ -13,8 +13,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, LabeledMethodEntry, Outcome, StdContext, StdError, StdResult, StructObj,
-    SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError,
+    StdResult, StructObj, SwiftValue,
 };
 
 use crate::type_error;
@@ -86,9 +86,83 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("description", url_request_description),
         ("debugDescription", url_request_description),
         ("hashValue", url_request_hash_value),
+        ("cachePolicy", url_request_cache_policy),
+        ("networkServiceType", url_request_network_service_type),
+        ("attribution", url_request_attribution),
+        ("allowsCellularAccess", url_request_allows_cellular_access),
+        (
+            "allowsConstrainedNetworkAccess",
+            url_request_allows_constrained_network_access,
+        ),
+        (
+            "allowsExpensiveNetworkAccess",
+            url_request_allows_expensive_network_access,
+        ),
+        (
+            "httpShouldHandleCookies",
+            url_request_http_should_handle_cookies,
+        ),
+        (
+            "httpShouldUsePipelining",
+            url_request_http_should_use_pipelining,
+        ),
+        ("assumesHTTP3Capable", url_request_assumes_http3_capable),
+        (
+            "requiresDNSSECValidation",
+            url_request_requires_dnssec_validation,
+        ),
+        ("allowsPersistentDNS", url_request_allows_persistent_dns),
+        (
+            "allowsUltraConstrainedNetworkAccess",
+            url_request_allows_ultra_constrained_network_access,
+        ),
+        ("mainDocumentURL", url_request_main_document_url),
+        (
+            "cookiePartitionIdentifier",
+            url_request_cookie_partition_identifier,
+        ),
     ] {
         interp.register_property(BuiltinReceiver::URLRequest, name, f);
     }
+    // Plain stored-property setters: reads flow through the generic struct
+    // member path (`obj.get(name)`), but a `Type.member` shorthand like
+    // `.reloadIgnoringLocalCacheData` on the right-hand side of an assignment
+    // needs the field's declared type to resolve; the generic struct-field
+    // setter (no coercion) already handles the write itself.
+    interp.register_builtin_enum(
+        "URLRequest.CachePolicy",
+        &[
+            "useProtocolCachePolicy",
+            "reloadIgnoringLocalCacheData",
+            "returnCacheDataElseLoad",
+            "returnCacheDataDontLoad",
+            "reloadIgnoringLocalAndRemoteCacheData",
+            "reloadRevalidatingCacheData",
+        ],
+    );
+    interp.register_builtin_enum(
+        "URLRequest.NetworkServiceType",
+        &[
+            "default",
+            "voip",
+            "video",
+            "background",
+            "voice",
+            "responsiveData",
+            "avStreaming",
+            "responsiveAV",
+            "callSignaling",
+        ],
+    );
+    interp.register_builtin_enum("URLRequest.Attribution", &["developer", "user"]);
+    interp.register_intrinsic(
+        BuiltinReceiver::URLRequest,
+        "==",
+        MethodEntry {
+            mutating: false,
+            func: url_request_equal,
+        },
+    );
     // `timeoutInterval` is a `TimeInterval` (Double); coerce Int assignments
     // so `req.timeoutInterval = 30` reads back as `30.0` like Foundation.
     interp.register_property_setter(
@@ -229,7 +303,31 @@ pub(crate) fn extra_registered_keys() -> Vec<String> {
 // URLRequest
 // ===========================================================================
 
-/// Build the canonical URLRequest struct value.
+/// The default `URLRequest.CachePolicy` (`.useProtocolCachePolicy`).
+fn default_cache_policy() -> SwiftValue {
+    url_request_enum_case("URLRequest.CachePolicy", "useProtocolCachePolicy")
+}
+
+/// The default `URLRequest.NetworkServiceType` (`.default`).
+fn default_network_service_type() -> SwiftValue {
+    url_request_enum_case("URLRequest.NetworkServiceType", "default")
+}
+
+/// The default `URLRequest.Attribution` (`.developer`).
+fn default_attribution() -> SwiftValue {
+    url_request_enum_case("URLRequest.Attribution", "developer")
+}
+
+fn url_request_enum_case(type_name: &str, case: &str) -> SwiftValue {
+    SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: type_name.into(),
+        case: case.into(),
+        payload: Vec::new(),
+    }))
+}
+
+/// Build the canonical URLRequest struct value, with every Darwin-default
+/// stored field (cache policy, cellular/network-access flags, …) filled in.
 pub(crate) fn url_request_value(
     url: SwiftValue,
     timeout: f64,
@@ -245,6 +343,35 @@ pub(crate) fn url_request_value(
             ("httpBody".into(), body),
             ("timeoutInterval".into(), SwiftValue::Double(timeout)),
             ("allHTTPHeaderFields".into(), headers),
+            ("cachePolicy".into(), default_cache_policy()),
+            ("networkServiceType".into(), default_network_service_type()),
+            ("attribution".into(), default_attribution()),
+            ("allowsCellularAccess".into(), SwiftValue::Bool(true)),
+            (
+                "allowsConstrainedNetworkAccess".into(),
+                SwiftValue::Bool(true),
+            ),
+            (
+                "allowsExpensiveNetworkAccess".into(),
+                SwiftValue::Bool(true),
+            ),
+            ("httpShouldHandleCookies".into(), SwiftValue::Bool(true)),
+            ("httpShouldUsePipelining".into(), SwiftValue::Bool(false)),
+            ("assumesHTTP3Capable".into(), SwiftValue::Bool(false)),
+            ("requiresDNSSECValidation".into(), SwiftValue::Bool(false)),
+            // Verified against real Apple swiftc 6.3.2: the actual Darwin
+            // default is `false`, not `true` (the task brief's assumed
+            // default was wrong — flagged in notes.md).
+            ("allowsPersistentDNS".into(), SwiftValue::Bool(false)),
+            // Verified against real Apple swiftc 6.3.2 (macOS 26.1 SDK): the
+            // actual Darwin default is `false`, not `true` (the task brief's
+            // assumed default was wrong — flagged in notes.md).
+            (
+                "allowsUltraConstrainedNetworkAccess".into(),
+                SwiftValue::Bool(false),
+            ),
+            ("mainDocumentURL".into(), SwiftValue::Nil),
+            ("cookiePartitionIdentifier".into(), SwiftValue::Nil),
         ],
     }))
 }
@@ -252,6 +379,7 @@ pub(crate) fn url_request_value(
 fn url_request_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut url = None;
     let mut timeout = 60.0;
+    let mut cache_policy = None;
     for arg in &args {
         match arg.label.as_deref() {
             Some("url") => {
@@ -269,8 +397,12 @@ fn url_request_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
                     }
                 }
             }
-            // Accepted for API compatibility; the runtime has no URL cache.
-            Some("cachePolicy") => {}
+            Some("cachePolicy") => match &arg.value {
+                SwiftValue::Enum(e) if e.type_name == "URLRequest.CachePolicy" => {
+                    cache_policy = Some(arg.value.clone());
+                }
+                _ => return Err(type_error("cachePolicy must be a URLRequest.CachePolicy")),
+            },
             Some(other) => {
                 return Err(type_error(format!(
                     "unsupported URLRequest argument {other}:"
@@ -282,13 +414,22 @@ fn url_request_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let Some(url) = url else {
         return Err(type_error("URLRequest requires a url:"));
     };
-    Ok(url_request_value(
+    let mut req = url_request_value(
         url,
         timeout,
         SwiftValue::Nil,
         SwiftValue::Str("GET".into()),
         SwiftValue::Nil,
-    ))
+    );
+    if let Some(policy) = cache_policy {
+        let SwiftValue::Struct(o) = &req else {
+            unreachable!("url_request_value always returns a Struct");
+        };
+        let mut obj = (**o).clone();
+        obj.set("cachePolicy", policy);
+        req = SwiftValue::Struct(Rc::new(obj));
+    }
+    Ok(req)
 }
 
 fn request_field(recv: &SwiftValue, name: &str) -> StdResult {
@@ -351,6 +492,105 @@ fn url_request_hash_value(recv: SwiftValue) -> StdResult {
         bytes.extend_from_slice(m.as_bytes());
     }
     Ok(SwiftValue::int(crate::fnv1a_hash(&bytes)))
+}
+
+fn url_request_cache_policy(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "cachePolicy")
+}
+
+fn url_request_network_service_type(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "networkServiceType")
+}
+
+fn url_request_attribution(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "attribution")
+}
+
+fn url_request_allows_cellular_access(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "allowsCellularAccess")
+}
+
+fn url_request_allows_constrained_network_access(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "allowsConstrainedNetworkAccess")
+}
+
+fn url_request_allows_expensive_network_access(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "allowsExpensiveNetworkAccess")
+}
+
+fn url_request_http_should_handle_cookies(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "httpShouldHandleCookies")
+}
+
+fn url_request_http_should_use_pipelining(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "httpShouldUsePipelining")
+}
+
+fn url_request_assumes_http3_capable(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "assumesHTTP3Capable")
+}
+
+fn url_request_requires_dnssec_validation(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "requiresDNSSECValidation")
+}
+
+fn url_request_allows_persistent_dns(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "allowsPersistentDNS")
+}
+
+fn url_request_allows_ultra_constrained_network_access(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "allowsUltraConstrainedNetworkAccess")
+}
+
+fn url_request_main_document_url(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "mainDocumentURL")
+}
+
+fn url_request_cookie_partition_identifier(recv: SwiftValue) -> StdResult {
+    request_field(&recv, "cookiePartitionIdentifier")
+}
+
+/// Every stored field compared by `URLRequest.==` (`Equatable`), in the same
+/// order `url_request_value` builds them.
+const URL_REQUEST_EQUATABLE_FIELDS: &[&str] = &[
+    "url",
+    "httpMethod",
+    "httpBody",
+    "timeoutInterval",
+    "allHTTPHeaderFields",
+    "cachePolicy",
+    "networkServiceType",
+    "attribution",
+    "allowsCellularAccess",
+    "allowsConstrainedNetworkAccess",
+    "allowsExpensiveNetworkAccess",
+    "httpShouldHandleCookies",
+    "httpShouldUsePipelining",
+    "assumesHTTP3Capable",
+    "requiresDNSSECValidation",
+    "allowsPersistentDNS",
+    "allowsUltraConstrainedNetworkAccess",
+    "mainDocumentURL",
+    "cookiePartitionIdentifier",
+];
+
+fn url_request_equal(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if args.len() != 1 {
+        return Err(type_error("URLRequest.== expects one URLRequest"));
+    }
+    let same = URL_REQUEST_EQUATABLE_FIELDS.iter().all(|field| {
+        let lhs = request_field(&recv, field).unwrap_or(SwiftValue::Nil);
+        let rhs = request_field(&args[0], field).unwrap_or(SwiftValue::Nil);
+        lhs == rhs
+    });
+    Ok(Outcome {
+        result: SwiftValue::Bool(same),
+        receiver: recv,
+    })
 }
 
 /// The stored header pairs of a request/response headers value (`Nil` → empty).

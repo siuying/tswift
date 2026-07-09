@@ -2441,9 +2441,14 @@ impl<'w> Interpreter<'w> {
             .chain(self.contextual_type().map(String::from))
         {
             for name in self.types.enum_names() {
-                if ty
-                    .split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .any(|t| t == name)
+                // A plain type spelling (`Style`) matches a split token;
+                // a dotted builtin-enum spelling (`URLRequest.NetworkServiceType`)
+                // only ever appears as the *whole* contextual type string, since
+                // dots split it into separate tokens above.
+                if (ty == name.as_str()
+                    || ty
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .any(|t| t == name))
                     && self.enum_has_case(name, case)
                 {
                     return Some(name.clone());
@@ -3595,7 +3600,23 @@ impl<'w> Interpreter<'w> {
         }
 
         let l = self.eval(&lhs)?;
-        let r = self.eval(&rhs)?;
+        // `lhs == .caseName` / `lhs != .caseName`: give the implicit-member
+        // shorthand on the rhs the lhs's enum type as a contextual hint, so it
+        // resolves against that enum even when a same-named static value is
+        // also registered elsewhere (e.g. `req.networkServiceType == .default`
+        // must not resolve `.default` to `URLSessionConfiguration.default`).
+        let enum_hint = match (&op[..], &l) {
+            ("==" | "!=", SwiftValue::Enum(e)) => Some(e.type_name.clone()),
+            _ => None,
+        };
+        if let Some(ty) = &enum_hint {
+            self.type_hint.push(Some(ty.clone()));
+        }
+        let r = self.eval(&rhs);
+        if enum_hint.is_some() {
+            self.type_hint.pop();
+        }
+        let r = r?;
         // Equality against nil / reference / compound values goes through the
         // structural comparison rather than the scalar operator table.
         // `Measurement`/`Decimal` define `==` via the operator table (1 km ==
@@ -5703,6 +5724,39 @@ mod tests {
             interp.run(analysis)?;
         }
         Ok(String::from_utf8(buf).unwrap())
+    }
+
+    #[test]
+    fn enum_hint_pop_survives_rhs_error_in_equality() {
+        // `lhs == rhs` / `lhs != rhs` pushes the lhs enum type as a contextual
+        // hint while evaluating `rhs` (so a leading-dot shorthand on the rhs
+        // resolves against that enum). If `rhs` errors/throws, the hint must
+        // still be popped — an early `?` before the pop would leak it into
+        // whatever implicit-member resolution runs next.
+        let src = concat!(
+            "enum Color { case red }\n",
+            "enum MyError: Error { case boom }\n",
+            "func rhsThrows() throws -> Color { throw MyError.boom }\n",
+            "let c: Color = .red\n",
+            "_ = c == (try rhsThrows())\n",
+        );
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        crate::install_test_print(&mut interp);
+        let result = interp.run(analysis);
+        assert!(
+            result.is_err(),
+            "the uncaught throw from rhs should propagate as an error"
+        );
+        assert!(
+            interp.type_hint.is_empty(),
+            "the `==` enum contextual hint must be popped even when \
+             evaluating the rhs errors, not only on the success path \
+             (found: {:?})",
+            interp.type_hint,
+        );
     }
 
     #[test]
