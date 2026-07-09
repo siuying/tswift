@@ -10,6 +10,7 @@ pub mod decimal;
 mod env;
 mod fragment_cache;
 pub mod grapheme;
+pub mod host_bridge;
 pub mod http;
 mod interp;
 pub mod json;
@@ -23,6 +24,10 @@ mod value;
 
 pub use env::{BindError, Binding, Env};
 pub use grapheme::graphemes;
+pub use host_bridge::{
+    decode_value, encode_value, HostBridge, HostCallHandler, HostCallOutcome, Param as HostParam,
+    Signature as HostSignature, TypeExpr as HostTypeExpr,
+};
 pub use http::{
     decode_event_json, encode_event_json, HttpError, HttpEvent, HttpRequest, HttpResponse,
     HttpTaskHandle, HttpTransport, MockChunkedRoute, MockHttpTransport, MockRoute,
