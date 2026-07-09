@@ -44,6 +44,21 @@ pub fn swiftui_compile(source: &str) -> String {
     compile_impl(source)
 }
 
+/// Compile a multi-file SwiftUI module, render its root `View`, and start an
+/// interactive session. `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.
+/// Returns the same JSON envelope as `swiftUICompile`.
+#[wasm_bindgen(js_name = swiftUICompileModule)]
+pub fn swiftui_compile_module(module_json: &str) -> String {
+    install_panic_hook();
+    SESSION.with(|s| *s.borrow_mut() = None);
+    let module = match crate::parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => return compile_error(&e),
+    };
+    let (source, _filename) = module.merge();
+    compile_impl(&source)
+}
+
 /// Route a host event into the live session and return a **patch stream** that
 /// the `<swiftui-canvas>` host applies in place (preserving focus, an in-flight
 /// slider drag, scroll position, &c.): `{"ok":bool,"patches":[…]|null,

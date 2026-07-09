@@ -39,9 +39,13 @@ fn prelude_line_offset() -> u32 {
 /// (prelude-internal diagnostics are dropped). `ok` is false iff a user-region
 /// error is present.
 pub(crate) fn diagnose(source: &str) -> String {
+    diagnose_named(source, "main.swift")
+}
+
+fn diagnose_named(source: &str, filename: &str) -> String {
     let program = format!("{PRELUDE}\n{source}");
     let offset = prelude_line_offset();
-    let analysis = match Analysis::analyze(&program, "main.swift") {
+    let analysis = match Analysis::analyze(&program, filename) {
         Ok(analysis) => analysis,
         Err(error) => {
             return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())]);
@@ -142,7 +146,7 @@ pub(crate) fn compile_with_transport(
 ) -> String {
     // Drop any prior session first, so a failed recompile leaves no stale tree.
     *slot = None;
-    match build(source, http, stream_http) {
+    match build(source, "main.swift", http, stream_http) {
         Ok((bundle, tree_json, root)) => {
             *slot = Some(bundle);
             format!(
@@ -159,11 +163,12 @@ pub(crate) fn compile_with_transport(
 /// freed (via the partially-initialised bundle's `Drop`), so no path leaks.
 fn build(
     source: &str,
+    filename: &str,
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
 ) -> Result<(SwiftUiSession, String, String), String> {
     let program = format!("{PRELUDE}\n{source}");
-    let analysis = Analysis::analyze(&program, "main.swift").map_err(|e| e.to_string())?;
+    let analysis = Analysis::analyze(&program, filename).map_err(|e| e.to_string())?;
 
     let mut diagnostics = String::new();
     for diagnostic in analysis.diagnostics() {
@@ -197,7 +202,7 @@ fn build(
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
     tswift_swiftui::install(&mut interp);
-    interp.set_filename("main.swift");
+    interp.set_filename(filename);
     // Wire the host's URLSession transport (if any) so scripts' network calls —
     // including those fired from `.task {}` via `run_mount_tasks` — resolve.
     // Streaming config wins when both are present, matching the `run` path.
@@ -334,6 +339,46 @@ fn payload_from_json(value: Option<&Json>) -> Option<SwiftValue> {
         Json::Double(d) => Some(SwiftValue::Double(*d)),
         Json::Str(s) => Some(SwiftValue::Str(s.clone())),
         _ => None,
+    }
+}
+
+/// Lint a multi-file module (same as [`diagnose`] but accepts a
+/// `{"files":[…]}` payload).
+pub(crate) fn diagnose_module(module_json: &str) -> String {
+    let module = match crate::run::parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &e)]);
+        }
+    };
+    let (source, filename) = module.merge();
+    diagnose_named(&source, filename)
+}
+
+/// Compile a multi-file module into a SwiftUI render session (same as
+/// [`compile_with_transport`] but accepts a `{"files":[…]}` payload).
+pub(crate) fn compile_module_with_transport(
+    slot: &mut Option<SwiftUiSession>,
+    module_json: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> String {
+    let module = match crate::run::parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => return compile_error_json(&e),
+    };
+    let (source, filename) = module.merge();
+    *slot = None;
+    match build(&source, filename, http, stream_http) {
+        Ok((bundle, tree_json, root)) => {
+            *slot = Some(bundle);
+            format!(
+                "{{\"ok\":true,\"root\":\"{}\",\"tree\":{},\"error\":null}}",
+                escape_json(&root),
+                tree_json
+            )
+        }
+        Err(message) => compile_error_json(&message),
     }
 }
 

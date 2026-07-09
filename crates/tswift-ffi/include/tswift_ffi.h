@@ -126,6 +126,26 @@ char *tswift_swiftui_run_mount_tasks(TSwiftContext *ctx);
  * rendering. Stateless (no context). The editor's live error-feedback channel. */
 char *tswift_diagnostics(const char *source);
 
+/* ---- Module (multi-file) entry points ---------------------------------- */
+
+/* `module_json` shape for all three functions below:
+ *   {"files":[{"path":"<name.swift>","contents":"<source>"},...]}.
+ * Files are concatenated in order; the first file's path is used for
+ * diagnostic attribution. These are additive — the single-string
+ * tswift_run / tswift_diagnostics / tswift_swiftui_compile remain unchanged. */
+
+/* Compile and run a multi-file Swift module, returning owned result JSON
+ * (same envelope as tswift_run). */
+char *tswift_run_module(TSwiftContext *ctx, const char *module_json);
+
+/* Lint a multi-file Swift module and return owned diagnostics JSON
+ * (same envelope as tswift_diagnostics). Stateless (no context). */
+char *tswift_diagnostics_module(const char *module_json);
+
+/* Compile a multi-file SwiftUI module and start a live render session,
+ * returning owned UIIR JSON (same envelope as tswift_swiftui_compile). */
+char *tswift_swiftui_compile_module(TSwiftContext *ctx, const char *module_json);
+
 /* ---- String release ---------------------------------------------------- */
 
 /* Release a string returned by any function above. NULL is ignored. */

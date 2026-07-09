@@ -5,6 +5,7 @@
 //! interpreter through a lifetime-scoped `&'static` borrow that never escapes,
 //! so nothing leaks across repeated calls on a long-lived `Context`.
 
+use tswift_core::json::{self, Json};
 use tswift_core::result_json::{self, CompileReport, RunReport};
 use tswift_frontend::Analysis;
 
@@ -20,9 +21,19 @@ pub(crate) fn run_impl(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
 ) -> String {
+    run_impl_named(source, "main.swift", http, stream_http)
+}
+
+/// Like [`run_impl`] but with an explicit diagnostic `filename`.
+fn run_impl_named(
+    source: &str,
+    filename: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> String {
     let started = now_ms();
 
-    let analysis = match Analysis::analyze(source, "main.swift") {
+    let analysis = match Analysis::analyze(source, filename) {
         Ok(analysis) => analysis,
         Err(error) => {
             return result_json::result(
@@ -74,7 +85,7 @@ pub(crate) fn run_impl(
     let mut interp = tswift_core::Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
-    interp.set_filename("main.swift");
+    interp.set_filename(filename);
     if let Some(config) = stream_http {
         interp.set_http_transport(Box::new(crate::http::StreamingHostHttpHandler::from(
             config,
@@ -112,4 +123,79 @@ pub(crate) fn run_impl(
             elapsed_ms: run_elapsed,
         }),
     )
+}
+
+// ── Module helpers ──────────────────────────────────────────────────────────
+
+/// A parsed `{"files":[{"path":"…","contents":"…"},…]}` module payload.
+pub(crate) struct Module {
+    /// Ordered list of `(path, contents)` pairs.
+    pub files: Vec<(String, String)>,
+}
+
+impl Module {
+    /// Concatenate all file contents (separated by a single newline) and return
+    /// `(merged_source, first_file_path)`. If the module is empty, returns an
+    /// empty string with path `"main.swift"`.
+    pub fn merge(&self) -> (String, &str) {
+        let filename = self
+            .files
+            .first()
+            .map(|(p, _)| p.as_str())
+            .unwrap_or("main.swift");
+        let source = self
+            .files
+            .iter()
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        (source, filename)
+    }
+}
+
+/// Parse a `{"files":[{"path":"…","contents":"…"},…]}` JSON string.
+pub(crate) fn parse_module(module_json: &str) -> Result<Module, String> {
+    let root = json::parse(module_json).map_err(|e| format!("module JSON parse error: {e}"))?;
+    let arr = match root.get("files") {
+        Some(Json::Array(a)) => a.clone(),
+        _ => return Err("module JSON must have a \"files\" array".to_string()),
+    };
+    let mut files = Vec::with_capacity(arr.len());
+    for item in &arr {
+        let path = match item.get("path") {
+            Some(Json::Str(s)) => s.clone(),
+            _ => return Err("each file entry must have a \"path\" string".to_string()),
+        };
+        let contents = match item.get("contents") {
+            Some(Json::Str(s)) => s.clone(),
+            _ => return Err("each file entry must have a \"contents\" string".to_string()),
+        };
+        files.push((path, contents));
+    }
+    Ok(Module { files })
+}
+
+/// Compile and run a multi-file module, returning the result JSON.
+pub(crate) fn run_module_impl(
+    module_json: &str,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+) -> String {
+    let module = match parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return result_json::result(
+                BACKEND,
+                CompileReport {
+                    ok: false,
+                    diagnostics: &e,
+                    ast_preview: "",
+                    elapsed_ms: 0,
+                },
+                None,
+            );
+        }
+    };
+    let (source, filename) = module.merge();
+    run_impl_named(&source, filename, http, stream_http)
 }
