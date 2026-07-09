@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const wasmDir = new URL('../src/wasm/', import.meta.url);
-const { initSync, runSwift } = await import(new URL('qswift_wasm.js', wasmDir));
+const { initSync, runSwift, registerHostFunction, clearHostFunctions } = await import(new URL('qswift_wasm.js', wasmDir));
 initSync({ module: readFileSync(new URL('qswift_wasm_bg.wasm', wasmDir)) });
 
 let failures = 0;
@@ -72,8 +72,99 @@ for (const p of supported) {
   });
 }
 
+// 5. tswiftHost hook — host-native function bridge (issue #249).
+//
+// registerHostFunction() wires a schema; globalThis.tswiftHost is the
+// synchronous dispatch hook.  Prior art: tswiftHttp checks above.
+
+// 5a. A registered function backed by a live hook returns its result.
+check('tswiftHost: registered function returns result', () => {
+  globalThis.tswiftHost = (name, argsJson) => {
+    const args = JSON.parse(argsJson);
+    if (name === 'add') return JSON.stringify(args[0] + args[1]);
+    throw new Error(`unknown: ${name}`);
+  };
+  const reg = JSON.parse(
+    registerHostFunction(
+      JSON.stringify({ name: 'add', params: [{ type: 'Int' }, { type: 'Int' }], returns: 'Int' }),
+    ),
+  );
+  assert(reg.ok === true, `registration failed: ${JSON.stringify(reg)}`);
+  const r = JSON.parse(runSwift('print(add(3, 4))'));
+  clearHostFunctions();
+  delete globalThis.tswiftHost;
+  assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r)}`);
+  assert(r.run && r.run.stdout.trim() === '7', `bad stdout: ${JSON.stringify(r.run)}`);
+});
+
+// 5b. Absent hook surfaces as a runtime error, not a wasm trap.
+check('tswiftHost: absent hook is a runtime error', () => {
+  delete globalThis.tswiftHost;
+  const reg = JSON.parse(
+    registerHostFunction(JSON.stringify({ name: 'ping', returns: 'String' })),
+  );
+  assert(reg.ok === true, `registration failed: ${JSON.stringify(reg)}`);
+  const r = JSON.parse(runSwift('let x = ping()
+print(x)'));
+  clearHostFunctions();
+  assert(r.ok === false, `expected ok=false, got ${JSON.stringify(r)}`);
+  assert(r.compile && r.compile.ok === true, 'expected compile.ok=true');
+  assert(r.run && r.run.ok === false, 'expected run.ok=false');
+  assert(
+    r.run.stderr.includes('not available'),
+    `bad stderr: ${r.run.stderr}`,
+  );
+});
+
+// 5c. A thrown JS exception becomes a runtime error, not a wasm trap.
+check('tswiftHost: thrown JS exception is a runtime error', () => {
+  globalThis.tswiftHost = (_name, _argsJson) => {
+    throw new Error('boom from js');
+  };
+  const reg = JSON.parse(
+    registerHostFunction(JSON.stringify({ name: 'bang', returns: 'Void' })),
+  );
+  assert(reg.ok === true, `registration failed: ${JSON.stringify(reg)}`);
+  const r = JSON.parse(runSwift('bang()'));
+  clearHostFunctions();
+  delete globalThis.tswiftHost;
+  assert(r.ok === false, `expected ok=false, got ${JSON.stringify(r)}`);
+  assert(r.run && r.run.ok === false, 'expected run.ok=false');
+  assert(r.run.stderr.includes('boom from js'), `bad stderr: ${r.run.stderr}`);
+});
+
+// 5d. Malformed schema is rejected by registerHostFunction.
+check('tswiftHost: invalid schema returns error', () => {
+  const reg = JSON.parse(registerHostFunction(JSON.stringify({ returns: 'Void' }))); // missing name
+  assert(reg.ok === false, `expected ok=false, got ${JSON.stringify(reg)}`);
+  assert(reg.error && reg.error.length > 0, `expected non-empty error, got ${JSON.stringify(reg)}`);
+});
+
+// 5e. String-result host function round-trips through the bridge.
+check('tswiftHost: string return value round-trips', () => {
+  globalThis.tswiftHost = (name, _argsJson) => {
+    if (name === 'greeting') return JSON.stringify('Hello from host');
+    return 'null';
+  };
+  const reg = JSON.parse(
+    registerHostFunction(JSON.stringify({ name: 'greeting', returns: 'String' })),
+  );
+  assert(reg.ok === true, `registration failed: ${JSON.stringify(reg)}`);
+  const r = JSON.parse(runSwift('print(greeting())'));
+  clearHostFunctions();
+  delete globalThis.tswiftHost;
+  assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r)}`);
+  assert(
+    r.run && r.run.stdout.trim() === 'Hello from host',
+    `bad stdout: ${JSON.stringify(r.run)}`,
+  );
+});
+
 if (failures > 0) {
-  console.error(`\n${failures} wasm smoke check(s) failed`);
+  console.error(`
+${failures} wasm smoke check(s) failed`);
   process.exit(1);
 }
-console.log('\nall wasm smoke checks passed');
+console.log('
+all wasm smoke checks passed');
+

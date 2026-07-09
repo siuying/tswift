@@ -144,6 +144,35 @@ fn parse_module(module_json: &str) -> Result<Module, String> {
     Ok(Module { files })
 }
 
+/// Register a host-native function so that interpreted Swift can call it.
+///
+/// `signature_json` is the compact JSON schema accepted by the core bridge:
+///
+/// ```json
+/// {"name": "greet", "params": [{"label": "name", "type": "String"}], "returns": "String"}
+/// ```
+///
+/// Returns `{"ok":true}` on success or `{"ok":false,"error":"…"}` when the
+/// schema is malformed.  Registered functions are wired into every subsequent
+/// `runSwift` / `runSwiftModule` call; the embedding page must also define a
+/// **synchronous** `globalThis.tswiftHost(name, argsJson)` hook that services
+/// the calls (see `platform` docs below).
+#[wasm_bindgen(js_name = registerHostFunction)]
+pub fn register_host_function(signature_json: &str) -> String {
+    install_panic_hook();
+    platform::register_host_function_schema(signature_json)
+}
+
+/// Clear all host functions registered via [`register_host_function`].
+///
+/// Intended for test harnesses that need a clean slate between runs.
+/// Production pages generally register once per page load and never clear.
+#[wasm_bindgen(js_name = clearHostFunctions)]
+pub fn clear_host_functions() {
+    install_panic_hook();
+    platform::clear_host_function_schemas();
+}
+
 /// Compile and run a single Swift source string, returning a JSON result.
 ///
 /// This is the wasm entry point. The heavy lifting lives in [`run_swift_impl`],
@@ -314,6 +343,7 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
     tswift_foundation::install(&mut interp);
     interp.set_filename(filename);
     platform::install_http_transport(&mut interp);
+    platform::install_host_handler(&mut interp);
 
     let run_result = interp.run(analysis);
     let run_elapsed = elapsed_ms(run_started);
@@ -498,6 +528,117 @@ mod platform {
         interp.set_http_transport(Box::new(JsHttpTransport::new()));
     }
 
+    // ── Host-function bridge ─────────────────────────────────────────────────
+    //
+    // The embedding page opts in by defining a **synchronous**
+    // `globalThis.tswiftHost(name, argsJson) -> resultJson` hook.  The hook
+    // receives the registered function name and a JSON-encoded argument array,
+    // and must return a JSON-encoded result value (or `{"$thrown":"…"}` to
+    // raise a catchable Swift error).
+    //
+    // ## Degraded-tier rules (mirrors `tswiftHttp`, ADR-0005)
+    //
+    // - Absent hook   → `null`                → runtime error "not available".
+    // - Thrown JS exception → `{"$hostError":"…"}` sentinel from the shim
+    //                       → `Err(message)` from [`JsHostCallHandler`]
+    //                       → interpreter runtime error (NOT a wasm trap).
+    //
+    // wasm is single-threaded, so a `thread_local!` Vec is the right storage
+    // for the schemas registered before each run.
+
+    thread_local! {
+        static HOST_FN_SCHEMAS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    #[wasm_bindgen(inline_js = r#"
+        export function tswift_host_call(name, argsJson) {
+            const hook = globalThis.tswiftHost;
+            if (typeof hook !== "function") return null;
+            try {
+                const result = hook(name, argsJson);
+                return result == null ? "null" : String(result);
+            } catch (e) {
+                return JSON.stringify({ "$hostError": String(e) });
+            }
+        }
+    "#)]
+    extern "C" {
+        fn tswift_host_call(name: &str, args_json: &str) -> Option<String>;
+    }
+
+    /// The `globalThis.tswiftHost`-backed [`HostCallHandler`].
+    ///
+    /// Forwards every call to the JS hook, intercepting the `$hostError`
+    /// sentinel that the shim injects on thrown exceptions so they surface as
+    /// Rust `Err` strings (interpreter runtime errors) rather than wasm traps.
+    ///
+    /// [`HostCallHandler`]: tswift_core::HostCallHandler
+    struct JsHostCallHandler;
+
+    impl tswift_core::HostCallHandler for JsHostCallHandler {
+        fn call(&self, name: &str, args_json: &str) -> Result<String, String> {
+            use tswift_core::json::{self, Json};
+            let raw = match tswift_host_call(name, args_json) {
+                Some(s) => s,
+                None => return Err("tswiftHost hook is not available".into()),
+            };
+            // Detect the error sentinel the shim writes on JS exceptions.
+            // The `$hostError` key is dollar-prefixed (like `$thrown`) and is
+            // reserved — no legitimate handler result will contain it.
+            if let Ok(root) = json::parse(&raw) {
+                if let Some(Json::Str(msg)) = root.get("$hostError") {
+                    return Err(msg.clone());
+                }
+            }
+            Ok(raw)
+        }
+    }
+
+    /// Validate `signature_json` and, if valid, push it into the thread-local
+    /// registry so that the next run picks it up.  Returns a JSON status.
+    pub(super) fn register_host_function_schema(signature_json: &str) -> String {
+        use tswift_core::result_json::escape;
+        match tswift_core::HostSignature::from_json(signature_json) {
+            Ok(_) => {
+                HOST_FN_SCHEMAS.with(|schemas| {
+                    schemas.borrow_mut().push(signature_json.to_string());
+                });
+                r#"{"ok":true}"#.to_string()
+            }
+            Err(e) => {
+                let escaped = escape(&e);
+                format!(r#"{{"ok":false,"error":"{escaped}"}}"#)
+            }
+        }
+    }
+
+    /// Clear all registered host-function schemas (for test harnesses).
+    pub(super) fn clear_host_function_schemas() {
+        HOST_FN_SCHEMAS.with(|schemas| schemas.borrow_mut().clear());
+    }
+
+    /// Install the JS-backed host-call handler on `interp` and register every
+    /// schema that was pushed via [`register_host_function_schema`].
+    ///
+    /// A no-op when no schemas have been registered, so pages that do not use
+    /// host functions pay no overhead.
+    pub(super) fn install_host_handler(interp: &mut tswift_core::Interpreter<'_>) {
+        use std::sync::Arc;
+        HOST_FN_SCHEMAS.with(|schemas| {
+            let schemas = schemas.borrow();
+            if schemas.is_empty() {
+                return;
+            }
+            interp.set_host_call_handler(Arc::new(JsHostCallHandler));
+            for sig_json in schemas.iter() {
+                // Schemas were validated at registration time; ignore any
+                // residual error (should not occur in practice).
+                let _ = interp.register_host_fn(sig_json, None);
+            }
+        });
+    }
+
     pub(super) fn now_ms() -> f64 {
         performance_now()
     }
@@ -509,9 +650,67 @@ mod platform {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod platform {
+    // ── Off-target (native / cargo test) ────────────────────────────────────
+    // No JS host is available; HTTP and host functions are unavailable.
+    // The host-function registry still works so tests can verify schema
+    // validation and that absent-hook errors surface cleanly.
+
     /// Off-target (native unit tests) there is no JS host: `URLSession` stays
     /// unavailable, matching a page that defines no `tswiftHttp` hook.
     pub(super) fn install_http_transport(_interp: &mut tswift_core::Interpreter<'_>) {}
+
+    thread_local! {
+        static HOST_FN_SCHEMAS: std::cell::RefCell<Vec<String>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Validate `signature_json` and store it.  Returns a JSON status string.
+    pub(super) fn register_host_function_schema(signature_json: &str) -> String {
+        use tswift_core::result_json::escape;
+        match tswift_core::HostSignature::from_json(signature_json) {
+            Ok(_) => {
+                HOST_FN_SCHEMAS.with(|schemas| {
+                    schemas.borrow_mut().push(signature_json.to_string());
+                });
+                r#"{"ok":true}"#.to_string()
+            }
+            Err(e) => {
+                let escaped = escape(&e);
+                format!(r#"{{"ok":false,"error":"{escaped}"}}"#)
+            }
+        }
+    }
+
+    /// Clear all registered host-function schemas.
+    pub(super) fn clear_host_function_schemas() {
+        HOST_FN_SCHEMAS.with(|schemas| schemas.borrow_mut().clear());
+    }
+
+    /// On native there is no JS hook, so registered functions always fail with
+    /// "tswiftHost hook is not available" when called.  This mirrors the wasm
+    /// absent-hook degraded tier so the error path is exercisable in tests.
+    pub(super) fn install_host_handler(interp: &mut tswift_core::Interpreter<'_>) {
+        use std::sync::Arc;
+        HOST_FN_SCHEMAS.with(|schemas| {
+            let schemas = schemas.borrow();
+            if schemas.is_empty() {
+                return;
+            }
+            interp.set_host_call_handler(Arc::new(NativeUnavailableHandler));
+            for sig_json in schemas.iter() {
+                let _ = interp.register_host_fn(sig_json, None);
+            }
+        });
+    }
+
+    /// Stub handler used on native builds: every call returns an error
+    /// matching the wasm absent-hook message so tests can assert on it.
+    struct NativeUnavailableHandler;
+    impl tswift_core::HostCallHandler for NativeUnavailableHandler {
+        fn call(&self, _name: &str, _args_json: &str) -> Result<String, String> {
+            Err("tswiftHost hook is not available".into())
+        }
+    }
 
     pub(super) fn now_ms() -> f64 {
         std::time::SystemTime::now()
@@ -833,5 +1032,114 @@ mod tests {
         let json = diagnose_impl("#error(\"a\\\"b\")");
         // The embedded quote must be escaped so the envelope stays valid JSON.
         assert!(json.contains("a\\\"b"), "json={json}");
+    }
+
+    // -----------------------------------------------------------------------
+    // registerHostFunction / tswiftHost transport — native-exercisable tests
+    // -----------------------------------------------------------------------
+    //
+    // On native, `install_host_handler` uses `NativeUnavailableHandler` which
+    // always returns "tswiftHost hook is not available".  That lets us verify:
+    //  (a) schema validation in `register_host_function`,
+    //  (b) that the registered function is wired into the interpreter,
+    //  (c) that the absent-hook error surfaces as a runtime error.
+
+    /// Helper: register a schema, run `src`, then clear and return the result.
+    fn with_host_fn(schema: &str, src: &str) -> String {
+        // Register the schema.
+        let reg = platform::register_host_function_schema(schema);
+        assert!(
+            reg.contains("\"ok\":true"),
+            "registration failed: {reg} for schema={schema}"
+        );
+        let result = run_swift_impl(src);
+        // Always clear so other tests start with a clean slate.
+        platform::clear_host_function_schemas();
+        result
+    }
+
+    #[test]
+    fn register_host_function_valid_schema_returns_ok() {
+        let result =
+            platform::register_host_function_schema(r#"{"name":"ping","returns":"String"}"#);
+        platform::clear_host_function_schemas();
+        assert!(result.contains("\"ok\":true"), "result={result}");
+    }
+
+    #[test]
+    fn register_host_function_missing_name_returns_error() {
+        let result = platform::register_host_function_schema(r#"{"returns":"Void"}"#);
+        assert!(result.contains("\"ok\":false"), "result={result}");
+        assert!(result.contains("\"error\""), "result={result}");
+    }
+
+    #[test]
+    fn register_host_function_invalid_type_returns_error() {
+        let result = platform::register_host_function_schema(r#"{"name":"f","returns":"Banana"}"#);
+        assert!(result.contains("\"ok\":false"), "result={result}");
+    }
+
+    #[test]
+    fn register_host_function_bad_json_returns_error() {
+        let result = platform::register_host_function_schema("not json");
+        assert!(result.contains("\"ok\":false"), "result={result}");
+    }
+
+    #[test]
+    fn registered_host_fn_absent_hook_is_runtime_error() {
+        // On native the hook is always absent, so calling a registered function
+        // must fail as a runtime error (not a compile error and not a panic).
+        let json = with_host_fn(
+            r#"{"name":"ping","returns":"String"}"#,
+            "let r = ping()\nprint(r)",
+        );
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        // Compile phase must succeed (the function is registered).
+        assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
+        // Run phase must fail with the absent-hook message.
+        assert!(json.contains("\"run\":{\"ok\":false"), "json={json}");
+        assert!(
+            json.contains("tswiftHost hook is not available"),
+            "json={json}"
+        );
+    }
+
+    #[test]
+    fn registered_void_host_fn_absent_hook_is_runtime_error() {
+        let json = with_host_fn(r#"{"name":"doThing","returns":"Void"}"#, "doThing()");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
+        assert!(
+            json.contains("tswiftHost hook is not available"),
+            "json={json}"
+        );
+    }
+
+    #[test]
+    fn registered_labelled_fn_absent_hook_is_runtime_error() {
+        let json = with_host_fn(
+            r#"{"name":"greet","params":[{"label":"name","type":"String"}],"returns":"String"}"#,
+            r#"let r = greet(name: "Sam")\nprint(r)"#,
+        );
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"compile\":{\"ok\":true"), "json={json}");
+        assert!(
+            json.contains("tswiftHost hook is not available"),
+            "json={json}"
+        );
+    }
+
+    #[test]
+    fn clear_host_functions_removes_registered_schemas() {
+        // Register, clear, then run — the function is unknown at runtime
+        // (the interpreter defers free-function dispatch to the run phase).
+        let reg = platform::register_host_function_schema(r#"{"name":"ping","returns":"Void"}"#);
+        assert!(reg.contains("\"ok\":true"), "reg={reg}");
+        platform::clear_host_function_schemas();
+        // After clearing, `ping` is not wired: the run phase fails with
+        // "unknown function".
+        let json = run_swift_impl("ping()");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("unknown function"), "json={json}");
     }
 }
