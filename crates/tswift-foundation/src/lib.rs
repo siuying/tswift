@@ -19,8 +19,9 @@ mod urlsession;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, LabeledMethodEntry,
-    MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, EnumObj, EvalError, IntValue, IntWidth, Interpreter, IntrinsicFn,
+    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj,
+    SwiftValue,
 };
 
 const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
@@ -108,6 +109,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
     );
     interp.register_property(
         BuiltinReceiver::DateComponents,
+        "isRepeatedDay",
+        date_components_is_repeated_day,
+    );
+    interp.register_property_setter(
+        BuiltinReceiver::DateComponents,
+        "isRepeatedDay",
+        date_components_set_is_repeated_day,
+    );
+    interp.register_property(
+        BuiltinReceiver::DateComponents,
         "description",
         date_components_description,
     );
@@ -177,6 +188,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(BuiltinReceiver::UUID, "description", uuid_description);
     interp.register_property(BuiltinReceiver::UUID, "debugDescription", uuid_description);
     interp.register_property(BuiltinReceiver::UUID, "hashValue", uuid_hash_value);
+    interp.register_property(BuiltinReceiver::UUID, "uuid", uuid_bytes_tuple);
 
     interp.register_free_fn("IndexPath", index_path_init);
     interp.register_property(BuiltinReceiver::IndexPath, "count", index_path_count);
@@ -693,8 +705,11 @@ pub(crate) const DATE_COMPONENT_FIELDS: &[&str] = &[
 ];
 
 /// Extra (non-integer) fields stored on a `DateComponents` value.
-/// `calendar` (Calendar?), `timeZone` (TimeZone?), `isLeapMonth` (Bool?).
-const DATE_COMPONENT_EXTRA_FIELDS: &[&str] = &["calendar", "timeZone", "isLeapMonth"];
+/// `calendar` (Calendar?), `timeZone` (TimeZone?), `isLeapMonth` (Bool?),
+/// `isRepeatedDay` (Bool?, always nil-defaulted here since this runtime does
+/// not model DST wall-clock transitions).
+const DATE_COMPONENT_EXTRA_FIELDS: &[&str] =
+    &["calendar", "timeZone", "isLeapMonth", "isRepeatedDay"];
 
 macro_rules! date_component_getters {
     ($($field:literal => $getter:ident),+ $(,)?) => {
@@ -934,6 +949,39 @@ fn date_components_is_leap_month(recv: SwiftValue) -> StdResult {
     Ok(obj.get("isLeapMonth").cloned().unwrap_or(SwiftValue::Nil))
 }
 
+/// `DateComponents.isRepeatedDay` — `Bool?` (nil when not specified). Unlike
+/// `isLeapMonth` there is no initializer label for this on Darwin either; it
+/// is a plain settable var, defaulting to `nil` until assigned. This runtime
+/// doesn't model DST wall-clock transitions (no timezone-transition table),
+/// so it is stored verbatim rather than computed.
+fn date_components_is_repeated_day(recv: SwiftValue) -> StdResult {
+    let obj = date_components_obj(&recv)?;
+    Ok(obj.get("isRepeatedDay").cloned().unwrap_or(SwiftValue::Nil))
+}
+
+/// `DateComponents.isRepeatedDay` setter — accepts `Bool` or `nil`.
+fn date_components_set_is_repeated_day(
+    recv: SwiftValue,
+    new_value: SwiftValue,
+) -> Result<SwiftValue, StdError> {
+    let value = match &new_value {
+        SwiftValue::Nil => SwiftValue::Nil,
+        SwiftValue::Bool(b) => SwiftValue::Bool(*b),
+        other => {
+            return Err(type_error(format!(
+                "DateComponents.isRepeatedDay expects Bool?, got {}",
+                other.type_name()
+            )))
+        }
+    };
+    let obj = date_components_obj(&recv)?;
+    let mut fields = obj.fields.clone();
+    if let Some(slot) = fields.iter_mut().find(|(n, _)| n == "isRepeatedDay") {
+        slot.1 = value;
+    }
+    Ok(date_components_value_struct(fields))
+}
+
 /// Description field order that matches Foundation's output:
 /// era, year, month, day, hour, minute, second, nanosecond,
 /// weekday, weekdayOrdinal, quarter, weekOfMonth, weekOfYear,
@@ -1003,9 +1051,12 @@ fn date_components_description(recv: SwiftValue) -> StdResult {
         }
     }
 
-    // Bool isLeapMonth at the end.
+    // Bool isLeapMonth, then isRepeatedDay, at the end.
     if let Some(SwiftValue::Bool(b)) = obj.get("isLeapMonth") {
         parts.push_str(&format!("isLeapMonth: {b} "));
+    }
+    if let Some(SwiftValue::Bool(b)) = obj.get("isRepeatedDay") {
+        parts.push_str(&format!("isRepeatedDay: {b} "));
     }
 
     Ok(SwiftValue::Str(parts))
@@ -1528,6 +1579,34 @@ fn uuid_hash_value(recv: SwiftValue) -> StdResult {
         return Err(type_error("malformed UUID value"));
     };
     Ok(SwiftValue::int(fnv1a_hash(s.as_bytes())))
+}
+
+/// `UUID.uuid: uuid_t` — Darwin's `uuid_t` is a 16-element homogeneous
+/// `(UInt8, …, UInt8)` tuple of the raw bytes (network byte order). Decoded
+/// from the canonical hyphenated string.
+fn uuid_bytes_tuple(recv: SwiftValue) -> StdResult {
+    let SwiftValue::Str(s) = uuid_string(recv)? else {
+        return Err(type_error("malformed UUID value"));
+    };
+    let hex: String = s.chars().filter(|c| *c != '-').collect();
+    let bytes = hex.as_bytes();
+    if bytes.len() != 32 {
+        return Err(type_error("malformed UUID value"));
+    }
+    let mut elems = Vec::with_capacity(16);
+    for i in 0..16 {
+        let hi = (bytes[2 * i] as char).to_digit(16);
+        let lo = (bytes[2 * i + 1] as char).to_digit(16);
+        match (hi, lo) {
+            (Some(h), Some(l)) => {
+                let byte = (h * 16 + l) as i128;
+                elems.push(SwiftValue::Int(IntValue::new(byte, IntWidth::U8)));
+            }
+            _ => return Err(type_error("malformed UUID value")),
+        }
+    }
+    let labels = vec![None; 16];
+    Ok(SwiftValue::Tuple(elems, labels))
 }
 
 fn data_hash_value(recv: SwiftValue) -> StdResult {

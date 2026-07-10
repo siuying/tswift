@@ -1,0 +1,5 @@
+{"x":"+Inf","y":"-Inf","z":"NaN"}
+inf
+-inf
+true
+throws on infinity

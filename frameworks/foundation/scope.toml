@@ -38,13 +38,14 @@ Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 Decimal = ["+", "+=", "-", "-=", "*", "*=", "/", "/=", "==", "<"]
 DateComponents = ["==", "!="]
 Calendar = ["==", "!="]
-IndexPath = ["<", "<=", ">", ">=", "==", "!="]
+IndexPath = ["<", "<=", ">", ">=", "==", "!=", "+", "+=", "subscript"]
 Measurement = ["+", "-", "*", "/", "==", "<"]
 Data = ["=="]
 UUID = ["=="]
 URL = ["=="]
 URLQueryItem = ["=="]
 URLComponents = ["=="]
+URLRequest = ["=="]
 
 # Darwin gaps (documented, intentional for now):
 # - Calendar/DateComponents/DateFormatter/ISO8601DateFormatter operate in the
@@ -74,11 +75,20 @@ URLComponents = ["=="]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
 decimal_special_values = "Decimal has no infinity or negative zero: isInfinite is always false, isFinite is !isNaN. nan.significand/exponent propagate NaN. greatestFiniteMagnitude and ulp are not modelled."
+decimal_form_truncating_remainder_unavailable = "Decimal.formTruncatingRemainder(dividingBy:) is NOT implemented: verified against real Apple swiftc 6.3.2 (multiple -target triples) that the real Foundation declares this FloatingPoint-conformance method `@available(*, unavailable, message: \"Decimal does not yet fully adopt FloatingPoint.\")` — it cannot be called from any real Swift program. Implementing a callable version here would diverge from Darwin, not converge with it. Tier B / permanent skip, same rationale class as the .infinity/.signalingNaN gap."
 numberformatter_locale = "fixed en_US: ',' grouping, '.' decimal, '$' currency; no Locale. ObjC class absent from inventory."
 urlsession_transport = "URLSession runs on the embedding's transport: mock (fixtures), ureq HTTPS (CLI --allow-network), host handler (ffi), tswiftHttp hook (wasm); no cache/cookies/redirect policy modelled"
 urlsession_delegates = "URLSessionDataDelegate/TaskDelegate callbacks modelled (M3/M4); URLSessionDataTask.cancel/resume/state/progress modelled; bytes/download/publisher members unmodelled"
 urlsession_wasm_tier = "wasm: fetch completes eagerly; delegate+progress replay faithfully; cancel stops delivery only (cannot abort completed fetch)"
 urlsession_task_semantics = "URLSessionDataTask, URLSession, URLSessionConfiguration, DateFormatter, ISO8601DateFormatter, NumberFormatter, JSONEncoder, JSONDecoder, PropertyListEncoder are Object-backed (SwiftValue::Object, reference semantics); `let` bindings legal; aliases observe mutations; `===` identity holds. See ADR-0012."
+urlrequest_policy_stored_not_enforced = "URLRequest.cachePolicy/networkServiceType/attribution and the allowsCellularAccess/allowsConstrainedNetworkAccess/allowsExpensiveNetworkAccess/httpShouldHandleCookies/httpShouldUsePipelining/assumesHTTP3Capable/requiresDNSSECValidation/allowsPersistentDNS/allowsUltraConstrainedNetworkAccess flags and mainDocumentURL/cookiePartitionIdentifier are stored, round-trip, and participate in ==, but urlsession.rs's transport ignores all of them when making a request — no cache, cookie, or network-service-type policy is actually enforced."
+urlrequest_http_body_stream = "URLRequest.httpBodyStream is NOT modelled (Tier B): the runtime has no InputStream type to back it."
+coder_user_info_stored_not_threaded = "JSONEncoder/JSONDecoder/PropertyListEncoder.userInfo is a settable/gettable [CodingUserInfoKey: Any] dictionary (defaults to empty), backed by a stored field on the coder Object. CodingUserInfoKey(rawValue:) is modelled as a Hashable String wrapper. userInfo round-trips but is NOT threaded into custom init(from:)/encode(to:) — this runtime's Codable support is hand-written (no serde/Encoder/Decoder surfaced to user code), so a custom coder cannot read decoder.userInfo during decoding."
+jsondecoder_allows_json5 = "JSONDecoder.allowsJSON5 is NOT modelled (Tier B): requires a real JSON5 parser. assumesTopLevelDictionary IS modelled (brace-less top-level objects are wrapped before parsing)."
+calendar_weekend = "'Weekend' = Saturday + Sunday for nextWeekend(startingAfter:) and dateIntervalOfWeekend(containing:) and isDateInWeekend(_:). This is the Gregorian convention under the fixed en_US/Gregorian stance; Darwin's real weekend is Locale-dependent (some locales use Fri/Sat). Both return a Sat 00:00 ..< Mon 00:00 DateInterval (duration 172800s); Monday 00:00 is the exclusive end and is NOT part of the weekend."
+calendar_autoupdating_current = "Calendar.autoupdatingCurrent is an alias for Calendar.current: under the fixed Gregorian/UTC/en_US model there is no live Locale/TimeZone to track, so the two are identical."
+calendar_enumerate_dates_dates_deferred = "Calendar.enumerateDates(startingAfter:matching:...:using:) and Calendar.dates(byAdding:...) are NOT implemented. enumerateDates needs its closure's `stop: inout Bool` to write back through the Rust->Swift call_closure seam, which currently passes args by value and returns only the closure result (no inout write-back) — without it the loop cannot honour early stop and would diverge from Darwin. dates(...) returns an unbounded lazy Sequence<Date>, which the runtime has no representation for. Both deferred pending seam/Sequence work; documented rather than guessed."
+uuid_uuid_t = "UUID.uuid returns Darwin's uuid_t as a 16-element homogeneous (UInt8, ..., UInt8) tuple of the raw bytes in network byte order, decoded from the canonical string. Backed by SwiftValue::Tuple."
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]
