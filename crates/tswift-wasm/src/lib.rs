@@ -1047,6 +1047,98 @@ print("acc=\(acc_N) len=\(v_N.length)")
         }
     }
 
+    /// Startup-cost breakdown (Slice 18). `#[ignore]` like `bench_warm_start`;
+    /// invoke explicitly:
+    /// `cargo test -p tswift-wasm --release bench_startup_breakdown -- --ignored --nocapture`.
+    ///
+    /// Splits a *cold* run into its four phases so we can see where first-run
+    /// wall time actually goes before deciding whether a pre-analyzed prelude
+    /// snapshot is worth building:
+    ///   (a) install   — `tswift_std/foundation/swiftdata/swiftui` `install*`
+    ///                    (the `register_*` builtin-table construction).
+    ///   (b) prelude   — analyzing the SwiftUI + `@Query` preludes ALONE
+    ///                    (the ~420-line boilerplate every SwiftUI compile pays).
+    ///   (c) analyze   — analyzing prelude+user program, minus (b) = user code.
+    ///   (d) execute   — `Interpreter::run_retaining` (tree-walk).
+    /// Medians over `SAMPLES`; each phase is timed on a freshly-unique source
+    /// so nothing is cache-warm.
+    #[test]
+    #[ignore = "benchmark; run with --ignored --nocapture"]
+    fn bench_startup_breakdown() {
+        use std::time::Instant;
+        use tswift_swiftui::PRELUDE;
+        const SAMPLES: usize = 51;
+
+        let query_prelude = tswift_swiftdata::QUERY_PRELUDE;
+        let prelude = format!("{PRELUDE}\n{query_prelude}\n");
+        let prelude_lines = prelude.lines().count();
+
+        // (a) install: build a full interpreter + run every framework install,
+        // discarding it. This is the per-run register_* table construction the
+        // wasm run/compile paths pay on every call.
+        let mut install = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let mut sink = std::io::sink();
+            let t = Instant::now();
+            let mut interp = Interpreter::new(&mut sink);
+            tswift_std::install(&mut interp);
+            tswift_foundation::install_with(&mut interp, tswift_core::Capabilities::all());
+            tswift_swiftdata::install(&mut interp, true);
+            tswift_swiftui::install(&mut interp);
+            install.push(t.elapsed().as_secs_f64() * 1000.0);
+            drop(interp);
+        }
+
+        // (b) prelude analysis: analyze ONLY the prelude boilerplate.
+        let mut prelude_a = Vec::with_capacity(SAMPLES);
+        for i in 0..SAMPLES {
+            let src = format!("{prelude}// u{i}\n");
+            let t = Instant::now();
+            let _ = tswift_frontend::Analysis::analyze(&src, "main.swift");
+            prelude_a.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        for (label, repeats) in [("small", 18usize), ("large", 66usize)] {
+            let user = bench_program(repeats);
+
+            // (c) full analyze (prelude + user), unique each sample.
+            let mut full_a = Vec::with_capacity(SAMPLES);
+            for i in 0..SAMPLES {
+                let src = format!("{prelude}{user}\n// u{i}");
+                let t = Instant::now();
+                let _ = tswift_frontend::Analysis::analyze(&src, "main.swift");
+                full_a.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+
+            // (d) execute: analyze once (user-only program, no SwiftUI body so
+            // it just runs top-level), then time the tree-walk repeatedly.
+            let mut exec = Vec::with_capacity(SAMPLES);
+            for _ in 0..SAMPLES {
+                let analysis = tswift_frontend::Analysis::analyze(&user, "main.swift").unwrap();
+                let rc = std::rc::Rc::new(analysis);
+                let mut sink = std::io::sink();
+                let mut interp = Interpreter::new(&mut sink);
+                tswift_std::install(&mut interp);
+                let t = Instant::now();
+                let _ = interp.run_retaining(rc);
+                exec.push(t.elapsed().as_secs_f64() * 1000.0);
+                drop(interp);
+            }
+
+            let a = median(&install);
+            let b = median(&prelude_a);
+            let full = median(&full_a);
+            let user_only = (full - b).max(0.0);
+            let d = median(&exec);
+            let lines = format!("{prelude}{user}").lines().count();
+            println!(
+                "BREAKDOWN {label:<5} lines={lines:<4} (prelude={prelude_lines}) \
+                 install={a:.3}ms prelude_analyze={b:.3}ms user_analyze={user_only:.3}ms \
+                 full_analyze={full:.3}ms execute={d:.3}ms"
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // decode_batch_response — pure logic, wasm-independent
     // -----------------------------------------------------------------------

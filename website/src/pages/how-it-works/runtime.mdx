@@ -136,6 +136,37 @@ pattern-matching against the error value. `try?` maps `Throw` to
 
 ---
 
+## Runtime execution tiers
+
+tswift runs the **same tree-walking interpreter** on every platform. There is
+**no ahead-of-time compilation, no JIT, and no bytecode** — each tier lexes,
+parses, type-resolves, and then _interprets_ the AST. Tiers differ only in the
+host capabilities they expose and in whether repeated runs reuse a cached
+analysis; the execution strategy is identical everywhere.
+
+| Tier | Execution | Warm-start caching | Host services (files / defaults / database) |
+|---|---|---|---|
+| **Native CLI** | Tree-walking interpreter | None — process-per-run | Real: OS filesystem, JSON-backed defaults, SQLite |
+| **Web (wasm)** | Tree-walking interpreter | In-memory analysis cache for byte-identical re-runs | Virtual: in-memory filesystem, browser storage, SQLite (wasm) |
+| **iOS embed** | Tree-walking interpreter | None wired (same pattern available) | Real: Foundation filesystem, real SQLite |
+
+### Where startup time goes
+
+Profiling a cold run splits it into four phases — installing the standard
+library and framework builtins, analyzing the boilerplate prelude, analyzing
+user code, and executing. On every platform, **execution dominates: roughly
+90% or more of total wall time.** Installing builtins and analyzing source
+together stay under ~1.6 ms even for a 1,000-line program, while execution
+ranges from several to tens of milliseconds. Because the interpreter is the
+wall, startup is never the bottleneck for a non-trivial program, and there is
+no separate "compile" step to eliminate.
+
+On the web, re-running byte-identical source reuses the prior analysis, trimming
+a few tenths of a millisecond up to ~1.6 ms of re-analysis. This is pure latency
+caching — it never changes output — and it is _not_ compilation.
+
+---
+
 ## Explore further
 
 - [Frontend Pipeline ←](/how-it-works/frontend)
