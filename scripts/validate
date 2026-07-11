@@ -114,9 +114,17 @@ validate_web_canvas() {
   npm --prefix web/swiftui-canvas run validate
 }
 
+validate_coverage_json_drift() {
+  section "Web: framework-inventory coverage JSON tests"
+  python3 tools/framework-inventory/test_coverage_json.py
+  section "Web: coverage JSON drift check"
+  scripts/generate-coverage-json.sh --check
+}
+
 validate_web_all() {
   validate_web_canvas
   validate_wasm_smoke
+  validate_coverage_json_drift
 
   if [[ -f website/package.json ]]; then
     npm_install_if_needed website
@@ -144,7 +152,7 @@ changed_files() {
 }
 
 validate_changed() {
-  local files rust=0 ios=0 web=0 website=0 proto_web=0 proto_swiftui=0
+  local files rust=0 ios=0 web=0 website=0 proto_web=0 proto_swiftui=0 coverage_json=0
   files="$(changed_files)"
 
   if [[ -z "$files" ]]; then
@@ -165,6 +173,10 @@ validate_changed() {
         ios=1 ;;
     esac
     case "$f" in
+      tools/framework-inventory/**|frameworks/*/inventory.md|frameworks/*/registered_keys.txt|frameworks/*/scope.toml|website/src/data/coverage/**|scripts/generate-coverage-json.sh|docs/swift-runtime/stdlib-inventory.md|crates/tswift-cli/tests/fixtures/**)
+        web=1; coverage_json=1 ;;
+    esac
+    case "$f" in
       web/swiftui-canvas/**|tests/swiftui-fixtures/**|crates/tswift-wasm/**)
         web=1 ;;
       website/**)
@@ -181,6 +193,7 @@ validate_changed() {
   if (( web )); then
     validate_web_canvas
     validate_wasm_smoke
+    if (( coverage_json )); then validate_coverage_json_drift; fi
     if (( website )); then
       npm_install_if_needed website
       section "Web: website smoke test"

@@ -220,7 +220,6 @@ Int.subtractingReportingOverflow
 Int.trailingZeroBitCount
 Int.unsafelyUnwrapped
 Int.words
-Optional.debugDescription
 Optional.flatMap
 Optional.map
 Optional.take

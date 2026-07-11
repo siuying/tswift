@@ -1,0 +1,4098 @@
+{
+  "framework": "SwiftUI",
+  "sections": [
+    {
+      "name": "View",
+      "members": [
+        {
+          "name": "accentColor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityActions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityActivationPoint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityAddTraits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityAdjustableAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityChartDescriptor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityChildren",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityCustomContent",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityDefaultFocus",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityDirectTouch",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityDragPoint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityDropPoint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityElement",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityFocused",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityHeading",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityHint",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityIdentifier",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityIgnoresInvertColors",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityInputLabels",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityLabel",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityLabeledPair",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityLinkedGroup",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityQuickAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityRemoveTraits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityRepresentation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityRespondsToUserInteraction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityRotor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityRotorEntry",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityScrollAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityScrollStatus",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityShowsLargeContentViewer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilitySortPriority",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityTextContentType",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityValue",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityZoomAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "actionSheet",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "alert",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "alignmentGuide",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allowedDynamicRange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allowsHitTesting",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allowsTightening",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allowsWindowActivationEvents",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "alternatingRowBackgrounds",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "anchorPreference",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "animation",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "aspectRatio",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "assistiveAccessNavigationIcon",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "attributedTextFormattingDefinition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "autocapitalization",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "autocorrectionDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "background",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "backgroundExtensionEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundPreferenceValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "badge",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "badgeProminence",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "baselineOffset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "blendMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "blur",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "bold",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "border",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "brightness",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "buttonBorderShape",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "buttonRepeatBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "buttonSizing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "buttonStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "clipShape",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "clipped",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "colorEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "colorInvert",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "colorMultiply",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "colorScheme",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "compositingGroup",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "confirmationDialog",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerBackground",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerCornerOffset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerRelativeFrame",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerShape",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contentCaptureProtected",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contentMargins",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contentShape",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contentToolbar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contentTransition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contextMenu",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contrast",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "controlGroupStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "controlSize",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "coordinateSpace",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "copyable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "cornerRadius",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "cuttable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "datePickerStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultAdaptableTabBarPlacement",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultAppStorage",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultFocus",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultHoverEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultScrollAnchor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultWheelPickerItemHeight",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defersSystemGestures",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "deleteDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogIcon",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogPreventsAppTermination",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogSeverity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogSuppressionToggle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "digitalCrownAccessory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "digitalCrownRotation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "disableAutocorrection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "disabled",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "disclosureGroupStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dismissalConfirmationDialog",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "distortionEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "documentBrowserContextMenu",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dragConfiguration",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dragContainer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dragContainerSelection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dragPreviewsFormation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "draggable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "drawingGroup",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dropConfiguration",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dropDestination",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dropPreviewsFormation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dynamicTypeSize",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "edgesIgnoringSafeArea",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "environment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "environmentObject",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "equatable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exportableToServices",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exportsItemProviders",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogBrowserOptions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogConfirmationLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogCustomizationID",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogDefaultDirectory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogImportsUnresolvedAliases",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogMessage",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileDialogURLEnabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileExporter",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileExporterFilenameLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileImporter",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fileMover",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "findDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "findNavigator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fixedSize",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "flipsForRightToLeftLayoutDirection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusEffectDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusScope",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusSection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focused",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusedObject",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusedSceneObject",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusedSceneValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "focusedValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "font",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "fontDesign",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fontWeight",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "fontWidth",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "foregroundColor",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "foregroundStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "formStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "frame",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "fullScreenCover",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gaugeStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "geometryGroup",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gesture",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "glassEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "glassEffectID",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "glassEffectTransition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "glassEffectUnion",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "grayscale",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gridCellAnchor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gridCellColumns",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gridCellUnsizedAxes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gridColumnAlignment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "groupBoxStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "handGestureShortcut",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "handlesExternalEvents",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "headerProminence",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "help",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "highPriorityGesture",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "horizontalRadioGroupLayout",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hoverEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hoverEffectDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hoverEffectGroup",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hueRotation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "id",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "ignoresSafeArea",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "imageScale",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "immersiveEnvironmentPicker",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "importableFromServices",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "importsItemProviders",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "indexViewStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "inspector",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "inspectorColumnWidth",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "interactionActivityTrackingTag",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "interactiveDismissDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "invalidatableContent",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "italic",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "itemProvider",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "kerning",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "keyboardShortcut",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "keyboardType",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "keyframeAnimator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labelIconToTitleSpacing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labelReservedIconWidth",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labelStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labeledContentStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labelsHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "labelsVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layerEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutPriority",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "layoutValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "lineHeight",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "lineLimit",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "lineSpacing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listItemTint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowBackground",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowHoverEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowHoverEffectDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowInsets",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowPlatterColor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowSeparatorTint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listRowSpacing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listSectionIndexVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listSectionMargins",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listSectionSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listSectionSeparatorTint",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listSectionSpacing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "listStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "luminanceToAlpha",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "mask",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "matchedGeometryEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "matchedTransitionSource",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "materialActiveAppearance",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuActionDismissBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuButtonStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuIndicator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuOrder",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "minimumScaleFactor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "modifier",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "modifierKeyAlternate",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "monospaced",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "monospacedDigit",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "moveDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "multilineTextAlignment",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "navigationBarBackButtonHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationBarHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationBarItems",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationBarTitle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationBarTitleDisplayMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationDestination",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "navigationDocument",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationLinkIndicatorVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationSplitViewColumnWidth",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationSplitViewStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationSubtitle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationTitle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "navigationTransition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "navigationViewStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "offset",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onAppear",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onChange",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onContinueUserActivity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onContinuousHover",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onCopyCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onCutCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onDeleteCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onDisappear",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onDrag",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onDragSessionUpdated",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onDrop",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onDropSessionUpdated",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onExitCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onGeometryChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onHover",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onInteractiveResizeChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onKeyPress",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onLongPressGesture",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onLongTouchGesture",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onModifierKeysChanged",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onMoveCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onOpenURL",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onPasteCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onPencilDoubleTap",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onPencilSqueeze",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onPlayPauseCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onPreferenceChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onReceive",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onScrollGeometryChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onScrollPhaseChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onScrollTargetVisibilityChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onScrollVisibilityChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onSubmit",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onTapGesture",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "onVolumeViewpointChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onWorldRecenter",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "opacity",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "ornament",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "overlay",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "overlayPreferenceValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "padding",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "pageCommand",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "paletteSelectionEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "pasteDestination",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "persistentSystemOverlays",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "phaseAnimator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "pickerStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "pointerVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "popover",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "position",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "preference",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "preferredColorScheme",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "prefersDefaultFocus",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationBackground",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationBackgroundInteraction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationCompactAdaptation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationContentInteraction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationCornerRadius",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationDetents",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationDragIndicator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationPreventsAppTermination",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentationSizing",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentedWindowStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "presentedWindowToolbarStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "previewContext",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "previewDevice",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "previewDisplayName",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "previewInterfaceOrientation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "previewLayout",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "privacySensitive",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "progressViewStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "projectionEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "redacted",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "refreshable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "renameAction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "replaceDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "rotation3DEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "rotationEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "safeAreaBar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "safeAreaInset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "safeAreaPadding",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "saturation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scaleEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scaledToFill",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "scaledToFit",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "scenePadding",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollBounceBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollClipDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollContentBackground",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollDismissesKeyboard",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollEdgeEffectHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollEdgeEffectStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollIndicators",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollIndicatorsFlash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollInputBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollPosition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollTargetBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollTargetLayout",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scrollTransition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchCompletion",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchDictationBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchFocused",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchPresentationToolbarBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchScopes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchSelection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchSuggestions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchToolbarBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "searchable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sectionActions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sectionIndexLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "selectionDisabled",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sensoryFeedback",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "shadow",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "sheet",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "simultaneousGesture",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sliderThumbVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAdjustedPitch",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAlwaysIncludesPunctuation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAnnouncementsQueued",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechSpellsOutCharacters",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "springLoadingBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "statusBar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "statusBarHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "strikethrough",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "submitLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "submitScope",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "supportedVolumeViewpoints",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "swipeActions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolColorRenderingMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolEffectsRemoved",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolRenderingMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolVariableValueMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbolVariant",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabBarMinimizeBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabItem",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "tabViewBottomAccessory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewCustomization",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewSearchActivation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewSidebarBottomBar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewSidebarFooter",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewSidebarHeader",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tabViewStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tableColumnHeaders",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tableStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tag",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "task",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "textCase",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "textContentType",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textEditorStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textFieldStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "textInputAutocapitalization",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textInputCompletion",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textInputFormattingControlVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textInputSuggestions",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textRenderer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textScale",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textSelection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textSelectionAffinity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tint",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "toggleStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarBackground",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarBackgroundVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarColorScheme",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarForegroundStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarItemHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarRole",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarTitleDisplayMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarTitleMenu",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "toolbarVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "touchBar",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "touchBarCustomizationLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "touchBarItemPresence",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "touchBarItemPrincipal",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tracking",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transaction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transformAnchorPreference",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transformEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transformEnvironment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transformPreference",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transition",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "truncationMode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "typeSelectEquivalent",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "typesettingLanguage",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "underline",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "unredacted",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "userActivity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "visualEffect",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowDismissBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowFullScreenBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowMinimizeBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowResizeAnchor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowResizeBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowToolbarFullScreenVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "writingDirection",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "writingToolsAffordanceVisibility",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "writingToolsBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "zIndex",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 53,
+        "missing": 415,
+        "out_of_scope": 0,
+        "total": 468
+      }
+    },
+    {
+      "name": "State",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "projectedValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "Text",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityHeading",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityTextContentType",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "baselineOffset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "bold",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "customAttribute",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "font",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fontDesign",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fontWeight",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fontWidth",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "foregroundColor",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "foregroundStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "italic",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "kerning",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "monospaced",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "monospacedDigit",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAdjustedPitch",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAlwaysIncludesPunctuation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechAnnouncementsQueued",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "speechSpellsOutCharacters",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "strikethrough",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textScale",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "textVariant",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "tracking",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "typesettingLanguage",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "underline",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 29,
+        "out_of_scope": 0,
+        "total": 30
+      }
+    },
+    {
+      "name": "Button",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "VStack",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "HStack",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "Spacer",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "minLength",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Toggle",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "ZStack",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "Color",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accentColor",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "animatableData",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "black",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "blue",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "brown",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "cgColor",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "clear",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "cyan",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exposureAdjust",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "gradient",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "gray",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "green",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "headroom",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "indigo",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "mint",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "mix",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "opacity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "orange",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "pink",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "primary",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "purple",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "red",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "resolve",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "resolveHDR",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "secondary",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "teal",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "transferRepresentation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "white",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "yellow",
+          "kind": "let",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 35,
+        "out_of_scope": 0,
+        "total": 35
+      }
+    },
+    {
+      "name": "Circle",
+      "members": [
+        {
+          "name": "corners",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "inset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sizeThatFits",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 5,
+        "out_of_scope": 0,
+        "total": 6
+      }
+    },
+    {
+      "name": "RoundedRectangle",
+      "members": [
+        {
+          "name": "animatableData",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cornerSize",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "corners",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "inset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "style",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 7,
+        "out_of_scope": 0,
+        "total": 8
+      }
+    },
+    {
+      "name": "Rectangle",
+      "members": [
+        {
+          "name": "corners",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "inset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "Capsule",
+      "members": [
+        {
+          "name": "corners",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "inset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "style",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 5,
+        "out_of_scope": 0,
+        "total": 6
+      }
+    },
+    {
+      "name": "Ellipse",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "inset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "layoutDirectionBehavior",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    },
+    {
+      "name": "ForEach",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "content",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "data",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    },
+    {
+      "name": "List",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Section",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "Binding",
+      "members": [
+        {
+          "name": "animation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "constant",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "id",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "indices",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "projectedValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "transaction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 13,
+        "out_of_scope": 0,
+        "total": 13
+      }
+    },
+    {
+      "name": "TextField",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "SecureField",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Slider",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Stepper",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Picker",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "StateObject",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "projectedValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "ObservedObject",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "projectedValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "EnvironmentObject",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "projectedValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "Environment",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "ProgressView",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "AsyncImage",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "ScrollView",
+      "members": [
+        {
+          "name": "axes",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "content",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "showsIndicators",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "LazyVStack",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "LazyHStack",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "Grid",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "LazyVGrid",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "LazyHGrid",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "GeometryReader",
+      "members": [
+        {
+          "name": "content",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "GeometryProxy",
+      "members": [
+        {
+          "name": "bounds",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "containerCornerInsets",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "frame",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "safeAreaInsets",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "size",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 6,
+        "out_of_scope": 0,
+        "total": 6
+      }
+    },
+    {
+      "name": "ViewThatFits",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "NavigationStack",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "NavigationLink",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "isDetailLink",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "NavigationSplitView",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "NavigationPath",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "codable",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "removeLast",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 5,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 7
+      }
+    },
+    {
+      "name": "TabView",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Form",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Group",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Animation",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "animate",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "base",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "bouncy",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "default",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "delay",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "easeIn",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "easeInOut",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "easeOut",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "interactiveSpring",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "interpolatingSpring",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "linear",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "logicallyComplete",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "repeatCount",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "repeatForever",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "shouldMerge",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "smooth",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "snappy",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "speed",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "spring",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "systemOverlayAppearance",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "systemOverlayDelayedDisappearance",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "systemOverlayDisappearance",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "systemOverlayDisappearanceDelay",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "timingCurve",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "velocity",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 12,
+        "missing": 20,
+        "out_of_scope": 0,
+        "total": 32
+      }
+    },
+    {
+      "name": "AnyTransition",
+      "members": [
+        {
+          "name": "animation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "asymmetric",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "combined",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "identity",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "modifier",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "move",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "offset",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "opacity",
+          "kind": "let",
+          "status": "partial"
+        },
+        {
+          "name": "push",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "scale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "slide",
+          "kind": "var",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 9,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 12
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 0,
+    "partial": 112,
+    "missing": 590,
+    "out_of_scope": 0,
+    "total": 702
+  }
+}

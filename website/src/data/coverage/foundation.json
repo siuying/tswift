@@ -1,0 +1,3315 @@
+{
+  "framework": "Foundation",
+  "sections": [
+    {
+      "name": "Data",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "advanced",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "base64EncodedData",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "base64EncodedString",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "bytes",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "copyBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "enumerateBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "indices",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mutableBytes",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "mutableSpan",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "range",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "regions",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "resetBytes",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subdata",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "write",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 20,
+        "partial": 0,
+        "missing": 15,
+        "out_of_scope": 0,
+        "total": 35
+      }
+    },
+    {
+      "name": "UUID",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "uuid",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "uuidString",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 7,
+        "partial": 0,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 11
+      }
+    },
+    {
+      "name": "IndexPath",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appending",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "compare",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "dropLast",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 18,
+        "partial": 0,
+        "missing": 6,
+        "out_of_scope": 0,
+        "total": 24
+      }
+    },
+    {
+      "name": "IndexSet",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "<=",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": ">=",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "contains",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "filteredIndexSet",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "first",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "formIntersection",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formSymmetricDifference",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "formUnion",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "indexRange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "integerGreaterThan",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "integerGreaterThanOrEqualTo",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "integerLessThan",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "integerLessThanOrEqualTo",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "intersection",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "intersects",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "last",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "rangeView",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "shift",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "symmetricDifference",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "union",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "update",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 28,
+        "partial": 1,
+        "missing": 13,
+        "out_of_scope": 0,
+        "total": 42
+      }
+    },
+    {
+      "name": "URL",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "absoluteString",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "absoluteURL",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appendPathComponent",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appendPathExtension",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appending",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appendingPathComponent",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "appendingPathExtension",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "applicationDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "applicationSupportDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "associativeList",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "baseURL",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "bookmarkData",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "cachesDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "checkPromisedItemIsReachable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "checkResourceIsReachable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "consuming",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "currentDirectory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "dataRepresentation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "deleteLastPathComponent",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "deletePathExtension",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "deletingLastPathComponent",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "deletingPathExtension",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "desktopDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "documentsDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "downloadsDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "format",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "formatted",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fragment",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hasDirectoryPath",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "homeDirectory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "host",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isFileURL",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lastPathComponent",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "libraryDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "lines",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "list",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "moviesDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "musicDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "parse",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "parseStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "password",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "path",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "pathComponents",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "pathExtension",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "picturesDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "port",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "promisedItemResourceValues",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "query",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "relativePath",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "relativeString",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAllCachedResourceValues",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "removeCachedResourceValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "resolveSymlinksInPath",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "resolvingSymlinksInPath",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "resourceBytes",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "resourceValues",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "scheme",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "setResourceValues",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "setTemporaryResourceValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "sharedPublicDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "standardize",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "standardized",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "standardizedFileURL",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startAccessingSecurityScopedResource",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "stopAccessingSecurityScopedResource",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "temporaryDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "text",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "trashDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "user",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "userDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeFileSystemRepresentation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "writeBookmarkData",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 37,
+        "partial": 0,
+        "missing": 44,
+        "out_of_scope": 0,
+        "total": 81
+      }
+    },
+    {
+      "name": "URLComponents",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "encodedHost",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "fragment",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "host",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "password",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "path",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedFragment",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedHost",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedPassword",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedPath",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedQuery",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedQueryItems",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "percentEncodedUser",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "port",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "query",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "queryItems",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "rangeOfFragment",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfHost",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfPassword",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfPath",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfPort",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfQuery",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfScheme",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "rangeOfUser",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "scheme",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "string",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "url",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "user",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 24,
+        "partial": 0,
+        "missing": 11,
+        "out_of_scope": 0,
+        "total": 35
+      }
+    },
+    {
+      "name": "URLQueryItem",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "name",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "value",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 8
+      }
+    },
+    {
+      "name": "Date",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "abbreviated",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "addTimeInterval",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "addingTimeInterval",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "advanced",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "attributedStyle",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "compare",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "consuming",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "conversational",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "conversationalDefaultDigits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "conversationalTwoDigits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "dateSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dateTimeSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "day",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dayOfYear",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "defaultDigits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultDigitsNoAMPM",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "discreteInput",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "distantFuture",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "distantPast",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "era",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exemplarLocation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "extended",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "format",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formatted",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "fractional",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "genericLocation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "genericName",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hour",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "identifier",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "input",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "iso8601",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "julianModified",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "locale",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "localizedGMT",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "milliseconds",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "minute",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "month",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "narrow",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "now",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "omitted",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "oneDigit",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "ordinalOfDayInMonth",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "padded",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "parse",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "parseStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "quarter",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "relatedGregorian",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "second",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "secondFraction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "short",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "specificName",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "standard",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "threeDigits",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "time",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "timeIntervalBetween1970AndReferenceDate",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "timeIntervalSince",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "timeIntervalSince1970",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "timeIntervalSinceNow",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "timeIntervalSinceReferenceDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "timeSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "timeZone",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "timeZoneSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "twoDigits",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "twoDigitsNoAMPM",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "week",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "weekOfMonth",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "weekOfYear",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "weekday",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "wide",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "with12s",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "year",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 34,
+        "partial": 2,
+        "missing": 51,
+        "out_of_scope": 0,
+        "total": 87
+      }
+    },
+    {
+      "name": "Calendar",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "amSymbol",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "autoupdatingCurrent",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "compare",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "component",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "current",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "date",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dateComponents",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dateInterval",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dateIntervalOfWeekend",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dates",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "enumerateDates",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "eraSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "firstWeekday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "identifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isDate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isDateInToday",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "isDateInTomorrow",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "isDateInWeekend",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isDateInYesterday",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "locale",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "longEraSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "maximumRange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "minimumDaysInFirstWeek",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "minimumRange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "monthSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "nextDate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nextWeekend",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "ordinality",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "pmSymbol",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "quarterSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "range",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "shortMonthSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "shortQuarterSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "shortStandaloneMonthSymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "shortStandaloneQuarterSymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "shortStandaloneWeekdaySymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "shortWeekdaySymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "standaloneMonthSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "standaloneQuarterSymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "standaloneWeekdaySymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "startOfDay",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "timeZone",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "veryShortMonthSymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "veryShortStandaloneMonthSymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "veryShortStandaloneWeekdaySymbols",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "veryShortWeekdaySymbols",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "weekdaySymbols",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 37,
+        "partial": 10,
+        "missing": 8,
+        "out_of_scope": 0,
+        "total": 55
+      }
+    },
+    {
+      "name": "DateComponents",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "calendar",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "consuming",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "date",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "dateSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dateTimeSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "day",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dayOfYear",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "era",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "format",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "formatted",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hour",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isLeapMonth",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isRepeatedDay",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isValidDate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "minute",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "month",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nanosecond",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "parse",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "parseStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "quarter",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "second",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "setValue",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "time",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "timeSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "timeZone",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "timeZoneSeparator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "value",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "weekOfMonth",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "weekOfYear",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "weekday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "weekdayOrdinal",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "year",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "yearForWeekOfYear",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 27,
+        "partial": 0,
+        "missing": 14,
+        "out_of_scope": 0,
+        "total": 41
+      }
+    },
+    {
+      "name": "Decimal",
+      "members": [
+        {
+          "name": "*",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "*=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/=",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "add",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "advanced",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "consuming",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "divide",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exponent",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "floatingPointClass",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formTruncatingRemainder",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "formatted",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "greatestFiniteMagnitude",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "infinity",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isCanonical",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isEqual",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isFinite",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isInfinite",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isLess",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isLessThanOrEqualTo",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isNaN",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isNormal",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSignMinus",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSignaling",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "isSignalingNaN",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSubnormal",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isTotallyOrdered",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isZero",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "leastFiniteMagnitude",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "leastNonzeroMagnitude",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "leastNormalMagnitude",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "magnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "multiply",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nan",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "negate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nextDown",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "nextUp",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "parse",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "parseStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "pi",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "quietNaN",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "radix",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "sign",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "signalingNaN",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "significand",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subtract",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "ulp",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 49,
+        "partial": 2,
+        "missing": 8,
+        "out_of_scope": 0,
+        "total": 59
+      }
+    },
+    {
+      "name": "Measurement",
+      "members": [
+        {
+          "name": "*",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "convert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "converted",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formatted",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hidesScaleName",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "unit",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "value",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 15,
+        "partial": 0,
+        "missing": 5,
+        "out_of_scope": 0,
+        "total": 20
+      }
+    },
+    {
+      "name": "JSONEncoder",
+      "members": [
+        {
+          "name": "dataEncodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "dateEncodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "keyEncodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "nonConformingFloatEncodingStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "outputFormatting",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "userInfo",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 8
+      }
+    },
+    {
+      "name": "JSONDecoder",
+      "members": [
+        {
+          "name": "allowsJSON5",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "assumesTopLevelDictionary",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "dataDecodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "dateDecodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "decode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "keyDecodingStrategy",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "nonConformingFloatDecodingStrategy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "userInfo",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 9
+      }
+    },
+    {
+      "name": "PropertyListEncoder",
+      "members": [
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "outputFormat",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "userInfo",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 3,
+        "partial": 0,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    },
+    {
+      "name": "URLRequest",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "addValue",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "allHTTPHeaderFields",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "allowsCellularAccess",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "allowsConstrainedNetworkAccess",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "allowsExpensiveNetworkAccess",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "allowsPersistentDNS",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "allowsUltraConstrainedNetworkAccess",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "assumesHTTP3Capable",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "attribution",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cachePolicy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cookiePartitionIdentifier",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "httpBody",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "httpBodyStream",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "httpMethod",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "httpShouldHandleCookies",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "httpShouldUsePipelining",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "mainDocumentURL",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "networkServiceType",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "requiresDNSSECValidation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "setValue",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "timeoutInterval",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "url",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "value",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 12,
+        "partial": 0,
+        "missing": 18,
+        "out_of_scope": 0,
+        "total": 30
+      }
+    },
+    {
+      "name": "URLError",
+      "members": [
+        {
+          "name": "appTransportSecurityRequiresSecureConnection",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundSessionInUseByAnotherProcess",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundSessionRequiresSharedContainer",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundSessionWasDisconnected",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "backgroundTaskCancelledReason",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "badServerResponse",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "badURL",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "callIsActive",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cancelled",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "cannotCloseFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotConnectToHost",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "cannotCreateFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotDecodeContentData",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "cannotDecodeRawData",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "cannotFindHost",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "cannotLoadFromNetwork",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotMoveFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotOpenFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotParseResponse",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "cannotRemoveFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "cannotWriteToFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "clientCertificateRejected",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "clientCertificateRequired",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "dataLengthExceedsMaximum",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "dataNotAllowed",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "dnsLookupFailed",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "downloadDecodingFailedMidStream",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "downloadDecodingFailedToComplete",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "downloadTaskResumeData",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "errorDomain",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "failingURL",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "failureURLPeerTrust",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "failureURLString",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "fileDoesNotExist",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "fileIsDirectory",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "httpTooManyRedirects",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "internationalRoamingOff",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "networkConnectionLost",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "networkUnavailableReason",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "noPermissionsToReadFile",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "notConnectedToInternet",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "redirectToNonExistentLocation",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "requestBodyStreamExhausted",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "resourceUnavailable",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "secureConnectionFailed",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "serverCertificateHasBadDate",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "serverCertificateHasUnknownRoot",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "serverCertificateNotYetValid",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "serverCertificateUntrusted",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "timedOut",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "unknown",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "unsupportedURL",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "uploadTaskResumeData",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "userAuthenticationRequired",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "userCancelledAuthentication",
+          "kind": "var",
+          "status": "partial"
+        },
+        {
+          "name": "zeroByteResource",
+          "kind": "var",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 7,
+        "partial": 16,
+        "missing": 35,
+        "out_of_scope": 0,
+        "total": 58
+      }
+    },
+    {
+      "name": "URLSession",
+      "members": [
+        {
+          "name": "bytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "data",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dataTaskPublisher",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "download",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "upload",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 1,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "FileManager",
+      "members": [
+        {
+          "name": "enumerator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "replaceItemAt",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "replaceItemAtURL",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 335,
+    "partial": 32,
+    "missing": 248,
+    "out_of_scope": 0,
+    "total": 615
+  }
+}

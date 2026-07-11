@@ -1,0 +1,2771 @@
+{
+  "framework": "Swift stdlib",
+  "sections": [
+    {
+      "name": "Array",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "capacity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mutableSpan",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "withContiguousMutableStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBytes",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 21,
+        "partial": 0,
+        "missing": 11,
+        "out_of_scope": 0,
+        "total": 32
+      }
+    },
+    {
+      "name": "ArraySlice",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "capacity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mutableSpan",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "withContiguousMutableStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBytes",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 17,
+        "partial": 0,
+        "missing": 12,
+        "out_of_scope": 0,
+        "total": 29
+      }
+    },
+    {
+      "name": "Bool",
+      "members": [
+        {
+          "name": "!",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "&&",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "random",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "toggle",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "||",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 9,
+        "partial": 1,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 13
+      }
+    },
+    {
+      "name": "ClosedRange",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "clamped",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "contains",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lowerBound",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "overlaps",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "relative",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "upperBound",
+          "kind": "let",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 15,
+        "partial": 0,
+        "missing": 6,
+        "out_of_scope": 0,
+        "total": 21
+      }
+    },
+    {
+      "name": "CollectionOfOne",
+      "members": [
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mutableSpan",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "next",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 7,
+        "partial": 0,
+        "missing": 5,
+        "out_of_scope": 0,
+        "total": 12
+      }
+    },
+    {
+      "name": "ContiguousArray",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "capacity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mutableSpan",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "withContiguousMutableStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBufferPointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBytes",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 19,
+        "partial": 0,
+        "missing": 11,
+        "out_of_scope": 0,
+        "total": 30
+      }
+    },
+    {
+      "name": "Dictionary",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "capacity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "compactMapValues",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "filter",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "keys",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "mapValues",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "merge",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "merging",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "next",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "popFirst",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeValue",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "updateValue",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "values",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 29,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 32
+      }
+    },
+    {
+      "name": "Double",
+      "members": [
+        {
+          "name": "*",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "*=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "addProduct",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "advanced",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "binade",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "bitPattern",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "exponent",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "exponentBitCount",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "exponentBitPattern",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "formRemainder",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formSquareRoot",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formTruncatingRemainder",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "greatestFiniteMagnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "infinity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "isCanonical",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isEqual",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isFinite",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isInfinite",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isLess",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isLessThanOrEqualTo",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isNaN",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isNormal",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSignMinus",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSignalingNaN",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSubnormal",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isZero",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "leastNonzeroMagnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "leastNormalMagnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "magnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "nan",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "negate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nextUp",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "pi",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "quietNaN",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "round",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "sign",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "signalingNaN",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "significand",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "significandBitCount",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "significandBitPattern",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "significandWidth",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "ulp",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "ulpOfOne",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "write",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 49,
+        "partial": 0,
+        "missing": 10,
+        "out_of_scope": 0,
+        "total": 59
+      }
+    },
+    {
+      "name": "EmptyCollection",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "next",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 8,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 10
+      }
+    },
+    {
+      "name": "Int",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "%",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "%=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "&",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "&<<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "&<<=",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "&=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "&>>",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "&>>=",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "*",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "*=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "-=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "/=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "^",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "^=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "addingReportingOverflow",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "advanced",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "bitWidth",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "byteSwapped",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "codingKey",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dividedReportingOverflow",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dividingFullWidth",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "leadingZeroBitCount",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "magnitude",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "multipliedFullWidth",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "multipliedReportingOverflow",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "nonzeroBitCount",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "remainderReportingOverflow",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "signum",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "subtractingReportingOverflow",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "trailingZeroBitCount",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "words",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "|",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "|=",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 42,
+        "partial": 0,
+        "missing": 8,
+        "out_of_scope": 0,
+        "total": 50
+      }
+    },
+    {
+      "name": "Optional",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "flatMap",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "map",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "none",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "some",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "take",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "unsafelyUnwrapped",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "~=",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 11,
+        "partial": 0,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 15
+      }
+    },
+    {
+      "name": "Range",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "clamped",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "contains",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "indices",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lowerBound",
+          "kind": "let",
+          "status": "implemented"
+        },
+        {
+          "name": "overlaps",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "relative",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "upperBound",
+          "kind": "let",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 15,
+        "partial": 0,
+        "missing": 6,
+        "out_of_scope": 0,
+        "total": 21
+      }
+    },
+    {
+      "name": "ReversedCollection",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "next",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "reversed",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 9,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 12
+      }
+    },
+    {
+      "name": "Set",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "capacity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "contains",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "filter",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "firstIndex",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formIntersection",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formSymmetricDifference",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formUnion",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "intersection",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isDisjoint",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isStrictSubset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isStrictSuperset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isSubset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isSuperset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "next",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "popFirst",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeFirst",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "subtract",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "subtracting",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "symmetricDifference",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "union",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "update",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 35,
+        "partial": 0,
+        "missing": 7,
+        "out_of_scope": 0,
+        "total": 42
+      }
+    },
+    {
+      "name": "String",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "+=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "characters",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "codingKey",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "decodeCString",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "encodedOffset",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hasPrefix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hasSuffix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isContiguousUTF8",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lowercased",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "makeContiguousUTF8",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "max",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "min",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAll",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reserveCapacity",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "samePosition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "unicodeScalars",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "uppercased",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "utf16",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "utf16Offset",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "utf8",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "utf8CString",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "utf8Span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "withCString",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withMutableCharacters",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUTF8",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "write",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "~=",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 29,
+        "partial": 0,
+        "missing": 24,
+        "out_of_scope": 0,
+        "total": 53
+      }
+    },
+    {
+      "name": "Substring",
+      "members": [
+        {
+          "name": "append",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "base",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "characters",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "customMirror",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "customPlaygroundQuickLook",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "description",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "filter",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "indices",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "isContiguousUTF8",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lowercased",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "makeContiguousUTF8",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "replaceSubrange",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "unicodeScalars",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "uppercased",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "utf16",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "utf8",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "utf8Span",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "withCString",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withMutableCharacters",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUTF8",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "write",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "~=",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 19,
+        "partial": 0,
+        "missing": 14,
+        "out_of_scope": 0,
+        "total": 33
+      }
+    },
+    {
+      "name": "(free functions)",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "!==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "%",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "%=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "<=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "===",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": ">=",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "abs",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "all",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "any",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "assert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "assertionFailure",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "debugPrint",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dump",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "exchange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "extendLifetime",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fatalError",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "getVaList",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "isKnownUniquelyReferenced",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "max",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "min",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "numericCast",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "pointwiseMax",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "pointwiseMin",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "precondition",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "preconditionFailure",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "print",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "readLine",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "repeatElement",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "sequence",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "stride",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "swap",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "transcode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "unsafeBitCast",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "unsafeDowncast",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withExtendedLifetime",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutableBytes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeMutablePointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafePointer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withUnsafeTemporaryAllocation",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "withVaList",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "zip",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "~=",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 29,
+        "partial": 0,
+        "missing": 18,
+        "out_of_scope": 0,
+        "total": 47
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 363,
+    "partial": 1,
+    "missing": 147,
+    "out_of_scope": 0,
+    "total": 511
+  }
+}
