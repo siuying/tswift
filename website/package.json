@@ -8,12 +8,14 @@
     "build:wasm": "wasm-pack build ../crates/tswift-wasm --target web --out-dir ../../website/public/wasm --out-name tswift_wasm",
     "build": "npm run build:wasm && astro build",
     "preview": "astro preview",
-    "test": "node test/wasm-smoke.mjs && node test/db-host-service.mjs && node test/playground-init-ordering.mjs",
+    "test": "node test/wasm-smoke.mjs && node test/db-host-service.mjs && node test/playground-init-ordering.mjs && node test/studio.mjs && node test/studio-editor-lint.mjs && node test/studio-wasm.mjs",
     "deploy": "wrangler pages deploy dist --project-name tswift --branch main"
   },
   "dependencies": {
     "@astrojs/mdx": "^7.0.0",
     "@astrojs/react": "^6.0.0",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.10.4",
     "@codemirror/language": "^6.12.4",
     "@codemirror/legacy-modes": "^6.5.3",
     "@codemirror/lint": "^6.9.7",

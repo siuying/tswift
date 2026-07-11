@@ -15,6 +15,35 @@ export function clearHostFunctions() {
 }
 
 /**
+ * List every declaration symbol (name/kind/file/line/container/signature)
+ * across a set of files, as JSON.
+ *
+ * `files_json` is `{"files":[{"path":"…","contents":"…"},…]}` — the same
+ * wire shape [`run_swift_module`] takes. Each file is analyzed
+ * independently (`tswift_frontend::symbols::list_symbols`): a syntax error
+ * in one file doesn't block symbols from the others. Shape:
+ * `{"ok":bool,"symbols":[{"name","kind","file","line","container"?,
+ * "signature"?},…],"error"?:string}` — `ok` is false only when `files_json`
+ * itself fails to parse (in which case `symbols` is `[]`).
+ * @param {string} files_json
+ * @returns {string}
+ */
+export function listSymbols(files_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.listSymbols(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Register a host-native function so that interpreted Swift can call it.
  *
  * `signature_json` is the compact JSON schema accepted by the core bridge:
@@ -73,8 +102,10 @@ export function runSwift(source) {
  * Compile and run a multi-file Swift module, returning a JSON result.
  *
  * `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`. Files are
- * concatenated in order; the first file's path is used for diagnostics.
- * Additive — `runSwift` remains unchanged.
+ * analyzed together as one compilation unit ([`Analysis::analyze_program`]);
+ * each diagnostic is attributed to its true originating file and file-local
+ * line/col, not just the first file. Additive — `runSwift` remains
+ * unchanged.
  * @param {string} module_json
  * @returns {string}
  */

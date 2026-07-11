@@ -1,0 +1,623 @@
+---
+// Web Studio — a focused mini-IDE for the tswift runtime: multi-file project,
+// symbol outline, live SwiftUI canvas / console, inline diagnostics. All logic
+// runs client-side; the pure project/module/outline transforms live in
+// ../lib/studio/*.js (unit-tested in website/test/studio.mjs).
+---
+
+<div class="studio" id="studio">
+  <!-- Top bar -->
+  <header class="st-topbar">
+    <div class="st-brand">
+      <span class="st-dot"></span>
+      <input id="st-project-name" class="st-project-name" aria-label="Project name" spellcheck="false" />
+    </div>
+    <div class="st-topbar-actions">
+      <button id="st-quickopen-btn" class="st-btn st-btn-ghost" title="Quick open (⌘K)">⌘K Open…</button>
+      <button id="st-new-btn" class="st-btn st-btn-ghost">New Project</button>
+      <button id="st-run" class="st-btn st-btn-run" disabled>▶ Run</button>
+      <span id="st-status" class="st-status">loading…</span>
+    </div>
+  </header>
+
+  <div class="st-body">
+    <!-- Sidebar: files + outline -->
+    <aside class="st-sidebar">
+      <div class="st-panel st-files">
+        <div class="st-panel-head">
+          <span>Files</span>
+          <button id="st-add-file" class="st-icon-btn" title="New file">＋</button>
+        </div>
+        <ul id="st-file-tree" class="st-file-tree"></ul>
+      </div>
+      <div class="st-panel st-outline">
+        <div class="st-panel-head"><span>Outline</span></div>
+        <ul id="st-outline" class="st-outline-tree"><li class="st-empty">—</li></ul>
+      </div>
+    </aside>
+
+    <!-- Center: tabs + editor -->
+    <main class="st-center">
+      <div id="st-tabs" class="st-tabs"></div>
+      <div id="st-editor" class="st-editor"></div>
+    </main>
+
+    <!-- Right: preview / console / problems -->
+    <section class="st-right">
+      <div class="st-right-tabs">
+        <button data-rtab="preview" id="st-rtab-preview" class="st-rtab" style="display:none">Preview</button>
+        <button data-rtab="console" class="st-rtab active">Console</button>
+        <button data-rtab="problems" class="st-rtab">Problems <span id="st-problem-count" class="st-badge">0</span></button>
+      </div>
+      <div id="st-preview-wrap" class="st-preview" style="display:none">
+        <div class="st-device"><div class="st-screen">
+          <swiftui-canvas id="st-canvas" appearance="light" theme="ios"></swiftui-canvas>
+        </div></div>
+      </div>
+      <pre id="st-console" class="st-console">Ready.</pre>
+      <ul id="st-problems" class="st-problems"><li class="st-empty">No problems.</li></ul>
+    </section>
+  </div>
+
+  <!-- Quick-open overlay -->
+  <div id="st-quickopen" class="st-quickopen" hidden>
+    <div class="st-quickopen-box">
+      <input id="st-quickopen-input" class="st-quickopen-input" placeholder="Jump to a file or symbol…" spellcheck="false"
+        role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="st-quickopen-list" aria-label="Quick open" />
+      <ul id="st-quickopen-list" class="st-quickopen-list" role="listbox"></ul>
+    </div>
+  </div>
+</div>
+
+<style>
+  .studio {
+    --st-chrome: #12131f;
+    --st-panel: #1a1c2b;
+    --st-line: rgba(255,255,255,.08);
+    --st-text: #dfe4f2;
+    --st-muted: #8b90a6;
+    display: flex; flex-direction: column;
+    height: min(78vh, 820px); min-height: 560px;
+    border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    background: var(--st-chrome); color: var(--st-text);
+    font-size: .85rem;
+  }
+
+  /* Top bar */
+  .st-topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: .55rem .85rem; background: var(--st-chrome);
+    border-bottom: 1px solid var(--st-line); flex-shrink: 0;
+  }
+  .st-brand { display: flex; align-items: center; gap: .55rem; min-width: 0; }
+  .st-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .st-project-name {
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    color: var(--st-text); font-family: var(--font-mono); font-weight: 600;
+    font-size: .9rem; padding: .2rem .4rem; width: 20ch; max-width: 40vw;
+  }
+  .st-project-name:hover { border-color: var(--st-line); }
+  .st-project-name:focus { outline: none; border-color: var(--accent); background: var(--st-panel); }
+  .st-topbar-actions { display: flex; align-items: center; gap: .5rem; }
+  .st-btn {
+    font-size: .78rem; font-weight: 600; padding: .35rem .7rem; border-radius: 7px;
+    cursor: pointer; border: 1px solid var(--st-line); background: var(--st-panel); color: var(--st-text);
+  }
+  .st-btn:hover { border-color: var(--accent); }
+  .st-btn-ghost { background: transparent; color: var(--st-muted); }
+  .st-btn-run { background: var(--accent); border-color: transparent; color: #fff; }
+  .st-btn-run:hover { background: var(--accent-strong); }
+  .st-btn-run:disabled { opacity: .5; cursor: default; }
+  .st-status { font-size: .72rem; color: var(--st-muted); font-family: var(--font-mono); min-width: 7ch; }
+  .st-status.ok { color: #7ee0a8; }
+  .st-status.error { color: #e0674f; }
+  .st-status.running { color: var(--accent); }
+
+  /* Body grid */
+  .st-body { display: grid; grid-template-columns: 210px 1fr 340px; flex: 1; min-height: 0; }
+  @media (max-width: 900px) { .st-body { grid-template-columns: 1fr; grid-auto-rows: minmax(180px, auto); } }
+
+  .st-sidebar { border-right: 1px solid var(--st-line); display: flex; flex-direction: column; min-height: 0; background: var(--st-chrome); }
+  .st-panel { display: flex; flex-direction: column; min-height: 0; }
+  .st-files { flex: 1 1 55%; border-bottom: 1px solid var(--st-line); }
+  .st-outline { flex: 1 1 45%; }
+  .st-panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .45rem .7rem; font-size: .68rem; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--st-muted); flex-shrink: 0;
+  }
+  .st-icon-btn { background: transparent; border: none; color: var(--st-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 .25rem; }
+  .st-icon-btn:hover { color: var(--accent); }
+
+  .st-file-tree, .st-outline-tree, .st-problems { list-style: none; margin: 0; padding: 0 0 .5rem; overflow: auto; flex: 1; }
+  .st-file-tree li { display: flex; align-items: center; gap: .2rem; padding: 0 .3rem; color: var(--st-text); }
+  .st-file-tree li:hover { background: rgba(255,255,255,.04); }
+  .st-file-tree li.active { background: var(--accent-soft); color: #fff; box-shadow: inset 2px 0 0 var(--accent); }
+  .st-frow-open {
+    display: flex; align-items: center; gap: .4rem; flex: 1; min-width: 0;
+    padding: .25rem .4rem; background: transparent; border: none; color: inherit;
+    font: inherit; text-align: left; cursor: pointer; border-radius: 4px;
+  }
+  .st-file-tree .st-fname { flex: 1; font-family: var(--font-mono); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st-file-tree .st-ficon { color: var(--st-muted); font-size: .7rem; }
+  .st-file-tree .st-frow-actions { display: flex; gap: .2rem; opacity: 0; pointer-events: none; flex-shrink: 0; }
+  .st-file-tree li:hover .st-frow-actions,
+  .st-file-tree li:focus-within .st-frow-actions { opacity: 1; pointer-events: auto; }
+  .st-frow-actions button { background: transparent; border: none; color: var(--st-muted); cursor: pointer; font-size: .72rem; padding: .2rem; border-radius: 4px; }
+  .st-frow-actions button:hover { color: var(--accent); }
+
+  .st-frow-open:focus-visible,
+  .st-frow-actions button:focus-visible,
+  .st-sym-row:focus-visible,
+  .st-prob-row:focus-visible,
+  .st-qo-row:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: -2px;
+  }
+
+  .st-sym-row, .st-prob-row {
+    display: block; width: 100%; text-align: left; background: transparent; border: none;
+    color: inherit; font: inherit; cursor: pointer; padding: 0;
+  }
+  .st-outline-tree li { padding: 0; font-family: var(--font-mono); font-size: .76rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .st-outline-tree .st-sym-row { padding: .2rem .7rem; }
+  .st-outline-tree li:hover { background: rgba(255,255,255,.04); }
+  .st-outline-tree .st-sym-child .st-sym-row { padding-left: 1.6rem; }
+  .st-outline-tree .st-sym-file { color: var(--st-muted); font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; padding-top: .4rem; padding-left: .7rem; cursor: default; font-family: var(--font-sans); }
+  .st-sym-kind { color: var(--accent); opacity: .8; }
+  .st-empty { color: var(--st-muted); font-style: italic; padding: .5rem .7rem; }
+
+  /* Center */
+  .st-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--st-panel); }
+  .st-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--st-line); flex-shrink: 0; background: var(--st-chrome); }
+  .st-tab {
+    display: flex; align-items: center; gap: .4rem; padding: .45rem .8rem; cursor: pointer;
+    font-family: var(--font-mono); font-size: .76rem; color: var(--st-muted);
+    border-right: 1px solid var(--st-line); white-space: nowrap; background: transparent; border-top: none; border-bottom: none; border-left: none;
+  }
+  .st-tab.active { color: var(--st-text); background: var(--st-panel); box-shadow: inset 0 -2px 0 var(--accent); }
+  .st-tab .st-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); visibility: hidden; }
+  .st-tab.dirty .st-tab-dot { visibility: visible; }
+  .st-editor { flex: 1; min-height: 0; overflow: hidden; }
+  .st-editor .cm-editor { height: 100%; }
+
+  /* Right */
+  .st-right { border-left: 1px solid var(--st-line); display: flex; flex-direction: column; min-height: 0; background: var(--st-chrome); }
+  .st-right-tabs { display: flex; border-bottom: 1px solid var(--st-line); flex-shrink: 0; }
+  .st-rtab { padding: .5rem .8rem; cursor: pointer; font-size: .74rem; font-weight: 600; color: var(--st-muted); background: transparent; border: none; }
+  .st-rtab.active { color: var(--st-text); box-shadow: inset 0 -2px 0 var(--accent); }
+  .st-badge { background: var(--st-line); border-radius: 999px; padding: 0 .4rem; font-size: .66rem; }
+  .st-badge.has { background: var(--accent); color: #fff; }
+  .st-console { flex: 1; margin: 0; padding: .8rem; overflow: auto; font-family: var(--font-mono); font-size: .78rem; white-space: pre-wrap; color: var(--st-text); }
+  .st-console.error { color: #e0674f; }
+  .st-problems { flex: 1; }
+  .st-problems li { padding: 0; font-size: .76rem; border-bottom: 1px solid var(--st-line); }
+  .st-problems li:hover { background: rgba(255,255,255,.04); }
+  .st-problems .st-prob-row { display: flex; gap: .5rem; align-items: baseline; padding: .4rem .7rem; }
+  .st-problems .st-prob-loc { font-family: var(--font-mono); color: var(--st-muted); font-size: .7rem; flex-shrink: 0; }
+  .st-problems .st-prob-error { color: #e0674f; }
+  .st-problems .st-prob-warning { color: #d9a85f; }
+
+  .st-preview { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: 1rem; overflow: auto; background: #0d1117; }
+  .st-device { width: 300px; max-width: 100%; border: 9px solid #1c1c1e; border-radius: 34px; background: #000; box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden; }
+  .st-screen { background: #fff; border-radius: 25px; overflow: hidden; min-height: 380px; display: flex; flex-direction: column; }
+  .st-screen swiftui-canvas { display: block; flex: 1; }
+
+  /* Quick-open */
+  .st-quickopen { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; z-index: 50; }
+  .st-quickopen[hidden] { display: none; }
+  .st-quickopen-box { width: min(560px, 92vw); background: var(--st-panel); border: 1px solid var(--st-line); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+  .st-quickopen-input { width: 100%; padding: .9rem 1rem; background: transparent; border: none; border-bottom: 1px solid var(--st-line); color: var(--st-text); font-size: 1rem; font-family: var(--font-mono); }
+  .st-quickopen-input:focus { outline: none; }
+  .st-quickopen-list { list-style: none; margin: 0; padding: .3rem; max-height: 50vh; overflow: auto; }
+  .st-quickopen-list li { padding: 0; border-radius: 7px; }
+  .st-quickopen-list li.sel { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+  .st-quickopen-list .st-qo-row {
+    display: flex; width: 100%; align-items: baseline; gap: .6rem; padding: .5rem .7rem;
+    border-radius: 7px; cursor: pointer; background: transparent; border: none; color: inherit; font: inherit; text-align: left;
+  }
+  .st-quickopen-list .st-qo-label { font-family: var(--font-mono); font-size: .84rem; color: var(--st-text); }
+  .st-quickopen-list .st-qo-detail { font-size: .72rem; color: var(--st-muted); margin-left: auto; }
+  .st-quickopen-list .st-qo-type { font-size: .64rem; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); min-width: 3.5ch; }
+</style>
+
+<script type="module">
+  import '../../../web/swiftui-canvas/src/canvas.ts';
+  import { createStudioEditor } from '../lib/studio/editor.js';
+  import * as store from '../lib/studio/project.js';
+  import { moduleJson, isSwiftUIProject } from '../lib/studio/module.js';
+  import { buildOutline, quickOpenIndex, filterEntries } from '../lib/studio/outline.js';
+  import { SAMPLES, sampleById } from '../lib/studio/samples.js';
+
+  // ── State ────────────────────────────────────────────────────────
+  // localStorage can throw (SecurityError in a private/embedded/blocked-storage
+  // context, or a QuotaExceededError on write) — guard every read/write and
+  // degrade to the starter project + in-memory-only persistence rather than
+  // aborting boot.
+  function readStoredProject() {
+    try {
+      return store.deserialize(localStorage.getItem(store.STORAGE_KEY));
+    } catch {
+      return null;
+    }
+  }
+  let storageAvailable = true;
+  let project = readStoredProject()
+    || store.createProject(SAMPLES[0].name, SAMPLES[0].files);
+  let symbols = [];
+  let diagnosticsByFile = new Map(); // path -> [{line,col,severity,message}]
+
+  // wasm exports (filled by initWasm)
+  let runSwiftModule = null, listSymbols = null, swiftUICompileModule = null,
+      swiftUIDispatch = null, swiftDiagnosticsModule = null;
+
+  // ── DOM ──────────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const nameInput = $('st-project-name');
+  const fileTree  = $('st-file-tree');
+  const outlineEl = $('st-outline');
+  const tabsEl    = $('st-tabs');
+  const runBtn    = $('st-run');
+  const statusEl  = $('st-status');
+  const consoleEl = $('st-console');
+  const problemsEl = $('st-problems');
+  const problemCount = $('st-problem-count');
+  const previewWrap = $('st-preview-wrap');
+  const canvas    = $('st-canvas');
+  const rtabs     = document.querySelectorAll('.st-rtab');
+
+  const editor = createStudioEditor({
+    parent: $('st-editor'),
+    getDiagnostics: () => diagnosticsByFile.get(project.activePath) || [],
+    onInput: onEditorInput,
+    onRun: () => runBtn.click(),
+    onSave: save,
+  });
+
+  function setStatus(type, text) { statusEl.textContent = text; statusEl.className = `st-status ${type}`; }
+
+  // ── Persistence ──────────────────────────────────────────────────
+  let saveTimer = null;
+  function save() {
+    if (!storageAvailable) return;
+    try {
+      localStorage.setItem(store.STORAGE_KEY, store.serialize(project));
+    } catch {
+      // Blocked/quota-exceeded storage: keep working in-memory, stop retrying.
+      storageAvailable = false;
+    }
+  }
+  function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+
+  // ── Rendering ────────────────────────────────────────────────────
+  function renderName() { nameInput.value = project.name; }
+
+  function renderFileTree() {
+    fileTree.innerHTML = '';
+    for (const f of store.sortFiles(project.files)) {
+      const li = document.createElement('li');
+      if (f.path === project.activePath) li.classList.add('active');
+      const manifest = store.isManifest(f.path);
+      li.innerHTML = `<button type="button" class="st-frow-open" aria-current="${f.path === project.activePath ? 'true' : 'false'}">` +
+        `<span class="st-ficon" aria-hidden="true">${manifest ? '📦' : 'ƒ'}</span>` +
+        `<span class="st-fname">${escapeHtml(f.path)}</span></button>` +
+        `<span class="st-frow-actions">` +
+        `<button type="button" data-act="rename" title="Rename" aria-label="Rename ${escapeHtml(f.path)}">✎</button>` +
+        `<button type="button" data-act="delete" title="Delete" aria-label="Delete ${escapeHtml(f.path)}">🗑</button></span>`;
+      const openBtn = li.querySelector('.st-frow-open');
+      openBtn.addEventListener('click', () => openFile(f.path));
+      openBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'F2') { e.preventDefault(); renameFilePrompt(f.path); }
+        else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteFilePrompt(f.path); }
+      });
+      li.querySelector('[data-act="rename"]').addEventListener('click', (e) => { e.stopPropagation(); renameFilePrompt(f.path); });
+      li.querySelector('[data-act="delete"]').addEventListener('click', (e) => { e.stopPropagation(); deleteFilePrompt(f.path); });
+      fileTree.appendChild(li);
+    }
+  }
+
+  function renderTabs() {
+    tabsEl.innerHTML = '';
+    for (const f of store.sortFiles(project.files)) {
+      const btn = document.createElement('button');
+      btn.className = 'st-tab' + (f.path === project.activePath ? ' active' : '');
+      btn.innerHTML = `<span class="st-tab-dot"></span>${escapeHtml(store.basename(f.path))}`;
+      btn.addEventListener('click', () => openFile(f.path));
+      tabsEl.appendChild(btn);
+    }
+  }
+
+  function renderOutline() {
+    outlineEl.innerHTML = '';
+    const groups = buildOutline(symbols);
+    if (groups.length === 0) { outlineEl.innerHTML = '<li class="st-empty">No symbols yet.</li>'; return; }
+    for (const g of groups) {
+      const head = document.createElement('li');
+      head.className = 'st-sym-file';
+      head.textContent = store.basename(g.file);
+      outlineEl.appendChild(head);
+      for (const root of g.roots) {
+        outlineEl.appendChild(symbolRow(root, false));
+        for (const child of root.children) outlineEl.appendChild(symbolRow(child, true));
+      }
+    }
+  }
+
+  function symbolRow(sym, child) {
+    const li = document.createElement('li');
+    if (child) li.classList.add('st-sym-child');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'st-sym-row';
+    btn.innerHTML = `<span class="st-sym-kind" aria-hidden="true">${sym.kind}</span> ${escapeHtml(sym.name)}`;
+    btn.title = sym.signature || sym.name;
+    btn.setAttribute('aria-label', `${sym.kind} ${sym.name}, ${store.basename(sym.file)} line ${sym.line}`);
+    btn.addEventListener('click', () => jumpTo(sym.file, sym.line));
+    li.appendChild(btn);
+    return li;
+  }
+
+  function renderProblems() {
+    const items = [];
+    for (const [file, diags] of diagnosticsByFile) {
+      for (const d of diags) items.push({ file, ...d });
+    }
+    items.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
+    problemCount.textContent = String(items.length);
+    problemCount.classList.toggle('has', items.length > 0);
+    if (items.length === 0) { problemsEl.innerHTML = '<li class="st-empty">No problems.</li>'; return; }
+    problemsEl.innerHTML = '';
+    for (const it of items) {
+      const li = document.createElement('li');
+      li.innerHTML = `<button type="button" class="st-prob-row" aria-label="${it.severity} in ${escapeHtml(store.basename(it.file))} line ${it.line}: ${escapeHtml(it.message)}">` +
+        `<span class="st-prob-loc st-prob-${it.severity}">${escapeHtml(store.basename(it.file))}:${it.line}</span>` +
+        `<span>${escapeHtml(it.message)}</span></button>`;
+      li.querySelector('.st-prob-row').addEventListener('click', () => jumpTo(it.file, it.line));
+      problemsEl.appendChild(li);
+    }
+  }
+
+  // ── File actions ─────────────────────────────────────────────────
+  function openFile(path) {
+    if (!project.files.some((f) => f.path === path)) return;
+    project = { ...project, activePath: path };
+    editor.open(path, store.fileSource(project, path) ?? '');
+    renderFileTree(); renderTabs();
+    scheduleSave();
+  }
+
+  function onEditorInput() {
+    project = store.updateSource(project, project.activePath, editor.value);
+    scheduleSave();
+    scheduleAnalyze();
+  }
+
+  function addFilePrompt() {
+    const name = prompt('New file name (e.g. Model.swift):', 'NewFile.swift');
+    if (!name) return;
+    const err = store.validatePath(project, name.trim());
+    if (err) { alert(err); return; }
+    project = store.addFile(project, name.trim(), '');
+    editor.open(project.activePath, '');
+    renderAll(); save(); scheduleAnalyze();
+  }
+
+  function renameFilePrompt(path) {
+    const next = prompt('Rename file:', path);
+    if (!next || next.trim() === path) return;
+    try {
+      editor.forget(path);
+      project = store.renameFile(project, path, next.trim());
+      editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+      renderAll(); save(); scheduleAnalyze();
+    } catch (e) { alert(e.message); }
+  }
+
+  function deleteFilePrompt(path) {
+    if (!confirm(`Delete ${path}?`)) return;
+    try {
+      project = store.deleteFile(project, path);
+      editor.forget(path);
+      editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+      renderAll(); save(); scheduleAnalyze();
+    } catch (e) { alert(e.message); }
+  }
+
+  nameInput.addEventListener('input', () => { project = { ...project, name: nameInput.value }; scheduleSave(); });
+  $('st-add-file').addEventListener('click', addFilePrompt);
+
+  // ── New project ──────────────────────────────────────────────────
+  $('st-new-btn').addEventListener('click', () => {
+    const list = SAMPLES.map((s, i) => `${i + 1}. ${s.name} — ${s.description}`).join('\n');
+    const pick = prompt(`Start a new project from a template:\n\n${list}\n\nEnter a number (1–${SAMPLES.length}):`, '1');
+    if (!pick) return;
+    const idx = parseInt(pick, 10) - 1;
+    const sample = SAMPLES[idx] || SAMPLES[0];
+    for (const f of project.files) editor.forget(f.path);
+    project = store.createProject(sample.name, sample.files);
+    editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+    renderAll(); save(); scheduleAnalyze();
+  });
+
+  // ── Jump / goto ──────────────────────────────────────────────────
+  function jumpTo(file, line) {
+    if (file !== project.activePath) openFile(file);
+    editor.gotoLine(line);
+    showRightTab('console'); // keep code visible; don't steal focus to preview
+  }
+
+  // ── Right tabs ───────────────────────────────────────────────────
+  function showRightTab(name) {
+    previewWrap.style.display = name === 'preview' ? 'flex' : 'none';
+    consoleEl.style.display = name === 'console' ? '' : 'none';
+    problemsEl.style.display = name === 'problems' ? '' : 'none';
+    rtabs.forEach((t) => t.classList.toggle('active', t.dataset.rtab === name));
+  }
+  rtabs.forEach((t) => t.addEventListener('click', () => showRightTab(t.dataset.rtab)));
+  function setPreviewAvailable(on) {
+    $('st-rtab-preview').style.display = on ? '' : 'none';
+    if (!on && $('st-rtab-preview').classList.contains('active')) showRightTab('console');
+  }
+
+  // ── Analyze (diagnostics + symbols), debounced ───────────────────
+  let analyzeTimer = null;
+  function scheduleAnalyze() { clearTimeout(analyzeTimer); analyzeTimer = setTimeout(analyze, 350); }
+  function analyze() {
+    if (!swiftDiagnosticsModule || !listSymbols) return;
+    const json = moduleJson(project);
+    try {
+      const diag = JSON.parse(swiftDiagnosticsModule(json));
+      diagnosticsByFile = new Map();
+      for (const d of diag.diagnostics || []) {
+        const file = d.file || project.activePath;
+        if (!diagnosticsByFile.has(file)) diagnosticsByFile.set(file, []);
+        diagnosticsByFile.get(file).push(d);
+      }
+    } catch { diagnosticsByFile = new Map(); }
+    try {
+      const sym = JSON.parse(listSymbols(json));
+      symbols = sym.ok ? sym.symbols : [];
+    } catch { symbols = []; }
+    renderOutline(); renderProblems();
+    editor.refreshDiagnostics(); // push the latest diagnostics into the CM6 lint state
+  }
+
+  // ── Run ──────────────────────────────────────────────────────────
+  canvas.addEventListener('swiftui-event', (e) => {
+    if (!swiftUIDispatch) return;
+    const { id, event, value } = e.detail;
+    const payload = value == null ? '' : JSON.stringify(value);
+    try {
+      const res = JSON.parse(swiftUIDispatch(id, event, payload));
+      if (res.ok) canvas.applyPatches(res.patches);
+      else setStatus('error', 'event error');
+    } catch { setStatus('error', 'event crash'); }
+  });
+
+  runBtn.addEventListener('click', () => {
+    if (!runSwiftModule) return;
+    setStatus('running', 'running…');
+    const json = moduleJson(project);
+    if (isSwiftUIProject(project)) {
+      let res;
+      try { res = JSON.parse(swiftUICompileModule(json)); } catch (err) { res = { ok: false, error: String(err) }; }
+      if (res.ok && res.root) {
+        canvas.mount(res.tree);
+        setPreviewAvailable(true);
+        showRightTab('preview');
+        setStatus('ok', `preview · ${res.root}`);
+        return;
+      }
+      // SwiftUI compile failed — fall through to show the error in console.
+      consoleEl.textContent = res.error || 'SwiftUI compile failed.';
+      consoleEl.className = 'st-console error';
+      setPreviewAvailable(false);
+      showRightTab('console');
+      setStatus('error', 'compile error');
+      return;
+    }
+    setPreviewAvailable(false);
+    try {
+      const result = JSON.parse(runSwiftModule(json));
+      if (result.run) {
+        const out = [result.run.stdout?.trim(), result.run.stderr?.trim()].filter(Boolean).join('\n');
+        consoleEl.textContent = out || '(no output)';
+        consoleEl.className = result.run.ok ? 'st-console' : 'st-console error';
+        setStatus(result.run.ok ? 'ok' : 'error', `${result.run.ok ? 'ok' : 'failed'} (${result.run.elapsedMs}ms)`);
+      } else {
+        const msg = result.compile?.stderr || 'Compile failed.';
+        consoleEl.textContent = msg;
+        consoleEl.className = 'st-console error';
+        setStatus('error', 'compile error');
+        showRightTab('problems');
+      }
+      showRightTab(result.run ? 'console' : 'problems');
+    } catch (err) {
+      consoleEl.textContent = String(err.message || err);
+      consoleEl.className = 'st-console error';
+      setStatus('error', 'error');
+    }
+  });
+
+  // ── Quick open (⌘K) ──────────────────────────────────────────────
+  const qo = $('st-quickopen'), qoInput = $('st-quickopen-input'), qoList = $('st-quickopen-list');
+  let qoEntries = [], qoSelected = 0;
+  function openQuickOpen() {
+    qoEntries = quickOpenIndex(project, symbols);
+    qoInput.value = ''; qoSelected = 0;
+    renderQuickOpen('');
+    qo.hidden = false; qoInput.focus();
+  }
+  function closeQuickOpen() { qo.hidden = true; editor.focus(); }
+  function renderQuickOpen(query) {
+    const results = filterEntries(qoEntries, query);
+    qoList.innerHTML = '';
+    if (qoSelected >= results.length) qoSelected = Math.max(0, results.length - 1);
+    results.forEach((e, i) => {
+      const li = document.createElement('li');
+      li.id = `st-qo-opt-${i}`;
+      li.setAttribute('role', 'option');
+      const selected = i === qoSelected;
+      li.setAttribute('aria-selected', selected ? 'true' : 'false');
+      if (selected) li.classList.add('sel');
+      li.innerHTML = `<button type="button" class="st-qo-row" tabindex="-1">` +
+        `<span class="st-qo-type" aria-hidden="true">${e.type === 'file' ? 'file' : (e.kind || 'sym')}</span>` +
+        `<span class="st-qo-label">${escapeHtml(e.label)}</span>` +
+        `<span class="st-qo-detail">${escapeHtml(e.detail)}</span></button>`;
+      li.querySelector('.st-qo-row').addEventListener('click', () => { jumpTo(e.file, e.line); closeQuickOpen(); });
+      qoList.appendChild(li);
+    });
+    qo._results = results;
+    qoInput.setAttribute('aria-activedescendant', results.length ? `st-qo-opt-${qoSelected}` : '');
+  }
+  qoInput.addEventListener('input', () => { qoSelected = 0; renderQuickOpen(qoInput.value); });
+  qoInput.addEventListener('keydown', (e) => {
+    const results = qo._results || [];
+    if (e.key === 'ArrowDown') { qoSelected = Math.min(qoSelected + 1, results.length - 1); renderQuickOpen(qoInput.value); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { qoSelected = Math.max(qoSelected - 1, 0); renderQuickOpen(qoInput.value); e.preventDefault(); }
+    else if (e.key === 'Enter') { const r = results[qoSelected]; if (r) { jumpTo(r.file, r.line); closeQuickOpen(); } }
+    else if (e.key === 'Escape') closeQuickOpen();
+  });
+  qo.addEventListener('click', (e) => { if (e.target === qo) closeQuickOpen(); });
+  $('st-quickopen-btn').addEventListener('click', openQuickOpen);
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openQuickOpen(); }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runBtn.click(); }
+  });
+
+  // ── Helpers / boot ───────────────────────────────────────────────
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function renderAll() { renderName(); renderFileTree(); renderTabs(); renderOutline(); renderProblems(); }
+
+  renderAll();
+  editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+
+  async function initWasm() {
+    try {
+      const { installTSwiftHostServices } = await import('../lib/tswift-host-services.js');
+      installTSwiftHostServices();
+      const dbInstallPromise = import('../lib/tswift-db-host-service.js')
+        .then((m) => m.installTSwiftDbHostService())
+        .catch(() => false);
+      const base = import.meta.env.BASE_URL || '/';
+      const wasmUrl = new URL(base + 'wasm/tswift_wasm.js', location.origin).href;
+      const importModule = new Function('u', 'return import(u)');
+      const mod = await importModule(wasmUrl);
+      await mod.default();
+      runSwiftModule = mod.runSwiftModule;
+      listSymbols = mod.listSymbols;
+      swiftUICompileModule = mod.swiftUICompileModule;
+      swiftUIDispatch = mod.swiftUIDispatch;
+      swiftDiagnosticsModule = mod.swiftDiagnosticsModule;
+      await dbInstallPromise;
+      runBtn.disabled = false;
+      setStatus('', 'idle');
+      analyze();
+    } catch (err) {
+      setStatus('error', 'wasm failed');
+      consoleEl.textContent = `Failed to load runtime:\n${err.message}`;
+      consoleEl.className = 'st-console error';
+    }
+  }
+  initWasm();
+</script>

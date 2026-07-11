@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro';
+import Studio from '../components/Studio.astro';
+---
+
+<Base
+  title="Studio — tswift"
+  description="A browser mini-IDE for Swift: multi-file projects, symbol outline, live SwiftUI canvas, and console — powered by the tswift Rust runtime compiled to WebAssembly."
+>
+  <div style="max-width:1440px;margin:0 auto;padding:1.75rem 1.25rem 4rem">
+    <div style="margin-bottom:1.25rem">
+      <p style="color:var(--accent);font-size:.72rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.4rem">
+        🧩 tswift Studio
+      </p>
+      <h1 style="font-size:1.7rem;margin-bottom:.35rem">A Swift mini-IDE in your browser</h1>
+      <p style="max-width:70ch;font-size:.95rem">
+        Multi-file projects, a live symbol outline, SwiftUI canvas preview and console output —
+        all compiled and run locally by the tswift Rust runtime in WebAssembly. Your project
+        autosaves to this browser. Press <strong>⌘K</strong> to jump, <strong>⌘↵</strong> to run.
+      </p>
+    </div>
+    <Studio />
+    <p style="margin-top:1rem;font-size:.82rem;color:var(--muted)">
+      ⚠️ Everything runs in your browser — no code leaves this page. Some Swift features are not yet
+      implemented; see <a href="/status">implementation status</a>.
+    </p>
+  </div>
+</Base>
