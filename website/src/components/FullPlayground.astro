@@ -641,6 +641,21 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
       // module runs any script.
       const { installTSwiftHostServices } = await import('../lib/tswift-host-services.js');
       installTSwiftHostServices();
+      // `tswift.db.*` needs a real sqlite module fetched over the network
+      // (`@sqlite.org/sqlite-wasm`). Kick that fetch off in parallel with the
+      // wasm bundle load below (don't serialize behind it), but *await* it
+      // before enabling Run — Swift can call `tswift.db.*` the instant Run is
+      // clickable, so `tswift.db` must already be declared (or definitively
+      // not, on failure) in `tswiftHostServices` by then. Racing this against
+      // `runBtn.disabled = false` let a script see "declared" mid-registration
+      // or (worse) call in before `globalThis.tswiftHost` even knew about
+      // `tswift.db`. A slow/absent network still doesn't block the runtime
+      // from becoming usable in general — it only leaves `tswift.db`
+      // undeclared (see the module's own doc for the resulting
+      // capability-diagnostic behavior); it does not fail `initWasm()`.
+      const dbInstallPromise = import('../lib/tswift-db-host-service.js')
+        .then((m) => m.installTSwiftDbHostService())
+        .catch(() => false);
       // Load the wasm-bindgen glue from /public. We bypass Vite's import
       // pipeline (which rewrites public-file imports with ?import/?url and
       // breaks them in dev) by importing an absolute URL via indirect import.
@@ -653,6 +668,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
       swiftUICompile = mod.swiftUICompile;
       swiftUIDispatch = mod.swiftUIDispatch;
       swiftDiagnostics = mod.swiftDiagnostics;
+      await dbInstallPromise;
       runBtn.disabled = false;
       setStatus('idle', 'idle');
       // Lint the initial document now that the frontend is available.

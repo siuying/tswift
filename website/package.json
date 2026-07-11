@@ -8,7 +8,7 @@
     "build:wasm": "wasm-pack build ../crates/tswift-wasm --target web --out-dir ../../website/public/wasm --out-name tswift_wasm",
     "build": "npm run build:wasm && astro build",
     "preview": "astro preview",
-    "test": "node test/wasm-smoke.mjs",
+    "test": "node test/wasm-smoke.mjs && node test/db-host-service.mjs && node test/playground-init-ordering.mjs",
     "deploy": "wrangler pages deploy dist --project-name tswift --branch main"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "@codemirror/state": "^6.7.0",
     "@codemirror/view": "^6.43.4",
     "@lezer/highlight": "^1.2.3",
+    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "astro": "^7.0.3",
     "codemirror": "^6.0.2",
     "react": "^19.0.0",
