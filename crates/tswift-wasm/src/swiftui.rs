@@ -22,7 +22,6 @@ use std::cell::RefCell;
 
 use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
-use tswift_frontend::Analysis;
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
 use tswift_swiftui::{find_root_view, uiir, PRELUDE};
@@ -47,7 +46,7 @@ pub fn swiftui_compile(source: &str) -> String {
     // for `swiftUIDispatch` to mutate, running its teardown finalizers so the
     // leaked interpreter's native resources (db handles) are released.
     clear_session();
-    compile_impl(source)
+    compile_impl(source, crate::analysis_cache::swiftui_single_key(source))
 }
 
 /// Compile a multi-file SwiftUI module, render its root `View`, and start an
@@ -61,8 +60,13 @@ pub fn swiftui_compile_module(module_json: &str) -> String {
         Ok(m) => m,
         Err(e) => return compile_error(&e),
     };
+    // Key on the module's *structural* file boundaries (ordered `(path,
+    // contents)` pairs + a multi-file entry-mode tag), NOT on the merged
+    // source: a module `[a, b]` must never share a cache entry with a single
+    // source equal to `a + b`. `merge()` is only for the analysis input.
+    let cache_key = crate::analysis_cache::swiftui_program_key(&module.files);
     let (source, _filename) = module.merge();
-    compile_impl(&source)
+    compile_impl(&source, cache_key)
 }
 
 /// Route a host event into the live session and return a **patch stream** that
@@ -117,12 +121,20 @@ fn clear_session() {
     });
 }
 
-fn compile_impl(source: &str) -> String {
+fn compile_impl(source: &str, cache_key: String) -> String {
     // Prepend the SwiftUI token prelude and the SwiftData `@Query` prelude
     // (ADR-0016 Slice 10b) so `@Query`/`.modelContainer(for:)` resolve; the
     // fetch degrades to `[]` when the host doesn't back `tswift.db`.
     let program = format!("{PRELUDE}\n{}\n{source}", tswift_swiftdata::QUERY_PRELUDE);
-    let analysis = match Analysis::analyze(&program, "main.swift") {
+    // Warm-start cache: a re-submitted byte-identical program (Studio re-run,
+    // embed refresh) reuses the prior `Analysis` instead of re-lexing/parsing/
+    // analyzing. The interpreter below is still built + run fresh, so this is
+    // pure runtime caching (not compilation) and invisible except as latency.
+    // `cache_key` carries the caller's structural file boundaries + entry mode
+    // (single vs multi-file); the merged `program` is only the analysis input.
+    let analysis = match crate::analysis_cache::analyze_keyed(cache_key, || {
+        tswift_frontend::Analysis::analyze(&program, "main.swift")
+    }) {
         Ok(analysis) => analysis,
         Err(error) => return compile_error(&error.to_string()),
     };
@@ -140,8 +152,7 @@ fn compile_impl(source: &str) -> String {
         return compile_error(diagnostics.trim_end());
     }
 
-    let analysis: &'static Analysis = Box::leak(Box::new(analysis));
-    let Some(root) = find_root_view(analysis) else {
+    let Some(root) = find_root_view(&analysis) else {
         return compile_error("no `View`-conforming struct found");
     };
 
@@ -168,7 +179,11 @@ fn compile_impl(source: &str) -> String {
     crate::platform::install_registered_host_fns(&mut interp);
     tswift_swiftui::install(&mut interp);
     interp.set_filename("main.swift");
-    if let Err(error) = interp.run(analysis) {
+    // The session (below) is leaked to `'static` and holds `Node<'static>`
+    // cursors into this AST across dispatch calls, so the interpreter must
+    // retain the `Rc` for its lifetime; the warm-start cache keeps only its
+    // own independent `Rc` and can evict without freeing an AST in use.
+    if let Err(error) = interp.run_retaining(analysis) {
         return compile_error(&error.to_string());
     }
 

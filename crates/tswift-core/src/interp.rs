@@ -938,6 +938,14 @@ pub struct Interpreter<'w> {
     /// Replaces the per-evaluation `Box::leak`: a repeated fragment is analyzed
     /// once, and the whole cache is reclaimed when the interpreter drops.
     fragment_cache: FragmentCache,
+    /// Programs whose `Analysis` this interpreter *retains ownership of* (shared
+    /// via `Rc`), set by [`Interpreter::run_retaining`]. Keeps the AST alive for
+    /// the whole interpreter lifetime so every `Node<'static>` the run stores
+    /// stays valid, while letting a warm-start cache evict its *own* `Rc`
+    /// without freeing an AST an interpreter is still walking. Dropped when the
+    /// interpreter drops (same soundness model as [`FragmentCache`]); a `Node`
+    /// cursor carries no `Drop`, so field drop-order is irrelevant.
+    retained_analyses: Vec<Rc<Analysis>>,
     /// The embedding-installed HTTP backend behind `URLSession` (see
     /// [`crate::http`]); `None` means network access is unavailable.
     http_transport: Option<Box<dyn crate::http::HttpTransport>>,
@@ -1069,6 +1077,7 @@ impl<'w> Interpreter<'w> {
             rng_state: initial_rng_seed(),
             type_hint: Vec::new(),
             fragment_cache: FragmentCache::default(),
+            retained_analyses: Vec::new(),
             http_transport: None,
             host_bridge: crate::host_bridge::HostBridge::default(),
             response_disposition: None,
@@ -1438,6 +1447,33 @@ impl<'w> Interpreter<'w> {
                 methods: std::collections::HashMap::new(),
                 computed: std::collections::HashMap::new(),
             });
+    }
+
+    /// Evaluate a program whose [`Analysis`] the interpreter *retains ownership
+    /// of* (shared via `Rc`) instead of a caller-leaked `&'static`.
+    ///
+    /// This is the memory-bounded entry point for a warm-start cache: the cache
+    /// can hand the interpreter an `Rc<Analysis>` and later evict (drop) its
+    /// own `Rc` freely, because the AST lives exactly as long as the last
+    /// interpreter (or SwiftUI session) still using it — no permanent
+    /// `Box::leak`. When every holder drops, the AST is freed.
+    ///
+    /// # Safety model
+    ///
+    /// Identical to [`FragmentCache`]: the `&'static Analysis` derived here does
+    /// **not** live for the process lifetime; it lives as long as the `Rc`
+    /// pushed onto `self.retained_analyses`, which is dropped only when the
+    /// interpreter drops. `Rc` never moves its pointee, so the address every
+    /// stored `Node<'static>` references is stable; the retained `Rc` is never
+    /// removed before drop; and `Node` cursors carry no `Drop`, so drop-order
+    /// against other interpreter fields is irrelevant.
+    pub fn run_retaining(&mut self, analysis: Rc<Analysis>) -> Result<(), EvalError> {
+        // SAFETY: see the doc comment above — the retained `Rc` keeps this
+        // allocation alive (at a stable address) for the interpreter's entire
+        // lifetime, which outlives every `Node<'static>` derived from it.
+        let static_ref: &'static Analysis = unsafe { &*Rc::as_ptr(&analysis) };
+        self.retained_analyses.push(analysis);
+        self.run(static_ref)
     }
 
     /// Evaluate a fully-analyzed program.

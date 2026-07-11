@@ -96,6 +96,7 @@ pub(crate) fn decode_batch_response(
     }
 }
 
+pub(crate) mod analysis_cache;
 mod swiftui;
 
 const BACKEND: &str = "wasm";
@@ -411,7 +412,7 @@ fn collect_diagnostics(analysis: &Analysis, include_file: bool) -> (String, bool
 fn run_swift_impl_named(source: &str, filename: &str) -> String {
     let started = now_ms();
 
-    let analysis = match Analysis::analyze(source, filename) {
+    let analysis = match analysis_cache::analyze_cached(source, filename) {
         Ok(analysis) => analysis,
         Err(error) => {
             return result_json::result(
@@ -434,7 +435,7 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
 /// [`run_swift_impl_named`]. Diagnostics carry their per-file paths.
 fn run_program_impl(files: &[tswift_frontend::SourceFile]) -> String {
     let started = now_ms();
-    let analysis = match Analysis::analyze_program(files) {
+    let analysis = match analysis_cache::analyze_program_cached(files) {
         Ok(analysis) => analysis,
         Err(error) => {
             return result_json::result(
@@ -457,7 +458,7 @@ fn run_program_impl(files: &[tswift_frontend::SourceFile]) -> String {
 }
 
 fn run_from_analysis(
-    analysis: Analysis,
+    analysis: std::rc::Rc<Analysis>,
     filename: &str,
     started: f64,
     include_file: bool,
@@ -483,7 +484,6 @@ fn run_from_analysis(
     }
 
     let run_started = now_ms();
-    let analysis: &'static Analysis = Box::leak(Box::new(analysis));
     let mut stdout = Vec::new();
     let mut interp = Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
@@ -507,7 +507,11 @@ fn run_from_analysis(
     platform::install_http_transport(&mut interp);
     platform::install_registered_host_fns(&mut interp);
 
-    let run_result = interp.run(analysis);
+    // Retain the cached `Rc` for the interpreter's lifetime instead of leaking
+    // to `'static`: the warm-start cache can evict its own `Rc` independently,
+    // and the AST is freed once this (dropped-at-return) interpreter releases
+    // its clone. See `analysis_cache` + `Interpreter::run_retaining`.
+    let run_result = interp.run_retaining(analysis);
     let run_elapsed = elapsed_ms(run_started);
     // Drop the interpreter before reading its output buffer: this runs any
     // registered finalizers (e.g. closing SwiftData database handles) and
@@ -956,6 +960,92 @@ fn elapsed_ms(started: f64) -> u64 {
 mod tests {
     use super::*;
     use tswift_core::http::HttpEvent;
+
+    /// Build a self-contained program of approximately `repeats` code units
+    /// (~8 lines each). Every unit is independent (suffixed by index) so the
+    /// frontend does real lex/parse/sema work proportional to program size.
+    #[cfg(test)]
+    fn bench_program(repeats: usize) -> String {
+        use std::fmt::Write;
+        let unit = r#"struct Vec2_N { var x: Double; var y: Double
+  func add(_ o: Vec2_N) -> Vec2_N { Vec2_N(x: x + o.x, y: y + o.y) }
+  var length: Double { (x * x + y * y).squareRoot() }
+}
+func fib_N(_ n: Int) -> Int { n < 2 ? n : fib_N(n-1) + fib_N(n-2) }
+var acc_N = 0
+for i in 0..<12 { acc_N += fib_N(i % 10) }
+let v_N = Vec2_N(x: 3, y: 4).add(Vec2_N(x: 1, y: 1))
+print("acc=\(acc_N) len=\(v_N.length)")
+"#;
+        let mut src = String::new();
+        for i in 0..repeats {
+            let _ = write!(src, "{}", unit.replace('N', &i.to_string()));
+        }
+        src
+    }
+
+    /// Median of a slice of samples (sorts a copy; the slice is small).
+    #[cfg(test)]
+    fn median(samples: &[f64]) -> f64 {
+        let mut v = samples.to_vec();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mid = v.len() / 2;
+        if v.len() % 2 == 0 {
+            (v[mid - 1] + v[mid]) / 2.0
+        } else {
+            v[mid]
+        }
+    }
+
+    /// Warm-start micro-benchmark backing ADR-0018's measurement table.
+    /// `#[ignore]` so it never runs in presubmit/CI; invoke explicitly:
+    /// `cargo test -p tswift-wasm --release bench_warm_start -- --ignored --nocapture`.
+    ///
+    /// Reports **medians** (not best-of-N) over `SAMPLES` runs for two program
+    /// sizes — the exact two rows ADR-0018 records. `cold` re-analyzes a
+    /// freshly-unique source each sample (cache miss); `warm` re-runs one
+    /// byte-identical source (cache hit), so `cold - warm` isolates the elided
+    /// lex/parse/sema cost. The interpreter runs fresh in both cases.
+    #[test]
+    #[ignore = "benchmark; run with --ignored --nocapture"]
+    fn bench_warm_start() {
+        use std::time::Instant;
+        const SAMPLES: usize = 51; // odd → exact median element
+
+        // (label, repeat count) chosen so the emitted programs land near the
+        // ~160-line and ~600-line sizes ADR-0018 tabulates.
+        for (label, repeats) in [("small", 18usize), ("large", 66usize)] {
+            let src = bench_program(repeats);
+            let lines = src.lines().count();
+
+            // cold: each sample is a distinct source (forces a cache miss +
+            // full re-analyze), measuring the un-cached path.
+            let mut cold = Vec::with_capacity(SAMPLES);
+            for i in 0..SAMPLES {
+                let s = format!("{src}\n// unique-{i}");
+                let t = Instant::now();
+                let _ = run_swift_impl(&s);
+                cold.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+
+            // warm: prime once, then re-run the SAME source (cache hit).
+            let _ = run_swift_impl(&src);
+            let mut warm = Vec::with_capacity(SAMPLES);
+            for _ in 0..SAMPLES {
+                let t = Instant::now();
+                let _ = run_swift_impl(&src);
+                warm.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+
+            let cold_med = median(&cold);
+            let warm_med = median(&warm);
+            let saved = cold_med - warm_med;
+            let pct = saved / cold_med * 100.0;
+            println!(
+                "BENCH {label:<5} lines={lines:<4} cold={cold_med:.3}ms warm={warm_med:.3}ms saved={saved:.3}ms ({pct:.0}%)"
+            );
+        }
+    }
 
     // -----------------------------------------------------------------------
     // decode_batch_response — pure logic, wasm-independent
