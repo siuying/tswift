@@ -8,7 +8,7 @@
     "build:wasm": "wasm-pack build ../crates/tswift-wasm --target web --out-dir ../../website/public/wasm --out-name tswift_wasm",
     "build": "npm run build:wasm && astro build",
     "preview": "astro preview",
-    "test": "node test/wasm-smoke.mjs && node test/db-host-service.mjs && node test/playground-init-ordering.mjs && node test/studio.mjs && node test/studio-editor-lint.mjs && node test/studio-wasm.mjs",
+    "test": "node test/wasm-smoke.mjs && node test/db-host-service.mjs && node test/embed-code.mjs && node test/playground-init-ordering.mjs && node test/studio.mjs && node test/studio-editor-lint.mjs && node test/studio-wasm.mjs",
     "deploy": "wrangler pages deploy dist --project-name tswift --branch main"
   },
   "dependencies": {

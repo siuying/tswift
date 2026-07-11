@@ -1,0 +1,220 @@
+---
+layout: ../../layouts/Doc.astro
+title: Embedding tswift snippets
+description: Drop a runnable Swift/SwiftUI snippet into any page with the /embed/ iframe route — URL format, the postMessage protocol, and security posture.
+section: how-it-works
+---
+
+# Embedding tswift snippets
+
+The `/embed/` route renders a single Swift snippet — console output or a live
+SwiftUI view — inside an `<iframe>`, using the exact same wasm runtime as the
+[Playground](/playground). It's meant to be pasted onto a blog post,
+documentation page, or any other site that wants a runnable Swift example
+without shipping its own copy of the runtime.
+
+The easiest way to get a snippet: open the [Playground](/playground), write
+or pick your code, and click **⌇ Embed** — it copies a ready-to-paste
+`<iframe>` tag for you. Everything below documents the format that button
+generates, for anyone building the URL by hand or integrating it elsewhere
+(the Studio's multi-file projects aren't embeddable — see "Why single-file
+only" below).
+
+## URL format
+
+```
+/embed/?code=<base64url>&chrome=off&theme=auto&origin=<url-encoded-parent-origin>
+```
+
+| Param    | Values                    | Default | Meaning                                                              |
+|----------|---------------------------|---------|------------------------------------------------------------------------|
+| `code`   | base64url string          | *(required)* | The Swift source, encoded — see below. The param must be *present*; an explicitly empty value (`code=`) is a valid, deliberately-empty program (renders an empty console, no error) — only a fully missing, oversized, or malformed `code` produces the inline error message. |
+| `chrome` | `off` \| `on`              | `off`   | `off`: render-only, no editor, no buttons. `on`: adds a small top bar with a **▶ Run** button and an **Open in Playground ↗** link. |
+| `theme`  | `light` \| `dark` \| `auto`| `auto`  | Forces the page background/text and the SwiftUI canvas appearance, or follows the *embedding* page's `prefers-color-scheme` when `auto`. |
+| `origin` | a URL-encoded origin, e.g. `https%3A%2F%2Fexample.com` | — (unset) | The origin of the page you're pasting this iframe into. When set, every `postMessage` below is addressed specifically to it (and carries full detail, incl. error text). When unset, the protocol degrades — see "postMessage protocol" below. |
+| `embed`  | any                        | —       | Purely decorative — not read by the page. The generated snippet sets `embed=1` so a pasted `<iframe src>` is self-describing at a glance; omitting it changes nothing. |
+
+Neither `chrome` nor `theme` ever produces an error for an unrecognized
+value — they silently fall back to their default. A missing `origin` never
+errors either — it just narrows what gets posted (see below). Only a fully
+missing, oversized, or malformed `code` produces the inline error message
+described below.
+
+### The `code` parameter: base64url of UTF-8, not lz-string
+
+`code` is **base64url of the snippet's raw UTF-8 bytes** — no compression.
+The obvious alternative (lz-string) was considered and rejected: this repo
+has no lz-string dependency today, adding one is against project policy
+("no new npm deps unless trivial + pinned, prefer none"), and a hand-vendored
+LZ implementation isn't actually *tiny* if done honestly. Base64url needs
+nothing beyond `btoa`/`atob` + `TextEncoder`/`TextDecoder`, which every
+browser and Node ship natively.
+
+Encoding, step by step:
+
+1. UTF-8-encode the source (`TextEncoder`).
+2. Base64-encode the bytes (`btoa`).
+3. Make it URL-safe: `+` → `-`, `/` → `_`, drop the trailing `=` padding
+   (recoverable from the string's length on decode).
+
+The reference implementation lives in
+[`website/src/lib/embed-code.js`](https://github.com/siuying/tswift/blob/main/website/src/lib/embed-code.js)
+(`encodeEmbedCode`/`decodeEmbedCode`) — read it directly if you're building
+a link generator in another language; it's about 40 lines of encode/decode
+logic with no framework dependencies.
+
+There is a hard length ceiling on `code` (20,000 encoded characters, roughly
+a 15 KB snippet) enforced **before** any decoding is attempted. A
+missing, malformed, or over-limit `code` renders a friendly inline message
+in the iframe — never a blank page or an uncaught exception.
+
+**Missing vs. empty, precisely:** `?code=` with no value at all is a valid,
+empty program — decoded as `""` and rendered as an empty console — whereas
+a URL with *no `code` param at all* is the actual "missing" error case.
+(`decodeEmbedCode('')` alone can't tell these apart — an empty string is an
+empty string whether or not the key was in the query string — so the split
+is made one layer up, against the raw query string, by
+[`resolveEmbedSource`](https://github.com/siuying/tswift/blob/main/website/src/lib/embed-params.js)
+in `embed-params.js`, which `embed.astro` calls instead of `decodeEmbedCode`
+directly.) The Playground's **⬚ Embed** button won't generate a link for an
+empty snippet in the first place — the button is disabled with an
+explanatory tooltip until there's something to embed.
+
+### Why single-file only
+
+The embed route intentionally only understands one `code` param carrying one
+Swift file — matching the Playground (single-file), not the
+[Studio](/studio) (multi-file `Package.swift` projects). A multi-file embed
+would need either several URL params (unwieldy, and each one eats into the
+same length budget) or a small JSON manifest encoded as one big blob (loses
+the "paste a URL and it just works" simplicity that makes an embed useful).
+If a future need for multi-file embeds shows up, extending `code` to accept
+an encoded `{files:[...]}` module JSON (the same shape `runSwiftModule`/
+`swiftUICompileModule` already accept) is the natural next step — the render
+pipeline underneath already supports it.
+
+## What gets rendered
+
+The embed page runs the same two-step fallback the Playground's **Run**
+button uses:
+
+1. Try compiling the snippet as a SwiftUI `View` (`swiftUICompile`). If it
+   declares a root view, render it live in a `<swiftui-canvas>` — including
+   interactive controls (buttons, toggles, etc.), which round-trip back into
+   the same wasm session exactly like the Playground's preview pane.
+2. Otherwise, run it as a console program (`runSwift`) and show `stdout`
+   (and `stderr`, if any) in a preformatted output pane.
+3. If neither step produces a usable result — a parse/type error, or a
+   crash — a friendly inline error box is shown instead of a blank iframe.
+
+## postMessage protocol
+
+The embed page posts three message types to `window.parent` (when embedded
+in an iframe; it's a no-op when loaded standalone). Every message is a plain
+object with a `type` field:
+
+```ts
+type TSwiftEmbedMessage =
+  | { type: "tswift-embed:ready" }
+  | { type: "tswift-embed:error"; message: string } // only with ?origin= set
+  | { type: "tswift-embed:error"; error: true }      // without ?origin=
+  | { type: "tswift-embed:resize"; height: number };
+```
+
+- **`tswift-embed:ready`** — sent exactly once, after the initial
+  decode → load-wasm → compile/run attempt finishes, whether it succeeded or
+  failed. Use it to know when it's safe to stop showing your own "loading…"
+  placeholder around the iframe.
+- **`tswift-embed:error`** — sent whenever the inline error message is
+  shown: an invalid/oversized `code`, a wasm load failure, a compile error,
+  or a runtime crash. With `?origin=` set, `message` carries the same text
+  shown in the iframe; without it, the message text is stripped down to a
+  bare `error: true` flag (see "Origin targeting" below for why).
+- **`tswift-embed:resize`** — sent whenever the rendered content's height
+  changes (tracked with a `ResizeObserver` on the embed page's `<body>`), so
+  a parent page can grow/shrink the iframe to fit without an internal
+  scrollbar. `height` is a whole-pixel `document.body.scrollHeight`.
+
+### Origin targeting
+
+By default — no `?origin=` param — messages are broadcast with target origin
+`"*"`, but only the two that carry no snippet-derived content: `ready` (no
+payload) and `resize` (a pixel height). `error`'s `message` text comes from
+the snippet's own source or the compiler's output, which the embed page has
+no way to know is safe to broadcast to *any* listener on the parent page, so
+without a trusted origin it's reduced to `{ error: true }`.
+
+Pass `?origin=<url-encoded-origin-of-your-page>` to unlock the full
+protocol: every message (including the full `error.message` text) is then
+addressed *specifically* to that origin via `postMessage(msg, origin)`
+instead of `"*"`. This repo's snippet generator (the Playground's **⬚
+Embed** button) cannot fill this in automatically — it only knows the URL
+the iframe will load, not the origin of whatever third-party page you
+ultimately paste the snippet onto — so it leaves an HTML comment reminding
+you to add `&origin=` yourself.
+
+**On the parent page, always validate incoming messages** — origin-scoping
+the embed's *outgoing* messages doesn't protect you from a different,
+unrelated `postMessage` sender on your own page. A listener MUST check
+both `event.origin` (against the embed host, e.g. the tswift site's origin)
+and `event.source === iframe.contentWindow` before trusting `event.data`:
+
+```js
+const EMBED_ORIGIN = "https://tswift.example"; // the origin serving /embed/
+const iframe = document.querySelector("iframe.tswift-embed");
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== EMBED_ORIGIN) return;
+  if (e.source !== iframe.contentWindow) return;
+  if (!e.data || typeof e.data.type !== "string") return;
+  if (!e.data.type.startsWith("tswift-embed:")) return;
+
+  if (e.data.type === "tswift-embed:resize") {
+    iframe.style.height = `${e.data.height}px`;
+  }
+  if (e.data.type === "tswift-embed:error") {
+    // `message` is only present when the iframe's `src` included
+    // `&origin=<url-encoded-this-page's-origin>`.
+    console.warn("tswift embed error:", e.data.message ?? "(no details; add ?origin= to the embed src for details)");
+  }
+});
+```
+
+## Security posture
+
+- **No `X-Frame-Options` / `frame-ancestors`.** This repo has no
+  `_headers`, `netlify.toml`, or `vercel.json` anywhere, and the only HTTP
+  header configuration that exists at all (`astro.config.mjs`'s
+  `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy`) is scoped to
+  the **local dev server** only, not the built static site. The deployed
+  site (a static Cloudflare Pages build) sends no frame-blocking headers, so
+  `/embed/` is framable from any origin by design — that's the entire point
+  of the route. If a future deploy target adds its own default
+  frame-blocking headers, `/embed/` specifically needs an allow-framing
+  override; nothing in this repo currently sets one to begin with.
+- **No storage, no persistence, no cross-project pollution.** The embed
+  page never imports the host-services modules the Playground/Studio use for
+  `UserDefaults`/`FileManager`/SwiftData (`tswift-host-services.js`,
+  `tswift-db-host-service.js`) — it never touches `localStorage` and never
+  declares those host services to the running snippet at all. A snippet that
+  calls into `UserDefaults`/`FileManager`/SwiftData gets the same catchable
+  "host does not provide this service" error every other platform surfaces
+  for an undeclared capability; it cannot read or write anything from the
+  Playground's or Studio's own `localStorage`-backed projects, and nothing
+  it does persists past a page reload. This is a real, honestly-documented
+  degraded tier (matching the project's existing "name the tier, don't fake
+  parity" convention — see ADR-0014), not an oversight.
+- **`code` has a hard length ceiling**, checked before any decoding or
+  compilation, so an absurdly long `code` value fails fast with the same
+  friendly inline error as any other malformed input rather than degrading
+  performance or hanging the page.
+- **Sandbox-friendly.** All `postMessage`/`window.parent` access is
+  wrapped so a `sandbox`ed or cross-origin-opaque parent frame degrades to
+  "the protocol events just don't get sent" rather than throwing and
+  breaking the render.
+- **`postMessage` is origin-scoped when the caller opts in, and
+  never leaks snippet content by default.** Without `?origin=`, only the
+  content-free `ready`/`resize` signals are broadcast (`"*"`); `error`'s
+  message text (derived from the snippet's own source/compiler output) is
+  withheld unless the caller supplies a trusted `origin` to address it to
+  directly. See "Origin targeting" above.

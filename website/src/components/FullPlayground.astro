@@ -21,7 +21,28 @@
       <div class="run-bar">
         <button id="fp-run" class="run-btn" disabled>▶ Run</button>
         <span id="fp-status" class="status-badge">loading…</span>
-        <button id="fp-clear" style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:.3rem .75rem;cursor:pointer;font-size:.78rem">Clear</button>
+        <button id="fp-embed" style="margin-left:auto;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:.3rem .75rem;cursor:pointer;font-size:.78rem">⬚ Embed</button>
+        <button id="fp-clear" style="background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted);padding:.3rem .75rem;cursor:pointer;font-size:.78rem">Clear</button>
+      </div>
+      <div id="fp-embed-panel" class="fp-embed-panel" style="display:none">
+        <div class="fp-embed-row">
+          <label for="fp-embed-chrome">Chrome</label>
+          <select id="fp-embed-chrome">
+            <option value="off">off (render only)</option>
+            <option value="on">on (Run + open link)</option>
+          </select>
+          <label for="fp-embed-theme">Theme</label>
+          <select id="fp-embed-theme">
+            <option value="auto">auto</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </div>
+        <textarea id="fp-embed-html" class="fp-embed-html" readonly rows="3"></textarea>
+        <div class="fp-embed-row">
+          <button id="fp-embed-copy" class="run-btn" type="button">Copy snippet</button>
+          <span id="fp-embed-status" style="color:var(--muted);font-size:.75rem"></span>
+        </div>
       </div>
     </div>
     <div class="pane">
@@ -74,6 +95,23 @@
     min-height:420px; display:flex; flex-direction:column;
   }
   .preview-stage swiftui-canvas { display:block; flex:1; }
+
+  .fp-embed-panel {
+    margin-top:.6rem; padding:.75rem; border:1px solid var(--border);
+    border-radius:8px; background:var(--surface2, rgba(255,255,255,.03));
+    display:flex; flex-direction:column; gap:.55rem;
+  }
+  .fp-embed-row { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+  .fp-embed-row label { font-size:.75rem; color:var(--muted); }
+  .fp-embed-row select {
+    font-size:.78rem; padding:.25rem .4rem; border-radius:6px;
+    border:1px solid var(--border); background:transparent; color:var(--text);
+  }
+  .fp-embed-html {
+    width:100%; resize:vertical; font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:.75rem; padding:.5rem .6rem; border-radius:6px;
+    border:1px solid var(--border); background:var(--code-bg); color:var(--code-text);
+  }
 </style>
 
 <script type="module">
@@ -82,6 +120,8 @@
   // example. Registers the <swiftui-canvas> custom element on import.
   import '../../../web/swiftui-canvas/src/canvas.ts';
   import { createSwiftEditor } from '../lib/swift-editor.js';
+  import { decodeEmbedCode } from '../lib/embed-code.js';
+  import { buildEmbedSnippet } from '../lib/embed-params.js';
 
   const ALL_PRESETS = [
     { group: 'Basics',       label: 'Hello World',      code: `// Hello, tswift!
@@ -538,6 +578,13 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
   const previewTab  = document.getElementById('fp-tab-preview');
   const previewWrap = document.getElementById('fp-preview-wrap');
   const preview     = document.getElementById('fp-preview');
+  const embedBtn       = document.getElementById('fp-embed');
+  const embedPanel     = document.getElementById('fp-embed-panel');
+  const embedChromeSel = document.getElementById('fp-embed-chrome');
+  const embedThemeSel  = document.getElementById('fp-embed-theme');
+  const embedHtml      = document.getElementById('fp-embed-html');
+  const embedCopyBtn   = document.getElementById('fp-embed-copy');
+  const embedStatus    = document.getElementById('fp-embed-status');
 
   // ── Tabs ─────────────────────────────────────────────────────────
   function showTab(name) {
@@ -579,6 +626,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
     document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     updateMeta();
+    updateEmbedAvailability();
     stdout.textContent = 'Ready.';
     stdout.className = 'output-area';
     compile.textContent = '';
@@ -586,8 +634,80 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
     showTab('stdout');
   }
 
+  // An empty snippet has nothing to embed: `code=` on the /embed/ route
+  // decodes to a valid-but-empty program rather than an error (see
+  // `resolveEmbedSource` in `embed-params.js`), so generating an embed link
+  // for empty source wouldn't fail loudly — it would just be a pointless
+  // blank iframe. Disable the button instead of letting someone copy a
+  // link to nothing, with a tooltip explaining why.
+  function updateEmbedAvailability() {
+    const empty = source.value.trim().length === 0;
+    embedBtn.disabled = empty;
+    embedBtn.title = empty ? 'Add some code first — there is nothing to embed yet.' : '';
+    if (empty && embedPanel.style.display !== 'none') {
+      embedPanel.style.display = 'none';
+    }
+  }
+
+  // Deep-link prefill: `?code=<base64url>` (from the /embed/ page's "Open
+  // in Playground" link, or a hand-shared link) wins over the default
+  // preset. Malformed/oversized values are ignored — falls back to the
+  // default preset exactly as if no `?code=` were present.
+  let prefilledFromUrl = false;
+  try {
+    const codeParam = new URLSearchParams(location.search).get('code');
+    if (codeParam) {
+      source.value = decodeEmbedCode(codeParam);
+      prefilledFromUrl = true;
+    }
+  } catch (err) {
+    console.warn('tswift playground: ignoring invalid ?code= parameter:', err.message);
+  }
+
   const firstPill = presetBar.querySelector('.preset-pill');
-  if (firstPill) loadPreset(firstPill);
+  if (prefilledFromUrl) {
+    updateMeta();
+    updateEmbedAvailability();
+  } else if (firstPill) {
+    loadPreset(firstPill);
+  } else {
+    updateEmbedAvailability();
+  }
+
+  // ── Embed snippet generator ─────────────────────────────────────
+  function refreshEmbedSnippet() {
+    try {
+      const { html } = buildEmbedSnippet({
+        origin: location.origin,
+        base: import.meta.env.BASE_URL || '/',
+        source: source.value,
+        chrome: embedChromeSel.value,
+        theme: embedThemeSel.value,
+      });
+      embedHtml.value = html;
+      embedStatus.textContent = '';
+    } catch (err) {
+      embedHtml.value = '';
+      embedStatus.textContent = err.message;
+    }
+  }
+  embedBtn.addEventListener('click', () => {
+    const showing = embedPanel.style.display !== 'none';
+    embedPanel.style.display = showing ? 'none' : 'flex';
+    if (!showing) refreshEmbedSnippet();
+  });
+  embedChromeSel.addEventListener('change', refreshEmbedSnippet);
+  embedThemeSel.addEventListener('change', refreshEmbedSnippet);
+  embedCopyBtn.addEventListener('click', async () => {
+    if (!embedHtml.value) return;
+    try {
+      await navigator.clipboard.writeText(embedHtml.value);
+      embedStatus.textContent = 'Copied!';
+    } catch {
+      embedHtml.select();
+      embedStatus.textContent = 'Press ⌘/Ctrl+C to copy.';
+    }
+  });
 
   presetBar.addEventListener('click', e => {
     const pill = e.target.closest('.preset-pill');
@@ -597,6 +717,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
   source.addEventListener('input', () => {
     document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
     updateMeta();
+    updateEmbedAvailability();
   });
 
   clearBtn.addEventListener('click', () => {
@@ -604,6 +725,7 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
     stdout.textContent = '';
     compile.textContent = '';
     updateMeta();
+    updateEmbedAvailability();
   });
 
   function updateMeta() {

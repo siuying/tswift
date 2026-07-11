@@ -1,0 +1,332 @@
+---
+// /embed/ — a chrome-less (or minimal-chrome) iframe route that renders a
+// single Swift snippet through the same wasm pipeline as the playground.
+//
+// URL parameters (see `website/src/lib/embed-params.js` for the parser):
+//   code   - base64url(UTF-8(source)), see `website/src/lib/embed-code.js`
+//            for the exact codec and why it's plain base64url (no lz-string
+//            dep). Required (the param must be present, `code=` with an
+//            empty value is a valid, deliberately-empty program); missing/
+//            invalid/oversized shows a friendly inline error instead of
+//            crashing. See `resolveEmbedSource` in `embed-params.js` for the
+//            exact missing-vs-empty-vs-malformed split.
+//   chrome - "off" (default): render-only, no editor, no buttons.
+//            "on": adds a minimal top bar (Run + "Open in Playground").
+//   theme  - "light" | "dark" | "auto" (default): forces the SwiftUI canvas
+//            appearance and the embed page's own background/text colors, or
+//            (auto) follows the embedding page's `prefers-color-scheme`.
+//   origin - optional; the embedding page's own origin (e.g.
+//            `https://example.com`, URL-encoded). When present, every
+//            postMessage below is addressed *specifically* to it instead of
+//            being broadcast with targetOrigin "*", and the full error
+//            message text is included. Omit it and the protocol still
+//            works, but degrades: only the non-sensitive 'ready'/'resize'
+//            signals are broadcast, and 'error' is reduced to a bare
+//            boolean flag (no message text) to avoid leaking snippet-
+//            derived content to an unauthenticated '*' target.
+//   embed  - purely decorative/documentary (the generated snippet sets
+//            `embed=1`); not read by this page. Present only so a pasted
+//            snippet is self-describing at a glance.
+//
+// postMessage protocol (documented in full at /how-it-works/embedding):
+//   'tswift-embed:ready'  - emitted once, after the initial decode+compile
+//                            +run/render attempt finishes (success OR error).
+//   'tswift-embed:error'  - emitted whenever a decode/compile/run/load
+//                            failure produces the inline error message.
+//                            Carries `message` only when `?origin=` was
+//                            supplied; otherwise just `{ error: true }`.
+//   'tswift-embed:resize' - emitted whenever the rendered content's height
+//                            changes (via ResizeObserver on <body>), so a
+//                            parent page can auto-size the iframe.
+// See `postToParent` below for the exact origin-targeting rules.
+//
+// Security posture (see the embedding docs page for the full rationale):
+//  - No `X-Frame-Options`/frame-ancestors are set anywhere in this repo
+//    (no `_headers`/`netlify.toml`/`vercel.json`; the only header config in
+//    `astro.config.mjs` is COOP/COEP on the *dev* server only) — this route
+//    is framable by design, matching its purpose.
+//  - This page never imports `tswift-host-services.js` / `tswift-db-host-
+//    service.js`, so it never touches `localStorage` and never declares
+//    `tswift.defaults`/`tswift.fs`/`tswift.db` host services — an embedded
+//    snippet cannot read/write any project's playground/studio storage, and
+//    cannot persist anything of its own either (a documented, honest
+//    degraded tier: `UserDefaults`/`FileManager`/SwiftData APIs raise the
+//    normal "host does not provide this service" catchable error if used).
+//  - `code` has a hard length ceiling (`MAX_ENCODED_LENGTH` in
+//    `embed-code.js`) enforced before any decoding/compilation is attempted.
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>tswift embed</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --e-bg: #ffffff;
+        --e-text: #23201c;
+        --e-muted: #6c6155;
+        --e-border: rgba(48, 38, 28, .14);
+        --e-accent: #d9622e;
+        --e-code-bg: #1a1c2b;
+        --e-code-text: #d7dbe6;
+        --e-error-bg: rgba(220, 38, 38, .08);
+        --e-error-border: rgba(220, 38, 38, .35);
+        --e-error-text: #b91c1c;
+      }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-embed-theme="light"]) {
+          --e-bg: #16171f;
+          --e-text: #eef0f6;
+          --e-muted: #a3a8bd;
+          --e-border: rgba(255, 255, 255, .14);
+          --e-code-bg: #0d0e15;
+          --e-code-text: #d7dbe6;
+          --e-error-bg: rgba(248, 113, 113, .1);
+          --e-error-border: rgba(248, 113, 113, .4);
+          --e-error-text: #fca5a5;
+        }
+      }
+      html[data-embed-theme="dark"] {
+        --e-bg: #16171f;
+        --e-text: #eef0f6;
+        --e-muted: #a3a8bd;
+        --e-border: rgba(255, 255, 255, .14);
+        --e-code-bg: #0d0e15;
+        --e-code-text: #d7dbe6;
+        --e-error-bg: rgba(248, 113, 113, .1);
+        --e-error-border: rgba(248, 113, 113, .4);
+        --e-error-text: #fca5a5;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        background: var(--e-bg);
+        color: var(--e-text);
+        font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+        /* No forced height/overflow: the page grows to fit its content and
+           reports its size via ResizeObserver, so the parent's <iframe>
+           element is the only scroll boundary that ever matters. */
+      }
+      #e-chrome {
+        display: none;
+        align-items: center; gap: .6rem;
+        padding: .5rem .75rem;
+        border-bottom: 1px solid var(--e-border);
+        font-size: .78rem;
+      }
+      #e-chrome button {
+        font: inherit; font-weight: 700; font-size: .78rem;
+        padding: .35rem .8rem; border-radius: 6px; border: none;
+        background: var(--e-accent); color: #fff; cursor: pointer;
+      }
+      #e-chrome button:disabled { opacity: .5; cursor: default; }
+      #e-chrome a {
+        margin-left: auto; color: var(--e-muted); text-decoration: none;
+        font-size: .75rem;
+      }
+      #e-chrome a:hover { color: var(--e-accent); }
+      #e-status { color: var(--e-muted); font-size: .72rem; }
+      #e-stage { padding: .9rem; }
+      #e-loading { color: var(--e-muted); font-size: .85rem; padding: .5rem 0; }
+      #e-output {
+        margin: 0; white-space: pre-wrap; word-break: break-word;
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: .82rem; line-height: 1.5;
+        background: var(--e-code-bg); color: var(--e-code-text);
+        border-radius: 8px; padding: .85rem 1rem;
+        display: none;
+      }
+      #e-output.error { color: #ff9c9c; }
+      #e-error {
+        display: none;
+        background: var(--e-error-bg); border: 1px solid var(--e-error-border);
+        color: var(--e-error-text); border-radius: 8px; padding: .8rem 1rem;
+        font-size: .82rem; line-height: 1.5;
+      }
+      #e-error strong { display: block; margin-bottom: .25rem; }
+      swiftui-canvas { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="e-chrome">
+      <button id="e-run" disabled>▶ Run</button>
+      <span id="e-status">loading…</span>
+      <a id="e-open" href="/playground/" target="_top" rel="noopener">Open in Playground ↗</a>
+    </div>
+    <div id="e-stage">
+      <div id="e-loading">Loading tswift…</div>
+      <div id="e-error"><strong>Couldn't render this snippet</strong><span id="e-error-msg"></span></div>
+      <pre id="e-output"></pre>
+      <swiftui-canvas id="e-canvas" theme="ios"></swiftui-canvas>
+    </div>
+
+    <script type="module">
+      import '../../../web/swiftui-canvas/src/canvas.ts';
+      import { parseEmbedParams, playgroundUrl, resolveEmbedSource } from '../lib/embed-params.js';
+
+      const html = document.documentElement;
+      const chromeBar = document.getElementById('e-chrome');
+      const runBtn = document.getElementById('e-run');
+      const statusEl = document.getElementById('e-status');
+      const openLink = document.getElementById('e-open');
+      const loadingEl = document.getElementById('e-loading');
+      const errorEl = document.getElementById('e-error');
+      const errorMsgEl = document.getElementById('e-error-msg');
+      const outputEl = document.getElementById('e-output');
+      const canvasEl = document.getElementById('e-canvas');
+
+      // ── postMessage protocol ────────────────────────────────────────
+      // With a trusted `?origin=` param, every message is addressed to it
+      // directly — the strict, recommended path. Without one, 'ready'/
+      // 'resize' still reach a naive embedder (their payloads carry no
+      // snippet-derived content: none, and a pixel height respectively),
+      // but an 'error' message's `message` text is derived from the
+      // *snippet's own source/compiler output*, which is not safe to
+      // broadcast to any listener on the page ('*') — so without a trusted
+      // origin it's reduced to a bare `error: true` flag instead.
+      function postToParent(type, detail) {
+        try {
+          if (!(window.parent && window.parent !== window)) return;
+          if (originParam) {
+            window.parent.postMessage({ type, ...detail }, originParam);
+            return;
+          }
+          const safeDetail = type === 'tswift-embed:error' ? { error: true } : detail;
+          window.parent.postMessage({ type, ...safeDetail }, '*');
+        } catch {
+          // Sandboxed/opaque-origin iframes (or a malformed `?origin=`) can
+          // throw on `postMessage` itself; never let that break rendering.
+        }
+      }
+
+      let readySent = false;
+      function sendReadyOnce() {
+        if (readySent) return;
+        readySent = true;
+        postToParent('tswift-embed:ready', {});
+      }
+
+      let lastHeight = -1;
+      const resizeObserver = new ResizeObserver(() => {
+        const height = Math.ceil(document.body.scrollHeight);
+        if (height === lastHeight) return;
+        lastHeight = height;
+        postToParent('tswift-embed:resize', { height });
+      });
+      resizeObserver.observe(document.body);
+
+      // ── Params ───────────────────────────────────────────────────────
+      const { chrome, theme, codeParam, originParam } = parseEmbedParams(location.search);
+      if (theme !== 'auto') html.setAttribute('data-embed-theme', theme);
+      if (theme === 'light' || theme === 'dark') canvasEl.setAttribute('appearance', theme);
+      if (chrome === 'on') chromeBar.style.display = 'flex';
+
+      const base = import.meta.env.BASE_URL || '/';
+      openLink.href = playgroundUrl(base, codeParam);
+
+      function showError(message) {
+        loadingEl.style.display = 'none';
+        outputEl.style.display = 'none';
+        canvasEl.style.display = 'none';
+        errorEl.style.display = 'block';
+        errorMsgEl.textContent = message;
+        statusEl.textContent = 'error';
+        postToParent('tswift-embed:error', { message });
+      }
+
+      function hideStatusPanels() {
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'none';
+        outputEl.style.display = 'none';
+        canvasEl.style.display = 'none';
+      }
+
+      // ── Program run ──────────────────────────────────────────────────
+      let mod = null;
+
+      function runProgram(source) {
+        hideStatusPanels();
+        let compileRes;
+        try {
+          compileRes = JSON.parse(mod.swiftUICompile(source));
+        } catch (err) {
+          showError(err.message || String(err));
+          return;
+        }
+        if (compileRes.ok && compileRes.root) {
+          canvasEl.style.display = 'block';
+          canvasEl.mount(compileRes.tree);
+          statusEl.textContent = `preview · ${compileRes.root}`;
+          return;
+        }
+        // Not a SwiftUI `View` (or it failed to compile as one) — run it as
+        // a console program instead, same fallback order as the playground.
+        let runRes;
+        try {
+          runRes = JSON.parse(mod.runSwift(source));
+        } catch (err) {
+          showError(err.message || String(err));
+          return;
+        }
+        if (runRes.run) {
+          outputEl.style.display = 'block';
+          const out = [runRes.run.stdout?.trim(), runRes.run.stderr?.trim()]
+            .filter(Boolean)
+            .join('\n');
+          outputEl.textContent = out || '(no output)';
+          outputEl.classList.toggle('error', !runRes.run.ok);
+          statusEl.textContent = runRes.run.ok ? 'ok' : 'failed';
+        } else if (runRes.compile) {
+          showError(runRes.compile.stderr || 'Compile error (no details).');
+        } else {
+          showError('The runtime returned an unrecognized result.');
+        }
+      }
+
+      canvasEl.addEventListener('swiftui-event', (e) => {
+        if (!mod || !mod.swiftUIDispatch) return;
+        const { id, event, value } = e.detail;
+        const payload = value == null ? '' : JSON.stringify(value);
+        try {
+          const res = JSON.parse(mod.swiftUIDispatch(id, event, payload));
+          if (res.ok) canvasEl.applyPatches(res.patches);
+        } catch {
+          // Best-effort — an event crash shouldn't tear down the embed.
+        }
+      });
+
+      async function boot() {
+        let source;
+        try {
+          ({ source } = resolveEmbedSource(location.search));
+        } catch (err) {
+          showError(err.message);
+          sendReadyOnce();
+          return;
+        }
+
+        try {
+          const wasmUrl = new URL(base + 'wasm/tswift_wasm.js', location.origin).href;
+          const importModule = new Function('u', 'return import(u)');
+          mod = await importModule(wasmUrl);
+          await mod.default();
+        } catch (err) {
+          showError(`Failed to load the tswift runtime: ${err.message || err}`);
+          sendReadyOnce();
+          return;
+        }
+
+        runBtn.disabled = false;
+        runBtn.addEventListener('click', () => runProgram(source));
+        runProgram(source);
+        sendReadyOnce();
+      }
+
+      boot();
+    </script>
+  </body>
+</html>
