@@ -150,11 +150,22 @@ fn compile_impl(source: &str) -> String {
     let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
     let mut interp = Interpreter::new(out);
     tswift_std::install(&mut interp);
+    // The default host-call handler MUST be installed before the Foundation /
+    // SwiftData installs: `HostBridge::register` resolves a `None` handler
+    // against the default handler *at registration time*, so registering
+    // `tswift.db.*` (or `tswift.defaults.*`/`tswift.fs.*`) before a default
+    // handler exists silently fails the registration and `is_host_fn` then
+    // reports `false` — degrading `.modelContainer(for:)`/`@Query` as
+    // "SwiftData is unavailable" even when the page declared the service. This
+    // mirrors the `run_swift` path (see `lib.rs`).
+    crate::platform::install_host_call_handler(&mut interp);
     tswift_foundation::install_with(&mut interp, crate::platform::host_capabilities());
     tswift_swiftdata::install(
         &mut interp,
         crate::platform::host_capabilities().contains(tswift_core::HostService::Database),
     );
+    crate::platform::install_http_transport(&mut interp);
+    crate::platform::install_registered_host_fns(&mut interp);
     tswift_swiftui::install(&mut interp);
     interp.set_filename("main.swift");
     if let Err(error) = interp.run(analysis) {

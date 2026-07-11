@@ -4,11 +4,12 @@
 // wasm smoke coverage) — samples are trimmed to what the runtime actually
 // supports today rather than aspirational Swift.
 //
-// Note on SwiftData + SwiftUI: `@Query` / `.modelContainer(for:inMemory:)`
-// render natively, but the wasm `swiftUICompile` path does not currently grant
-// the `tswift.db` capability to the SwiftUI render session (console SwiftData
-// via `runSwiftModule` does). So the SwiftData sample here is a console program
-// (which works), and the SwiftUI todo uses `@State` (which renders live).
+// SwiftData + SwiftUI: `@Query` / `.modelContainer(for:inMemory:)` render live
+// through the wasm `swiftUICompile*` path once the `tswift.db` host service is
+// installed (the render session now installs the host-call handler before
+// SwiftData, so the `tswift.db.*` wire registers — see
+// crates/tswift-wasm/src/swiftui.rs). Both a console SwiftData sample and a
+// live SwiftData-backed SwiftUI list ship below.
 
 export const SAMPLES = [
   {
@@ -157,6 +158,77 @@ struct TodoView: View {
             .cornerRadius(8)
         }
         .padding()
+    }
+}
+`,
+      },
+    ],
+  },
+
+  {
+    id: 'swiftdata-swiftui',
+    name: 'SwiftData + SwiftUI',
+    description: 'A live SwiftUI list backed by SwiftData @Query + .modelContainer.',
+    files: [
+      {
+        path: 'Note.swift',
+        source: `import SwiftData
+
+@Model
+class Note {
+    var title: String
+    init(title: String) { self.title = title }
+}
+`,
+      },
+      {
+        path: 'NoteListView.swift',
+        source: `import SwiftData
+import SwiftUI
+
+// A SwiftData-backed list: @Query reads the environment's model context, and
+// the "Add note" button inserts + saves. Because the SwiftUI session
+// re-evaluates \`body\` on every dispatch, the new row appears with no explicit
+// change-notification hook.
+struct NoteListView: View {
+    @Query(sort: \\.title) var notes: [Note]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Notes")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+
+            ForEach(notes) { note in
+                HStack {
+                    Text("•")
+                    Text(note.title)
+                    Spacer()
+                }
+            }
+
+            Text("\\(notes.count) notes")
+                .foregroundColor(.secondary)
+
+            Button("Add note") {
+                if let ctx = try? __tswiftCurrentModelContext() {
+                    ctx.insert(Note(title: "Note \\(notes.count + 1)"))
+                    try? ctx.save()
+                }
+            }
+            .foregroundColor(.white)
+            .padding()
+            .background(Color.blue)
+            .cornerRadius(8)
+        }
+        .padding()
+    }
+}
+
+struct RootView: View {
+    var body: some View {
+        NoteListView()
+            .modelContainer(for: Note.self, inMemory: true)
     }
 }
 `,

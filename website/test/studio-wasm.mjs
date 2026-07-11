@@ -70,7 +70,7 @@ for (const sample of SAMPLES) {
   const project = createProject(sample.name, sample.files);
   const json = moduleJson(project);
 
-  if (sample.id === 'swiftdata' && !dbAvailable) {
+  if ((sample.id === 'swiftdata' || sample.id === 'swiftdata-swiftui') && !dbAvailable) {
     console.log(`  skip ${sample.name}: sqlite-wasm (tswift.db) unavailable in this environment`);
     continue;
   }
@@ -101,6 +101,73 @@ for (const sample of SAMPLES) {
       assert((res.run.stdout || '').length > 0, 'expected stdout');
     });
   }
+}
+
+// Regression: a SwiftUI view backed by SwiftData (`@Query` +
+// `.modelContainer(for:)`) must render + mutate through the `swiftUICompile`
+// session, not just `runSwiftModule`. Previously the swiftui compile path
+// never installed the host-call handler before `tswift_swiftdata::install`, so
+// the `tswift.db.*` signatures failed to register and `.modelContainer(for:)`
+// threw "SwiftData is unavailable" even with `tswift.db` backed.
+if (!dbAvailable) {
+  console.log('  skip SwiftData SwiftUI render: sqlite-wasm (tswift.db) unavailable');
+} else {
+  const SWIFTDATA_VIEW = [
+    'import SwiftData',
+    'import SwiftUI',
+    '',
+    '@Model',
+    'class Note {',
+    '  var title: String',
+    '  init(title: String) { self.title = title }',
+    '}',
+    '',
+    'struct NoteList: View {',
+    '  @Query(sort: \\.title) var tasks: [Note]',
+    '  var body: some View {',
+    '    VStack {',
+    '      Button("add") {',
+    '        if let ctx = try? __tswiftCurrentModelContext() {',
+    '          ctx.insert(Note(title: "row-\\(tasks.count + 1)"))',
+    '          try? ctx.save()',
+    '        }',
+    '      }',
+    '      List {',
+    '        ForEach(tasks) { task in',
+    '          Text(task.title)',
+    '        }',
+    '      }',
+    '    }',
+    '  }',
+    '}',
+    '',
+    'struct RootView: View {',
+    '  var body: some View {',
+    '    NoteList()',
+    '      .modelContainer(for: Note.self, inMemory: true)',
+    '  }',
+    '}',
+  ].join('\n');
+
+  check('SwiftData-backed SwiftUI view renders through swiftUICompile', () => {
+    const r = JSON.parse(mod.swiftUICompile(SWIFTDATA_VIEW));
+    assert(r.ok === true, `compile failed: ${r.error}`);
+    assert(r.root === 'RootView', `bad root: ${JSON.stringify(r)}`);
+    assert(r.tree && r.tree.kind, 'expected a UIIR tree');
+  });
+
+  check('SwiftData dispatch inserts+saves and re-renders a new row', () => {
+    // The "add" button is child 0.0; tapping it inserts+saves a Note, and the
+    // re-render (body re-evaluates every dispatch) must surface an inserted
+    // Text patch for the new row.
+    const after = JSON.parse(mod.swiftUIDispatch('0.0', 'tap', ''));
+    assert(after.ok === true, `dispatch failed: ${after.error}`);
+    assert(Array.isArray(after.patches), `expected patches: ${JSON.stringify(after)}`);
+    const inserted = after.patches.find(
+      (p) => p.op === 'insert' && p.node && p.node.args && p.node.args.verbatim === 'row-1',
+    );
+    assert(inserted, `tap did not insert row-1: ${JSON.stringify(after.patches)}`);
+  });
 }
 
 if (failures > 0) {
