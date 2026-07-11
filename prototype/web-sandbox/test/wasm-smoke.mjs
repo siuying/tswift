@@ -2,7 +2,7 @@
 //
 // Native `cargo test` cannot catch wasm-only panics (e.g. `SystemTime::now()`
 // is unimplemented on wasm32 and aborts to `RuntimeError: unreachable`), because
-// the host has a working clock. This loads `src/wasm/qswift_wasm_bg.wasm` and
+// the host has a working clock. This loads `src/wasm/tswift_wasm_bg.wasm` and
 // runs it through Node, asserting representative programs actually execute.
 //
 // Run with: npm test   (which builds the wasm first)
@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const wasmDir = new URL('../src/wasm/', import.meta.url);
-const { initSync, runSwift, runSwiftModule, registerHostFunction, clearHostFunctions } = await import(new URL('qswift_wasm.js', wasmDir));
-initSync({ module: readFileSync(new URL('qswift_wasm_bg.wasm', wasmDir)) });
+const { initSync, runSwift, runSwiftModule, listSymbols, registerHostFunction, clearHostFunctions } = await import(new URL('tswift_wasm.js', wasmDir));
+initSync({ module: readFileSync(new URL('tswift_wasm_bg.wasm', wasmDir)) });
 
 let failures = 0;
 function check(name, fn) {
@@ -102,6 +102,24 @@ check('runSwiftModule rejects top-level code outside main.swift', () => {
   );
 });
 
+// 4d. listSymbols returns a declaration outline across files.
+check('listSymbols lists declarations across files', () => {
+  const module = JSON.stringify({
+    files: [
+      { path: 'Models.swift', contents: 'struct Point {\n    let x: Int\n}\n' },
+      { path: 'main.swift', contents: 'func run() {}\n' },
+    ],
+  });
+  const r = JSON.parse(listSymbols(module));
+  assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r)}`);
+  const names = r.symbols.map((s) => s.name);
+  assert(names.includes('Point'), `expected Point in ${JSON.stringify(r.symbols)}`);
+  assert(names.includes('x'), `expected x in ${JSON.stringify(r.symbols)}`);
+  assert(names.includes('run'), `expected run in ${JSON.stringify(r.symbols)}`);
+  const x = r.symbols.find((s) => s.name === 'x');
+  assert(x.container === 'Point', `expected x's container to be Point, got ${JSON.stringify(x)}`);
+});
+
 // 5. tswiftHost hook — host-native function bridge (issue #249).
 //
 // registerHostFunction() wires a schema; globalThis.tswiftHost is the
@@ -134,8 +152,7 @@ check('tswiftHost: absent hook is a runtime error', () => {
     registerHostFunction(JSON.stringify({ name: 'ping', returns: 'String' })),
   );
   assert(reg.ok === true, `registration failed: ${JSON.stringify(reg)}`);
-  const r = JSON.parse(runSwift('let x = ping()
-print(x)'));
+  const r = JSON.parse(runSwift('let x = ping()\nprint(x)'));
   clearHostFunctions();
   assert(r.ok === false, `expected ok=false, got ${JSON.stringify(r)}`);
   assert(r.compile && r.compile.ok === true, 'expected compile.ok=true');
@@ -195,6 +212,5 @@ if (failures > 0) {
 ${failures} wasm smoke check(s) failed`);
   process.exit(1);
 }
-console.log('
-all wasm smoke checks passed');
+console.log('\nall wasm smoke checks passed');
 

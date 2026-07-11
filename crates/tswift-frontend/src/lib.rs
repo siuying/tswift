@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod decode;
+pub mod project;
+pub mod symbols;
 
 /// The syntactic category of a [`Node`]. Re-exported from `tswift_ast`: the
 /// frontend and the parse AST now share one node vocabulary.

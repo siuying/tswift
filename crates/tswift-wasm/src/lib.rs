@@ -241,6 +241,39 @@ pub fn run_swift_module(module_json: &str) -> String {
     run_program_impl(&module.source_files())
 }
 
+/// List every declaration symbol (name/kind/file/line/container/signature)
+/// across a set of files, as JSON.
+///
+/// `files_json` is `{"files":[{"path":"…","contents":"…"},…]}` — the same
+/// wire shape [`run_swift_module`] takes. Each file is analyzed
+/// independently (`tswift_frontend::symbols::list_symbols`): a syntax error
+/// in one file doesn't block symbols from the others. Shape:
+/// `{"ok":bool,"symbols":[{"name","kind","file","line","container"?,
+/// "signature"?},…],"error"?:string}` — `ok` is false only when `files_json`
+/// itself fails to parse (in which case `symbols` is `[]`).
+#[wasm_bindgen(js_name = listSymbols)]
+pub fn list_symbols(files_json: &str) -> String {
+    install_panic_hook();
+    list_symbols_impl(files_json)
+}
+
+fn list_symbols_impl(files_json: &str) -> String {
+    let module = match parse_module(files_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"symbols\":[],\"error\":{}}}",
+                json::to_string(&Json::Str(e))
+            )
+        }
+    };
+    let symbols = tswift_frontend::symbols::list_symbols(&module.source_files());
+    format!(
+        "{{\"ok\":true,\"symbols\":{}}}",
+        tswift_frontend::symbols::to_json(&symbols)
+    )
+}
+
 /// Lint a multi-file Swift module and return diagnostics JSON.
 ///
 /// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.
@@ -1179,6 +1212,32 @@ mod tests {
         let json = run_swift_module(module);
         assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
         assert!(json.contains("helpers.swift"), "json={json}");
+    }
+
+    #[test]
+    fn list_symbols_lists_across_files_with_container() {
+        let module = r#"{"files":[
+            {"path":"Models.swift","contents":"struct Point {\n    let x: Int\n}\n"},
+            {"path":"main.swift","contents":"func run() {}\n"}
+        ]}"#;
+        let json = list_symbols(module);
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(
+            json.contains("\"name\":\"Point\",\"kind\":\"struct\""),
+            "json={json}"
+        );
+        assert!(json.contains("\"name\":\"x\",\"kind\":\"let\",\"file\":\"Models.swift\",\"line\":2,\"container\":\"Point\""), "json={json}");
+        assert!(
+            json.contains("\"name\":\"run\",\"kind\":\"func\",\"file\":\"main.swift\""),
+            "json={json}"
+        );
+    }
+
+    #[test]
+    fn list_symbols_reports_malformed_module_json() {
+        let json = list_symbols("not json");
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"symbols\":[]"), "json={json}");
     }
 
     #[test]

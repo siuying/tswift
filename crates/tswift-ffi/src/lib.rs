@@ -502,6 +502,33 @@ pub unsafe extern "C" fn tswift_diagnostics_module(module_json: *const c_char) -
     into_json_ptr(swiftui::diagnose_module(module_json))
 }
 
+/// List every declaration symbol (name/kind/file/line/container/signature)
+/// across a multi-file module, returning owned JSON. Stateless: takes no
+/// context. Release with [`tswift_string_free`].
+///
+/// `module_json` is a NUL-terminated JSON string:
+/// `{"files":[{"path":"…","contents":"…"},…]}`. Each file is analyzed
+/// independently (`tswift_frontend::symbols::list_symbols`), so a syntax
+/// error in one file doesn't block symbols from the others. Response shape:
+/// `{"ok":bool,"symbols":[{"name","kind","file","line","container"?,
+/// "signature"?},…],"error"?:string}` — `ok` is false only when
+/// `module_json` itself fails to parse.
+///
+/// # Safety
+/// `module_json` must be null or a valid NUL-terminated C string. The returned
+/// pointer is owned by the caller and must be freed once with
+/// [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_list_symbols(module_json: *const c_char) -> *mut c_char {
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(
+            "{\"ok\":false,\"symbols\":[],\"error\":\"module_json is null or not valid UTF-8\"}"
+                .to_string(),
+        );
+    };
+    into_json_ptr(run::symbols_impl(module_json))
+}
+
 /// Compile a multi-file SwiftUI module through `ctx` and start a live render
 /// session. Returns owned UIIR JSON (same envelope as
 /// [`tswift_swiftui_compile`]); release with [`tswift_string_free`].
@@ -575,6 +602,8 @@ mod tests {
             tswift_diagnostics_module;
         let _compile_module: unsafe extern "C" fn(*mut Context, *const c_char) -> *mut c_char =
             tswift_swiftui_compile_module;
+        // Symbol listing (Slice 12/13)
+        let _list_symbols: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_list_symbols;
         // Host-native function registration (Epic #246)
         let _register_host_fn: unsafe extern "C" fn(
             *mut Context,
@@ -692,6 +721,57 @@ mod tests {
         unsafe { tswift_context_free(ctx) };
         assert!(json.contains("\"ok\":false"), "expected failure: {json}");
         assert!(json.contains("helpers.swift"), "expected file name: {json}");
+    }
+
+    /// `tswift_list_symbols` is stateless (no context) and lists declarations
+    /// across every file in the module, each carrying its own file/line and
+    /// (for nested members) container.
+    #[test]
+    fn list_symbols_lists_across_files() {
+        let module = CString::new(
+            r#"{"files":[
+                {"path":"Models.swift","contents":"struct Point {\n    let x: Int\n}\n"},
+                {"path":"main.swift","contents":"func run() {}\n"}
+            ]}"#,
+        )
+        .unwrap();
+        let out = unsafe { tswift_list_symbols(module.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        assert!(json.contains("\"ok\":true"), "unexpected result: {json}");
+        assert!(
+            json.contains("\"name\":\"Point\",\"kind\":\"struct\""),
+            "{json}"
+        );
+        assert!(
+            json.contains("\"container\":\"Point\""),
+            "expected x's container: {json}"
+        );
+        assert!(
+            json.contains("\"name\":\"run\",\"kind\":\"func\",\"file\":\"main.swift\""),
+            "{json}"
+        );
+    }
+
+    /// A malformed `module_json` is a structured `{"ok":false,...}` error, not
+    /// a panic — mirrors `tswift_diagnostics_module`'s null/UTF-8 handling.
+    #[test]
+    fn list_symbols_malformed_json_is_structured_error() {
+        let bad = CString::new("not json").unwrap();
+        let out = unsafe { tswift_list_symbols(bad.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("\"symbols\":[]"), "{json}");
+    }
+
+    /// A null `module_json` pointer is a structured error, not a crash.
+    #[test]
+    fn list_symbols_null_json_is_structured_error() {
+        let out = unsafe { tswift_list_symbols(std::ptr::null()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        assert!(json.contains("\"ok\":false"), "{json}");
     }
 
     /// A host function `hostDeviceName() -> String` registered through the FFI

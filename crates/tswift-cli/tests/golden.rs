@@ -800,3 +800,131 @@ fn operator_traps() {
         "expected 'unknown member' error, got: {err}"
     );
 }
+
+/// `tswift run <dir-with-Package.swift>` loads the manifest, picks the sole
+/// `.executableTarget`, and derives its source set from the `Sources/<name>/`
+/// convention (Slice 12/13's `tswift_frontend::project` seam).
+#[test]
+fn run_loads_a_package_swift_project() {
+    let case = fixtures_dir().join("project");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&case)
+        .output()
+        .expect("spawn tswift");
+    assert!(
+        output.status.success(),
+        "run <project dir> failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = std::fs::read_to_string(case.join("expected.txt")).expect("read expected.txt");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}
+
+/// `tswift symbols <file>` prints a JSON outline: declaration name/kind/line/
+/// container/signature, derived from the parse AST (Slice 12/13's
+/// `tswift_frontend::symbols` seam).
+#[test]
+fn symbols_lists_declarations_in_one_file() {
+    let file = fixtures_dir().join("symbols/two_files/Models.swift");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("symbols")
+        .arg(&file)
+        .output()
+        .expect("spawn tswift");
+    assert!(
+        output.status.success(),
+        "symbols failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with('['), "expected a JSON array: {stdout}");
+    assert!(stdout.contains("\"name\":\"Point\",\"kind\":\"struct\""));
+    assert!(stdout.contains("\"name\":\"length\",\"kind\":\"func\""));
+    assert!(stdout.contains("\"container\":\"Point\""));
+    assert!(stdout.contains("\"signature\":\"func length() -> Int\""));
+}
+
+/// `tswift symbols <dir>` walks every `.swift` file recursively; symbols from
+/// both files appear, each carrying its own file path and file-local line.
+#[test]
+fn symbols_walks_a_directory_across_files() {
+    let dir = fixtures_dir().join("symbols/two_files");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("symbols")
+        .arg(&dir)
+        .output()
+        .expect("spawn tswift");
+    assert!(
+        output.status.success(),
+        "symbols <dir> failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"name\":\"Point\""), "{stdout}");
+    assert!(
+        stdout.contains("\"name\":\"run\",\"kind\":\"func\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Models.swift"), "{stdout}");
+    assert!(stdout.contains("main.swift"), "{stdout}");
+}
+
+/// A symlink placed under a `Package.swift` project tree (e.g. pointing at a
+/// file outside the project root) must never be followed by the recursive
+/// project loader — neither read directly (a symlinked `.swift` file) nor
+/// recursed into (a symlinked directory). This is a security-relevant
+/// property, not just a correctness nicety: the loader must never let a
+/// project's own file tree read arbitrary files off the filesystem via a
+/// symlink.
+#[cfg(unix)]
+#[test]
+fn run_ignores_symlinks_that_would_escape_the_project_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = unique_temp_dir("symlink-escape");
+    std::fs::create_dir_all(root.join("Sources/App")).expect("create project dirs");
+    std::fs::write(
+        root.join("Package.swift"),
+        "let package = Package(\n    name: \"Foo\",\n    targets: [\n        .executableTarget(name: \"App\"),\n    ]\n)\n",
+    )
+    .expect("write Package.swift");
+    std::fs::write(root.join("Sources/App/main.swift"), "print(1)\n").expect("write main.swift");
+
+    // A secret file OUTSIDE the project root that a symlink will try to
+    // reach; if the loader ever reads it, the run's output would differ.
+    let outside = unique_temp_dir("symlink-escape-secret");
+    std::fs::create_dir_all(&outside).expect("create outside dir");
+    std::fs::write(outside.join("secret.swift"), "print(\"LEAKED\")\n").expect("write secret file");
+
+    // A symlinked `.swift` file under the target directory, pointing at the
+    // file outside the root.
+    symlink(
+        outside.join("secret.swift"),
+        root.join("Sources/App/Escape.swift"),
+    )
+    .expect("create symlinked file");
+    // A symlinked directory under the target directory, pointing at the
+    // outside dir wholesale.
+    symlink(&outside, root.join("Sources/App/EscapeDir")).expect("create symlinked dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&root)
+        .output()
+        .expect("spawn tswift");
+
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
+
+    assert!(
+        output.status.success(),
+        "run <project dir with symlinks> failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout, "1\n",
+        "loader must never follow a symlink into or out of the project root: {stdout}"
+    );
+}

@@ -299,3 +299,24 @@ pub(crate) fn run_module_impl(
     let files = module.source_files();
     run_program_impl_files(&files, http, stream_http, host_fns, caps)
 }
+
+/// List every declaration symbol (name/kind/file/line/container/signature)
+/// across a `{"files":[{"path":"…","contents":"…"},…]}` module, as JSON.
+/// Shape: `{"ok":bool,"symbols":[…],"error"?:string}` — `ok` is false only
+/// when `module_json` itself fails to parse.
+pub(crate) fn symbols_impl(module_json: &str) -> String {
+    let module = match parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => {
+            return format!(
+                "{{\"ok\":false,\"symbols\":[],\"error\":{}}}",
+                json::to_string(&Json::Str(e))
+            );
+        }
+    };
+    let symbols = tswift_frontend::symbols::list_symbols(&module.source_files());
+    format!(
+        "{{\"ok\":true,\"symbols\":{}}}",
+        tswift_frontend::symbols::to_json(&symbols)
+    )
+}

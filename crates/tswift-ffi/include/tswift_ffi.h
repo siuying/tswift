@@ -191,6 +191,16 @@ char *tswift_diagnostics_module(const char *module_json);
  * returning owned UIIR JSON (same envelope as tswift_swiftui_compile). */
 char *tswift_swiftui_compile_module(TSwiftContext *ctx, const char *module_json);
 
+/* List every declaration symbol (name/kind/file/line/container/signature)
+ * across a multi-file module, returning owned JSON. Stateless (no context).
+ * Same `module_json` shape as the three functions above. Each file is
+ * analyzed independently, so a syntax error in one file doesn't block
+ * symbols from the others. Response shape:
+ *   {"ok":bool,"symbols":[{"name","kind","file","line","container"?,
+ *   "signature"?},...],"error"?:string}
+ * `ok` is false only when `module_json` itself fails to parse. */
+char *tswift_list_symbols(const char *module_json);
+
 /* ---- String release ---------------------------------------------------- */
 
 /* Release a string returned by any function above. NULL is ignored. */

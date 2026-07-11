@@ -2296,11 +2296,16 @@ impl<'a> Parser<'a> {
                     .add(NodeKind::NamePattern, Some(t.text), t.line, t.col))
             }
             // `self` rebinding: `guard let self = self` / shorthand `if let self`
-            // (SE-0345) — the keyword is a valid binding name here. (Other
+            // (SE-0345) — the keyword is a valid binding name here. `package` is
+            // also accepted as a binding name: it's the SE-0386 access-level
+            // modifier keyword (`is_modifier_word`) but Package.swift manifests
+            // universally spell their top-level binding `let package = Package(…)`,
+            // and in *pattern* position (right after `let`/`var`, not before a
+            // decl keyword) there is no modifier-run ambiguity to resolve. (Other
             // contextual keywords like `any`/`some` are NOT accepted: reading
             // them back in expression position would need type-vs-value
             // disambiguation this parser does not do.)
-            TokenKind::Keyword if t.text == "self" => {
+            TokenKind::Keyword if t.text == "self" || t.text == "package" => {
                 self.bump();
                 Ok(self
                     .ast
