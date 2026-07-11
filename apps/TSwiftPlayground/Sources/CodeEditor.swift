@@ -15,6 +15,9 @@ struct CodeEditor: UIViewRepresentable {
     /// Frontend diagnostics to mark inline (error/warning underlines on the
     /// affected source range). Empty leaves the text unmarked.
     var diagnostics: [PreviewSession.Diagnostic] = []
+    /// A pending jump request (from tapping a symbol in the outline). When it
+    /// changes, the editor moves the caret to that 1-based line.
+    var jumpTarget: JumpTarget?
 
     func makeUIView(context: Context) -> TextView {
         let textView = TextView()
@@ -38,12 +41,31 @@ struct CodeEditor: UIViewRepresentable {
     }
 
     func updateUIView(_ textView: TextView, context: Context) {
-        // Only push external changes (e.g. loading a sample) — never echo the
-        // user's own keystrokes back, which would reset the caret.
+        // Only push external changes (e.g. loading a sample / switching files) —
+        // never echo the user's own keystrokes back, which would reset the caret.
         if textView.text != text {
             textView.text = text
         }
         textView.highlightedRanges = Self.highlightedRanges(for: diagnostics, in: textView.text)
+        // Apply a jump request once per distinct token.
+        if let target = jumpTarget, target != context.coordinator.lastJump {
+            context.coordinator.lastJump = target
+            Self.jump(textView, toLine: target.line)
+        }
+    }
+
+    /// Move the caret to the start of a 1-based `line` and scroll it into view.
+    /// Out-of-range lines are ignored.
+    static func jump(_ textView: TextView, toLine line: Int) {
+        let ns = textView.text as NSString
+        var lineStarts: [Int] = [0]
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length),
+                               options: [.byLines, .substringNotRequired]) { _, _, enclosing, _ in
+            lineStarts.append(enclosing.location + enclosing.length)
+        }
+        guard line >= 1, line <= lineStarts.count else { return }
+        let offset = min(lineStarts[line - 1], ns.length)
+        textView.selectedRange = NSRange(location: offset, length: 0)
     }
 
     /// Map diagnostics (1-based line/col) to Runestone highlight ranges: a tinted
@@ -82,6 +104,9 @@ struct CodeEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, TextViewDelegate {
         private let text: Binding<String>
+        /// The last jump request applied, so the same request isn't re-run on
+        /// every unrelated `updateUIView`.
+        var lastJump: JumpTarget?
 
         init(text: Binding<String>) {
             self.text = text

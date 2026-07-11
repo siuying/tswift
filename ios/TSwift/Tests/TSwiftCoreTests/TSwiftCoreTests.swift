@@ -46,6 +46,39 @@ final class TSwiftCoreTests: XCTestCase {
         XCTAssertTrue(result.diagnostics.contains("helpers.swift"), result.diagnostics)
     }
 
+    func testListSymbolsAcrossFiles() {
+        let module = TSwiftModule(files: [
+            TSwiftSourceFile(
+                path: "models.swift",
+                contents: "struct Point {\n    let x: Int\n    func moved() -> Point { self }\n}\n"
+            ),
+            TSwiftSourceFile(path: "main.swift", contents: "func greet() {}\n"),
+        ])
+        let result = TSwiftCore.listSymbols(module: module)
+        XCTAssertTrue(result.ok, result.error ?? "")
+        let byName = Dictionary(grouping: result.symbols, by: \.name)
+        XCTAssertNotNil(byName["Point"], "expected the Point struct")
+        XCTAssertEqual(byName["Point"]?.first?.kind, "struct")
+        XCTAssertEqual(byName["Point"]?.first?.file, "models.swift")
+        // A nested member reports its container.
+        XCTAssertEqual(byName["x"]?.first?.container, "Point")
+        // A symbol from the second file is listed too.
+        XCTAssertNotNil(byName["greet"], "expected greet() from main.swift")
+        XCTAssertEqual(byName["greet"]?.first?.file, "main.swift")
+    }
+
+    func testListSymbolsMalformedModuleIsNotOk() {
+        // A file with a syntax error must not abort the whole listing; a
+        // well-formed sibling still contributes its symbols.
+        let module = TSwiftModule(files: [
+            TSwiftSourceFile(path: "broken.swift", contents: "struct {{{ "),
+            TSwiftSourceFile(path: "ok.swift", contents: "struct Good {}\n"),
+        ])
+        let result = TSwiftCore.listSymbols(module: module)
+        XCTAssertTrue(result.ok, result.error ?? "")
+        XCTAssertTrue(result.symbols.contains { $0.name == "Good" }, "expected Good")
+    }
+
     func testContextReuseAcrossRuns() {
         let context = TSwiftContext()
         let first = TSwiftCore.run(#"print("one")"#, in: context)

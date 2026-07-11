@@ -41,6 +41,75 @@ public struct TSwiftModule: Sendable {
     }
 }
 
+// MARK: - Symbols
+
+/// One declaration symbol discovered by the frontend across a module — the
+/// unit an outline/jump-to-symbol view is built from.
+public struct TSwiftSymbol: Decodable, Identifiable, Sendable, Equatable {
+    /// The declared name (e.g. `CounterView`, `body`, `increment`).
+    public let name: String
+    /// The lowercase Swift keyword for the declaration (`struct`, `func`,
+    /// `var`, `let`, `enum`, `class`, `case`, `init`, `subscript`, …).
+    public let kind: String
+    /// The source file the declaration lives in (a module file `path`).
+    public let file: String
+    /// The 1-based line the declaration starts on within `file`.
+    public let line: Int
+    /// The nearest enclosing container declaration's name, if nested.
+    public let container: String?
+    /// A cheap one-line signature preview, if the frontend produced one.
+    public let signature: String?
+
+    /// Stable identity for SwiftUI lists: file + line + name uniquely locate a
+    /// declaration (two symbols can't start at the same line in one file).
+    public var id: String { "\(file):\(line):\(name)" }
+}
+
+extension TSwiftCore {
+    /// The decoded result of a `listSymbols` call.
+    public struct SymbolsResult: Sendable {
+        /// Whether the module JSON itself parsed (individual files with syntax
+        /// errors are skipped, not fatal — they just contribute no symbols).
+        public let ok: Bool
+        /// Every declaration symbol found across the module's files, in source
+        /// order per file.
+        public let symbols: [TSwiftSymbol]
+        /// The error message when `ok` is false (malformed module JSON).
+        public let error: String?
+    }
+
+    /// List every declaration symbol across a multi-file `module`.
+    ///
+    /// Stateless (needs no `TSwiftContext`): each file is analyzed
+    /// independently, so a syntax error in one file does not block symbols
+    /// from the others. Backed by the `tswift_list_symbols` C ABI.
+    public static func listSymbols(module: TSwiftModule) -> SymbolsResult {
+        let moduleJSON = module.toJSON()
+        let raw = moduleJSON.withCString { cJSON -> String in
+            guard let ptr = tswift_list_symbols(cJSON) else { return "" }
+            defer { tswift_string_free(ptr) }
+            return String(cString: ptr)
+        }
+        return decodeSymbols(raw)
+    }
+
+    private struct SymbolsEnvelope: Decodable {
+        let ok: Bool
+        let symbols: [TSwiftSymbol]
+        let error: String?
+    }
+
+    private static func decodeSymbols(_ raw: String) -> SymbolsResult {
+        guard let envelope = try? JSONDecoder().decode(
+            SymbolsEnvelope.self, from: Data(raw.utf8)
+        ) else {
+            let detail = raw.isEmpty ? "tswift_list_symbols returned null" : raw
+            return SymbolsResult(ok: false, symbols: [], error: detail)
+        }
+        return SymbolsResult(ok: envelope.ok, symbols: envelope.symbols, error: envelope.error)
+    }
+}
+
 // MARK: - TSwiftCore
 
 /// One-shot "compile a Swift program and run it for its stdout" façade.

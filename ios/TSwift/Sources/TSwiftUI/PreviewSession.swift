@@ -23,7 +23,12 @@ public final class PreviewSession: ObservableObject {
     /// editor can surface syntax/sema errors as the user types.
     @Published public private(set) var diagnostics: [Diagnostic] = []
 
-    private let context: TSwiftContext
+    /// The context backing this session's compiles/dispatches. Exposed so a
+    /// host can run *console* programs on the same interpreter state (e.g.
+    /// `TSwiftCore.run(module:in:)`) or install host services
+    /// (`installFoundationHostServices()`/`installDatabaseHostServices()`)
+    /// that both the live preview and console runs then share.
+    public let context: TSwiftContext
 
     public init(context: TSwiftContext = TSwiftContext()) {
         self.context = context

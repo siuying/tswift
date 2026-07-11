@@ -41,6 +41,28 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: dev.tswift.playground
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_CFBundleDisplayName: TSwift Playground
+        INFOPLIST_KEY_CFBundleDisplayName: TSwift Studio
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
+  # Unit tests for the pure project store (file CRUD + persistence). Hosted by
+  # the app target so `@testable import TSwiftPlayground` reaches its models.
+  TSwiftPlaygroundTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: TSwiftPlayground
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tswift.playgroundTests
+        SWIFT_VERSION: "6.0"
+schemes:
+  TSwiftPlayground:
+    build:
+      targets:
+        TSwiftPlayground: all
+        TSwiftPlaygroundTests: [test]
+    test:
+      targets:
+        - TSwiftPlaygroundTests
