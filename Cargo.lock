@@ -622,6 +622,7 @@ name = "tswift-swiftdata"
 version = "0.0.0"
 dependencies = [
  "tswift-core",
+ "tswift-frontend",
 ]
 
 [[package]]

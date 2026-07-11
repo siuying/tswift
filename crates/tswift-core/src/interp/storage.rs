@@ -1774,7 +1774,7 @@ impl<'w> Interpreter<'w> {
     }
 
     /// The path components of a key-path closure value, if `value` is one.
-    fn keypath_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
+    pub(super) fn keypath_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
         if let SwiftValue::Closure(id) = value {
             if let Some((ClosureDef::KeyPath(components), _)) = self.closures.get(*id) {
                 return Some(components.clone());

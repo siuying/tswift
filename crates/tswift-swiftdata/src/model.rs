@@ -56,8 +56,9 @@ use tswift_core::{
     Arg, BuiltinReceiver, ClassObj, EvalError, Interpreter, MethodEntry, Outcome, StdContext,
     StdError, StdResult, StructObj, SwiftValue,
 };
+use tswift_frontend::{Node, NodeKind};
 
-use crate::db::{self, encode_params, DbValue, ExecResult};
+use crate::db::{self, decode_rows, encode_params, DbRow, DbValue, ExecResult};
 
 /// The default persistent store name handed to the host when no in-memory
 /// configuration is supplied. The host maps it to a real location.
@@ -116,6 +117,13 @@ struct ContextState {
     tracked: Vec<Tracked>,
     /// Persisted objects marked for deletion, with the rowid to delete.
     deleted: Vec<(Rc<RefCell<ClassObj>>, i64)>,
+    /// Identity map: committed persisted objects keyed by `(type name, rowid)`,
+    /// so fetching the same row twice in one context returns the *same* instance
+    /// (mirrors SwiftData's per-context identity map). The type name is part of
+    /// the key because `rowid` is only unique *within a table*: two `@Model`
+    /// types sharing one connection can each own a row with `rowid == 1`.
+    /// O(1) lookup on fetch.
+    by_identity: HashMap<(String, i64), Rc<RefCell<ClassObj>>>,
 }
 
 struct Tracked {
@@ -135,6 +143,10 @@ struct Column {
     name: String,
     sql_type: SqlType,
     not_null: bool,
+    /// Whether the Swift property is declared `Bool` (stored as `INTEGER`);
+    /// needed to reconstruct a `SwiftValue::Bool` — not a plain `Int` — when
+    /// decoding a fetched row.
+    is_bool: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -212,6 +224,21 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("ModelContainer", model_container_init);
     interp.register_free_fn("ModelConfiguration", model_configuration_init);
     interp.register_free_fn("ModelContext", model_context_init);
+    interp.register_free_fn("FetchDescriptor", fetch_descriptor_init);
+    // `.forward`/`.reverse` resolve against the `order:` parameter's type.
+    interp.register_builtin_enum("SortOrder", &["forward", "reverse"]);
+    interp.register_free_fn_typed(
+        "SortDescriptor",
+        sort_descriptor_init,
+        vec![
+            tswift_core::BuiltinParam::positional("KeyPath"),
+            tswift_core::BuiltinParam::labeled("order", "SortOrder"),
+        ],
+    );
+
+    // `#Predicate<T> { obj in … }` — compiled to a SQL `WHERE` fragment at
+    // creation time (captures resolved eagerly), via the generic macro seam.
+    interp.register_macro("Predicate", predicate_macro);
 
     let container = BuiltinReceiver::register_extension("ModelContainer");
     interp.register_contextual_property(container, "mainContext", container_main_context);
@@ -221,6 +248,7 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
         ("insert", context_insert as _),
         ("delete", context_delete as _),
         ("save", context_save as _),
+        ("fetch", context_fetch as _),
     ] {
         interp.register_intrinsic(
             context,
@@ -330,6 +358,7 @@ fn derive_schema(ctx: &dyn StdContext, type_name: &str) -> Result<ModelSchema, S
                 name: prop.name.clone(),
                 sql_type,
                 not_null: !optional,
+                is_bool: base == "Bool",
             }),
             None => {
                 return Err(host_error(format!(
@@ -534,6 +563,7 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
                 inserted: Vec::new(),
                 tracked: Vec::new(),
                 deleted: Vec::new(),
+                by_identity: HashMap::new(),
             },
         );
         s.containers.insert(
@@ -615,6 +645,7 @@ fn model_context_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
                 inserted: Vec::new(),
                 tracked: Vec::new(),
                 deleted: Vec::new(),
+                by_identity: HashMap::new(),
             },
         );
     });
@@ -804,20 +835,30 @@ fn apply_after_commit(
     for (idx, values) in updates {
         state.tracked[idx].snapshot = values;
     }
-    // Move inserted objects into the tracked set with their new rowid+snapshot.
+    // Move inserted objects into the tracked set with their new rowid+snapshot,
+    // and register them in the identity map.
     let inserted = std::mem::take(&mut state.inserted);
     for (obj, rowid) in inserted.into_iter().zip(insert_rowids) {
-        let snapshot = {
+        let (class_name, snapshot) = {
             let borrowed = obj.borrow();
-            schema_for(&state.schemas, &borrowed.class_name)
+            let snapshot = schema_for(&state.schemas, &borrowed.class_name)
                 .and_then(|schema| row_values(&borrowed, schema))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            (borrowed.class_name.clone(), snapshot)
         };
+        state
+            .by_identity
+            .insert((class_name, rowid), Rc::clone(&obj));
         state.tracked.push(Tracked {
             obj,
             rowid,
             snapshot,
         });
+    }
+    // Drop committed-deleted objects from the identity map (keyed by type+rowid).
+    for (obj, rowid) in &state.deleted {
+        let class_name = obj.borrow().class_name.clone();
+        state.by_identity.remove(&(class_name, *rowid));
     }
     state.deleted.clear();
 }
@@ -953,6 +994,726 @@ fn tx(ctx: &mut dyn StdContext, handle: i64, op: &str) -> Result<(), StdError> {
     Ok(())
 }
 
+/// Run a `SELECT` (or other read) via the `tswift.db.query` wire and decode the
+/// reply into rows.
+fn query(
+    ctx: &mut dyn StdContext,
+    handle: i64,
+    sql: &str,
+    params: &[DbValue],
+) -> Result<Vec<DbRow>, StdError> {
+    let reply = ctx.call_host_fn(
+        db::OP_QUERY,
+        vec![
+            (Some("handle".to_string()), SwiftValue::int(handle as i128)),
+            (Some("sql".to_string()), SwiftValue::Str(sql.to_string())),
+            (
+                Some("params".to_string()),
+                SwiftValue::Str(encode_params(params)),
+            ),
+        ],
+    )?;
+    let text = as_string(&reply)
+        .ok_or_else(|| type_error("SwiftData: tswift.db.query returned a non-String reply"))?;
+    decode_rows(&text).map_err(|e| type_error(format!("SwiftData: malformed query result: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// #Predicate<T> { obj in … }  →  SQL WHERE fragment (bound params)
+// ---------------------------------------------------------------------------
+//
+// The macro handler compiles the closure body to a SQL `WHERE` fragment with
+// `?` placeholders at *creation* time — resolving any captured/literal value
+// eagerly to a bound parameter (mirroring SwiftData capturing values when the
+// `#Predicate` is formed). The compiled predicate is stored on the returned
+// opaque `Predicate` object as three fields the fetch path reads: `__where`
+// (fragment text, empty for a trivially-true predicate), `__params` (the JSON
+// bind array) and `__type` (the `<T>` model type, if written).
+//
+// Deviation from Apple SwiftData: real `#Predicate` is a compile-time macro
+// evaluated lazily against each object; here it lowers straight to SQL, so
+// only the shapes SQLite can express with bound params are supported. Anything
+// else raises a clear diagnostic rather than silently full-scanning with a
+// wrong (or absent) filter. See ADR-0016.
+
+/// The set of comparison operators lowered directly to SQL.
+fn sql_comparison_op(op: &str) -> Option<&'static str> {
+    match op {
+        "==" => Some("="),
+        "!=" => Some("<>"),
+        "<" => Some("<"),
+        "<=" => Some("<="),
+        ">" => Some(">"),
+        ">=" => Some(">="),
+        _ => None,
+    }
+}
+
+/// Flip a comparison operator when its operands are swapped
+/// (`2000 < obj.year` → `obj.year > 2000`).
+fn flip_comparison(op: &str) -> &str {
+    match op {
+        "<" => ">",
+        "<=" => ">=",
+        ">" => "<",
+        ">=" => "<=",
+        other => other, // ==, != are symmetric
+    }
+}
+
+fn predicate_error(msg: impl Into<String>) -> StdError {
+    // A clear, non-silent diagnostic: an unsupported predicate shape must never
+    // degrade into a wrong or absent filter.
+    type_error(format!("SwiftData #Predicate: {}", msg.into()))
+}
+
+/// Whether `node`'s subtree references the closure parameter `param`.
+fn references_param(node: &Node<'static>, param: &str) -> bool {
+    if node.kind() == NodeKind::IdentExpr && node.text().as_deref() == Some(param) {
+        return true;
+    }
+    node.children().any(|c| references_param(&c, param))
+}
+
+/// If `node` is `param.property` (a single-level member access on the closure
+/// parameter), return the property/column name.
+fn param_column(node: &Node<'static>, param: &str) -> Option<String> {
+    if node.kind() != NodeKind::MemberExpr {
+        return None;
+    }
+    let base = node.children().next()?;
+    if base.kind() == NodeKind::IdentExpr && base.text().as_deref() == Some(param) {
+        node.text()
+    } else {
+        None
+    }
+}
+
+/// Convert an evaluated Swift value into a bound SQL value.
+fn swift_to_db_value(value: &SwiftValue) -> Result<DbValue, StdError> {
+    match value {
+        SwiftValue::Nil => Ok(DbValue::Null),
+        SwiftValue::Bool(b) => Ok(DbValue::Int(i64::from(*b))),
+        SwiftValue::Int(i) => i64::try_from(i.raw)
+            .map(DbValue::Int)
+            .map_err(|_| predicate_error("integer literal does not fit in Int64")),
+        SwiftValue::Double(d) => Ok(DbValue::Real(*d)),
+        other => match as_string(other) {
+            Some(s) => Ok(DbValue::Text(s)),
+            None => Err(predicate_error(format!(
+                "cannot bind a value of type {} as a query parameter",
+                other.type_name()
+            ))),
+        },
+    }
+}
+
+/// Escape a `LIKE` pattern literal so `%` / `_` / `\\` are matched literally
+/// (the generated `LIKE` clause pairs this with `ESCAPE '\\'`).
+fn escape_like(literal: &str) -> String {
+    let mut out = String::with_capacity(literal.len());
+    for ch in literal.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// A compiled SQL fragment: text with `?` placeholders plus its bind values.
+struct Fragment {
+    sql: String,
+    params: Vec<DbValue>,
+}
+
+/// Compile a predicate closure body expression to a SQL `WHERE` fragment.
+struct PredicateCompiler<'a, 'c, 's> {
+    ctx: &'a mut dyn StdContext,
+    param: &'c str,
+    /// The model's derived schema, used to validate that a property reference
+    /// is well-typed for the SQL shape it lowers to. `None` when the model type
+    /// is unknown at compile time (e.g. an untyped `#Predicate`), in which case
+    /// validation is skipped rather than fabricating an error.
+    schema: Option<&'s ModelSchema>,
+}
+
+impl<'s> PredicateCompiler<'_, '_, 's> {
+    /// Resolve a referenced property to its column in the model schema. Returns
+    /// `Ok(None)` when no schema is available (validation disabled); an unknown
+    /// property with a schema present is a clear error.
+    fn column(&self, name: &str) -> Result<Option<&'s Column>, StdError> {
+        match self.schema {
+            Some(schema) => match schema.columns.iter().find(|c| c.name == name) {
+                Some(col) => Ok(Some(col)),
+                None => Err(predicate_error(format!(
+                    "'{name}' is not a stored property of {}",
+                    schema.type_name
+                ))),
+            },
+            None => Ok(None),
+        }
+    }
+
+    fn compile(&mut self, node: &Node<'static>) -> Result<Fragment, StdError> {
+        match node.kind() {
+            // A parenthesised single expression (should the frontend ever wrap
+            // one in a `TupleExpr`) is transparent.
+            NodeKind::TupleExpr if node.children().count() == 1 => {
+                let inner = node.children().next().unwrap();
+                self.compile(&inner)
+            }
+            NodeKind::PrefixExpr if node.text().as_deref() == Some("!") => {
+                let inner = node
+                    .children()
+                    .next()
+                    .ok_or_else(|| predicate_error("`!` without an operand"))?;
+                let frag = self.compile(&inner)?;
+                Ok(Fragment {
+                    sql: format!("(NOT {})", frag.sql),
+                    params: frag.params,
+                })
+            }
+            // A bare boolean stored property (`obj.watched`) used in boolean
+            // position lowers to `\"watched\" = 1`.
+            NodeKind::MemberExpr => {
+                let column = param_column(node, self.param).ok_or_else(|| {
+                    predicate_error("only a stored property of the model object is supported here")
+                })?;
+                // A bare property in boolean position must be a `Bool` column.
+                if let Some(col) = self.column(&column)? {
+                    if !col.is_bool {
+                        return Err(predicate_error(format!(
+                            "'{column}' is not a Bool; only a Bool property may be used as a \
+                             standalone condition (write an explicit comparison instead)"
+                        )));
+                    }
+                }
+                Ok(Fragment {
+                    sql: format!("{} = 1", quote_ident(&column)),
+                    params: vec![],
+                })
+            }
+            NodeKind::BinaryExpr => self.compile_binary(node),
+            NodeKind::CallExpr => self.compile_string_method(node),
+            other => Err(predicate_error(format!(
+                "unsupported expression `{other:?}` (supported: &&, ||, !, comparisons, \
+                 and String contains/hasPrefix/hasSuffix)"
+            ))),
+        }
+    }
+
+    fn compile_binary(&mut self, node: &Node<'static>) -> Result<Fragment, StdError> {
+        let op = node.text().unwrap_or_default();
+        let mut kids = node.children();
+        let lhs = kids
+            .next()
+            .ok_or_else(|| predicate_error("binary expression missing left operand"))?;
+        let rhs = kids
+            .next()
+            .ok_or_else(|| predicate_error("binary expression missing right operand"))?;
+
+        // Logical connectives combine two boolean fragments.
+        if op == "&&" || op == "||" {
+            let joiner = if op == "&&" { " AND " } else { " OR " };
+            let mut left = self.compile(&lhs)?;
+            let right = self.compile(&rhs)?;
+            left.params.extend(right.params);
+            return Ok(Fragment {
+                sql: format!("({}{joiner}{})", left.sql, right.sql),
+                params: left.params,
+            });
+        }
+
+        let Some(sql_op) = sql_comparison_op(&op) else {
+            return Err(predicate_error(format!("unsupported operator `{op}`")));
+        };
+
+        // Exactly one side must reference the model object (the column); the
+        // other is evaluated eagerly to a bound parameter.
+        let left_col = param_column(&lhs, self.param);
+        let right_col = param_column(&rhs, self.param);
+        let (column, value_node, effective_op) = match (left_col, right_col) {
+            (Some(col), None) if !references_param(&rhs, self.param) => (col, rhs, sql_op),
+            (None, Some(col)) if !references_param(&lhs, self.param) => {
+                (col, lhs, flip_comparison(&op))
+            }
+            _ => {
+                return Err(predicate_error(
+                    "a comparison must be between one stored property of the model \
+                     object and a literal or captured value",
+                ))
+            }
+        };
+        let effective_op = sql_comparison_op(effective_op).unwrap_or(effective_op);
+
+        // Validate the property reference exists in the schema (when known).
+        let col_info = self.column(&column)?;
+
+        let value = self.ctx.eval_node(&value_node)?;
+        let db_value = swift_to_db_value(&value)?;
+        let ident = quote_ident(&column);
+
+        // `== nil` / `!= nil` lower to `IS NULL` / `IS NOT NULL`.
+        if matches!(db_value, DbValue::Null) {
+            // Comparing to nil is only meaningful for an optional property.
+            if let Some(col) = col_info {
+                if col.not_null {
+                    return Err(predicate_error(format!(
+                        "'{column}' is not optional; only an optional property may be \
+                         compared to nil"
+                    )));
+                }
+            }
+            return match effective_op {
+                "=" => Ok(Fragment {
+                    sql: format!("{ident} IS NULL"),
+                    params: vec![],
+                }),
+                "<>" => Ok(Fragment {
+                    sql: format!("{ident} IS NOT NULL"),
+                    params: vec![],
+                }),
+                _ => Err(predicate_error("only == / != may compare against nil")),
+            };
+        }
+        Ok(Fragment {
+            sql: format!("{ident} {effective_op} ?"),
+            params: vec![db_value],
+        })
+    }
+
+    /// `obj.text.contains(\"x\")` / `hasPrefix` / `hasSuffix` → `LIKE`.
+    fn compile_string_method(&mut self, node: &Node<'static>) -> Result<Fragment, StdError> {
+        let mut kids = node.children();
+        let callee = kids
+            .next()
+            .ok_or_else(|| predicate_error("call without a callee"))?;
+        if callee.kind() != NodeKind::MemberExpr {
+            return Err(predicate_error("unsupported call in predicate"));
+        }
+        let method = callee.text().unwrap_or_default();
+        let receiver = callee
+            .children()
+            .next()
+            .ok_or_else(|| predicate_error("method call without a receiver"))?;
+        let column = param_column(&receiver, self.param).ok_or_else(|| {
+            predicate_error("string predicate must call the method on a stored property")
+        })?;
+        // `contains`/`hasPrefix`/`hasSuffix` lower to `LIKE`, valid only on a
+        // `String` (TEXT) column.
+        if let Some(col) = self.column(&column)? {
+            if col.sql_type != SqlType::Text {
+                return Err(predicate_error(format!(
+                    "'{column}' is not a String; `{method}` may only be used on a \
+                     String property"
+                )));
+            }
+        }
+        let arg = kids
+            .next()
+            .ok_or_else(|| predicate_error(format!("`{method}` requires one argument")))?;
+        if references_param(&arg, self.param) {
+            return Err(predicate_error(
+                "the argument may not reference the model object",
+            ));
+        }
+        if kids.next().is_some() {
+            return Err(predicate_error(format!(
+                "`{method}` takes exactly one argument"
+            )));
+        }
+        let value = self.ctx.eval_node(&arg)?;
+        let needle = as_string(&value)
+            .ok_or_else(|| predicate_error(format!("`{method}` expects a String argument")))?;
+        let pattern = match method.as_str() {
+            "contains" => format!("%{}%", escape_like(&needle)),
+            "hasPrefix" => format!("{}%", escape_like(&needle)),
+            "hasSuffix" => format!("%{}", escape_like(&needle)),
+            other => {
+                return Err(predicate_error(format!(
+                "unsupported String method `{other}` (supported: contains, hasPrefix, hasSuffix)"
+            )))
+            }
+        };
+        Ok(Fragment {
+            sql: format!("{} LIKE ? ESCAPE '\\'", quote_ident(&column)),
+            params: vec![DbValue::Text(pattern)],
+        })
+    }
+}
+
+/// The result expression of a predicate closure body (its single boolean
+/// expression), unwrapping an `ExprStmt`/`ReturnStmt` wrapper.
+fn closure_result_expr(closure: &Node<'static>) -> Option<Node<'static>> {
+    let last = closure
+        .children()
+        .filter(|c| c.kind() != NodeKind::Param)
+        .last()?;
+    match last.kind() {
+        NodeKind::ExprStmt | NodeKind::ReturnStmt => last.children().next(),
+        _ => Some(last),
+    }
+}
+
+fn predicate_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResult {
+    let type_name = node
+        .children()
+        .find(|c| c.kind() == NodeKind::TypeRef)
+        .and_then(|c| c.text());
+    let closure = node
+        .children()
+        .find(|c| c.kind() == NodeKind::ClosureExpr)
+        .ok_or_else(|| predicate_error("expected a closure body, `#Predicate<T> { obj in … }`"))?;
+    let param = closure
+        .children()
+        .find(|c| c.kind() == NodeKind::Param)
+        .and_then(|c| c.text())
+        .ok_or_else(|| predicate_error("the closure must name its parameter"))?;
+    let body = closure_result_expr(&closure)
+        .ok_or_else(|| predicate_error("the closure has no boolean expression"))?;
+
+    // Derive the model schema so property references can be type-checked. If the
+    // type is unwritten or its schema can't be derived (e.g. no such @Model),
+    // validation is skipped — container creation surfaces schema errors clearly.
+    let schema = match &type_name {
+        Some(t) => derive_schema(&*ctx, t).ok(),
+        None => None,
+    };
+
+    let fragment = {
+        let mut compiler = PredicateCompiler {
+            ctx,
+            param: &param,
+            schema: schema.as_ref(),
+        };
+        compiler.compile(&body)?
+    };
+
+    Ok(make_object(
+        "Predicate",
+        vec![
+            ("__where".into(), SwiftValue::Str(fragment.sql)),
+            (
+                "__params".into(),
+                SwiftValue::Str(encode_params(&fragment.params)),
+            ),
+            (
+                "__type".into(),
+                type_name.map(SwiftValue::Str).unwrap_or(SwiftValue::Nil),
+            ),
+        ],
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// SortDescriptor(\.key, order:)  and  FetchDescriptor(predicate:sortBy:)
+// ---------------------------------------------------------------------------
+
+fn sort_descriptor_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut column: Option<String> = None;
+    let mut order = "forward".to_string();
+    for arg in &args {
+        match arg.label.as_deref() {
+            Some("order") => {
+                order = match &arg.value {
+                    SwiftValue::Enum(e) => e.case.clone(),
+                    other => as_string(other).unwrap_or_else(|| "forward".to_string()),
+                };
+            }
+            _ => {
+                if let Some(comps) = ctx.key_path_components(&arg.value) {
+                    if !comps.is_empty() {
+                        column = Some(comps.join("."));
+                    }
+                }
+            }
+        }
+    }
+    let Some(column) = column else {
+        return Err(type_error(
+            "SortDescriptor requires a key path naming a stored property, e.g. SortDescriptor(\\.year)",
+        ));
+    };
+    Ok(make_object(
+        "SortDescriptor",
+        vec![
+            ("column".into(), SwiftValue::Str(column)),
+            ("order".into(), SwiftValue::Str(order)),
+        ],
+    ))
+}
+
+fn fetch_descriptor_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut where_sql = String::new();
+    let mut params_json = encode_params(&[]);
+    let mut type_name = SwiftValue::Nil;
+    let mut sort_by = SwiftValue::Array(Rc::new(Vec::new()));
+    let mut fetch_limit = SwiftValue::Nil;
+    for arg in &args {
+        match arg.label.as_deref() {
+            Some("predicate") | None => {
+                if let SwiftValue::Object(o) = &arg.value {
+                    let o = o.borrow();
+                    if o.class_name == "Predicate" {
+                        where_sql = o.get("__where").and_then(as_string).unwrap_or_default();
+                        if let Some(p) = o.get("__params").and_then(as_string) {
+                            params_json = p;
+                        }
+                        if let Some(t) = o.get("__type") {
+                            type_name = t.clone();
+                        }
+                    }
+                }
+            }
+            Some("sortBy") => {
+                if matches!(&arg.value, SwiftValue::Array(_)) {
+                    sort_by = arg.value.clone();
+                }
+            }
+            Some("fetchLimit") => {
+                if matches!(&arg.value, SwiftValue::Int(_)) {
+                    fetch_limit = arg.value.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(make_object(
+        "FetchDescriptor",
+        vec![
+            ("__where".into(), SwiftValue::Str(where_sql)),
+            ("__params".into(), SwiftValue::Str(params_json)),
+            ("__type".into(), type_name),
+            ("sortBy".into(), sort_by),
+            ("fetchLimit".into(), fetch_limit),
+        ],
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// context.fetch(FetchDescriptor)
+// ---------------------------------------------------------------------------
+
+/// A read-only snapshot of a `FetchDescriptor` object's compiled parts.
+struct FetchPlan {
+    where_sql: String,
+    params: Vec<DbValue>,
+    type_name: Option<String>,
+    order_by: Vec<(String, bool)>, // (column, reverse)
+    limit: Option<i64>,
+}
+
+fn read_fetch_plan(descriptor: &SwiftValue) -> Result<FetchPlan, StdError> {
+    let SwiftValue::Object(o) = descriptor else {
+        return Err(type_error(
+            "ModelContext.fetch(_:) expects a FetchDescriptor argument",
+        ));
+    };
+    let o = o.borrow();
+    if o.class_name != "FetchDescriptor" {
+        return Err(type_error(
+            "ModelContext.fetch(_:) expects a FetchDescriptor argument",
+        ));
+    }
+    let where_sql = o.get("__where").and_then(as_string).unwrap_or_default();
+    let params = o
+        .get("__params")
+        .and_then(as_string)
+        .map(|s| db::decode_params(&s).unwrap_or_default())
+        .unwrap_or_default();
+    let type_name = o.get("__type").and_then(as_string);
+    let mut order_by = Vec::new();
+    if let Some(SwiftValue::Array(items)) = o.get("sortBy") {
+        for item in items.iter() {
+            if let SwiftValue::Object(sd) = item {
+                let sd = sd.borrow();
+                if sd.class_name == "SortDescriptor" {
+                    if let Some(col) = sd.get("column").and_then(as_string) {
+                        let reverse =
+                            sd.get("order").and_then(as_string).as_deref() == Some("reverse");
+                        order_by.push((col, reverse));
+                    }
+                }
+            }
+        }
+    }
+    let limit = match o.get("fetchLimit") {
+        Some(SwiftValue::Int(i)) => i64::try_from(i.raw).ok(),
+        _ => None,
+    };
+    Ok(FetchPlan {
+        where_sql,
+        params,
+        type_name,
+        order_by,
+        limit,
+    })
+}
+
+fn select_sql(schema: &ModelSchema, plan: &FetchPlan) -> String {
+    let mut cols = vec!["rowid".to_string()];
+    cols.extend(schema.columns.iter().map(|c| quote_ident(&c.name)));
+    let mut sql = format!(
+        "SELECT {} FROM {}",
+        cols.join(", "),
+        quote_ident(&schema.table)
+    );
+    if !plan.where_sql.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&plan.where_sql);
+    }
+    if !plan.order_by.is_empty() {
+        let terms: Vec<String> = plan
+            .order_by
+            .iter()
+            .map(|(col, reverse)| {
+                format!(
+                    "{} {}",
+                    quote_ident(col),
+                    if *reverse { "DESC" } else { "ASC" }
+                )
+            })
+            .collect();
+        sql.push_str(" ORDER BY ");
+        sql.push_str(&terms.join(", "));
+    }
+    if let Some(limit) = plan.limit {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    sql
+}
+
+/// Decode a fetched column value into the Swift value its property expects.
+fn db_to_swift(value: &DbValue, col: &Column) -> SwiftValue {
+    match value {
+        DbValue::Null => SwiftValue::Nil,
+        DbValue::Int(i) => {
+            if col.is_bool {
+                SwiftValue::Bool(*i != 0)
+            } else {
+                SwiftValue::int(*i as i128)
+            }
+        }
+        DbValue::Real(d) => SwiftValue::Double(*d),
+        DbValue::Text(s) => SwiftValue::Str(s.clone()),
+        DbValue::Blob(_) => SwiftValue::Nil,
+    }
+}
+
+fn context_fetch(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let id = context_id(&recv)?;
+    let descriptor = args
+        .first()
+        .cloned()
+        .ok_or_else(|| type_error("ModelContext.fetch(_:) expects a FetchDescriptor argument"))?;
+    let plan = read_fetch_plan(&descriptor)?;
+    let iid = ctx.interpreter_id();
+
+    // Take the context state out so the host query call doesn't alias the
+    // thread-local borrow; always put it back.
+    let mut state = with_state(iid, |s| s.contexts.remove(&id))
+        .ok_or_else(|| type_error("ModelContext.fetch(): unknown context"))?;
+    let result = fetch_rows(ctx, &mut state, &plan);
+    with_state(iid, |s| {
+        s.contexts.insert(id, state);
+    });
+    let objects = result?;
+    Ok(Outcome {
+        result: SwiftValue::Array(Rc::new(objects)),
+        receiver: recv,
+    })
+}
+
+fn fetch_rows(
+    ctx: &mut dyn StdContext,
+    state: &mut ContextState,
+    plan: &FetchPlan,
+) -> Result<Vec<SwiftValue>, StdError> {
+    // Resolve the model type: the predicate's `<T>`, else the sole registered
+    // schema, else a clear diagnostic (never a silent wrong table).
+    let type_name = match &plan.type_name {
+        Some(t) => t.clone(),
+        None if state.schemas.len() == 1 => state.schemas[0].type_name.clone(),
+        None => {
+            return Err(type_error(
+                "SwiftData: cannot infer the model type to fetch; use FetchDescriptor with a \
+                 #Predicate<T> (this container registers several model types)",
+            ))
+        }
+    };
+    let schema = schema_for(&state.schemas, &type_name)?;
+    let sql = select_sql(schema, plan);
+    let rows = query(ctx, state.handle, &sql, &plan.params)?;
+
+    // Rows marked for deletion in this context but not yet committed are still
+    // physically present in the store, so the SELECT returns them. SwiftData
+    // excludes pending-deleted objects from fetch results within the context,
+    // so filter them out by rowid (scoped to this fetch's model type).
+    let deleted_rowids: std::collections::HashSet<i64> = state
+        .deleted
+        .iter()
+        .filter(|(obj, _)| obj.borrow().class_name == type_name)
+        .map(|(_, rowid)| *rowid)
+        .collect();
+
+    let mut objects = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let rowid = row
+            .iter()
+            .find(|(name, _)| name == "rowid")
+            .and_then(|(_, v)| match v {
+                DbValue::Int(i) => Some(*i),
+                _ => None,
+            })
+            .ok_or_else(|| type_error("SwiftData: fetched row is missing its rowid"))?;
+
+        // Exclude objects pending deletion in this context.
+        if deleted_rowids.contains(&rowid) {
+            continue;
+        }
+
+        // Identity map: fetching the same row twice returns the same instance.
+        // Keyed by `(type name, rowid)` so a row in another table with the same
+        // rowid can't alias this one.
+        if let Some(existing) = state.by_identity.get(&(type_name.clone(), rowid)) {
+            objects.push(SwiftValue::Object(Rc::clone(existing)));
+            continue;
+        }
+
+        let schema = schema_for(&state.schemas, &type_name)?;
+        let mut fields = Vec::with_capacity(schema.columns.len());
+        let mut snapshot = Vec::with_capacity(schema.columns.len());
+        for col in &schema.columns {
+            let db_value = row
+                .iter()
+                .find(|(name, _)| name == &col.name)
+                .map(|(_, v)| v.clone())
+                .unwrap_or(DbValue::Null);
+            fields.push((col.name.clone(), db_to_swift(&db_value, col)));
+            snapshot.push(db_value);
+        }
+        let obj = Rc::new(RefCell::new(ClassObj {
+            class_name: type_name.clone(),
+            fields,
+        }));
+        state
+            .by_identity
+            .insert((type_name.clone(), rowid), Rc::clone(&obj));
+        state.tracked.push(Tracked {
+            obj: Rc::clone(&obj),
+            rowid,
+            snapshot,
+        });
+        objects.push(SwiftValue::Object(obj));
+    }
+    Ok(objects)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -970,6 +1731,7 @@ mod tests {
         Commit,
         Rollback,
         Execute(String, Vec<DbValue>),
+        Query(String, Vec<DbValue>),
     }
 
     /// A mock [`StdContext`] that records the `tswift.db.*` wire traffic the
@@ -990,6 +1752,10 @@ mod tests {
         /// When true, `tswift.db.commit` replies `$thrown` (a commit-time
         /// failure), exercising the flush's commit-error rollback path.
         fail_commit: bool,
+        /// Canned `tswift.db.query` reply rows, keyed by a SQL substring match.
+        query_rows: Vec<(String, Vec<DbRow>)>,
+        /// Values a captured identifier resolves to inside `eval_node`.
+        captures: HashMap<String, SwiftValue>,
         sink: io::Sink,
     }
 
@@ -1005,6 +1771,8 @@ mod tests {
                 next_rowid: 0,
                 fail_on: None,
                 fail_commit: false,
+                query_rows: Vec::new(),
+                captures: HashMap::new(),
                 sink: io::sink(),
             }
         }
@@ -1114,7 +1882,60 @@ mod tests {
                         .encode(),
                     ))
                 }
+                db::OP_QUERY => {
+                    let sql = arg_str(1);
+                    let params = db::decode_params(&arg_str(2)).unwrap();
+                    self.calls.push(Call::Query(sql.clone(), params));
+                    if let Some(needle) = &self.fail_on {
+                        if sql.contains(needle.as_str()) {
+                            return Err(self.throw(host_error("boom")));
+                        }
+                    }
+                    let rows = self
+                        .query_rows
+                        .iter()
+                        .find(|(needle, _)| sql.contains(needle.as_str()))
+                        .map(|(_, rows)| rows.clone())
+                        .unwrap_or_default();
+                    Ok(SwiftValue::Str(db::encode_rows(&rows)))
+                }
                 other => panic!("unexpected host fn {other}"),
+            }
+        }
+
+        fn key_path_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
+            // Test convention: a key path is spelled `Str("kp:col")`.
+            match value {
+                SwiftValue::Str(s) => s.strip_prefix("kp:").map(|c| vec![c.to_string()]),
+                _ => None,
+            }
+        }
+
+        fn eval_node(&mut self, node: &Node<'static>) -> StdResult {
+            // A minimal literal/captured-identifier evaluator — enough for the
+            // non-column side of a predicate comparison in these tests.
+            match node.kind() {
+                NodeKind::IntegerLiteral => Ok(SwiftValue::int(node.int().unwrap_or(0) as i128)),
+                NodeKind::FloatLiteral => Ok(SwiftValue::Double(node.float().unwrap_or(0.0))),
+                NodeKind::BoolLiteral => Ok(SwiftValue::Bool(node.bool().unwrap_or(false))),
+                NodeKind::NilLiteral => Ok(SwiftValue::Nil),
+                NodeKind::StringLiteral => {
+                    let raw = node.text().unwrap_or_default();
+                    let inner = raw
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .unwrap_or(&raw)
+                        .to_string();
+                    Ok(SwiftValue::Str(inner))
+                }
+                NodeKind::IdentExpr => {
+                    let name = node.text().unwrap_or_default();
+                    self.captures
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| type_error(format!("unknown capture `{name}`")))
+                }
+                other => Err(type_error(format!("mock eval_node: unsupported {other:?}"))),
             }
         }
     }
@@ -1419,16 +2240,19 @@ mod tests {
                     name: "title".into(),
                     sql_type: SqlType::Text,
                     not_null: true,
+                    is_bool: false,
                 },
                 Column {
                     name: "rating".into(),
                     sql_type: SqlType::Real,
                     not_null: false,
+                    is_bool: false,
                 },
                 Column {
                     name: "seen".into(),
                     sql_type: SqlType::Integer,
                     not_null: true,
+                    is_bool: false,
                 },
             ],
         };
@@ -1453,6 +2277,7 @@ mod tests {
             name: "t".into(),
             sql_type: SqlType::Text,
             not_null: false,
+            is_bool: false,
         };
         assert_eq!(
             encode_field(&SwiftValue::Str("hi".into()), &text_col, "M").unwrap(),
@@ -1466,6 +2291,7 @@ mod tests {
             name: "n".into(),
             sql_type: SqlType::Integer,
             not_null: true,
+            is_bool: false,
         };
         assert_eq!(
             encode_field(&SwiftValue::int(5), &int_col, "M").unwrap(),
@@ -1572,5 +2398,543 @@ mod tests {
         // Cleanup B's bucket so the thread-local doesn't leak into other tests
         // that may reuse this thread.
         teardown_registry(&mut b);
+    }
+
+    // ---------------------------------------------------------------------
+    // Fetch path: #Predicate → SQL, SortDescriptor, FetchDescriptor, fetch.
+    // ---------------------------------------------------------------------
+
+    /// Parse `body` inside a `#Predicate<Movie> { m in … }` and return the
+    /// `CompilerDirective` node (leaked to `'static`, matching how the
+    /// interpreter holds AST nodes).
+    fn predicate_node(body: &str) -> Node<'static> {
+        typed_predicate_node("Movie", "m", body)
+    }
+
+    fn typed_predicate_node(type_name: &str, param: &str, body: &str) -> Node<'static> {
+        let src = format!("let _p = #Predicate<{type_name}> {{ {param} in\n{body}\n}}\n");
+        let analysis = tswift_frontend::Analysis::analyze(&src, "pred.swift").unwrap();
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        find_kind(analysis.root(), NodeKind::CompilerDirective)
+            .expect("no #Predicate directive parsed")
+    }
+
+    fn find_kind(node: Node<'static>, kind: NodeKind) -> Option<Node<'static>> {
+        if node.kind() == kind {
+            return Some(node);
+        }
+        for child in node.children() {
+            if let Some(found) = find_kind(child, kind) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Compile a predicate body and return `(where_sql, params)`.
+    fn compile_predicate(ctx: &mut MockCtx, body: &str) -> (String, Vec<DbValue>) {
+        let node = predicate_node(body);
+        let value = predicate_macro(ctx, &node).unwrap();
+        let SwiftValue::Object(o) = value else {
+            panic!("predicate is not an object");
+        };
+        let o = o.borrow();
+        let where_sql = o.get("__where").and_then(as_string).unwrap();
+        let params =
+            db::decode_params(&o.get("__params").and_then(|v| as_string(&v)).unwrap()).unwrap();
+        (where_sql, params)
+    }
+
+    #[test]
+    fn predicate_compiles_comparisons_to_bound_where() {
+        let mut ctx = MockCtx::new(true);
+        let (sql, params) = compile_predicate(&mut ctx, "m.year > 2000");
+        assert_eq!(sql, "\"year\" > ?");
+        assert_eq!(params, vec![DbValue::Int(2000)]);
+
+        // Swapped operands flip the operator.
+        let (sql, params) = compile_predicate(&mut ctx, "2000 < m.year");
+        assert_eq!(sql, "\"year\" > ?");
+        assert_eq!(params, vec![DbValue::Int(2000)]);
+
+        let (sql, params) = compile_predicate(&mut ctx, "m.title == \"Arrival\"");
+        assert_eq!(sql, "\"title\" = ?");
+        assert_eq!(params, vec![DbValue::Text("Arrival".into())]);
+
+        let (sql, params) = compile_predicate(&mut ctx, "m.title != \"Dune\"");
+        assert_eq!(sql, "\"title\" <> ?");
+        assert_eq!(params, vec![DbValue::Text("Dune".into())]);
+    }
+
+    #[test]
+    fn predicate_compiles_boolean_connectives_and_negation() {
+        let mut ctx = MockCtx::new(true);
+        let (sql, params) = compile_predicate(&mut ctx, "m.year >= 2000 && m.title == \"A\"");
+        assert_eq!(sql, "(\"year\" >= ? AND \"title\" = ?)");
+        assert_eq!(params, vec![DbValue::Int(2000), DbValue::Text("A".into())]);
+
+        let (sql, _) = compile_predicate(&mut ctx, "m.year > 2000 || m.year < 1990");
+        assert_eq!(sql, "(\"year\" > ? OR \"year\" < ?)");
+
+        let (sql, _) = compile_predicate(&mut ctx, "!(m.year > 2000)");
+        assert_eq!(sql, "(NOT \"year\" > ?)");
+
+        // A bare boolean stored property lowers to `= 1`; `!` negates it.
+        let (sql, params) = compile_predicate(&mut ctx, "!m.watched");
+        assert_eq!(sql, "(NOT \"watched\" = 1)");
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn predicate_compiles_string_methods_to_like() {
+        let mut ctx = MockCtx::new(true);
+        let (sql, params) = compile_predicate(&mut ctx, "m.title.contains(\"ar\")");
+        assert_eq!(sql, "\"title\" LIKE ? ESCAPE '\\'");
+        assert_eq!(params, vec![DbValue::Text("%ar%".into())]);
+
+        let (sql, params) = compile_predicate(&mut ctx, "m.title.hasPrefix(\"Ar\")");
+        assert_eq!(params, vec![DbValue::Text("Ar%".into())]);
+        assert!(sql.contains("LIKE ?"));
+
+        let (sql, params) = compile_predicate(&mut ctx, "m.title.hasSuffix(\"al\")");
+        assert_eq!(params, vec![DbValue::Text("%al".into())]);
+        assert!(sql.contains("LIKE ?"));
+
+        // `%`/`_` in the needle are escaped so they match literally.
+        let (_, params) = compile_predicate(&mut ctx, "m.title.contains(\"5%_x\")");
+        assert_eq!(params, vec![DbValue::Text("%5\\%\\_x%".into())]);
+    }
+
+    #[test]
+    fn string_method_rejects_extra_arguments() {
+        let mut ctx = MockCtx::new(true);
+        let node = predicate_node("m.title.contains(\"x\", \"y\")");
+        let err = predicate_macro(&mut ctx, &node).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("exactly one argument"), "{msg}");
+    }
+
+    #[test]
+    fn predicate_compiles_nil_comparisons_to_is_null() {
+        let mut ctx = MockCtx::new(true);
+        let (sql, params) = compile_predicate(&mut ctx, "m.body == nil");
+        assert_eq!(sql, "\"body\" IS NULL");
+        assert!(params.is_empty());
+        let (sql, _) = compile_predicate(&mut ctx, "m.body != nil");
+        assert_eq!(sql, "\"body\" IS NOT NULL");
+    }
+
+    #[test]
+    fn predicate_captures_values_eagerly() {
+        let mut ctx = MockCtx::new(true);
+        ctx.captures.insert("minYear".into(), SwiftValue::int(1999));
+        let (sql, params) = compile_predicate(&mut ctx, "m.year >= minYear");
+        assert_eq!(sql, "\"year\" >= ?");
+        assert_eq!(params, vec![DbValue::Int(1999)]);
+    }
+
+    #[test]
+    fn predicate_records_its_generic_model_type() {
+        let mut ctx = MockCtx::new(true);
+        let node = predicate_node("m.year > 2000");
+        let value = predicate_macro(&mut ctx, &node).unwrap();
+        let SwiftValue::Object(o) = value else {
+            panic!()
+        };
+        assert_eq!(
+            o.borrow()
+                .get("__type")
+                .and_then(|v| as_string(&v))
+                .as_deref(),
+            Some("Movie")
+        );
+    }
+
+    #[test]
+    fn unsupported_predicate_shape_is_a_clear_error() {
+        let mut ctx = MockCtx::new(true);
+        // Comparing two stored properties is not expressible as a bound param.
+        let node = predicate_node("m.year > m.other");
+        let err = predicate_macro(&mut ctx, &node).unwrap_err();
+        assert!(matches!(err, StdError::Error(_)));
+        // An unsupported operator (`~=`) is rejected too.
+        let node = predicate_node("m.year + 1 > 2000");
+        assert!(predicate_macro(&mut ctx, &node).is_err());
+    }
+
+    #[test]
+    fn sort_descriptor_reads_keypath_and_order() {
+        let mut ctx = MockCtx::new(true);
+        let forward = sort_descriptor_init(
+            &mut ctx,
+            vec![Arg::positional(SwiftValue::Str("kp:year".into()))],
+        )
+        .unwrap();
+        let SwiftValue::Object(o) = &forward else {
+            panic!()
+        };
+        assert_eq!(
+            o.borrow().get("column").and_then(as_string).as_deref(),
+            Some("year")
+        );
+        assert_eq!(
+            o.borrow().get("order").and_then(as_string).as_deref(),
+            Some("forward")
+        );
+
+        let reverse = sort_descriptor_init(
+            &mut ctx,
+            vec![
+                Arg::positional(SwiftValue::Str("kp:title".into())),
+                labeled(
+                    "order",
+                    SwiftValue::Enum(Rc::new(tswift_core::EnumObj {
+                        type_name: "SortOrder".into(),
+                        case: "reverse".into(),
+                        payload: vec![],
+                    })),
+                ),
+            ],
+        )
+        .unwrap();
+        let SwiftValue::Object(o) = &reverse else {
+            panic!()
+        };
+        assert_eq!(
+            o.borrow().get("order").and_then(as_string).as_deref(),
+            Some("reverse")
+        );
+    }
+
+    #[test]
+    fn select_sql_includes_where_order_and_limit() {
+        let schema = ModelSchema {
+            type_name: "Movie".into(),
+            table: "Movie".into(),
+            columns: vec![
+                Column {
+                    name: "title".into(),
+                    sql_type: SqlType::Text,
+                    not_null: true,
+                    is_bool: false,
+                },
+                Column {
+                    name: "year".into(),
+                    sql_type: SqlType::Integer,
+                    not_null: true,
+                    is_bool: false,
+                },
+            ],
+        };
+        let plan = FetchPlan {
+            where_sql: "\"year\" > ?".into(),
+            params: vec![DbValue::Int(2000)],
+            type_name: Some("Movie".into()),
+            order_by: vec![("year".into(), true), ("title".into(), false)],
+            limit: Some(5),
+        };
+        assert_eq!(
+            select_sql(&schema, &plan),
+            "SELECT rowid, \"title\", \"year\" FROM \"Movie\" WHERE \"year\" > ? \
+             ORDER BY \"year\" DESC, \"title\" ASC LIMIT 5"
+        );
+    }
+
+    /// Build a container and stock a canned query reply of two Movie rows.
+    fn movie_rows() -> Vec<DbRow> {
+        vec![
+            vec![
+                ("rowid".into(), DbValue::Int(1)),
+                ("title".into(), DbValue::Text("Arrival".into())),
+                ("year".into(), DbValue::Int(2016)),
+            ],
+            vec![
+                ("rowid".into(), DbValue::Int(2)),
+                ("title".into(), DbValue::Text("Dune".into())),
+                ("year".into(), DbValue::Int(2021)),
+            ],
+        ]
+    }
+
+    #[test]
+    fn fetch_emits_single_select_and_decodes_rows() {
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        ctx.query_rows.push(("SELECT".into(), movie_rows()));
+        let (_c, main) = movie_container(&mut ctx);
+
+        let sort = sort_descriptor_init(
+            &mut ctx,
+            vec![
+                Arg::positional(SwiftValue::Str("kp:year".into())),
+                labeled(
+                    "order",
+                    SwiftValue::Enum(Rc::new(tswift_core::EnumObj {
+                        type_name: "SortOrder".into(),
+                        case: "reverse".into(),
+                        payload: vec![],
+                    })),
+                ),
+            ],
+        )
+        .unwrap();
+        let descriptor = fetch_descriptor_init(
+            &mut ctx,
+            vec![labeled("sortBy", SwiftValue::Array(Rc::new(vec![sort])))],
+        )
+        .unwrap();
+
+        let before = ctx.calls.len();
+        let out = context_fetch(&mut ctx, main, vec![descriptor]).unwrap();
+        // Exactly one query call, with the expected SELECT.
+        let queries: Vec<_> = ctx.calls[before..]
+            .iter()
+            .filter(|c| matches!(c, Call::Query(_, _)))
+            .collect();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(
+            queries[0],
+            &Call::Query(
+                "SELECT rowid, \"title\", \"year\" FROM \"Movie\" ORDER BY \"year\" DESC".into(),
+                vec![]
+            )
+        );
+        // Two decoded Movie objects.
+        let SwiftValue::Array(items) = out.result else {
+            panic!()
+        };
+        assert_eq!(items.len(), 2);
+        let SwiftValue::Object(first) = &items[0] else {
+            panic!()
+        };
+        assert_eq!(first.borrow().class_name, "Movie");
+        assert_eq!(
+            first
+                .borrow()
+                .get("title")
+                .and_then(|v| as_string(&v))
+                .as_deref(),
+            Some("Arrival")
+        );
+    }
+
+    #[test]
+    fn fetch_returns_same_instance_for_same_row() {
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        ctx.query_rows.push(("SELECT".into(), movie_rows()));
+        let (_c, main) = movie_container(&mut ctx);
+
+        let descriptor = fetch_descriptor_init(&mut ctx, vec![]).unwrap();
+        let first = context_fetch(&mut ctx, main.clone(), vec![descriptor.clone()]).unwrap();
+        let second = context_fetch(&mut ctx, main, vec![descriptor]).unwrap();
+        let (SwiftValue::Array(a), SwiftValue::Array(b)) = (first.result, second.result) else {
+            panic!()
+        };
+        // The identity map returns the *same* Rc across two fetches of row 1.
+        let (SwiftValue::Object(oa), SwiftValue::Object(ob)) = (&a[0], &b[0]) else {
+            panic!()
+        };
+        assert!(Rc::ptr_eq(oa, ob));
+    }
+
+    #[test]
+    fn fetched_object_mutation_then_save_updates_by_rowid() {
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        ctx.query_rows.push(("SELECT".into(), movie_rows()));
+        let (_c, main) = movie_container(&mut ctx);
+        let descriptor = fetch_descriptor_init(&mut ctx, vec![]).unwrap();
+        let fetched = context_fetch(&mut ctx, main.clone(), vec![descriptor]).unwrap();
+        let SwiftValue::Array(items) = fetched.result else {
+            panic!()
+        };
+        let SwiftValue::Object(movie) = &items[0] else {
+            panic!()
+        };
+        movie.borrow_mut().set("year", SwiftValue::int(1999));
+        let before = ctx.calls.len();
+        context_save(&mut ctx, main, vec![]).unwrap();
+        assert_eq!(ctx.calls[before], Call::Begin);
+        assert_eq!(
+            ctx.calls[before + 1],
+            Call::Execute(
+                "UPDATE \"Movie\" SET \"title\" = ?, \"year\" = ? WHERE rowid = ?".into(),
+                vec![
+                    DbValue::Text("Arrival".into()),
+                    DbValue::Int(1999),
+                    DbValue::Int(1)
+                ]
+            )
+        );
+        assert_eq!(ctx.calls[before + 2], Call::Commit);
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue 1: identity map must be keyed by (type, rowid), not rowid alone.
+    // ---------------------------------------------------------------------
+
+    /// Build an in-memory container registering *two* `@Model` types sharing one
+    /// connection, returning `(container, main_context)`.
+    fn two_model_container(ctx: &mut MockCtx) -> SwiftValue {
+        let config = model_configuration_init(
+            ctx,
+            vec![labeled("isStoredInMemoryOnly", SwiftValue::Bool(true))],
+        )
+        .unwrap();
+        let container = model_container_init(
+            ctx,
+            vec![
+                labeled("for", SwiftValue::Metatype("Movie".into())),
+                Arg::positional(SwiftValue::Metatype("Actor".into())),
+                labeled("configurations", config),
+            ],
+        )
+        .unwrap();
+        container_main_context(ctx, container).unwrap()
+    }
+
+    fn fetch_one(
+        ctx: &mut MockCtx,
+        main: &SwiftValue,
+        predicate: SwiftValue,
+    ) -> Rc<RefCell<ClassObj>> {
+        let descriptor = fetch_descriptor_init(ctx, vec![labeled("predicate", predicate)]).unwrap();
+        let out = context_fetch(ctx, main.clone(), vec![descriptor]).unwrap();
+        let SwiftValue::Array(items) = out.result else {
+            panic!("fetch did not return an array")
+        };
+        let SwiftValue::Object(obj) = &items[0] else {
+            panic!("fetched element is not an object")
+        };
+        Rc::clone(obj)
+    }
+
+    #[test]
+    fn fetch_across_model_types_with_same_rowid_returns_distinct_instances() {
+        // Both tables own a row with rowid == 1 (rowid is unique only per table).
+        let mut ctx = MockCtx::new(true)
+            .with_model("Movie", &[("year", "Int")])
+            .with_model("Actor", &[("name", "String")]);
+        ctx.query_rows.push((
+            "FROM \"Movie\"".into(),
+            vec![vec![
+                ("rowid".into(), DbValue::Int(1)),
+                ("year".into(), DbValue::Int(2016)),
+            ]],
+        ));
+        ctx.query_rows.push((
+            "FROM \"Actor\"".into(),
+            vec![vec![
+                ("rowid".into(), DbValue::Int(1)),
+                ("name".into(), DbValue::Text("Amy".into())),
+            ]],
+        ));
+        let main = two_model_container(&mut ctx);
+
+        let movie_pred = predicate_macro(&mut ctx, &predicate_node("m.year > 0")).unwrap();
+        let actor_pred = predicate_macro(
+            &mut ctx,
+            &typed_predicate_node("Actor", "a", "a.name == \"Amy\""),
+        )
+        .unwrap();
+
+        // Fetch Movie (rowid 1) then Actor (rowid 1). A rowid-only identity map
+        // would return the Movie instance for the Actor fetch.
+        let movie = fetch_one(&mut ctx, &main, movie_pred);
+        let actor = fetch_one(&mut ctx, &main, actor_pred);
+
+        assert_eq!(movie.borrow().class_name, "Movie");
+        assert_eq!(actor.borrow().class_name, "Actor");
+        assert!(!Rc::ptr_eq(&movie, &actor), "instances must be distinct");
+
+        // Mutating each and saving must UPDATE the correct table, both rowid 1.
+        movie.borrow_mut().set("year", SwiftValue::int(1999));
+        actor
+            .borrow_mut()
+            .set("name", SwiftValue::Str("Amy A".into()));
+        let before = ctx.calls.len();
+        context_save(&mut ctx, main, vec![]).unwrap();
+        let executes: Vec<_> = ctx.calls[before..]
+            .iter()
+            .filter_map(|c| match c {
+                Call::Execute(sql, p) => Some((sql.clone(), p.clone())),
+                _ => None,
+            })
+            .collect();
+        assert!(executes.contains(&(
+            "UPDATE \"Movie\" SET \"year\" = ? WHERE rowid = ?".into(),
+            vec![DbValue::Int(1999), DbValue::Int(1)],
+        )));
+        assert!(executes.contains(&(
+            "UPDATE \"Actor\" SET \"name\" = ? WHERE rowid = ?".into(),
+            vec![DbValue::Text("Amy A".into()), DbValue::Int(1)],
+        )));
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue 2: objects pending deletion are excluded from fetch results.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn pending_deleted_object_is_excluded_from_fetch() {
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        // The store still physically holds both rows until save commits.
+        ctx.query_rows.push(("SELECT".into(), movie_rows()));
+        let (_c, main) = movie_container(&mut ctx);
+
+        // Insert + save one row (rowid 1), then mark it deleted (not yet saved).
+        let m = movie("Arrival", 2016);
+        context_insert(&mut ctx, main.clone(), vec![m.clone()]).unwrap();
+        context_save(&mut ctx, main.clone(), vec![]).unwrap();
+        context_delete(&mut ctx, main.clone(), vec![m]).unwrap();
+
+        let descriptor = fetch_descriptor_init(&mut ctx, vec![]).unwrap();
+        let out = context_fetch(&mut ctx, main, vec![descriptor]).unwrap();
+        let SwiftValue::Array(items) = out.result else {
+            panic!()
+        };
+        // rowid 1 is pending deletion → excluded; only rowid 2 (Dune) remains.
+        assert_eq!(items.len(), 1);
+        let SwiftValue::Object(o) = &items[0] else {
+            panic!()
+        };
+        assert_eq!(
+            o.borrow().get("title").and_then(as_string).as_deref(),
+            Some("Dune")
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Issue 3: predicate lowering validates property references vs. schema.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn predicate_validates_property_references_against_schema() {
+        let mut ctx = MockCtx::new(true).with_model(
+            "Movie",
+            &[
+                ("title", "String"),
+                ("year", "Int"),
+                ("watched", "Bool"),
+                ("body", "String?"),
+            ],
+        );
+
+        // Bare-bool position requires a Bool property.
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.year")).is_err());
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.watched")).is_ok());
+
+        // String methods require a String property.
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.year.contains(\"x\")")).is_err());
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.title.contains(\"x\")")).is_ok());
+
+        // nil comparison requires an optional property.
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.title == nil")).is_err());
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.body == nil")).is_ok());
+
+        // An unknown property is a clear error too.
+        assert!(predicate_macro(&mut ctx, &predicate_node("m.nope > 1")).is_err());
     }
 }

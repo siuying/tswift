@@ -972,6 +972,11 @@ pub struct Interpreter<'w> {
     /// deterministically. Drained by [`Interpreter::teardown`], which the
     /// `Drop` impl also calls, so each finalizer runs exactly once.
     finalizers: Vec<crate::stdlib::Finalizer>,
+    /// Freestanding-macro handlers registered by frameworks via
+    /// [`Interpreter::register_macro`], keyed by the macro name (`"Predicate"`
+    /// for `#Predicate`). Consulted by [`Interpreter::eval_macro`] before the
+    /// builtin macros. Core assigns the name no meaning.
+    macros: HashMap<String, crate::stdlib::MacroFn>,
     /// A process-unique, monotonically-assigned identity for this interpreter,
     /// handed out at construction from [`NEXT_INTERPRETER_ID`]. Exposed
     /// generically via [`StdContext::interpreter_id`] so a framework holding
@@ -1063,6 +1068,7 @@ impl<'w> Interpreter<'w> {
             response_disposition_token: 0,
             singletons: HashMap::new(),
             finalizers: Vec::new(),
+            macros: HashMap::new(),
             id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -1148,6 +1154,16 @@ impl<'w> Interpreter<'w> {
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
         self.globals
             .add_free_fn(name, FreeFnEntry { f, params: None });
+    }
+
+    /// Register a freestanding-macro handler served through the [`StdContext`]
+    /// seam, keyed by the macro name without its leading `#` (`"Predicate"`
+    /// handles `#Predicate`). Consulted by the macro evaluator before the
+    /// builtin macros, so a framework can give `#Name<T> { … }` custom
+    /// semantics (e.g. compiling a predicate closure to SQL). Core assigns the
+    /// name and node shape no meaning.
+    pub fn register_macro(&mut self, name: &str, f: crate::stdlib::MacroFn) {
+        self.macros.insert(name.to_string(), f);
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -3189,6 +3205,14 @@ impl<'w> Interpreter<'w> {
     /// Magic literals: `#file`, `#line`, `#function`, `#column`.
     fn eval_macro(&mut self, node: &Node<'static>) -> Eval {
         let which = node.text().unwrap_or_default();
+        // A framework-registered freestanding macro (`#Predicate`, …) takes
+        // priority: strip a leading `#` from the directive spelling and look it
+        // up. The handler inspects the node's children (generic type args +
+        // trailing-closure body) itself.
+        let macro_name = which.strip_prefix('#').unwrap_or(&which);
+        if let Some(handler) = self.macros.get(macro_name).copied() {
+            return handler(self, node).map_err(Self::std_error_to_signal);
+        }
         match which.as_str() {
             "file" | "filePath" | "fileID" => Ok(SwiftValue::Str(self.filename.clone())),
             "line" => Ok(SwiftValue::int(node.line() as i128)),
@@ -5003,6 +5027,14 @@ impl StdContext for Interpreter<'_> {
 
     fn is_host_fn(&self, name: &str) -> bool {
         Interpreter::is_host_fn(self, name)
+    }
+
+    fn key_path_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
+        self.keypath_components(value)
+    }
+
+    fn eval_node(&mut self, node: &Node<'static>) -> crate::stdlib::StdResult {
+        self.eval(node).map_err(Self::signal_to_std_error)
     }
 
     fn nominal_type_info(&self, type_name: &str) -> Option<crate::stdlib::NominalTypeInfo> {

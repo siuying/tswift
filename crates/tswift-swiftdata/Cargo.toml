@@ -8,3 +8,9 @@ description = "tswift SwiftData substrate: the tswift.db.* host-service wire (SQ
 
 [dependencies]
 tswift-core.workspace = true
+tswift-frontend.workspace = true
+
+[dev-dependencies]
+# Predicate-compilation tests parse real `#Predicate<T> { … }` source to obtain
+# the `CompilerDirective` AST node the macro handler compiles to SQL.
+tswift-frontend.workspace = true

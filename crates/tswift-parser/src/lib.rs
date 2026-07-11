@@ -2768,6 +2768,30 @@ impl<'a> Parser<'a> {
                     }
                     self.ast.append_child(node, path);
                     self.expect(TokenKind::RParen)?;
+                } else if let Some(end) = self.generic_call_args() {
+                    // Freestanding macro form `#Name<T, …>(args) { closure }`
+                    // (e.g. `#Predicate<Movie> { … }`). Record each generic
+                    // type-identifier argument as a `TypeRef` child, discard a
+                    // parenthesised argument list, and attach a trailing
+                    // closure as a child so a macro handler can inspect the
+                    // un-evaluated body. Gated on a generic clause being
+                    // present so `if #available(…) { … }` (no generics) never
+                    // mistakes the `if`-body brace for a trailing closure.
+                    for j in self.pos..end {
+                        let t = self.tokens[j];
+                        if t.kind == TokenKind::Identifier {
+                            let ty = self.ast.add(NodeKind::TypeRef, Some(t.text), t.line, t.col);
+                            self.ast.append_child(node, ty);
+                        }
+                    }
+                    self.pos = end;
+                    if self.peek().kind == TokenKind::LParen {
+                        self.skip_balanced_parens();
+                    }
+                    if self.peek().kind == TokenKind::LBrace {
+                        let closure = self.parse_closure()?;
+                        self.ast.append_child(node, closure);
+                    }
                 } else if self.peek().kind == TokenKind::LParen {
                     self.skip_balanced_parens();
                 }

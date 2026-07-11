@@ -104,12 +104,80 @@ rather than faked.
 
 ### Deferred (clean seams left)
 
-- `fetch(_:)` / `#Predicate` / `FetchDescriptor`, relationships (`@Relationship`),
-  `@Attribute(.unique)`, cascade deletes.
+- Relationships (`@Relationship`), `@Attribute(.unique)`, cascade deletes.
 - A Swift-visible `.persistentModelID` accessor on the model instance (member
   access on a user class routes through its `ClassDef`, not this crate's
   builtin dispatch; the rowid is tracked internally for identity today).
 - `Data`/`Date` columns (need a value-shape decision with Foundation).
 
-The schema and open connection already exist, so `fetch` is an additive next
-step over the same wire.
+## Slice 10 — the fetch path (`fetch`, `#Predicate`, `SortDescriptor`, `FetchDescriptor`)
+
+Adds reads over the same `tswift.db.*` wire. Ships `ModelContext.fetch(_:)`,
+`FetchDescriptor<T>(predicate:sortBy:)` (+ mutable `fetchLimit`),
+`SortDescriptor(\.key, order:)`, and `#Predicate<T> { obj in … }` compiled to a
+parameterised SQL `WHERE`.
+
+### `#Predicate` compiles to SQL at creation time (bound params, quoted idents)
+
+Real SwiftData's `#Predicate` is a compile-time macro evaluated lazily against
+each object. Here it lowers **straight to SQL** when the `#Predicate` value is
+formed: the closure body AST is walked into a `WHERE` fragment with `?`
+placeholders, and any sub-expression that does *not* reference the closure
+parameter (a literal or a captured variable) is evaluated eagerly to a **bound
+parameter** (mirroring SwiftData capturing values at predicate-formation time).
+Values are **never interpolated** into SQL; identifiers are always
+double-quoted (`quote_ident`). Supported shapes: `== != < <= > >=` between a
+stored property and a literal/captured value (operands may appear in either
+order — a swapped comparison flips the operator); `&& || !`; a bare `Bool`
+property (`→ "col" = 1`); `== nil` / `!= nil` (`→ IS [NOT] NULL`); and
+`String` `contains`/`hasPrefix`/`hasSuffix` (`→ LIKE ? ESCAPE '\'` with `% _ \`
+escaped in the needle). **Any other shape raises a clear diagnostic** — never a
+silent full scan with a wrong/absent filter.
+
+### Generic core seams (no SwiftData knowledge in core)
+
+Three additive, framework-agnostic seams make this possible without core
+learning anything about SwiftData or SQL:
+
+- **Freestanding-macro registration.** `Interpreter::register_macro(name, fn)`
+  + `StdContext::MacroFn`; `eval_macro` dispatches a registered `#Name` to the
+  handler, passing the `CompilerDirective` AST node. The **parser** now parses
+  `#Name<T, …> { closure }` (a directive followed by a generic clause records
+  each type identifier as a `TypeRef` child and attaches a trailing closure as
+  a child) — gated on a generic clause being present so `if #available(…) { … }`
+  never mistakes the `if`-body brace for a trailing closure.
+- **`StdContext::eval_node(node)`** — evaluate an un-evaluated expression node
+  in the current environment; the predicate compiler uses it to turn the
+  non-column side of a comparison into a bound value.
+- **`StdContext::key_path_components(value)`** — the ordered component names of
+  a key-path value, so `SortDescriptor(\.year)` maps to an `ORDER BY` column
+  without core knowing what a `SortDescriptor` is.
+
+### One SQL per fetch; per-context identity map
+
+`fetch` emits a single `SELECT rowid, <cols> FROM <table> [WHERE …] [ORDER BY
+…] [LIMIT n]` and decodes each row into a model instance. A per-context
+**identity map** (`HashMap<rowid, Rc<ClassObj>>`, O(1)) guarantees fetching the
+same row twice in one context returns the **same instance**; fetched objects
+are **tracked** (added to the change set with a column snapshot) so
+mutate-then-`save()` emits an `UPDATE … WHERE rowid = ?`.
+
+**Model-type resolution.** `fetch<T>` needs `T`; the generic on
+`FetchDescriptor<T>()` is not preserved through the free-fn call, so the type is
+recovered from (1) the predicate's `<T>`, else (2) the sole registered schema
+when the container has exactly one model type. An ambiguous multi-model fetch
+with no predicate raises a clear diagnostic asking for a `#Predicate<T>`
+(documented deviation from Apple, where the generic is always inferred).
+
+### `@Query` / `.modelContainer(for:)` — deferred (R2 verified)
+
+SwiftUI's `@Query` is **not** shipped in this slice. R2 (does a re-render reach
+a `@Query`?) was verified in the affirmative: the render session re-evaluates
+`body` on **every** `dispatch` event (`session.rs`), so a `@Query` that fetches
+on every render would reflect a `save()` performed inside a button action
+without any dedicated save-notification hook — a hook is only needed for saves
+off the event loop (async), which is out of scope. The remaining work is a
+generic "framework contributes a prelude property-wrapper + reads the
+environment's `modelContext`" seam in `tswift-swiftui` (which today has no
+external-prelude registration point) plus binding the wrapper's `Element` type
+for the fetch — a self-contained follow-up over the now-complete fetch surface.

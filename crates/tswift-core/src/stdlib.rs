@@ -293,6 +293,32 @@ pub trait StdContext {
         0
     }
 
+    /// The ordered component names of a key-path value (`\Movie.year` →
+    /// `["year"]`; `\.self` → `[]`), or `None` when `value` is not a key path.
+    /// A generic seam — core assigns the names no meaning; a framework (e.g.
+    /// SwiftData turning `SortDescriptor(\.year)` into an `ORDER BY` column)
+    /// reads them to learn which stored property a key path names. The default
+    /// (no interpreter, e.g. a unit-test mock) returns `None`; the interpreter
+    /// overrides it.
+    fn key_path_components(&self, value: &SwiftValue) -> Option<Vec<String>> {
+        let _ = value;
+        None
+    }
+
+    /// Evaluate an un-evaluated expression AST `node` in the current
+    /// environment, returning its value. This is the seam a freestanding-macro
+    /// handler ([`MacroFn`]) uses to turn a captured/literal sub-expression of
+    /// a macro body into a runtime value (e.g. the right-hand side of a
+    /// predicate comparison that does not reference the closure parameter).
+    /// Core assigns the node no framework meaning. The default (no
+    /// interpreter, e.g. a unit-test mock) traps; the interpreter overrides it.
+    fn eval_node(&mut self, node: &tswift_frontend::Node<'static>) -> StdResult {
+        let _ = node;
+        Err(StdError::Error(EvalError::Trap(
+            "expression evaluation is unavailable in this context".into(),
+        )))
+    }
+
     /// Call the named method on `receiver` (a class instance or any Swift
     /// value), dispatching with overload resolution by argument labels.
     /// Returns `Ok(Void)` if `receiver` is not an object or doesn't implement
@@ -701,6 +727,15 @@ impl Arg {
 
 /// A free-function intrinsic (`print`, `min`, `max`, …).
 pub type FreeFn = fn(&mut dyn StdContext, Vec<Arg>) -> StdResult;
+
+/// A freestanding-macro handler (`#Predicate`, …) registered via
+/// [`crate::Interpreter::register_macro`]. Receives the context and the
+/// `CompilerDirective` AST node — whose children are the macro's parsed
+/// generic type arguments (as `TypeRef` nodes) and trailing-closure /
+/// argument expressions — so a framework can inspect the un-evaluated macro
+/// body (e.g. compile a predicate closure to SQL) rather than run it. Core
+/// assigns the macro name and node shape no framework meaning.
+pub type MacroFn = fn(&mut dyn StdContext, &tswift_frontend::Node<'static>) -> StdResult;
 
 /// A label-aware method intrinsic for builtin receivers whose overloads cannot
 /// be selected from value shape alone. Returning `None` lets the normal
