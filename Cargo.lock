@@ -548,6 +548,7 @@ dependencies = [
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
+ "tswift-swiftdata",
  "tswift-swiftui",
  "ureq",
 ]
@@ -610,6 +611,13 @@ dependencies = [
 
 [[package]]
 name = "tswift-std"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+]
+
+[[package]]
+name = "tswift-swiftdata"
 version = "0.0.0"
 dependencies = [
  "tswift-core",

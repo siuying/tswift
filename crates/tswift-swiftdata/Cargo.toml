@@ -1,0 +1,10 @@
+[package]
+name = "tswift-swiftdata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tswift SwiftData substrate: the tswift.db.* host-service wire (SQL over the host bridge). No Swift-facing SwiftData API yet."
+
+[dependencies]
+tswift-core.workspace = true

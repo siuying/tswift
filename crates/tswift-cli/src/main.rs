@@ -9,11 +9,13 @@
 //! (kind, text, line, resolved type, modifiers) for inspecting how the frontend
 //! parses a construct — the fast path when adding a language feature.
 
+mod db;
 mod defaults;
 mod fs;
 mod host;
 mod httpmock;
 mod nethttp;
+mod sqlite_ffi;
 mod swiftui;
 
 use std::io::{self, Write};
@@ -158,7 +160,16 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
     // single default handler; it must be installed before `install_with`
     // declares the host-fn signatures that route through it.
     interp.set_host_call_handler(std::sync::Arc::new(host::CliHostHandler::new()));
-    tswift_foundation::install_with(&mut interp, tswift_core::Capabilities::all());
+    let caps = tswift_core::Capabilities::all();
+    tswift_foundation::install_with(&mut interp, caps);
+    // `tswift-swiftdata` only declares the `tswift.db.*` wire signatures at
+    // this slice (no Swift-facing `SwiftData` API yet); `db::DbHandler`
+    // above (routed through `host::CliHostHandler`) backs them with real
+    // SQLite.
+    tswift_swiftdata::install(
+        &mut interp,
+        caps.contains(tswift_core::HostService::Database),
+    );
     interp.set_filename(path);
     // Golden fixtures (and any offline caller) script `URLSession` through a
     // deterministic mock transport instead of the real network; the mock wins

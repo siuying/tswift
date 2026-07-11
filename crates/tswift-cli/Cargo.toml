@@ -15,6 +15,7 @@ tswift-frontend.workspace = true
 tswift-core.workspace = true
 tswift-std.workspace = true
 tswift-foundation.workspace = true
+tswift-swiftdata.workspace = true
 tswift-swiftui.workspace = true
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 

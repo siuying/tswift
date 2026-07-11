@@ -10,12 +10,14 @@
 
 use tswift_core::{HostCallHandler, HostService};
 
+use crate::db::DbHandler;
 use crate::defaults::DefaultsHandler;
 use crate::fs::FsHandler;
 
 pub struct CliHostHandler {
     defaults: DefaultsHandler,
     fs: FsHandler,
+    db: DbHandler,
 }
 
 impl CliHostHandler {
@@ -23,6 +25,7 @@ impl CliHostHandler {
         Self {
             defaults: DefaultsHandler::new(),
             fs: FsHandler::new(),
+            db: DbHandler::new(),
         }
     }
 }
@@ -38,9 +41,8 @@ impl HostCallHandler for CliHostHandler {
         match HostService::for_function(name) {
             Some(HostService::Defaults) => self.defaults.call(name, args_json),
             Some(HostService::FileSystem) => self.fs.call(name, args_json),
-            Some(HostService::Database) | None => {
-                Err(format!("no native handler for host fn `{name}`"))
-            }
+            Some(HostService::Database) => self.db.call(name, args_json),
+            None => Err(format!("no native handler for host fn `{name}`")),
         }
     }
 }
