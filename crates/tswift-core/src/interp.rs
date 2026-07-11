@@ -952,6 +952,11 @@ pub struct Interpreter<'w> {
     /// preventing a script-stored completionHandler from poisoning a later
     /// request's disposition.
     response_disposition_token: u64,
+    /// Per-interpreter cache backing [`StdContext::singleton`], keyed by the
+    /// caller-supplied opaque string. See that method's doc for why this is
+    /// a separate table from `statics` (no bare `.name` shorthand fallback
+    /// consults it).
+    singletons: HashMap<String, SwiftValue>,
 }
 
 /// Seed for the interpreter's SplitMix64 RNG.
@@ -1020,6 +1025,7 @@ impl<'w> Interpreter<'w> {
             host_bridge: crate::host_bridge::HostBridge::default(),
             response_disposition: None,
             response_disposition_token: 0,
+            singletons: HashMap::new(),
         }
     }
 
@@ -4914,6 +4920,32 @@ impl StdContext for Interpreter<'_> {
         // method (inherent methods take priority over trait methods in Rust
         // method resolution), so there is no infinite recursion.
         Interpreter::current_task_cancelled(self)
+    }
+
+    fn call_host_fn(
+        &mut self,
+        name: &str,
+        args: Vec<(Option<String>, SwiftValue)>,
+    ) -> crate::stdlib::StdResult {
+        // Explicit qualification picks the inherent `call_host_fn` (private,
+        // defined above) rather than recursing into this trait method.
+        match Interpreter::call_host_fn(self, name, &args) {
+            Ok(v) => Ok(v),
+            Err(sig) => Err(Self::signal_to_std_error(sig)),
+        }
+    }
+
+    fn is_host_fn(&self, name: &str) -> bool {
+        Interpreter::is_host_fn(self, name)
+    }
+
+    fn singleton(&mut self, key: &str, init: fn() -> SwiftValue) -> SwiftValue {
+        if let Some(v) = self.singletons.get(key) {
+            return v.clone();
+        }
+        let v = init();
+        self.singletons.insert(key.to_string(), v.clone());
+        v
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {

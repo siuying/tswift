@@ -410,3 +410,13 @@ UUID.description
 UUID.hashValue
 UUID.init
 UUID.uuidString
+UserDefaults.array
+UserDefaults.bool
+UserDefaults.double
+UserDefaults.integer
+UserDefaults.object
+UserDefaults.removeObject
+UserDefaults.set
+UserDefaults.standard
+UserDefaults.string
+UserDefaults.stringArray

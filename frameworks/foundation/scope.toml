@@ -33,6 +33,11 @@ id = "F6"
 title = "Networking"
 types = ["URLRequest", "URLError", "URLSession"]
 
+[[tier]]
+id = "F7"
+title = "Persistence"
+types = ["UserDefaults"]
+
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
 Decimal = ["+", "+=", "-", "-=", "*", "*=", "/", "/=", "==", "<"]
@@ -70,6 +75,16 @@ URLComponents = ["=="]
 # - URLSessionDataTask is backed by SwiftValue::Struct (not a class instance).
 #   Scripts MUST bind tasks to `var`, not `let`; aliases do not observe
 #   resume()/cancel() mutations (value-semantics divergence from Foundation).
+# - UserDefaults (F7) is backed by the `tswift.defaults` host service
+#   (tswift_core::host_services) rather than real Darwin CFPreferences;
+#   availability depends on the embedding (CLI native = in-process store,
+#   opt-in file persistence via TSWIFT_DEFAULTS_FILE; wasm = localStorage;
+#   iOS = real UserDefaults via a host-fn shim). Only Bool/Int/Double/String/
+#   [String] are storable; other property-list shapes (nested containers,
+#   Data, Date) are NOT modelled. dictionaryRepresentation(), register(
+#   defaults:), synchronize(), suites, and KVO/NotificationCenter integration
+#   are NOT implemented. An unavailable host service raises a Swift-catchable
+#   "unavailable on this platform" diagnostic rather than crashing.
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
@@ -79,6 +94,7 @@ urlsession_transport = "URLSession runs on the embedding's transport: mock (fixt
 urlsession_delegates = "URLSessionDataDelegate/TaskDelegate callbacks modelled (M3/M4); URLSessionDataTask.cancel/resume/state/progress modelled; bytes/download/publisher members unmodelled"
 urlsession_wasm_tier = "wasm: fetch completes eagerly; delegate+progress replay faithfully; cancel stops delivery only (cannot abort completed fetch)"
 urlsession_task_semantics = "URLSessionDataTask, URLSession, URLSessionConfiguration, DateFormatter, ISO8601DateFormatter, NumberFormatter, JSONEncoder, JSONDecoder, PropertyListEncoder are Object-backed (SwiftValue::Object, reference semantics); `let` bindings legal; aliases observe mutations; `===` identity holds. See ADR-0012."
+userdefaults_host_service = "UserDefaults.standard is Object-backed (===, `let` legal); its methods cross the tswift.defaults host-service namespace (set/get/remove, JSON-encoded values); type coercions on the typed getters (bool/integer/double(forKey:)) approximate NSNumber/NSString bridging, documented in tswift-foundation::user_defaults"
 
 [out_of_scope]
 filesystem = ["FileManager", "FileHandle"]

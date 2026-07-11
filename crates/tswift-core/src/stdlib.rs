@@ -13,10 +13,23 @@
 //! calling a closure, throwing, and writing output. This keeps `tswift-std`
 //! decoupled and unit-testable against a mock context.
 
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::io::Write;
 
 use crate::value::SwiftValue;
 use crate::EvalError;
+
+// ---------------------------------------------------------------------------
+// Thread-local registry backing `BuiltinReceiver::register_extension` /
+// `from_type_name`'s fallback for framework-registered receiver types. Safe
+// because the interpreter is single-threaded (ADR-0005); see `http.rs`'s
+// `DEFAULT_PENDING` for the same pattern.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static EXTENSION_RECEIVERS: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+}
 
 /// A failure raised by a standard-library intrinsic.
 ///
@@ -193,6 +206,44 @@ pub trait StdContext {
         false
     }
 
+    /// Invoke a registered host-native function ([`crate::host_bridge`]) by
+    /// its fully-qualified name (e.g. `"tswift.defaults.set"`) with
+    /// already-evaluated `(label, value)` arguments. This is how a framework
+    /// builtin reaches a host service ([`crate::host_services`]) gated into
+    /// its install by [`crate::host_services::Capabilities`]. The default has
+    /// no host bridge, so every call fails; the interpreter overrides it to
+    /// run the shared trampoline.
+    fn call_host_fn(&mut self, name: &str, args: Vec<(Option<String>, SwiftValue)>) -> StdResult {
+        let _ = args;
+        Err(StdError::Error(EvalError::Trap(format!(
+            "host fn `{name}` is not available in this context"
+        ))))
+    }
+
+    /// Whether `name` is a registered host-native function. A framework whose
+    /// install already gated an API on [`crate::host_services::Capabilities`]
+    /// does not need this (the gate is definitive); it exists for callers
+    /// that only learn availability at call time. The default is `false`.
+    fn is_host_fn(&self, _name: &str) -> bool {
+        false
+    }
+
+    /// Fetch (or lazily create via `init`) a per-interpreter singleton value
+    /// keyed by `key`, so `===` identity holds across repeated accesses (e.g.
+    /// `Type.shared`/`Type.standard`). `key` is an opaque string the calling
+    /// framework owns (typically `"<Type>.<member>"`); core assigns it no
+    /// meaning. Unlike [`crate::Interpreter::register_static_value`], this
+    /// cache is keyed only by the exact `key` a builtin looks itself up with
+    /// — it is never consulted by the ambiguous bare `.name` shorthand
+    /// fallback, so it carries none of that mechanism's cross-builtin
+    /// collision risk. The default (no interpreter, e.g. a unit-test mock)
+    /// calls `init` fresh on every access — i.e. behaves as if uncached;
+    /// the interpreter overrides it with a real per-instance cache.
+    fn singleton(&mut self, key: &str, init: fn() -> SwiftValue) -> SwiftValue {
+        let _ = key;
+        init()
+    }
+
     /// Call the named method on `receiver` (a class instance or any Swift
     /// value), dispatching with overload resolution by argument labels.
     /// Returns `Ok(Void)` if `receiver` is not an object or doesn't implement
@@ -310,6 +361,16 @@ pub enum BuiltinReceiver {
     /// `Date.FormatStyle` — a format-style builder produced by `.dateTime`;
     /// represented as a `Struct { type_name: "Date.FormatStyle" }`.
     DateFormatStyle,
+    /// A framework-registered receiver type core has no built-in knowledge
+    /// of. Core owns only the dispatch *mechanism* — the `(BuiltinReceiver,
+    /// method-name)` intrinsic tables — never the vocabulary of concrete
+    /// Foundation/SwiftUI/etc. type names; a framework crate calls
+    /// [`BuiltinReceiver::register_extension`] once at install time to mint a
+    /// stable key for its own type name (e.g. its extension type name), then uses
+    /// the returned `BuiltinReceiver` with the same `register_*`/dispatch API
+    /// as any built-in receiver. The wrapped string is the type name itself,
+    /// so [`BuiltinReceiver::type_name`] needs no per-type match arm.
+    Extension(&'static str),
 }
 
 impl BuiltinReceiver {
@@ -356,6 +417,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::CollectionOfOne => "CollectionOfOne",
             BuiltinReceiver::EmptyCollection => "EmptyCollection",
             BuiltinReceiver::DateFormatStyle => "Date.FormatStyle",
+            BuiltinReceiver::Extension(name) => name,
         }
     }
 
@@ -402,7 +464,33 @@ impl BuiltinReceiver {
             "CollectionOfOne" => BuiltinReceiver::CollectionOfOne,
             "EmptyCollection" => BuiltinReceiver::EmptyCollection,
             "Date.FormatStyle" => BuiltinReceiver::DateFormatStyle,
-            _ => return None,
+            _ => {
+                return EXTENSION_RECEIVERS
+                    .with(|table| table.borrow().get(name).copied())
+                    .map(BuiltinReceiver::Extension)
+            }
+        })
+    }
+
+    /// Mint (or fetch) the stable [`BuiltinReceiver::Extension`] key for a
+    /// framework-owned type name.
+    ///
+    /// Core has no compile-time knowledge of `name` — it is an opaque string
+    /// supplied by the calling framework crate (e.g. `tswift-foundation`
+    /// calling `register_extension` with its type name from its `install`).
+    /// Idempotent: calling it again for the same name returns the same key
+    /// (interning happens once per process-wide name; see the module-level
+    /// thread-local table doc). Call this once per name at install time,
+    /// before using the returned receiver with `register_intrinsic` /
+    /// `register_static` / etc.
+    pub fn register_extension(name: &'static str) -> BuiltinReceiver {
+        EXTENSION_RECEIVERS.with(|table| {
+            let mut table = table.borrow_mut();
+            if let Some(existing) = table.get(name).copied() {
+                return BuiltinReceiver::Extension(existing);
+            }
+            table.insert(name);
+            BuiltinReceiver::Extension(name)
         })
     }
 

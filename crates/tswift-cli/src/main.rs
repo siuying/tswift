@@ -9,6 +9,7 @@
 //! (kind, text, line, resolved type, modifiers) for inspecting how the frontend
 //! parses a construct — the fast path when adding a language feature.
 
+mod defaults;
 mod httpmock;
 mod nethttp;
 mod swiftui;
@@ -148,6 +149,11 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
     let mut interp = Interpreter::new(&mut handle);
     tswift_std::install(&mut interp);
     // The native CLI backs every host service (defaults, file system, database).
+    // `UserDefaults` is backed in-process by default (opt into real file
+    // persistence with `TSWIFT_DEFAULTS_FILE`; see `defaults.rs`), so the
+    // handler must be installed before `install_with` declares the host-fn
+    // signatures that route through it.
+    interp.set_host_call_handler(std::sync::Arc::new(defaults::DefaultsHandler::new()));
     tswift_foundation::install_with(&mut interp, tswift_core::Capabilities::all());
     interp.set_filename(path);
     // Golden fixtures (and any offline caller) script `URLSession` through a

@@ -15,6 +15,7 @@ mod numberformatter;
 mod plist;
 mod url;
 mod urlsession;
+mod user_defaults;
 
 use std::{collections::BTreeSet, rc::Rc};
 
@@ -31,26 +32,23 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 /// The host services Foundation's host-backed APIs draw on, paired with the
 /// user-facing API name for gating diagnostics.
 ///
-/// Empty in slice 1 (no host-backed Foundation builtins yet); later slices add
-/// `(HostService::Defaults, "UserDefaults")` and
-/// `(HostService::FileSystem, "FileManager")` here and register the matching
-/// builtins in [`gate_host_services`].
-const HOST_BACKED_APIS: &[(HostService, &str)] = &[];
+/// `(HostService::FileSystem, "FileManager")` lands in a later slice and
+/// registers the matching builtin in [`gate_host_services`].
+const HOST_BACKED_APIS: &[(HostService, &str)] = &[(HostService::Defaults, "UserDefaults")];
 
 /// Registration point for Foundation's host-service-backed builtins.
 ///
 /// A builtin whose backing service is present in `caps` is wired to the host;
 /// one whose service is absent is still registered, but its body raises the
 /// [`Capabilities::require`] diagnostic so callers see a clean "unavailable on
-/// this platform" error rather than a lower-level host-probe failure. Slice 1
-/// only establishes the seam — `HOST_BACKED_APIS` is empty, so this is a
-/// behaviour-preserving no-op that simply records which services are gated.
-fn gate_host_services(_interp: &mut Interpreter<'_>, caps: Capabilities) {
+/// this platform" error rather than a lower-level host-probe failure.
+fn gate_host_services(interp: &mut Interpreter<'_>, caps: Capabilities) {
     for &(service, api) in HOST_BACKED_APIS {
-        // The registration itself is unconditional; the availability decision
-        // is captured here so future slices attach a real (host-backed vs
-        // unavailable) builtin body per branch.
-        let _available = caps.require(service, api).is_ok();
+        let available = caps.require(service, api).is_ok();
+        // `HostService::FileSystem` (`FileManager`) lands in a later slice.
+        if service == HostService::Defaults {
+            user_defaults::install(interp, available);
+        }
     }
 }
 
@@ -453,7 +451,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("HTTPURLResponse.")
                     || other.starts_with("URLError.")
                     || other.starts_with("URLSession.")
-                    || other.starts_with("URLSessionConfiguration.") =>
+                    || other.starts_with("URLSessionConfiguration.")
+                    || other.starts_with("UserDefaults.") =>
             {
                 Some(other.to_string())
             }
