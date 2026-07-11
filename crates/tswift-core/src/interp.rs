@@ -4540,6 +4540,21 @@ impl<'w> Interpreter<'w> {
         args: &[CallArg],
     ) -> Result<Option<SwiftValue>, Signal> {
         if args.len() == 1 {
+            // `String(describing:)`/`String(reflecting:)` (and the unlabelled
+            // form) stringify their argument via this scalar-conversion path.
+            // Any *other* single-argument label on `String` (e.g.
+            // `contentsOfFile:`/`contentsOf:`, registered by a framework as a
+            // labelled free fn) is not a scalar conversion — fall through so
+            // the free-fn dispatch further down `eval_call`'s ladder gets a
+            // chance instead of silently stringifying the raw argument.
+            if name == "String"
+                && !matches!(
+                    args[0].label.as_deref(),
+                    None | Some("describing") | Some("reflecting")
+                )
+            {
+                return Ok(None);
+            }
             return interp.try_conversion(name, &args[0].value);
         }
         Ok(None)

@@ -36,7 +36,7 @@ types = ["URLRequest", "URLError", "URLSession"]
 [[tier]]
 id = "F7"
 title = "Persistence"
-types = ["UserDefaults"]
+types = ["UserDefaults", "FileManager"]
 
 [core_members]
 Date = ["+", "+=", "-", "-=", "<", "==", ">"]
@@ -85,6 +85,26 @@ URLComponents = ["=="]
 #   defaults:), synchronize(), suites, and KVO/NotificationCenter integration
 #   are NOT implemented. An unavailable host service raises a Swift-catchable
 #   "unavailable on this platform" diagnostic rather than crashing.
+# - FileManager (F7) is backed by the `tswift.fs` host service
+#   (tswift_core::host_services) rather than real Darwin filesystem APIs
+#   directly; availability depends on the embedding (CLI native = the real,
+#   unrooted filesystem; wasm/iOS host-fn shims land in a later slice).
+#   Binary content crosses the host wire as base64 String. `.default` is
+#   Object-backed (===, `let` legal, no per-instance state). Implemented:
+#   fileExists(atPath:), contents(atPath:), contentsOfDirectory(atPath:),
+#   createDirectory(atPath:withIntermediateDirectories:),
+#   removeItem(atPath:), createFile(atPath:contents:),
+#   copyItem/moveItem(atPath:toPath:); plus the file-URL-loading helpers
+#   String(contentsOfFile:)/String(contentsOf:), Data(contentsOf:), and
+#   String/Data write(to:)/write(toFile:). NOT implemented:
+#   fileExists(atPath:isDirectory:) (the `inout Bool` overload — this
+#   runtime does not thread `inout` through method calls), file attributes
+#   (`attributes:` arguments are accepted and ignored), symlinks/permissions/
+#   extended attributes, FileHandle, and non-`file:` URL loading (throws
+#   rather than fetching). Thrown errors surface as a simplified `HostError`
+#   struct (`message: String`) rather than `CocoaError`/`NSError`
+#   (domain/code/userInfo are not modelled) — documented in
+#   tswift-foundation::file_manager.
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"
@@ -97,7 +117,7 @@ urlsession_task_semantics = "URLSessionDataTask, URLSession, URLSessionConfigura
 userdefaults_host_service = "UserDefaults.standard is Object-backed (===, `let` legal); its methods cross the tswift.defaults host-service namespace (set/get/remove, JSON-encoded values); type coercions on the typed getters (bool/integer/double(forKey:)) approximate NSNumber/NSString bridging, documented in tswift-foundation::user_defaults"
 
 [out_of_scope]
-filesystem = ["FileManager", "FileHandle"]
+filesystem = ["FileHandle"]
 networking = ["Host"]
 objc_runtime = ["NSObject", "NSCoding", "Bundle"]
 distributed = ["NSXPCConnection", "NSUserActivity"]

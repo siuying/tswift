@@ -66,6 +66,7 @@ Data.reserveCapacity
 Data.resetBytes
 Data.startIndex
 Data.subdata
+Data.write
 Date.FormatStyle.DateStyle.abbreviated
 Date.FormatStyle.DateStyle.complete
 Date.FormatStyle.DateStyle.long
@@ -192,6 +193,15 @@ Decimal.sign
 Decimal.significand
 Decimal.subtract
 Decimal.ulp
+FileManager.contents
+FileManager.contentsOfDirectory
+FileManager.copyItem
+FileManager.createDirectory
+FileManager.createFile
+FileManager.default
+FileManager.fileExists
+FileManager.moveItem
+FileManager.removeItem
 HTTPURLResponse.allHeaderFields
 HTTPURLResponse.debugDescription
 HTTPURLResponse.description

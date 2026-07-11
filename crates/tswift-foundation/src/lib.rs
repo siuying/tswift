@@ -7,6 +7,7 @@
 mod calendar;
 mod datestyle;
 mod decimal;
+mod file_manager;
 mod formatter;
 mod json;
 mod measurement;
@@ -31,10 +32,10 @@ const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 
 /// The host services Foundation's host-backed APIs draw on, paired with the
 /// user-facing API name for gating diagnostics.
-///
-/// `(HostService::FileSystem, "FileManager")` lands in a later slice and
-/// registers the matching builtin in [`gate_host_services`].
-const HOST_BACKED_APIS: &[(HostService, &str)] = &[(HostService::Defaults, "UserDefaults")];
+const HOST_BACKED_APIS: &[(HostService, &str)] = &[
+    (HostService::Defaults, "UserDefaults"),
+    (HostService::FileSystem, "FileManager"),
+];
 
 /// Registration point for Foundation's host-service-backed builtins.
 ///
@@ -45,9 +46,10 @@ const HOST_BACKED_APIS: &[(HostService, &str)] = &[(HostService::Defaults, "User
 fn gate_host_services(interp: &mut Interpreter<'_>, caps: Capabilities) {
     for &(service, api) in HOST_BACKED_APIS {
         let available = caps.require(service, api).is_ok();
-        // `HostService::FileSystem` (`FileManager`) lands in a later slice.
-        if service == HostService::Defaults {
-            user_defaults::install(interp, available);
+        match service {
+            HostService::Defaults => user_defaults::install(interp, available),
+            HostService::FileSystem => file_manager::install(interp, available),
+            HostService::Database => {}
         }
     }
 }
@@ -452,7 +454,8 @@ pub fn registered_keys() -> Vec<String> {
                     || other.starts_with("URLError.")
                     || other.starts_with("URLSession.")
                     || other.starts_with("URLSessionConfiguration.")
-                    || other.starts_with("UserDefaults.") =>
+                    || other.starts_with("UserDefaults.")
+                    || other.starts_with("FileManager.") =>
             {
                 Some(other.to_string())
             }
@@ -1161,7 +1164,7 @@ fn byte_from_value(value: &SwiftValue) -> Result<u8, StdError> {
     }
 }
 
-fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+fn data_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if args.is_empty() {
         return Ok(data_value(Vec::new()));
     }
@@ -1185,6 +1188,12 @@ fn data_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         return Err(type_error(
             "Data expects zero arguments or one byte sequence",
         ));
+    }
+    // `Data(contentsOf: URL)` — throwing; reads a `file:` URL through the
+    // `tswift.fs` host service. See `file_manager.rs` for the wire and the
+    // documented deviation (non-`file:` URLs are not fetched).
+    if args[0].label.as_deref() == Some("contentsOf") {
+        return file_manager::data_contents_of(ctx, &args[0].value);
     }
     if args.len() == 1 && args[0].label.as_deref() == Some("base64Encoded") {
         let SwiftValue::Str(s) = &args[0].value else {

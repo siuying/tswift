@@ -115,7 +115,14 @@ pub fn registered_keys() -> Vec<String> {
 
 /// `String(data: Data, encoding: String.Encoding)` — failable: `nil` on invalid
 /// UTF-8 or unsupported encoding (we only model UTF-8 in this runtime).
-fn string_from_data_encoding(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+///
+/// Also the single registration point for `String`'s other labelled
+/// single-argument initializers, `String(contentsOfFile:)` and
+/// `String(contentsOf:)` (delegated to `file_manager.rs`) — core's free-fn
+/// table holds exactly one entry per name (see
+/// `tswift_core::Interpreter::register_free_fn`), so every `String(label:)`
+/// form this crate supports must be dispatched from this one function.
+fn string_from_data_encoding(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if args.len() == 2
         && args[0].label.as_deref() == Some("data")
         && args[1].label.as_deref() == Some("encoding")
@@ -126,9 +133,14 @@ fn string_from_data_encoding(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdRe
             Err(_) => SwiftValue::Nil, // failable — nil on invalid UTF-8
         });
     }
-    // Fall through: not the data:encoding: form; let the caller handle it.
+    if args.len() == 1 {
+        if let Some(label @ ("contentsOfFile" | "contentsOf")) = args[0].label.as_deref() {
+            return crate::file_manager::string_contents_of(ctx, label, &args[0].value);
+        }
+    }
+    // Fall through: not a supported multi/single-argument form.
     Err(type_error(
-        "String: unsupported multi-argument initializer (only data:encoding: is implemented)",
+        "String: unsupported initializer (only data:encoding:, contentsOfFile:, and contentsOf: are implemented)",
     ))
 }
 

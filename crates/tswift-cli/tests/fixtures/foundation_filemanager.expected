@@ -1,0 +1,16 @@
+true
+false
+true
+Hello, tswift!
+true
+["a.txt", "b.txt", "hello.txt"]
+true
+true
+false
+true
+false
+caught: true
+written via String
+written via String
+data write(to:)
+false

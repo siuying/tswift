@@ -46,11 +46,36 @@ fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     pairs
 }
 
+/// Build a fresh, unique, mkdtemp-style temp directory for one fixture run
+/// (process id + a nanosecond timestamp — good enough to avoid collisions
+/// across parallel `cargo test` fixture runs without a real `mkdtemp` crate
+/// dependency). Never pre-existing, so the caller never needs to worry about
+/// deleting something that wasn't created by this run.
+fn unique_temp_dir(label: &str) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "tswift-golden-{label}-{}-{nanos}",
+        std::process::id()
+    ))
+}
+
 /// Run the CLI on `swift_path` and return its stdout as a `String`.
 ///
 /// A sibling `<name>.http.json` route file (see `src/httpmock.rs`) is passed
 /// through `TSWIFT_HTTP_MOCK`, so `URLSession` fixtures stay deterministic
 /// and offline — still zero harness code per fixture.
+///
+/// A sibling `<name>.isolated_cwd` marker file (empty; presence-only) runs
+/// the fixture with its working directory set to a fresh, unique temp
+/// directory (see `unique_temp_dir`) instead of the repo checkout — for
+/// fixtures that touch the real filesystem (e.g. `FileManager`), so they
+/// never read from or delete a predictable shared path. The fixture itself
+/// should use *relative* paths (resolved against this fresh cwd) rather than
+/// a hardcoded absolute path.
 fn run_cli(swift_path: &Path) -> String {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_tswift"));
     cmd.arg("run").arg(swift_path);
@@ -58,7 +83,25 @@ fn run_cli(swift_path: &Path) -> String {
     if mock.exists() {
         cmd.env("TSWIFT_HTTP_MOCK", &mock);
     }
+    let isolated_marker = swift_path.with_extension("isolated_cwd");
+    let isolated_dir = if isolated_marker.exists() {
+        let label = swift_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dir = unique_temp_dir(&label);
+        std::fs::create_dir_all(&dir).expect("create isolated cwd for fixture");
+        cmd.current_dir(&dir);
+        Some(dir)
+    } else {
+        None
+    };
+
     let output = cmd.output().expect("failed to spawn tswift");
+
+    if let Some(dir) = &isolated_dir {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     assert!(
         output.status.success(),

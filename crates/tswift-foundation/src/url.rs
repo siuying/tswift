@@ -897,7 +897,7 @@ pub(crate) fn url_string(value: &SwiftValue) -> Result<String, StdError> {
 
 /// A URL is a file URL when its scheme is `file` (case-insensitive), matching
 /// Foundation's semantic `isFileURL` rather than initializer provenance.
-fn url_is_file_flag(value: &SwiftValue) -> bool {
+pub(crate) fn url_is_file_flag(value: &SwiftValue) -> bool {
     url_string(value)
         .ok()
         .and_then(|s| parse_url(&s).scheme)
@@ -929,15 +929,19 @@ fn url_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         }),
         Some("fileURLWithPath") => {
             let path = raw.clone();
-            let string = format!(
-                "file://{}",
-                if path.starts_with('/') {
-                    path
-                } else {
-                    format!("/{path}")
+            // Foundation's `URL(fileURLWithPath:)` resolves a relative path
+            // against the process's current working directory (it does NOT
+            // just root it at `/`) — mirror that with `std::env::current_dir`
+            // rather than silently misresolving relative paths.
+            let absolute = if path.starts_with('/') {
+                path
+            } else {
+                match std::env::current_dir() {
+                    Ok(cwd) => format!("{}/{path}", cwd.to_string_lossy()),
+                    Err(_) => format!("/{path}"),
                 }
-            );
-            Ok(url_value(string))
+            };
+            Ok(url_value(format!("file://{absolute}")))
         }
         Some(other) => Err(type_error(format!("unsupported URL argument {other}:"))),
         None => Err(type_error("URL argument needs a label")),
@@ -963,10 +967,13 @@ fn url_port(recv: SwiftValue) -> StdResult {
         .unwrap_or(SwiftValue::Nil))
 }
 fn url_path(recv: SwiftValue) -> StdResult {
-    // Foundation's `URL.path` is percent-decoded.
-    Ok(SwiftValue::Str(percent_decode(
-        &parse_url(&url_string(&recv)?).path,
-    )))
+    Ok(SwiftValue::Str(url_path_string(&recv)?))
+}
+
+/// Foundation's `URL.path` is percent-decoded. Shared with `FileManager`/file
+/// initializers that need a filesystem path from a `URL` value.
+pub(crate) fn url_path_string(recv: &SwiftValue) -> Result<String, StdError> {
+    Ok(percent_decode(&parse_url(&url_string(recv)?).path))
 }
 fn url_base_url(_recv: SwiftValue) -> StdResult {
     // No base URL is modelled; URLs are always absolute here.
