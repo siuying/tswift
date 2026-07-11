@@ -136,6 +136,15 @@ char *tswift_register_host_fn(TSwiftContext *ctx,
 /* Remove the host function named `name` from `ctx` (no-op if absent). */
 void tswift_remove_host_fn(TSwiftContext *ctx, const char *name);
 
+/* Declare that the host backs the host-service identified by `namespace`
+ * ("tswift.defaults", "tswift.fs", "tswift.db"), enabling the framework APIs
+ * layered on that service for scripts run through `ctx`. A service is available
+ * iff its namespace is declared here — capabilities are never inferred from the
+ * individual host functions a host registers. Idempotent per namespace.
+ * Returns owned JSON: {"ok":true,"namespace":"<ns>","error":null} on success,
+ * or {"ok":false,"namespace":null,"error":"<why>"} for a null/unknown one. */
+char *tswift_declare_host_service(TSwiftContext *ctx, const char *namespace);
+
 /* Deliver the result for an in-flight host-function call. Copies `result_json`
  * immediately; valid only during the callback invocation that received `call`. */
 void tswift_host_respond(void *call, const char *result_json);

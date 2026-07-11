@@ -340,7 +340,7 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
     let mut stdout = Vec::new();
     let mut interp = Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
+    tswift_foundation::install_with(&mut interp, platform::host_capabilities());
     interp.set_filename(filename);
     platform::install_http_transport(&mut interp);
     platform::install_host_handler(&mut interp);
@@ -376,7 +376,7 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
 // compiles and runs off-target.
 
 #[cfg(target_arch = "wasm32")]
-mod platform {
+pub(crate) mod platform {
     use tswift_core::http::{decode_response_json, encode_request_json};
     use tswift_core::{
         HttpError, HttpEvent, HttpRequest, HttpResponse, HttpTaskHandle, HttpTransport,
@@ -528,6 +528,19 @@ mod platform {
         interp.set_http_transport(Box::new(JsHttpTransport::new()));
     }
 
+    /// Declare host-service capabilities for this page from an **explicit**
+    /// host declaration: the optional `globalThis.tswiftHostServices` array of
+    /// namespace strings (e.g. `["tswift.defaults", "tswift.fs"]`). Each
+    /// recognised namespace enables its whole service; a page that defines no
+    /// such array (or an empty one) backs no host services, so host-backed
+    /// framework APIs gate cleanly. Capabilities are never inferred from the
+    /// mere presence of the `tswiftHost` call bridge — a page may register
+    /// arbitrary host functions without promising any of these services.
+    pub(super) fn host_capabilities() -> tswift_core::Capabilities {
+        let declared = tswift_host_services();
+        tswift_core::Capabilities::from_namespaces(declared.split(',').filter(|ns| !ns.is_empty()))
+    }
+
     // ── Host-function bridge ─────────────────────────────────────────────────
     //
     // The embedding page opts in by defining a **synchronous**
@@ -565,6 +578,21 @@ mod platform {
     "#)]
     extern "C" {
         fn tswift_host_call(name: &str, args_json: &str) -> Option<String>;
+    }
+
+    // Explicit host-service declaration: the page lists the namespaces it backs
+    // in `globalThis.tswiftHostServices`. We return them comma-joined (empty
+    // when the array is absent/empty/not an array) and map each to a service
+    // in Rust — an absent declaration grants no host-backed capabilities.
+    #[wasm_bindgen(inline_js = r#"
+        export function tswift_host_services() {
+            const s = globalThis.tswiftHostServices;
+            if (!Array.isArray(s)) return "";
+            return s.filter((x) => typeof x === "string").join(",");
+        }
+    "#)]
+    extern "C" {
+        fn tswift_host_services() -> String;
     }
 
     /// The `globalThis.tswiftHost`-backed [`HostCallHandler`].
@@ -649,7 +677,7 @@ mod platform {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-mod platform {
+pub(crate) mod platform {
     // ── Off-target (native / cargo test) ────────────────────────────────────
     // No JS host is available; HTTP and host functions are unavailable.
     // The host-function registry still works so tests can verify schema
@@ -658,6 +686,12 @@ mod platform {
     /// Off-target (native unit tests) there is no JS host: `URLSession` stays
     /// unavailable, matching a page that defines no `tswiftHttp` hook.
     pub(super) fn install_http_transport(_interp: &mut tswift_core::Interpreter<'_>) {}
+
+    /// Off-target there is no JS host, so no host services are backed — the
+    /// same degraded tier as a page that declares no `tswiftHostServices`.
+    pub(super) fn host_capabilities() -> tswift_core::Capabilities {
+        tswift_core::Capabilities::none()
+    }
 
     thread_local! {
         static HOST_FN_SCHEMAS: std::cell::RefCell<Vec<String>> =

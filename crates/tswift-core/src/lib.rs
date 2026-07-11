@@ -11,6 +11,7 @@ mod env;
 mod fragment_cache;
 pub mod grapheme;
 pub mod host_bridge;
+pub mod host_services;
 pub mod http;
 mod interp;
 pub mod json;
@@ -28,6 +29,7 @@ pub use host_bridge::{
     decode_value, encode_value, HostBridge, HostCallHandler, HostCallOutcome, Param as HostParam,
     Signature as HostSignature, TypeExpr as HostTypeExpr,
 };
+pub use host_services::{Capabilities, CapabilityError, HostService};
 pub use http::{
     decode_event_json, encode_event_json, HttpError, HttpEvent, HttpRequest, HttpResponse,
     HttpTaskHandle, HttpTransport, MockChunkedRoute, MockHttpTransport, MockRoute,

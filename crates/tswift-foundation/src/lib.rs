@@ -19,16 +19,67 @@ mod urlsession;
 use std::{collections::BTreeSet, rc::Rc};
 
 use tswift_core::{
-    Arg, BuiltinReceiver, EnumObj, EvalError, Interpreter, IntrinsicFn, LabeledMethodEntry,
-    MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, Capabilities, EnumObj, EvalError, HostService, Interpreter, IntrinsicFn,
+    LabeledMethodEntry, MethodEntry, Outcome, StdContext, StdError, StdResult, StructObj,
+    SwiftValue,
 };
 
 const REFERENCE_DATE_UNIX_OFFSET: f64 = 978_307_200.0;
 const DISTANT_PAST_REFERENCE_SECONDS: f64 = -63_113_904_000.0;
 const DISTANT_FUTURE_REFERENCE_SECONDS: f64 = 63_113_904_000.0;
 
+/// The host services Foundation's host-backed APIs draw on, paired with the
+/// user-facing API name for gating diagnostics.
+///
+/// Empty in slice 1 (no host-backed Foundation builtins yet); later slices add
+/// `(HostService::Defaults, "UserDefaults")` and
+/// `(HostService::FileSystem, "FileManager")` here and register the matching
+/// builtins in [`gate_host_services`].
+const HOST_BACKED_APIS: &[(HostService, &str)] = &[];
+
+/// Registration point for Foundation's host-service-backed builtins.
+///
+/// A builtin whose backing service is present in `caps` is wired to the host;
+/// one whose service is absent is still registered, but its body raises the
+/// [`Capabilities::require`] diagnostic so callers see a clean "unavailable on
+/// this platform" error rather than a lower-level host-probe failure. Slice 1
+/// only establishes the seam — `HOST_BACKED_APIS` is empty, so this is a
+/// behaviour-preserving no-op that simply records which services are gated.
+fn gate_host_services(_interp: &mut Interpreter<'_>, caps: Capabilities) {
+    for &(service, api) in HOST_BACKED_APIS {
+        // The registration itself is unconditional; the availability decision
+        // is captured here so future slices attach a real (host-backed vs
+        // unavailable) builtin body per branch.
+        let _available = caps.require(service, api).is_ok();
+    }
+}
+
 /// Register every currently-supported Foundation builtin into `interp`.
+///
+/// Adapter over [`install_with`] that declares **every** host service
+/// available — the behaviour existing callers (tests, the SwiftUI compile
+/// paths) rely on. Embeddings that know their platform backs only a subset of
+/// host services should call [`install_with`] with the matching
+/// [`Capabilities`] so host-backed APIs gate cleanly.
 pub fn install(interp: &mut Interpreter<'_>) {
+    install_with(interp, Capabilities::all());
+}
+
+/// Register every currently-supported Foundation builtin into `interp`, gating
+/// host-service-backed APIs on `caps`.
+///
+/// `caps` names which host services the embedding's platform backs (see
+/// [`tswift_core::host_services`]). Host-backed Foundation APIs
+/// (`UserDefaults` → [`HostService::Defaults`], `FileManager` →
+/// [`HostService::FileSystem`]) consult it so an absent service surfaces a
+/// clean "unavailable on this platform" diagnostic instead of a runtime
+/// host-probe failure.
+///
+/// Slice 1 wires the seam end-to-end; the pure-Rust value builtins below are
+/// unaffected by `caps`, and the host-backed builtins that consume it land in
+/// later slices ([`gate_host_services`] is their registration point).
+pub fn install_with(interp: &mut Interpreter<'_>, caps: Capabilities) {
+    gate_host_services(interp, caps);
     url::install(interp);
     network::install(interp);
     urlsession::install(interp);
@@ -40,6 +91,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     numberformatter::install(interp);
     measurement::install(interp);
     plist::install(interp);
+    // Reserved: host-service-backed builtins land here in later slices.
     interp.register_free_fn("Date", date_init);
     interp.register_property(
         BuiltinReceiver::Date,
@@ -2828,6 +2880,46 @@ mod tests {
             date_components_get(&dc, "dayOfYear").unwrap(),
             SwiftValue::Nil
         );
+    }
+
+    // ── Capability gating (slice 1: behaviour-preserving seam) ───────────────
+
+    #[test]
+    fn install_with_full_caps_matches_default_install() {
+        let mut a = Vec::new();
+        let mut interp_a = Interpreter::new(&mut a);
+        install(&mut interp_a);
+        let default_keys = interp_a.registered_keys();
+
+        let mut b = Vec::new();
+        let mut interp_b = Interpreter::new(&mut b);
+        install_with(&mut interp_b, Capabilities::all());
+        assert_eq!(interp_b.registered_keys(), default_keys);
+    }
+
+    #[test]
+    fn install_with_no_caps_registers_same_pure_rust_builtins() {
+        // Slice 1 has no host-backed Foundation builtins, so dropping every
+        // host service must not change the registered surface.
+        let mut full = Vec::new();
+        let mut interp_full = Interpreter::new(&mut full);
+        install_with(&mut interp_full, Capabilities::all());
+
+        let mut bare = Vec::new();
+        let mut interp_bare = Interpreter::new(&mut bare);
+        install_with(&mut interp_bare, Capabilities::none());
+
+        assert_eq!(interp_bare.registered_keys(), interp_full.registered_keys());
+    }
+
+    #[test]
+    fn gate_diagnostic_names_api_and_platform() {
+        let err = Capabilities::none()
+            .require(HostService::Defaults, "UserDefaults")
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("UserDefaults"), "{msg}");
+        assert!(msg.contains("unavailable on this platform"), "{msg}");
     }
 }
 

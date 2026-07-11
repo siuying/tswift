@@ -130,7 +130,14 @@ impl Drop for SwiftUiSession {
 /// entrypoint uses [`compile_with_transport`] to carry the host's handler.
 #[cfg(test)]
 pub(crate) fn compile(slot: &mut Option<SwiftUiSession>, source: &str) -> String {
-    compile_with_transport(slot, source, None, None, &[])
+    compile_with_transport(
+        slot,
+        source,
+        None,
+        None,
+        &[],
+        tswift_core::Capabilities::none(),
+    )
 }
 
 /// Like [`compile`], but installs the host's `URLSession` transport into the
@@ -144,10 +151,11 @@ pub(crate) fn compile_with_transport(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> String {
     // Drop any prior session first, so a failed recompile leaves no stale tree.
     *slot = None;
-    match build(source, "main.swift", http, stream_http, host_fns) {
+    match build(source, "main.swift", http, stream_http, host_fns, caps) {
         Ok((bundle, tree_json, root)) => {
             *slot = Some(bundle);
             format!(
@@ -168,6 +176,7 @@ fn build(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> Result<(SwiftUiSession, String, String), String> {
     let program = format!("{PRELUDE}\n{source}");
     let analysis = Analysis::analyze(&program, filename).map_err(|e| e.to_string())?;
@@ -202,7 +211,10 @@ fn build(
 
     let mut interp = Interpreter::new(out_ref);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
+    // Route SwiftUI's Foundation install through the same capability-aware path
+    // as the one-shot run: host-backed APIs gate on the services the embedding
+    // explicitly declared (`tswift_declare_host_service`), not implicit full caps.
+    tswift_foundation::install_with(&mut interp, caps);
     tswift_swiftui::install(&mut interp);
     interp.set_filename(filename);
     // Wire the host's URLSession transport (if any) so scripts' network calls —
@@ -366,6 +378,7 @@ pub(crate) fn compile_module_with_transport(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> String {
     let module = match crate::run::parse_module(module_json) {
         Ok(m) => m,
@@ -373,7 +386,7 @@ pub(crate) fn compile_module_with_transport(
     };
     let (source, filename) = module.merge();
     *slot = None;
-    match build(&source, filename, http, stream_http, host_fns) {
+    match build(&source, filename, http, stream_http, host_fns, caps) {
         Ok((bundle, tree_json, root)) => {
             *slot = Some(bundle);
             format!(

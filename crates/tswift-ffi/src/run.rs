@@ -21,8 +21,9 @@ pub(crate) fn run_impl(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> String {
-    run_impl_named(source, "main.swift", http, stream_http, host_fns)
+    run_impl_named(source, "main.swift", http, stream_http, host_fns, caps)
 }
 
 /// Like [`run_impl`] but with an explicit diagnostic `filename`.
@@ -32,6 +33,7 @@ fn run_impl_named(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> String {
     let started = now_ms();
 
@@ -86,7 +88,10 @@ fn run_impl_named(
     let mut stdout = Vec::new();
     let mut interp = tswift_core::Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
+    // iOS/native embeddings declare host-service capabilities *explicitly* via
+    // `tswift_declare_host_service` (namespace strings). A service is available
+    // iff its namespace was declared — never inferred from registered fn names.
+    tswift_foundation::install_with(&mut interp, caps);
     interp.set_filename(filename);
     if let Some(config) = stream_http {
         interp.set_http_transport(Box::new(crate::http::StreamingHostHttpHandler::from(
@@ -184,6 +189,7 @@ pub(crate) fn run_module_impl(
     http: Option<crate::http::HostHttpHandler>,
     stream_http: Option<crate::http::StreamingHandlerConfig>,
     host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
 ) -> String {
     let module = match parse_module(module_json) {
         Ok(m) => m,
@@ -201,5 +207,5 @@ pub(crate) fn run_module_impl(
         }
     };
     let (source, filename) = module.merge();
-    run_impl_named(&source, filename, http, stream_http, host_fns)
+    run_impl_named(&source, filename, http, stream_http, host_fns, caps)
 }

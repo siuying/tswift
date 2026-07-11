@@ -129,7 +129,7 @@ fn compile_impl(source: &str) -> String {
     let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
     let mut interp = Interpreter::new(out);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
+    tswift_foundation::install_with(&mut interp, crate::platform::host_capabilities());
     tswift_swiftui::install(&mut interp);
     interp.set_filename("main.swift");
     if let Err(error) = interp.run(analysis) {

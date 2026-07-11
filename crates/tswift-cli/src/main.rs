@@ -147,7 +147,8 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
     let mut handle = stdout.lock();
     let mut interp = Interpreter::new(&mut handle);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
+    // The native CLI backs every host service (defaults, file system, database).
+    tswift_foundation::install_with(&mut interp, tswift_core::Capabilities::all());
     interp.set_filename(path);
     // Golden fixtures (and any offline caller) script `URLSession` through a
     // deterministic mock transport instead of the real network; the mock wins

@@ -42,6 +42,12 @@ pub struct Context {
     /// place the HTTP transport is wired. Owned by the context: dropped (and the
     /// retained handler boxes released) when the context is freed.
     host_fns: Vec<host::HostFnRegistration>,
+    /// Host-service capabilities the embedding has *explicitly* declared via
+    /// [`tswift_declare_host_service`]. A service is available iff the host
+    /// declares its namespace — never inferred from registered function names.
+    /// Threaded into `tswift_foundation::install_with` so host-backed framework
+    /// APIs gate cleanly when their backing service was not declared.
+    host_caps: tswift_core::Capabilities,
 }
 
 impl Context {
@@ -51,6 +57,7 @@ impl Context {
             http: None,
             stream_http: None,
             host_fns: Vec::new(),
+            host_caps: tswift_core::Capabilities::none(),
         }
     }
 }
@@ -158,6 +165,7 @@ pub unsafe extern "C" fn tswift_run(ctx: *mut Context, source: *const c_char) ->
         ctx.http,
         ctx.stream_http,
         &ctx.host_fns,
+        ctx.host_caps,
     ))
 }
 
@@ -282,6 +290,56 @@ pub unsafe extern "C" fn tswift_remove_host_fn(ctx: *mut Context, name: *const c
     host::remove(&mut ctx.host_fns, name);
 }
 
+/// Declare that the host backs the host-service identified by `namespace`
+/// (e.g. `"tswift.defaults"`, `"tswift.fs"`, `"tswift.db"`), enabling the
+/// framework APIs layered on that service for scripts run through `ctx`.
+///
+/// This is the *explicit whole-service* declaration a framework capability
+/// gate consults: a service is available iff its namespace is declared here.
+/// Capabilities are never inferred from the individual host functions a host
+/// happens to register. Declaring the same namespace twice is idempotent.
+///
+/// Returns owned result JSON: `{"ok":true,"namespace":"<ns>","error":null}` on
+/// success, or `{"ok":false,"namespace":null,"error":"<why>"}` if `namespace`
+/// is null/invalid or unknown. Release it with [`tswift_string_free`].
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`tswift_context_new`]. `namespace` must
+/// be null or a valid NUL-terminated C string. The returned pointer is owned
+/// by the caller and must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_declare_host_service(
+    ctx: *mut Context,
+    namespace: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx.as_mut() else {
+        return into_json_ptr(host_service_error("null context"));
+    };
+    let Some(namespace) = borrow_str(namespace) else {
+        return into_json_ptr(host_service_error("namespace is null or not valid UTF-8"));
+    };
+    match tswift_core::HostService::for_namespace(namespace) {
+        Some(service) => {
+            ctx.host_caps = ctx.host_caps.with(service);
+            into_json_ptr(format!(
+                "{{\"ok\":true,\"namespace\":\"{}\",\"error\":null}}",
+                tswift_core::result_json::escape(namespace)
+            ))
+        }
+        None => into_json_ptr(host_service_error(&format!(
+            "unknown host-service namespace: {namespace}"
+        ))),
+    }
+}
+
+/// Build the `{"ok":false,…}` result JSON for a failed host-service declaration.
+fn host_service_error(message: &str) -> String {
+    format!(
+        "{{\"ok\":false,\"namespace\":null,\"error\":\"{}\"}}",
+        tswift_core::result_json::escape(message)
+    )
+}
+
 /// Build the `{"ok":false,…}` result JSON for a failed host-fn registration.
 fn host_register_error(message: &str) -> String {
     format!(
@@ -317,6 +375,7 @@ pub unsafe extern "C" fn tswift_swiftui_compile(
         ctx.http,
         ctx.stream_http,
         &ctx.host_fns,
+        ctx.host_caps,
     ))
 }
 
@@ -415,6 +474,7 @@ pub unsafe extern "C" fn tswift_run_module(
         ctx.http,
         ctx.stream_http,
         &ctx.host_fns,
+        ctx.host_caps,
     ))
 }
 
@@ -470,6 +530,7 @@ pub unsafe extern "C" fn tswift_swiftui_compile_module(
         ctx.http,
         ctx.stream_http,
         &ctx.host_fns,
+        ctx.host_caps,
     ))
 }
 
@@ -522,6 +583,53 @@ mod tests {
         let _remove_host_fn: unsafe extern "C" fn(*mut Context, *const c_char) =
             tswift_remove_host_fn;
         let _host_respond: unsafe extern "C" fn(*mut c_void, *const c_char) = tswift_host_respond;
+        // Explicit host-service capability declaration (slice 1).
+        let _declare_host_service: unsafe extern "C" fn(
+            *mut Context,
+            *const c_char,
+        ) -> *mut c_char = tswift_declare_host_service;
+    }
+
+    /// Declaring a known namespace succeeds and turns on that service's
+    /// capability; an unknown namespace is a structured error, not a panic.
+    #[test]
+    fn declare_host_service_toggles_capability() {
+        let ctx = tswift_context_new();
+        // Default: nothing declared.
+        assert_eq!(
+            unsafe { &*ctx }.host_caps,
+            tswift_core::Capabilities::none()
+        );
+
+        let ns = CString::new("tswift.defaults").unwrap();
+        let reg = unsafe { tswift_declare_host_service(ctx, ns.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(reg) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(reg) };
+        assert!(json.contains("\"ok\":true"), "{json}");
+        assert!(unsafe { &*ctx }
+            .host_caps
+            .contains(tswift_core::HostService::Defaults));
+        assert!(!unsafe { &*ctx }
+            .host_caps
+            .contains(tswift_core::HostService::FileSystem));
+
+        let bad = CString::new("tswift.bogus").unwrap();
+        let reg = unsafe { tswift_declare_host_service(ctx, bad.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(reg) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(reg) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+        assert!(json.contains("unknown host-service namespace"), "{json}");
+
+        unsafe { tswift_context_free(ctx) };
+    }
+
+    #[test]
+    fn declare_host_service_null_context_is_error() {
+        let ns = CString::new("tswift.defaults").unwrap();
+        let ptr = unsafe { tswift_declare_host_service(std::ptr::null_mut(), ns.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(ptr) };
+        assert!(json.contains("null context"), "{json}");
     }
 
     /// A host function `hostDeviceName() -> String` registered through the FFI
