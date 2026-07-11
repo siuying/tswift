@@ -64,6 +64,12 @@ use crate::db::{self, decode_rows, encode_params, DbRow, DbValue, ExecResult};
 /// configuration is supplied. The host maps it to a real location.
 const DEFAULT_STORE: &str = "default.store";
 
+/// Hidden field the `.modelContainer(for:)` modifier stashes its `ModelContext`
+/// on (on the modified view). The generic render-scope hooks read it to publish
+/// the context for exactly that view's subtree. Leading `__` — never serialized
+/// to the UIIR, invisible to user code, like SwiftUI's own `_env`.
+const MODEL_CONTEXT_FIELD: &str = "__modelContext";
+
 // ---------------------------------------------------------------------------
 // Per-interpreter native state
 //
@@ -99,6 +105,55 @@ struct SwiftDataState {
     next_id: i64,
     containers: HashMap<i64, ContainerState>,
     contexts: HashMap<i64, ContextState>,
+    /// The model context published to the SwiftUI environment for the *current*
+    /// render subtree, read by `@Query` (via `__tswiftCurrentModelContext()`).
+    /// Managed with stack discipline by the render-scope hooks
+    /// ([`scope_enter`]/[`scope_exit`]): a `.modelContainer(for:)` stashes its
+    /// context on the modified view (field [`MODEL_CONTEXT_FIELD`]); on entering
+    /// that view's subtree the hook pushes the previous value and installs the
+    /// modifier's, restoring it on exit. So nearest-ancestor wins and no context
+    /// leaks across siblings or after a modifier is removed. `None` outside any
+    /// `.modelContainer(for:)` subtree.
+    current_context: Option<SwiftValue>,
+    /// Save/restore stack backing [`current_context`]'s subtree scoping. Each
+    /// custom `View` the renderer expands pushes one frame on `scope_enter` and
+    /// pops it on `scope_exit`; the renderer guarantees balanced enter/exit. A
+    /// non-empty stack also signals "a render is in progress", so out-of-render
+    /// reads (a `Button` action firing between renders) can fall back to
+    /// [`action_context`] without corrupting in-render `@Query` scoping.
+    context_scope_stack: Vec<Option<SwiftValue>>,
+    /// The most-recently-entered `.modelContainer(for:)` context of the last
+    /// render, retained *past* the render so a `Button` action (which runs
+    /// outside any render scope, where the stack is empty) can still reach a
+    /// context. Single-container apps resolve unambiguously; with several
+    /// containers this is last-entered (a documented limitation — the precise
+    /// fix is `@Environment(\.modelContext)` capture, deferred per ADR-0016).
+    /// Never consulted while a render is in progress, so it cannot leak into an
+    /// unrelated subtree's `@Query`.
+    ///
+    /// Rebuilt from scratch every render pass (see [`pass_action_context`]): it
+    /// is republished only from containers actually entered *this* pass, so a
+    /// render whose `.modelContainer(for:)` disappeared (a conditional view)
+    /// clears it — an out-of-render action then gets the clean no-container
+    /// diagnostic instead of writing through a removed/sibling container.
+    action_context: Option<SwiftValue>,
+    /// Accumulator for [`action_context`], scoped to the in-flight render pass.
+    /// Reset to `None` when the outermost `scope_enter` opens a pass (empty
+    /// stack), overwritten by each container entered during the pass
+    /// (last-entered wins), and committed to [`action_context`] when the
+    /// outermost `scope_exit` closes the pass (stack returns to empty). This is
+    /// what makes a stale container from a previous pass fall away instead of
+    /// surviving into later out-of-render action reads.
+    pass_action_context: Option<SwiftValue>,
+    /// Containers minted by `.modelContainer(for:)`, keyed so the modifier
+    /// reuses one per site across renders instead of re-opening the database
+    /// every `body` re-evaluation. Persistent named stores share by store name +
+    /// schema (same file = same database). In-memory containers are keyed by the
+    /// modified view's type (the nearest stable callsite proxy available without
+    /// a callsite node id) so distinct `.modelContainer(for:inMemory:)` sites do
+    /// not collapse onto one shared in-memory database. Value is the container's
+    /// `mainContext`. See [`env_container_key`].
+    env_containers: HashMap<String, SwiftValue>,
 }
 
 struct ContainerState {
@@ -240,6 +295,20 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
     // creation time (captures resolved eagerly), via the generic macro seam.
     interp.register_macro("Predicate", predicate_macro);
 
+    // SwiftUI integration (ADR-0016 Slice 10b). `@Query` (declared in
+    // `crate::QUERY_PRELUDE`) reads the environment's model context through
+    // this free fn; `.modelContainer(for:)` publishes it. Both plug into
+    // `tswift-swiftui` only through generic core seams (`register_free_fn`,
+    // `register_struct_method`) — SwiftUI never learns SwiftData exists.
+    interp.register_free_fn("__tswiftCurrentModelContext", current_model_context);
+    interp.register_struct_method("modelContainer", modifier_model_container);
+    // Subtree scoping for the published context: the renderer brackets every
+    // custom View's `body` with these hooks, so `.modelContainer(for:)`'s
+    // context is visible only inside the modified view's subtree (nearest
+    // ancestor wins) and restored afterwards — no leakage across siblings or
+    // after the modifier is removed. Generic seam; SwiftUI stays SwiftData-blind.
+    interp.register_view_scope(scope_enter, scope_exit);
+
     let container = BuiltinReceiver::register_extension("ModelContainer");
     interp.register_contextual_property(container, "mainContext", container_main_context);
 
@@ -301,6 +370,16 @@ fn as_string(value: &SwiftValue) -> Option<String> {
     match value {
         SwiftValue::Str(s) => Some(s.clone()),
         SwiftValue::Substring { base, start, end } => Some(base[*start..*end].to_string()),
+        _ => None,
+    }
+}
+
+/// Read a (cloned) field from a struct-shaped view value — used by the render
+/// scope hooks to recover the `ModelContext` a `.modelContainer(for:)` stashed
+/// on the view it modified.
+fn struct_field(value: &SwiftValue, name: &str) -> Option<SwiftValue> {
+    match value {
+        SwiftValue::Struct(obj) => obj.get(name).cloned(),
         _ => None,
     }
 }
@@ -461,9 +540,18 @@ fn configuration_fields(value: &SwiftValue) -> Option<(bool, Option<String>)> {
 // ModelContainer(for: T.self, …)
 // ---------------------------------------------------------------------------
 
-fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    // Collect every model type (any metatype argument, in any position — the
-    // `for:` label leads the variadic) and any ModelConfiguration.
+/// The parsed model-type set and store selection of a `ModelContainer(for:)` /
+/// `.modelContainer(for:)` argument list.
+struct ContainerArgs {
+    type_names: Vec<String>,
+    in_memory: bool,
+    store_name: Option<String>,
+}
+
+/// Collect every model type (any metatype argument, in any position — the
+/// `for:` label leads the variadic) and any `ModelConfiguration`. Shared by the
+/// `ModelContainer(for:)` initializer and the `.modelContainer(for:)` modifier.
+fn parse_container_args(args: &[Arg]) -> ContainerArgs {
     let mut type_names: Vec<String> = Vec::new();
     let mut in_memory = false;
     let mut store_name: Option<String> = None;
@@ -474,7 +562,15 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             }
         }
     };
-    for arg in &args {
+    for arg in args {
+        // `.modelContainer(for:inMemory:)` — the modifier's convenience Bool
+        // (distinct from a ModelConfiguration). Any other label is ignored.
+        if arg.label.as_deref() == Some("inMemory") {
+            if let SwiftValue::Bool(b) = arg.value {
+                in_memory |= b;
+            }
+            continue;
+        }
         match &arg.value {
             SwiftValue::Metatype(_) => push_type(&arg.value),
             SwiftValue::Array(items) => {
@@ -495,6 +591,23 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             }
         }
     }
+    ContainerArgs {
+        type_names,
+        in_memory,
+        store_name,
+    }
+}
+
+/// Derive schemas, open the store, create the tables, and register a fresh
+/// container + its stable `mainContext` in the registry. Returns the container
+/// value paired with its main-context value. Shared by the initializer and the
+/// environment modifier; performs the capability gate itself.
+fn open_container(ctx: &mut dyn StdContext, parsed: &ContainerArgs) -> StdResult {
+    let ContainerArgs {
+        type_names,
+        in_memory,
+        store_name,
+    } = parsed;
 
     if type_names.is_empty() {
         return Err(type_error(
@@ -511,7 +624,7 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 
     // Derive schemas before opening anything, so a bad @Model fails cleanly.
     let mut schemas = Vec::with_capacity(type_names.len());
-    for name in &type_names {
+    for name in type_names {
         match derive_schema(ctx, name) {
             Ok(schema) => schemas.push(schema),
             Err(err) => return Err(ctx.throw(err)),
@@ -519,10 +632,12 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     }
     let schemas = Rc::new(schemas);
 
-    let path = if in_memory {
+    let path = if *in_memory {
         ":memory:".to_string()
     } else {
-        store_name.unwrap_or_else(|| DEFAULT_STORE.to_string())
+        store_name
+            .clone()
+            .unwrap_or_else(|| DEFAULT_STORE.to_string())
     };
 
     // Open the database (creating it if absent).
@@ -579,6 +694,168 @@ fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
         "ModelContainer",
         vec![("__cid".into(), SwiftValue::int(cid as i128))],
     ))
+}
+
+fn model_container_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let parsed = parse_container_args(&args);
+    open_container(ctx, &parsed)
+}
+
+/// The main-context value of a container value (`__cid` → registry lookup).
+fn container_main_context_value(iid: u64, container: &SwiftValue) -> Option<SwiftValue> {
+    let cid = object_int_field(container, "__cid")?;
+    with_state(iid, |s| {
+        s.containers.get(&cid).map(|c| c.main_context.clone())
+    })
+}
+
+/// The reuse key for a `.modelContainer(for:)` site's container. Persistent
+/// named stores share by store name + schema (same file = same database, which
+/// SwiftData also does). In-memory containers are per *site*: two distinct
+/// `.modelContainer(for:inMemory:)` with the same schema must own separate
+/// databases (each modifier instance owns its container). Lacking a callsite
+/// node id in the struct-method seam, the modified view's type name is the
+/// nearest stable site proxy — sibling containers on distinct views stay
+/// isolated. (Tripwire: two in-memory containers on the *same* view type would
+/// still collide; revisit if the renderer ever exposes a real callsite id.)
+fn env_container_key(parsed: &ContainerArgs, recv: &SwiftValue) -> String {
+    let mut sorted = parsed.type_names.clone();
+    sorted.sort();
+    let schemas = sorted.join(",");
+    if parsed.in_memory {
+        format!("mem|{}|{schemas}", recv.type_name())
+    } else {
+        // Normalize the store name to what `open_container` actually opens: an
+        // absent or empty name maps to `DEFAULT_STORE`. Without this an explicit
+        // `ModelConfiguration("default.store")` would key differently from the
+        // implicit default and mint a *second* container over the same file.
+        let store = match parsed.store_name.as_deref() {
+            Some(name) if !name.is_empty() => name,
+            _ => DEFAULT_STORE,
+        };
+        format!("persist|{store}|{schemas}")
+    }
+}
+
+/// `.modelContainer(for: T.self)` / `.modelContainer(for: [A.self, B.self])` —
+/// the SwiftUI view modifier. Establishes (once per site, then reused across
+/// renders) a container and stashes its `mainContext` on the modified view
+/// (field [`MODEL_CONTEXT_FIELD`]). The render-scope hooks ([`scope_enter`]/
+/// [`scope_exit`]) publish it to the environment for exactly that view's
+/// subtree, so `@Query` reads the nearest-ancestor context with no leakage. A
+/// side-effecting passthrough on the render tree: the receiver view is returned
+/// (carrying the stashed field) and never reaches the UIIR, like
+/// `.environmentObject(_)`.
+///
+/// Registered from this crate via the generic `Interpreter::register_struct_method`
+/// seam — `tswift-swiftui` never learns SwiftData exists.
+fn modifier_model_container(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let parsed = parse_container_args(&args);
+    if parsed.type_names.is_empty() {
+        return Err(type_error(
+            ".modelContainer(for:) requires at least one model type (e.g. .modelContainer(for: Item.self))",
+        ));
+    }
+    let key = env_container_key(&parsed, &recv);
+    let iid = ctx.interpreter_id();
+    let existing = with_state(iid, |s| s.env_containers.get(&key).cloned());
+    let main_context = match existing {
+        Some(mc) => mc,
+        None => {
+            let container = open_container(ctx, &parsed)?;
+            let mc = container_main_context_value(iid, &container).ok_or_else(|| {
+                type_error(".modelContainer(for:): failed to establish a main context")
+            })?;
+            with_state(iid, |s| {
+                s.env_containers.insert(key, mc.clone());
+            });
+            mc
+        }
+    };
+    // Stash the context on the modified view; the render-scope hooks publish it
+    // for this subtree only. Do NOT set `current_context` here — that would leak
+    // to siblings evaluated later in the same render.
+    let SwiftValue::Struct(obj) = &recv else {
+        return Err(type_error(format!(
+            ".modelContainer(for:) applied to non-view value `{}`",
+            recv.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    fields.retain(|(k, _)| k != MODEL_CONTEXT_FIELD);
+    fields.push((MODEL_CONTEXT_FIELD.into(), main_context));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
+/// Render-scope enter hook (registered via `Interpreter::register_view_scope`).
+/// Push the current published context, then — if this view was modified by
+/// `.modelContainer(for:)` — install that modifier's context for the subtree.
+/// Balanced with [`scope_exit`] by the renderer.
+fn scope_enter(ctx: &mut dyn StdContext, view: &SwiftValue) {
+    let marker = struct_field(view, MODEL_CONTEXT_FIELD);
+    with_state(ctx.interpreter_id(), |s| {
+        // Outermost enter (empty stack) opens a new render pass: forget the
+        // previous pass's accumulated action context, so a container removed
+        // this pass does not survive into it.
+        if s.context_scope_stack.is_empty() {
+            s.pass_action_context = None;
+        }
+        s.context_scope_stack.push(s.current_context.clone());
+        if let Some(mc) = marker {
+            s.current_context = Some(mc.clone());
+            // Record for out-of-render action reads; committed to
+            // `action_context` only when this pass ends (see `scope_exit`).
+            s.pass_action_context = Some(mc);
+        }
+    });
+}
+
+/// Render-scope exit hook. Restore the context saved by the matching
+/// [`scope_enter`], so nearest-ancestor scoping holds and nothing leaks past the
+/// subtree.
+fn scope_exit(ctx: &mut dyn StdContext, _view: &SwiftValue) {
+    with_state(ctx.interpreter_id(), |s| {
+        if let Some(prev) = s.context_scope_stack.pop() {
+            s.current_context = prev;
+        }
+        // Outermost exit (stack back to empty) closes the render pass: publish
+        // the containers actually entered this pass, clearing any stale action
+        // context from a pass whose `.modelContainer(for:)` has since vanished.
+        if s.context_scope_stack.is_empty() {
+            s.action_context = s.pass_action_context.take();
+        }
+    });
+}
+
+/// `__tswiftCurrentModelContext()` — the environment's current `ModelContext`,
+/// published by the nearest enclosing `.modelContainer(for:)`. Throws a
+/// catchable error when no container is in scope, so `@Query`'s getter degrades
+/// to an empty array (via `try?`) rather than trapping.
+fn current_model_context(ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdResult {
+    // While a render is in progress (scope stack non-empty), honour the strict
+    // subtree scope so `@Query` sees only its nearest-ancestor container. Only
+    // out-of-render callers (a `Button` action firing between renders) fall back
+    // to the retained `action_context`.
+    let resolved = with_state(ctx.interpreter_id(), |s| {
+        if s.context_scope_stack.is_empty() {
+            s.action_context.clone()
+        } else {
+            s.current_context.clone()
+        }
+    });
+    match resolved {
+        Some(mc) => Ok(mc),
+        None => Err(ctx.throw(host_error(
+            "SwiftData: no model container in the environment; add .modelContainer(for:) to a view",
+        ))),
+    }
 }
 
 fn container_main_context(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
@@ -2936,5 +3213,309 @@ mod tests {
 
         // An unknown property is a clear error too.
         assert!(predicate_macro(&mut ctx, &predicate_node("m.nope > 1")).is_err());
+    }
+
+    // ---------------------------------------------------------------------
+    // SwiftUI integration: .modelContainer(for:) modifier + @Query context.
+    // ---------------------------------------------------------------------
+
+    /// A throwaway view value to hand the `.modelContainer(for:)` modifier as
+    /// its receiver. Named so distinct sites (distinct view types) get distinct
+    /// in-memory containers.
+    fn named_view(type_name: &str) -> SwiftValue {
+        SwiftValue::Struct(Rc::new(StructObj {
+            type_name: type_name.into(),
+            fields: vec![],
+        }))
+    }
+
+    fn dummy_view() -> SwiftValue {
+        named_view("NoteList")
+    }
+
+    /// Apply `.modelContainer(for: model, inMemory: true)` to a freshly-named
+    /// view and return the modified view (carrying the stashed context field),
+    /// as the renderer would see it before entering the subtree.
+    fn apply_in_memory_container(ctx: &mut MockCtx, view_type: &str, model: &str) -> SwiftValue {
+        modifier_model_container(
+            ctx,
+            named_view(view_type),
+            vec![metatype(model), labeled("inMemory", SwiftValue::Bool(true))],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn model_container_modifier_publishes_context_and_reuses_across_renders() {
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        let iid = ctx.id;
+
+        // No container in scope yet -> current-context lookup errors.
+        assert!(current_model_context(&mut ctx, vec![]).is_err());
+
+        // First render: the modifier opens the store and stashes its context on
+        // the modified view; the context is NOT published until the renderer
+        // enters that view's subtree.
+        let out = apply_in_memory_container(&mut ctx, "NoteList", "Movie");
+        assert_eq!(out.type_name(), "NoteList");
+        assert!(
+            current_model_context(&mut ctx, vec![]).is_err(),
+            "context is scoped to the subtree, not published on modifier apply"
+        );
+        let opens = ctx
+            .calls
+            .iter()
+            .filter(|c| matches!(c, Call::Open(_)))
+            .count();
+        assert_eq!(opens, 1, "first render opens the store once");
+
+        // Entering the subtree publishes the context; it resolves to a
+        // ModelContext. Exiting withdraws it.
+        scope_enter(&mut ctx, &out);
+        let published = current_model_context(&mut ctx, vec![]).unwrap();
+        assert!(object_int_field(&published, "__ctxid").is_some());
+        scope_exit(&mut ctx, &out);
+        assert!(
+            with_state(iid, |s| s.current_context.is_none()),
+            "scoped context withdrawn after leaving the subtree"
+        );
+
+        // Second render of the same site reuses the container (no new Open),
+        // matching "one container per site across renders".
+        let before = ctx.calls.len();
+        let out2 = apply_in_memory_container(&mut ctx, "NoteList", "Movie");
+        let new_opens = ctx.calls[before..]
+            .iter()
+            .filter(|c| matches!(c, Call::Open(_)))
+            .count();
+        assert_eq!(new_opens, 0, "re-render reuses the container, no re-open");
+
+        // Same context instance is published on the reuse render's subtree.
+        scope_enter(&mut ctx, &out2);
+        let again = current_model_context(&mut ctx, vec![]).unwrap();
+        assert_eq!(
+            object_int_field(&again, "__ctxid"),
+            object_int_field(&published, "__ctxid")
+        );
+        scope_exit(&mut ctx, &out2);
+
+        teardown_registry(&mut ctx);
+        assert!(!REGISTRY.with(|r| r.borrow().contains_key(&iid)));
+    }
+
+    #[test]
+    fn model_container_modifier_requires_a_model_type() {
+        let mut ctx = MockCtx::new(true);
+        assert!(modifier_model_container(&mut ctx, dummy_view(), vec![]).is_err());
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn sibling_in_memory_containers_stay_isolated() {
+        // Two sibling `.modelContainer(for: Movie.self, inMemory: true)` on
+        // distinct views must own distinct in-memory databases (each modifier
+        // instance owns its container) -> two Opens, distinct contexts.
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        let a = apply_in_memory_container(&mut ctx, "PaneA", "Movie");
+        let b = apply_in_memory_container(&mut ctx, "PaneB", "Movie");
+        let opens = ctx
+            .calls
+            .iter()
+            .filter(|c| matches!(c, Call::Open(_)))
+            .count();
+        assert_eq!(opens, 2, "distinct sites open distinct in-memory stores");
+
+        scope_enter(&mut ctx, &a);
+        let ca = object_int_field(&current_model_context(&mut ctx, vec![]).unwrap(), "__ctxid");
+        scope_exit(&mut ctx, &a);
+        scope_enter(&mut ctx, &b);
+        let cb = object_int_field(&current_model_context(&mut ctx, vec![]).unwrap(), "__ctxid");
+        scope_exit(&mut ctx, &b);
+        assert_ne!(ca, cb, "sibling containers publish distinct contexts");
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn nested_container_nearest_ancestor_wins_and_restores() {
+        // Outer subtree publishes context O; a nested `.modelContainer` publishes
+        // context I for its inner subtree (nearest wins); leaving the inner
+        // subtree restores O; leaving the outer restores "no context".
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        let outer = apply_in_memory_container(&mut ctx, "Outer", "Movie");
+        let inner = apply_in_memory_container(&mut ctx, "Inner", "Movie");
+
+        scope_enter(&mut ctx, &outer);
+        let o = object_int_field(&current_model_context(&mut ctx, vec![]).unwrap(), "__ctxid");
+        scope_enter(&mut ctx, &inner);
+        let i = object_int_field(&current_model_context(&mut ctx, vec![]).unwrap(), "__ctxid");
+        assert_ne!(o, i, "nested container overrides for its subtree");
+        scope_exit(&mut ctx, &inner);
+        let back = object_int_field(&current_model_context(&mut ctx, vec![]).unwrap(), "__ctxid");
+        assert_eq!(
+            back, o,
+            "leaving the inner subtree restores the outer context"
+        );
+        scope_exit(&mut ctx, &outer);
+        assert!(
+            with_state(ctx.id, |s| s.current_context.is_none()),
+            "leaving the outer subtree restores no scoped context"
+        );
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn unmarked_view_subtree_sees_no_context() {
+        // A plain view (no `.modelContainer`) with no ancestor container: its
+        // subtree sees no context, so `@Query` gets a clear diagnostic (which it
+        // catches with `try?` and degrades to []). Not a stale leak.
+        let mut ctx = MockCtx::new(true);
+        let plain = named_view("Plain");
+        scope_enter(&mut ctx, &plain);
+        let err = current_model_context(&mut ctx, vec![]).unwrap_err();
+        if let StdError::Throw(v) = err {
+            let msg = struct_field(&v, "message")
+                .and_then(|m| as_string(&m))
+                .unwrap();
+            assert!(
+                msg.contains("no model container"),
+                "clear diagnostic: {msg}"
+            );
+        } else {
+            panic!("expected a catchable throw, got {err:?}");
+        }
+        scope_exit(&mut ctx, &plain);
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn query_fetch_reflects_inserts_after_save() {
+        // End-to-end at the native layer: publish a context via the modifier,
+        // insert + save, then fetch what `@Query`'s getter fetches (the sole
+        // schema) and see the new rows — the render-on-every-dispatch story.
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        // The mock SELECT reply mirrors what a real store returns post-save.
+        ctx.query_rows.push((
+            "SELECT".into(),
+            vec![vec![
+                ("rowid".into(), DbValue::Int(1)),
+                ("title".into(), DbValue::Text("Arrival".into())),
+                ("year".into(), DbValue::Int(2016)),
+            ]],
+        ));
+        let view = apply_in_memory_container(&mut ctx, "NoteList", "Movie");
+        scope_enter(&mut ctx, &view);
+        let main = current_model_context(&mut ctx, vec![]).unwrap();
+
+        context_insert(&mut ctx, main.clone(), vec![movie("Arrival", 2016)]).unwrap();
+        context_save(&mut ctx, main.clone(), vec![]).unwrap();
+
+        // `@Query` (no predicate) fetches the sole schema via a default
+        // FetchDescriptor. Assert a single SELECT is emitted per fetch.
+        let descriptor = fetch_descriptor_init(&mut ctx, vec![]).unwrap();
+        let before = ctx.calls.len();
+        let rows = context_fetch(&mut ctx, main.clone(), vec![descriptor]).unwrap();
+        let selects = ctx.calls[before..]
+            .iter()
+            .filter(|c| matches!(c, Call::Query(_, _)))
+            .count();
+        assert_eq!(selects, 1, "one SELECT per @Query fetch");
+        if let SwiftValue::Array(items) = rows.result {
+            assert_eq!(items.len(), 1, "the saved row is fetched back");
+        } else {
+            panic!("fetch did not return an array");
+        }
+        scope_exit(&mut ctx, &view);
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn action_context_cleared_when_container_removed_next_render() {
+        // A container present in render 1 but removed in render 2 (a conditional
+        // view) must not leave a stale `action_context`: an out-of-render action
+        // after render 2 gets the clean no-container diagnostic, never a write
+        // through the removed container.
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+        let iid = ctx.id;
+        let root = named_view("App");
+
+        // Render 1: the root's subtree contains a `.modelContainer(for:)`.
+        let marked = apply_in_memory_container(&mut ctx, "NoteList", "Movie");
+        scope_enter(&mut ctx, &root);
+        scope_enter(&mut ctx, &marked);
+        scope_exit(&mut ctx, &marked);
+        scope_exit(&mut ctx, &root);
+
+        // Out-of-render action after render 1 resolves the container's context.
+        assert!(
+            current_model_context(&mut ctx, vec![]).is_ok(),
+            "action after a render with a container resolves it"
+        );
+
+        // Render 2: the conditional dropped the container; only the plain root
+        // renders this pass.
+        scope_enter(&mut ctx, &root);
+        scope_exit(&mut ctx, &root);
+
+        // Out-of-render action after render 2: clean diagnostic, not a stale write.
+        let err = current_model_context(&mut ctx, vec![]).unwrap_err();
+        match err {
+            StdError::Throw(v) => {
+                let msg = struct_field(&v, "message")
+                    .and_then(|m| as_string(&m))
+                    .unwrap();
+                assert!(
+                    msg.contains("no model container"),
+                    "clean diagnostic: {msg}"
+                );
+            }
+            other => panic!("expected a catchable throw, got {other:?}"),
+        }
+        assert!(
+            with_state(iid, |s| s.action_context.is_none()),
+            "stale action context cleared once its container vanished"
+        );
+        teardown_registry(&mut ctx);
+    }
+
+    #[test]
+    fn default_store_key_normalized_so_explicit_name_reuses_container() {
+        // The default persistent store is keyed by an empty name but opens
+        // `default.store`. An explicit `ModelConfiguration("default.store")`
+        // names the *same* file, so it must reuse the implicit-default
+        // container rather than opening a second one over the same store.
+        let mut ctx =
+            MockCtx::new(true).with_model("Movie", &[("title", "String"), ("year", "Int")]);
+
+        // Site A: implicit default store (no ModelConfiguration name).
+        modifier_model_container(&mut ctx, named_view("PaneA"), vec![metatype("Movie")]).unwrap();
+
+        // Site B: explicit ModelConfiguration("default.store") over the same file.
+        let config = model_configuration_init(
+            &mut ctx,
+            vec![Arg::positional(SwiftValue::Str("default.store".into()))],
+        )
+        .unwrap();
+        modifier_model_container(
+            &mut ctx,
+            named_view("PaneB"),
+            vec![metatype("Movie"), labeled("configurations", config)],
+        )
+        .unwrap();
+
+        let opens = ctx
+            .calls
+            .iter()
+            .filter(|c| matches!(c, Call::Open(_)))
+            .count();
+        assert_eq!(
+            opens, 1,
+            "explicit default.store reuses the implicit-default container (same file)"
+        );
+        teardown_registry(&mut ctx);
     }
 }

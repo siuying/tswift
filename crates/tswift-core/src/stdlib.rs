@@ -58,6 +58,13 @@ pub type StdResult = Result<SwiftValue, StdError>;
 /// can release native resources deterministically.
 pub type Finalizer = Box<dyn FnOnce(&mut dyn StdContext)>;
 
+/// A render-scope hook registered via [`crate::Interpreter::register_view_scope`].
+/// The renderer brackets each custom `View`'s `body` evaluation with a matched
+/// `enter`/`exit` pair (called with the view value), letting a framework push
+/// and restore subtree-scoped state carried by a modifier (nearest-ancestor
+/// wins, no leakage across siblings). Core assigns the view value no meaning.
+pub type ViewScopeFn = fn(&mut dyn StdContext, &SwiftValue);
+
 /// The narrow capability handle handed to every standard-library intrinsic.
 ///
 /// Defined in core and implemented for [`crate::Interpreter`]; widen only as a
@@ -105,6 +112,19 @@ pub trait StdContext {
     ) -> StdResult {
         Ok(view.clone())
     }
+
+    /// Enter the render scope of a custom `View` before its `body` is evaluated,
+    /// invoking every hook registered via
+    /// [`crate::Interpreter::register_view_scope`]. Balanced with
+    /// [`StdContext::view_scope_exit`]: the renderer brackets each view's `body`
+    /// expansion so a framework can push subtree-scoped state (nearest-ancestor
+    /// wins). The default is a no-op; the interpreter overrides it.
+    fn view_scope_enter(&mut self, _view: &SwiftValue) {}
+    /// Exit the render scope entered by [`StdContext::view_scope_enter`],
+    /// invoking every registered hook's exit in reverse registration order so a
+    /// framework can restore the state it pushed. The default is a no-op; the
+    /// interpreter overrides it.
+    fn view_scope_exit(&mut self, _view: &SwiftValue) {}
 
     /// The program output sink (`print` and friends write here).
     fn out(&mut self) -> &mut dyn Write;

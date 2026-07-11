@@ -26,6 +26,46 @@ mod model;
 
 use tswift_core::Interpreter;
 
+/// SwiftData's SwiftUI-facing prelude source (the `@Query` property wrapper).
+///
+/// Kept separate from the native `install`: a SwiftUI render host prepends this
+/// to the user program (after `tswift_swiftui::PRELUDE`) so `@Query` resolves,
+/// exactly as the SwiftUI token prelude is prepended today. Not included on the
+/// plain `tswift run` path (no rendering, no `@Query`).
+///
+/// `@Query`'s getter fetches the environment's model context on every read;
+/// because a render session re-evaluates `body` on every dispatch event
+/// (ADR-0016 Slice 10b), a post-`save()` render reflects the new rows with no
+/// change-notification hook. It degrades to an empty array when no
+/// `.modelContainer(for:)` is in the environment (via `try?`).
+pub const QUERY_PRELUDE: &str = r#"
+@propertyWrapper
+struct Query<Element> {
+    var __descriptor: FetchDescriptor<Element>
+    var wrappedValue: [Element] {
+        guard let __ctx = try? __tswiftCurrentModelContext() else { return [] }
+        return (try? __ctx.fetch(__descriptor)) ?? []
+    }
+    init() {
+        __descriptor = FetchDescriptor<Element>()
+    }
+    init(_ descriptor: FetchDescriptor<Element>) {
+        __descriptor = descriptor
+    }
+    init(sort keyPath: Any, order: SortOrder = .forward) {
+        __descriptor = FetchDescriptor<Element>(sortBy: [SortDescriptor(keyPath, order: order)])
+    }
+    init(filter predicate: Predicate<Element>) {
+        __descriptor = FetchDescriptor<Element>(predicate: predicate)
+    }
+    init(filter predicate: Predicate<Element>, sort keyPath: Any, order: SortOrder = .forward) {
+        __descriptor = FetchDescriptor<Element>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(keyPath, order: order)])
+    }
+}
+"#;
+
 #[cfg(test)]
 use tswift_core::StdContext;
 

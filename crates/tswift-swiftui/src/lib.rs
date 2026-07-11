@@ -874,8 +874,17 @@ fn expand_into(
                 return Err(recursion_error(&v));
             }
             let (v, child_env) = apply_environment(ctx, v, env)?;
-            let body = ctx.get_member(&v, "body")?;
-            expand_into(ctx, body, out, depth + 1, &child_env)?;
+            // Bracket the view's `body` expansion with the generic render-scope
+            // hooks so a modifier-carried subtree value (e.g. SwiftData's
+            // `.modelContainer` context) is published for exactly this subtree
+            // and restored after — nearest-ancestor wins, no sibling leakage.
+            ctx.view_scope_enter(&v);
+            let result = match ctx.get_member(&v, "body") {
+                Ok(body) => expand_into(ctx, body, out, depth + 1, &child_env),
+                Err(e) => Err(e),
+            };
+            ctx.view_scope_exit(&v);
+            result?;
         }
         _ => {}
     }
@@ -913,7 +922,12 @@ pub fn resolve_root(ctx: &mut dyn StdContext, value: SwiftValue) -> Result<Swift
         // `.environmentObject(_)`) before evaluating its `body`.
         let (injected, child_env) = apply_environment(ctx, current, &env)?;
         env = child_env;
-        current = ctx.get_member(&injected, "body")?;
+        // Bracket `body` evaluation (which eagerly builds the whole subtree)
+        // with the render-scope hooks, mirroring `expand_into`.
+        ctx.view_scope_enter(&injected);
+        let body = ctx.get_member(&injected, "body");
+        ctx.view_scope_exit(&injected);
+        current = body?;
         depth += 1;
     }
     Ok(current)

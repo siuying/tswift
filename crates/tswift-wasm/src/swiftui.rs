@@ -118,7 +118,10 @@ fn clear_session() {
 }
 
 fn compile_impl(source: &str) -> String {
-    let program = format!("{PRELUDE}\n{source}");
+    // Prepend the SwiftUI token prelude and the SwiftData `@Query` prelude
+    // (ADR-0016 Slice 10b) so `@Query`/`.modelContainer(for:)` resolve; the
+    // fetch degrades to `[]` when the host doesn't back `tswift.db`.
+    let program = format!("{PRELUDE}\n{}\n{source}", tswift_swiftdata::QUERY_PRELUDE);
     let analysis = match Analysis::analyze(&program, "main.swift") {
         Ok(analysis) => analysis,
         Err(error) => return compile_error(&error.to_string()),

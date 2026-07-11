@@ -169,15 +169,39 @@ when the container has exactly one model type. An ambiguous multi-model fetch
 with no predicate raises a clear diagnostic asking for a `#Predicate<T>`
 (documented deviation from Apple, where the generic is always inferred).
 
-### `@Query` / `.modelContainer(for:)` — deferred (R2 verified)
+### `@Query` / `.modelContainer(for:)` — shipped in Slice 10b
 
-SwiftUI's `@Query` is **not** shipped in this slice. R2 (does a re-render reach
-a `@Query`?) was verified in the affirmative: the render session re-evaluates
-`body` on **every** `dispatch` event (`session.rs`), so a `@Query` that fetches
-on every render would reflect a `save()` performed inside a button action
-without any dedicated save-notification hook — a hook is only needed for saves
-off the event loop (async), which is out of scope. The remaining work is a
-generic "framework contributes a prelude property-wrapper + reads the
-environment's `modelContext`" seam in `tswift-swiftui` (which today has no
-external-prelude registration point) plus binding the wrapper's `Element` type
-for the fetch — a self-contained follow-up over the now-complete fetch surface.
+SwiftUI's `@Query` and the `.modelContainer(for:)` modifier now ship. R2 (does
+a re-render reach a `@Query`?) held: the render session re-evaluates `body` on
+**every** `dispatch` event (`session.rs`), so `@Query` fetches on every
+`wrappedValue` read and reflects a `save()` performed inside a button action
+with no save-notification hook (hooks are only needed for off-event-loop saves,
+out of scope).
+
+- **No new `tswift-swiftui` seam was required.** The anticipated
+  "external-prelude registration point" turned out unnecessary: the prelude is a
+  compile-time const the render caller composes (`tswift_swiftui::PRELUDE` +
+  `tswift_swiftdata::QUERY_PRELUDE` + user source) *before* install, so a runtime
+  registry would be too late anyway. `.modelContainer(for:)` is a passthrough
+  View modifier registered via the existing generic
+  `Interpreter::register_struct_method` seam (side-effect: publish the container's
+  `mainContext`; return the receiver unchanged, like `.environmentObject`);
+  `@Query`'s getter calls the free fn `__tswiftCurrentModelContext()` and reuses
+  the whole existing `ModelContext.fetch`/`FetchDescriptor`/`#Predicate` path.
+  SwiftUI never learns SwiftData exists.
+- **`@Query(sort:)` / `@Query(filter:)`** build a `FetchDescriptor` in the
+  wrapper's `init`; the `Element` type rides the existing sole-schema fallback
+  (or the predicate's `<T>`), same deviation-from-Apple as bare
+  `FetchDescriptor()`.
+- **`@Environment(\.modelContext)` remains deferred** — `tswift-swiftui` has no
+  custom keyed `EnvironmentValues` (only typed `@EnvironmentObject`). The
+  internal `__tswiftCurrentModelContext()` free fn is the stopgap for reaching
+  the context from an action; real `@Environment(\.modelContext)` waits on generic
+  env-value keys in SwiftUI.
+- **Generation-counter fetch caching not implemented** (fetch-on-every-read is
+  correct and cheap for typical bodies); documented as a tripwire in `notes.md`.
+
+The CLI and wasm SwiftUI render paths now back `tswift.db` (previously
+unbacked on the canvas path), so `@Query` works end-to-end against real SQLite
+(CLI) or degrades to `[]` when a page doesn't declare the service (wasm).
+Fixture: `tests/swiftui-fixtures/swiftdata-query.swift`.

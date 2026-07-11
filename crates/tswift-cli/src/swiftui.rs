@@ -42,7 +42,10 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
         eprintln!("error: cannot read `{path}`: {e}");
         ExitCode::FAILURE
     })?;
-    let program = format!("{PRELUDE}\n{user}");
+    // Prepend the SwiftUI token prelude and the SwiftData `@Query` prelude
+    // (ADR-0016 Slice 10b) so a rendered view can list `@Query` results against
+    // the environment's model container.
+    let program = format!("{PRELUDE}\n{}\n{user}", tswift_swiftdata::QUERY_PRELUDE);
     let analysis = analyze(&program).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::FAILURE
@@ -58,10 +61,16 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
     let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
     let mut interp = Interpreter::new(out);
     tswift_std::install(&mut interp);
-    tswift_foundation::install(&mut interp);
-    // Register the SwiftData surface (no db backing on the canvas path; the
-    // initializer raises a clean diagnostic if a view model reaches for it).
-    tswift_swiftdata::install(&mut interp, false);
+    // The native CLI backs every host service, including the database, so a
+    // rendered `.modelContainer(for:)` / `@Query` works end-to-end against real
+    // SQLite (see `main.rs`; the render host installs the same combined handler).
+    interp.set_host_call_handler(std::sync::Arc::new(crate::host::CliHostHandler::new()));
+    let caps = tswift_core::Capabilities::all();
+    tswift_foundation::install_with(&mut interp, caps);
+    tswift_swiftdata::install(
+        &mut interp,
+        caps.contains(tswift_core::HostService::Database),
+    );
     tswift_swiftui::install(&mut interp);
     if let Err(e) = interp.run(analysis) {
         eprintln!("error: {e}");

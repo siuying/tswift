@@ -972,6 +972,13 @@ pub struct Interpreter<'w> {
     /// deterministically. Drained by [`Interpreter::teardown`], which the
     /// `Drop` impl also calls, so each finalizer runs exactly once.
     finalizers: Vec<crate::stdlib::Finalizer>,
+    /// Render-scope hook pairs registered by frameworks via
+    /// [`Interpreter::register_view_scope`]. The SwiftUI renderer brackets each
+    /// custom `View`'s `body` evaluation with `view_scope_enter`/`_exit`, which
+    /// invoke every pair's enter (registration order) / exit (reverse order) so
+    /// a framework can push and restore subtree-scoped state a modifier carries.
+    /// Core assigns the view value no meaning.
+    view_scopes: Vec<(crate::stdlib::ViewScopeFn, crate::stdlib::ViewScopeFn)>,
     /// Freestanding-macro handlers registered by frameworks via
     /// [`Interpreter::register_macro`], keyed by the macro name (`"Predicate"`
     /// for `#Predicate`). Consulted by [`Interpreter::eval_macro`] before the
@@ -1068,6 +1075,7 @@ impl<'w> Interpreter<'w> {
             response_disposition_token: 0,
             singletons: HashMap::new(),
             finalizers: Vec::new(),
+            view_scopes: Vec::new(),
             macros: HashMap::new(),
             id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -1307,6 +1315,22 @@ impl<'w> Interpreter<'w> {
                 params: Some(params),
             },
         );
+    }
+
+    /// Register a render-scope hook pair (the generic subtree-scoping seam). The
+    /// SwiftUI renderer brackets each custom `View`'s `body` evaluation with a
+    /// matched call to `enter` (registration order) and `exit` (reverse order),
+    /// each receiving the view value, so a framework can push subtree-scoped
+    /// state a modifier carries and restore it afterwards (nearest-ancestor
+    /// wins, no leakage across siblings). Core assigns the view value no
+    /// meaning — SwiftData uses it to publish/withdraw the environment's
+    /// `ModelContext` for `@Query`.
+    pub fn register_view_scope(
+        &mut self,
+        enter: crate::stdlib::ViewScopeFn,
+        exit: crate::stdlib::ViewScopeFn,
+    ) {
+        self.view_scopes.push((enter, exit));
     }
 
     /// Instantiate a user struct `type_name` with `args` (label, value) pairs,
@@ -5081,6 +5105,29 @@ impl StdContext for Interpreter<'_> {
         self.finalizers.push(finalizer);
     }
 
+    fn view_scope_enter(&mut self, view: &SwiftValue) {
+        // Snapshot the fn pointers first (they are `Copy`) so we don't hold a
+        // borrow of `self` across the callback, which takes `self` as context.
+        let enters: Vec<crate::stdlib::ViewScopeFn> =
+            self.view_scopes.iter().map(|(enter, _)| *enter).collect();
+        for enter in enters {
+            enter(self, view);
+        }
+    }
+
+    fn view_scope_exit(&mut self, view: &SwiftValue) {
+        // Reverse registration order so exits unwind the matched enters.
+        let exits: Vec<crate::stdlib::ViewScopeFn> = self
+            .view_scopes
+            .iter()
+            .rev()
+            .map(|(_, exit)| *exit)
+            .collect();
+        for exit in exits {
+            exit(self, view);
+        }
+    }
+
     fn interpreter_id(&self) -> u64 {
         self.id
     }
@@ -6771,6 +6818,40 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
             assert_eq!(ran.get(), 1);
         }
         assert_eq!(ran.get(), 1, "finalizer runs exactly once");
+    }
+
+    #[test]
+    fn view_scope_hooks_run_in_registration_and_reverse_order() {
+        use crate::stdlib::StdContext;
+        // Two hooks record their enter/exit tags into a thread-local log; the
+        // renderer seam must call enters in registration order and exits in
+        // reverse (LIFO), so nested subtree state unwinds correctly.
+        thread_local! {
+            static LOG: std::cell::RefCell<Vec<&'static str>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        fn enter_a(_c: &mut dyn StdContext, _v: &SwiftValue) {
+            LOG.with(|l| l.borrow_mut().push("enterA"));
+        }
+        fn exit_a(_c: &mut dyn StdContext, _v: &SwiftValue) {
+            LOG.with(|l| l.borrow_mut().push("exitA"));
+        }
+        fn enter_b(_c: &mut dyn StdContext, _v: &SwiftValue) {
+            LOG.with(|l| l.borrow_mut().push("enterB"));
+        }
+        fn exit_b(_c: &mut dyn StdContext, _v: &SwiftValue) {
+            LOG.with(|l| l.borrow_mut().push("exitB"));
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        interp.register_view_scope(enter_a, exit_a);
+        interp.register_view_scope(enter_b, exit_b);
+        let view = SwiftValue::Void;
+        StdContext::view_scope_enter(&mut interp, &view);
+        StdContext::view_scope_exit(&mut interp, &view);
+        LOG.with(|l| {
+            assert_eq!(*l.borrow(), vec!["enterA", "enterB", "exitB", "exitA"]);
+        });
     }
 
     #[test]
