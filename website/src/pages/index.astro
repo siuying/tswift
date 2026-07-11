@@ -2,6 +2,17 @@
 import Base from '../layouts/Base.astro';
 import MiniPlayground from '../components/MiniPlayground.astro';
 import CoverageBar from '../components/CoverageBar.astro';
+import coverageIndex from '../data/coverage/index.json';
+import { parseLanguageTiers, sumTiers } from '../lib/language-coverage';
+
+const byFramework = Object.fromEntries(
+  coverageIndex.frameworks.map((f) => [f.framework, f])
+);
+const stdlib = byFramework.stdlib.totals;
+const foundation = byFramework.foundation.totals;
+const swiftui = byFramework.swiftui.totals;
+const languageTiers = parseLanguageTiers();
+const language = sumTiers(languageTiers, 0, 7);
 ---
 
 <Base
@@ -95,10 +106,10 @@ import CoverageBar from '../components/CoverageBar.astro';
     </p>
 
     <div style="max-width:680px">
-      <CoverageBar label="Language (Tiers 0–7)" done={138} total={171} href="/status/language" />
-      <CoverageBar label="Standard Library"      done={362} total={511} href="/status/stdlib" />
-      <CoverageBar label="Foundation"            done={313} total={519} href="/status/foundation" />
-      <CoverageBar label="SwiftUI"               done={60}  total={658} href="/status/swiftui" />
+      <CoverageBar label="Language (Tiers 0–7)" implemented={language.implemented} partial={language.partial} total={language.total} href="/status/language" />
+      <CoverageBar label="Standard Library" implemented={stdlib.implemented} partial={stdlib.partial} total={stdlib.total} href="/status/stdlib" />
+      <CoverageBar label="Foundation" implemented={foundation.implemented} partial={foundation.partial} total={foundation.total} href="/status/foundation" />
+      <CoverageBar label="SwiftUI" implemented={swiftui.implemented} partial={swiftui.partial} total={swiftui.total} href="/status/swiftui" />
     </div>
 
     <div style="margin-top:1.5rem">

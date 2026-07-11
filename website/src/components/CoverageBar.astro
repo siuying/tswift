@@ -1,13 +1,22 @@
 ---
+// Segmented coverage bar: "partial" is rendered as visually distinct from
+// "implemented" so a headline never silently counts partial work as done.
+// The percentage is shown as a range (implemented-only – implemented+partial)
+// whenever any partial members exist, with the exact counts spelled out
+// underneath so the split is never hidden behind a single blended number.
 interface Props {
   label: string;
-  done: number;
+  implemented: number;
   total: number;
+  partial?: number;
   href?: string;
 }
-const { label, done, total, href } = Astro.props;
-const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-const fillClass = pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low';
+const { label, implemented, total, partial = 0, href } = Astro.props;
+const missing = Math.max(total - implemented - partial, 0);
+const implementedPct = total > 0 ? Math.round((implemented / total) * 100) : 0;
+const donePct = total > 0 ? Math.round(((implemented + partial) / total) * 100) : 0;
+const fillClass = donePct >= 80 ? 'high' : donePct >= 50 ? 'mid' : donePct > 0 ? 'low' : 'zero';
+const pctLabel = partial > 0 && donePct !== implementedPct ? `${implementedPct}%–${donePct}%` : `${implementedPct}%`;
 ---
 
 <div class="coverage-section">
@@ -16,9 +25,14 @@ const fillClass = pct >= 80 ? 'high' : pct >= 50 ? 'mid' : 'low';
       ? <a href={href} class="coverage-label">{label}</a>
       : <span class="coverage-label">{label}</span>
     }
-    <span class="coverage-pct">{pct}% <span style="color:var(--muted);font-weight:400;font-size:.8rem">({done}/{total})</span></span>
+    <span class="coverage-pct">{pctLabel}</span>
   </div>
-  <div class="coverage-track">
-    <div class={`coverage-fill ${fillClass}`} style={`width:${pct}%`}></div>
+  <div class="coverage-track" role="img" aria-label={`${implemented} implemented, ${partial} partial, ${missing} missing, out of ${total} total`}>
+    <div class={`coverage-fill implemented ${fillClass}`} style={`width:${implementedPct}%`}></div>
+    <div class="coverage-fill partial" style={`width:${donePct - implementedPct}%`}></div>
   </div>
+  <p class="coverage-breakdown">
+    <strong>{implemented}</strong> implemented · <strong>{partial}</strong> partial · <strong>{missing}</strong> missing
+    <span class="coverage-breakdown-total"> ({total} total)</span>
+  </p>
 </div>

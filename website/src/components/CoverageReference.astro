@@ -1,0 +1,206 @@
+---
+// Generated, filterable API reference for one framework's coverage data
+// (website/src/data/coverage/<framework>.json). Renders every member with a
+// status badge, grouped by section; filtering is plain data-attribute driven
+// vanilla JS (no framework dep) that degrades to "everything visible" if JS
+// never runs.
+import CoverageBar from './CoverageBar.astro';
+
+interface Member {
+  name: string;
+  kind: string;
+  status: 'implemented' | 'partial' | 'missing' | 'out_of_scope';
+}
+interface Section {
+  name: string;
+  members: Member[];
+}
+interface CoverageData {
+  framework: string;
+  sections: Section[];
+  totals: {
+    implemented: number;
+    partial: number;
+    missing: number;
+    out_of_scope: number;
+    total: number;
+  };
+}
+
+interface Props {
+  displayName: string;
+  data: CoverageData;
+  idPrefix?: string;
+}
+
+const { displayName, data, idPrefix = 'ref' } = Astro.props;
+const { sections, totals } = data;
+
+const STATUS_ORDER = ['implemented', 'partial', 'missing', 'out_of_scope'] as const;
+const STATUS_LABEL: Record<string, string> = {
+  implemented: 'Implemented',
+  partial: 'Partial',
+  missing: 'Missing',
+  out_of_scope: 'Out of scope',
+};
+const STATUS_ICON: Record<string, string> = {
+  implemented: '✅',
+  partial: '🟡',
+  missing: '⬜',
+  out_of_scope: '🚫',
+};
+
+const kinds = Array.from(
+  new Set(sections.flatMap((s) => s.members.map((m) => m.kind)))
+).sort((a, b) => a.localeCompare(b));
+
+const memberCount = totals.total;
+const id = (suffix: string) => `${idPrefix}-${suffix}`;
+---
+
+<div class="ref">
+  <CoverageBar
+    label={displayName}
+    implemented={totals.implemented}
+    partial={totals.partial}
+    total={totals.total}
+  />
+  {totals.out_of_scope > 0 && (
+    <p class="ref-summary">
+      <strong>{totals.out_of_scope}</strong> additional members are out of scope.
+    </p>
+  )}
+
+  <div class="ref-filterbar" role="search">
+    <div class="ref-filter-row">
+      <div class="ref-search-field">
+        <label for={id('search')} class="sr-only">Search {displayName} members by name</label>
+        <input
+          id={id('search')}
+          class="ref-search"
+          type="search"
+          placeholder={`Search ${displayName} members…`}
+          autocomplete="off"
+          data-ref-search
+        />
+      </div>
+
+      <div class="ref-status-chips" role="group" aria-label="Filter by status">
+        <button type="button" class="ref-chip active" data-status-filter="all" aria-pressed="true">
+          All <span class="ref-chip-count">{memberCount}</span>
+        </button>
+        {STATUS_ORDER.filter((s) => s === 'implemented' || s === 'partial' || s === 'missing' || totals[s] > 0).map((s) => (
+          <button type="button" class="ref-chip" data-status-filter={s} aria-pressed="false">
+            {STATUS_ICON[s]} {STATUS_LABEL[s]} <span class="ref-chip-count">{totals[s]}</span>
+          </button>
+        ))}
+      </div>
+
+      {kinds.length > 1 && (
+        <div class="ref-kind-field">
+          <label for={id('kind')}>Kind</label>
+          <select id={id('kind')} class="ref-kind" data-ref-kind>
+            <option value="all">All kinds</option>
+            {kinds.map((k) => <option value={k}>{k}</option>)}
+          </select>
+        </div>
+      )}
+    </div>
+    <p class="ref-filter-status" id={id('status')} aria-live="polite">
+      Showing all {memberCount} members.
+    </p>
+  </div>
+
+  <div class="ref-sections" data-ref-sections>
+    {sections.map((section) => (
+      <section class="ref-section" data-ref-section>
+        <h2 class="ref-section-title">
+          {section.name} <span class="ref-section-count">({section.members.length})</span>
+        </h2>
+        <ul class="ref-member-list">
+          {section.members.map((m) => (
+            <li
+              class="ref-member"
+              data-ref-member
+              data-name={m.name.toLowerCase()}
+              data-status={m.status}
+              data-kind={m.kind}
+            >
+              <span class={`ref-status-badge ${m.status}`} aria-hidden="true" title={STATUS_LABEL[m.status]}>
+                {STATUS_ICON[m.status]}
+              </span>
+              <code class="ref-member-name">{m.name}</code>
+              <span class="ref-member-kind">{m.kind}</span>
+              <span class="sr-only">{STATUS_LABEL[m.status]}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+    <p class="ref-empty" data-ref-empty hidden>No members match your filters.</p>
+  </div>
+</div>
+
+<script define:vars={{ idPrefix }}>
+  (function () {
+    const root = document;
+    const search = root.getElementById(`${idPrefix}-search`);
+    const kindSelect = root.getElementById(`${idPrefix}-kind`);
+    const statusLine = root.getElementById(`${idPrefix}-status`);
+    // Scope every query to this component's own markup so multiple
+    // CoverageReference instances on one page (or future reuse) never cross-wire.
+    const scopedRoot = search ? search.closest('.ref') : null;
+    if (!scopedRoot) return;
+
+    const scopedChips = Array.from(scopedRoot.querySelectorAll('[data-status-filter]'));
+    const members = Array.from(scopedRoot.querySelectorAll('[data-ref-member]'));
+    const sections = Array.from(scopedRoot.querySelectorAll('[data-ref-section]'));
+    const emptyState = scopedRoot.querySelector('[data-ref-empty]');
+    if (!members.length) return;
+
+    let statusFilter = 'all';
+    let kindFilter = 'all';
+
+    function apply() {
+      const q = (search && search.value.trim().toLowerCase()) || '';
+      let shown = 0;
+      for (const el of members) {
+        const matchesQuery = !q || el.dataset.name.includes(q);
+        const matchesStatus = statusFilter === 'all' || el.dataset.status === statusFilter;
+        const matchesKind = kindFilter === 'all' || el.dataset.kind === kindFilter;
+        const visible = matchesQuery && matchesStatus && matchesKind;
+        el.hidden = !visible;
+        if (visible) shown++;
+      }
+      for (const sec of sections) {
+        const anyVisible = sec.querySelector('[data-ref-member]:not([hidden])');
+        sec.hidden = !anyVisible;
+      }
+      if (emptyState) emptyState.hidden = shown !== 0;
+      if (statusLine) {
+        statusLine.textContent =
+          shown === members.length
+            ? `Showing all ${members.length} members.`
+            : `Showing ${shown} of ${members.length} members.`;
+      }
+    }
+
+    if (search) search.addEventListener('input', apply);
+    if (kindSelect) {
+      kindSelect.addEventListener('change', () => {
+        kindFilter = kindSelect.value;
+        apply();
+      });
+    }
+    for (const chip of scopedChips) {
+      chip.addEventListener('click', () => {
+        statusFilter = chip.dataset.statusFilter;
+        for (const c of scopedChips) {
+          c.classList.toggle('active', c === chip);
+          c.setAttribute('aria-pressed', String(c === chip));
+        }
+        apply();
+      });
+    }
+  })();
+</script>

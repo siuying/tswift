@@ -1,6 +1,44 @@
 ---
 import Doc from '../../layouts/Doc.astro';
 import CoverageBar from '../../components/CoverageBar.astro';
+import coverageIndex from '../../data/coverage/index.json';
+import { parseLanguageTiers, sumTiers } from '../../lib/language-coverage';
+
+const byFramework = Object.fromEntries(
+  coverageIndex.frameworks.map((f) => [f.framework, f])
+);
+function pctInfo(totals: { implemented: number; partial: number; missing: number; total: number }) {
+  const done = totals.implemented + totals.partial;
+  const implementedPct = totals.total > 0 ? Math.round((totals.implemented / totals.total) * 100) : 0;
+  const donePct = totals.total > 0 ? Math.round((done / totals.total) * 100) : 0;
+  const tier = donePct >= 80 ? 'high' : donePct >= 50 ? 'mid' : donePct > 0 ? 'low' : 'zero';
+  const label = totals.partial > 0 && donePct !== implementedPct ? `${implementedPct}%–${donePct}%` : `${implementedPct}%`;
+  return { pct: donePct, implementedPct, tier, done, label };
+}
+const languageTiers = parseLanguageTiers();
+const language = sumTiers(languageTiers, 0, 9);
+const stdlib = byFramework.stdlib.totals;
+const foundation = byFramework.foundation.totals;
+const swiftui = byFramework.swiftui.totals;
+const languagePct = pctInfo(language);
+const stdlibPct = pctInfo(stdlib);
+const foundationPct = pctInfo(foundation);
+const swiftuiPct = pctInfo(swiftui);
+// Hand-authored tier prose (kept short/curated), paired positionally with
+// counts parsed from docs/swift-runtime/feature-checklist.md — numbers are
+// never hand-typed, only the label text is.
+const tierLabels = [
+  'Tier 0 — Lexical &amp; Literals',
+  'Tier 1 — Core Imperative (functions, control flow)',
+  'Tier 2 — Value &amp; Nominal Types',
+  'Tier 3 — Reference Types &amp; ARC',
+  'Tier 4 — Protocols, Generics, Extensions',
+  'Tier 5 — Error Handling',
+  'Tier 6 — Advanced Types &amp; Expressions',
+  'Tier 7 — Concurrency',
+  'Tier 8 — Macros &amp; Metaprogramming',
+  'Tier 9 — Attributes, Access Control, Operators',
+];
 ---
 
 <Doc title="Status Overview" section="status"
@@ -16,26 +54,26 @@ import CoverageBar from '../../components/CoverageBar.astro';
   <div class="status-grid" style="margin-bottom:3rem">
     <div class="status-card">
       <h3>Language</h3>
-      <div class="pct-big high">82%</div>
-      <p style="font-size:.85rem">Tiers 0–9 · 140 of 171 features</p>
+      <div class={`pct-big ${languagePct.tier}`}>{languagePct.label}</div>
+      <p style="font-size:.85rem">Tiers 0–9 · {language.implemented} implemented · {language.partial} partial · {language.missing} missing (of {language.total})</p>
       <a href="/status/language" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
       <h3>Standard Library</h3>
-      <div class="pct-big mid">71%</div>
-      <p style="font-size:.85rem">362 of 511 members · hardened vs Apple tests</p>
+      <div class={`pct-big ${stdlibPct.tier}`}>{stdlibPct.label}</div>
+      <p style="font-size:.85rem">{stdlib.implemented} implemented · {stdlib.partial} partial · {stdlib.missing} missing (of {stdlib.total}) · hardened vs Apple tests</p>
       <a href="/status/stdlib" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
       <h3>Foundation</h3>
-      <div class="pct-big mid">60%</div>
-      <p style="font-size:.85rem">366 of 612 members · hardened vs real Swift</p>
+      <div class={`pct-big ${foundationPct.tier}`}>{foundationPct.label}</div>
+      <p style="font-size:.85rem">{foundation.implemented} implemented · {foundation.partial} partial · {foundation.missing} missing (of {foundation.total}) · hardened vs real Swift</p>
       <a href="/status/foundation" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
       <h3>SwiftUI</h3>
-      <div class="pct-big low">9%</div>
-      <p style="font-size:.85rem">Tiers v1–5 + C1–C7 breadth · 60 of 658 surface members</p>
+      <div class={`pct-big ${swiftuiPct.tier}`}>{swiftuiPct.label}</div>
+      <p style="font-size:.85rem">Tiers v1–5 + C1–C7 breadth · {swiftui.implemented} implemented · {swiftui.partial} partial · {swiftui.missing} missing (of {swiftui.total})</p>
       <a href="/status/swiftui" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
   </div>
@@ -43,16 +81,15 @@ import CoverageBar from '../../components/CoverageBar.astro';
   <h2>Language tiers</h2>
   <p>The Swift language surface is organised into tiers by complexity and dependency order.</p>
 
-  <CoverageBar label="Tier 0 — Lexical &amp; Literals" done={17} total={17} href="/status/language" />
-  <CoverageBar label="Tier 1 — Core Imperative (functions, control flow)" done={20} total={22} href="/status/language" />
-  <CoverageBar label="Tier 2 — Value &amp; Nominal Types" done={25} total={28} href="/status/language" />
-  <CoverageBar label="Tier 3 — Reference Types &amp; ARC" done={19} total={20} href="/status/language" />
-  <CoverageBar label="Tier 4 — Protocols, Generics, Extensions" done={23} total={27} href="/status/language" />
-  <CoverageBar label="Tier 5 — Error Handling" done={8}  total={10} href="/status/language" />
-  <CoverageBar label="Tier 6 — Advanced Types &amp; Expressions" done={7}  total={13} href="/status/language" />
-  <CoverageBar label="Tier 7 — Concurrency" done={9}  total={14} href="/status/language" />
-  <CoverageBar label="Tier 8 — Macros &amp; Metaprogramming" done={4}  total={8}  href="/status/language" />
-  <CoverageBar label="Tier 9 — Attributes, Access Control, Operators" done={8}  total={20} href="/status/language" />
+  {languageTiers.filter((t) => t.tier <= 9).map((t, i) => (
+    <CoverageBar
+      label={tierLabels[i]}
+      implemented={t.totals.implemented}
+      partial={t.totals.partial}
+      total={t.totals.total}
+      href="/status/language"
+    />
+  ))}
 
   <h2 style="margin-top:2rem">Roadmap</h2>
   <p>Implementation phases follow the runtime design plan (R0–R6+):</p>
