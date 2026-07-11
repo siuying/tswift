@@ -187,6 +187,10 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
     }
 
     let result = interp.run(analysis);
+    // Drop the interpreter before flushing/reusing the stdout handle: this runs
+    // any registered finalizers (e.g. closing SwiftData database handles) and
+    // releases the `&mut handle` borrow.
+    drop(interp);
     let _ = handle.flush();
 
     match result {

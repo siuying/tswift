@@ -92,6 +92,10 @@ fn run_impl_named(
     // `tswift_declare_host_service` (namespace strings). A service is available
     // iff its namespace was declared — never inferred from registered fn names.
     tswift_foundation::install_with(&mut interp, caps);
+    tswift_swiftdata::install(
+        &mut interp,
+        caps.contains(tswift_core::HostService::Database),
+    );
     interp.set_filename(filename);
     if let Some(config) = stream_http {
         interp.set_http_transport(Box::new(crate::http::StreamingHostHttpHandler::from(
@@ -110,6 +114,10 @@ fn run_impl_named(
         unsafe { std::mem::transmute::<&Analysis, &'static Analysis>(&analysis) };
     let run_result = interp.run(static_analysis);
     let run_elapsed = elapsed_ms(run_started);
+    // Drop the interpreter before reading its output buffer: this runs any
+    // registered finalizers (e.g. closing SwiftData database handles) and
+    // releases the `&mut stdout` borrow.
+    drop(interp);
     let stdout = String::from_utf8_lossy(&stdout);
 
     let run_stderr = match &run_result {

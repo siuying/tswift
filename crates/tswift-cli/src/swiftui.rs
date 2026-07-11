@@ -59,6 +59,9 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
     let mut interp = Interpreter::new(out);
     tswift_std::install(&mut interp);
     tswift_foundation::install(&mut interp);
+    // Register the SwiftData surface (no db backing on the canvas path; the
+    // initializer raises a clean diagnostic if a view model reaches for it).
+    tswift_swiftdata::install(&mut interp, false);
     tswift_swiftui::install(&mut interp);
     if let Err(e) = interp.run(analysis) {
         eprintln!("error: {e}");

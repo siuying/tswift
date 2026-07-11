@@ -215,6 +215,10 @@ fn build(
     // as the one-shot run: host-backed APIs gate on the services the embedding
     // explicitly declared (`tswift_declare_host_service`), not implicit full caps.
     tswift_foundation::install_with(&mut interp, caps);
+    tswift_swiftdata::install(
+        &mut interp,
+        caps.contains(tswift_core::HostService::Database),
+    );
     tswift_swiftui::install(&mut interp);
     interp.set_filename(filename);
     // Wire the host's URLSession transport (if any) so scripts' network calls —

@@ -1980,6 +1980,7 @@ mod tests {
                 init_overloads: vec![],
                 deinit: None,
                 static_subscript: None,
+                attributes: vec![],
             },
         );
         let obj = task_object();
@@ -2051,6 +2052,7 @@ mod tests {
                 init_overloads: vec![],
                 deinit: None,
                 static_subscript: None,
+                attributes: vec![],
             },
         );
         let obj = task_object_with_field("state", SwiftValue::Str("user".to_string()));

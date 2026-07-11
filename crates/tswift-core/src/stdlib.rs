@@ -53,6 +53,11 @@ impl From<EvalError> for StdError {
 /// The result of an intrinsic: a produced value or a [`StdError`].
 pub type StdResult = Result<SwiftValue, StdError>;
 
+/// A teardown closure registered via [`StdContext::register_finalizer`], run
+/// once (receiving a mutable context) at interpreter teardown so a framework
+/// can release native resources deterministically.
+pub type Finalizer = Box<dyn FnOnce(&mut dyn StdContext)>;
+
 /// The narrow capability handle handed to every standard-library intrinsic.
 ///
 /// Defined in core and implemented for [`crate::Interpreter`]; widen only as a
@@ -228,6 +233,22 @@ pub trait StdContext {
         false
     }
 
+    /// Introspect a user-declared nominal type (`struct`/`class`) by name:
+    /// its declaration attributes (`["Model"]` for a `@Model class`, …) and
+    /// its stored properties in declaration order, each with the type it was
+    /// spelled with (when the frontend recovered one). Returns `None` when no
+    /// such nominal type is declared.
+    ///
+    /// This is a *generic* type-introspection seam — core assigns the
+    /// attribute strings and property names no framework meaning. A framework
+    /// (e.g. the SwiftData substrate deriving a table schema from a `@Model`
+    /// class) reads this to learn "what does this type look like" without
+    /// core knowing anything about that framework. The default returns `None`
+    /// (no interpreter, e.g. a unit-test mock); the interpreter overrides it.
+    fn nominal_type_info(&self, _type_name: &str) -> Option<NominalTypeInfo> {
+        None
+    }
+
     /// Fetch (or lazily create via `init`) a per-interpreter singleton value
     /// keyed by `key`, so `===` identity holds across repeated accesses (e.g.
     /// `Type.shared`/`Type.standard`). `key` is an opaque string the calling
@@ -242,6 +263,34 @@ pub trait StdContext {
     fn singleton(&mut self, key: &str, init: fn() -> SwiftValue) -> SwiftValue {
         let _ = key;
         init()
+    }
+
+    /// Register a finalizer closure to run once, at interpreter teardown
+    /// (drop), receiving a mutable context so it can call host functions while
+    /// releasing resources. A framework that holds native state outside the
+    /// `SwiftValue` graph — e.g. open database handles in a thread-local
+    /// registry — registers one at install time to close those handles and
+    /// drop its registry entries deterministically at end of session, instead
+    /// of leaking them per interpreter. Core assigns the closure no meaning and
+    /// runs each exactly once in registration order. The default (no
+    /// interpreter, e.g. a unit-test mock) drops the closure unrun; the
+    /// interpreter overrides it to run finalizers on teardown.
+    fn register_finalizer(&mut self, finalizer: Finalizer) {
+        let _ = finalizer;
+    }
+
+    /// A process-unique, monotonically-assigned identity for the underlying
+    /// interpreter. A framework holding per-interpreter native state in a
+    /// shared (e.g. thread-local) registry keys its bucket by this id so that
+    /// tearing one interpreter down — or several interpreters sharing a thread
+    /// — never disturbs another's state. The id is opaque: core (and every
+    /// framework) treats it only as an equality/hash key, never deriving
+    /// meaning or ordering from its value. The default returns `0` (no
+    /// interpreter, e.g. a unit-test mock — all mocks share one bucket, which
+    /// is fine as they hold no such registry state); the interpreter overrides
+    /// it with its real identity.
+    fn interpreter_id(&self) -> u64 {
+        0
     }
 
     /// Call the named method on `receiver` (a class instance or any Swift
@@ -278,6 +327,30 @@ pub trait StdContext {
     fn take_response_disposition(&mut self) -> bool {
         true
     }
+}
+
+/// One stored property of a user-declared nominal type, as surfaced by
+/// [`StdContext::nominal_type_info`].
+#[derive(Debug, Clone)]
+pub struct NominalProperty {
+    /// The property's declared name.
+    pub name: String,
+    /// The spelled type (`"String"`, `"Int?"`, …), when the frontend
+    /// recovered one; `None` for an inferred-only declaration.
+    pub declared_type: Option<String>,
+}
+
+/// A generic snapshot of a user-declared nominal type's shape, returned by
+/// [`StdContext::nominal_type_info`]. Carries only framework-agnostic facts —
+/// declaration attributes and stored properties — never any framework's
+/// interpretation of them.
+#[derive(Debug, Clone)]
+pub struct NominalTypeInfo {
+    /// Declaration attributes with their leading `@` stripped (`"Model"`,
+    /// `"Observable"`, …), in source order.
+    pub attributes: Vec<String>,
+    /// Stored properties in declaration order (computed properties excluded).
+    pub stored: Vec<NominalProperty>,
 }
 
 /// The natural `<` over comparable scalar values (the default `Comparable`).

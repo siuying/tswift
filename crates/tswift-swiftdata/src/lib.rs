@@ -1,21 +1,28 @@
 //! tswift-swiftdata — substrate for a future SwiftData implementation.
 //!
-//! This slice ships only the `tswift.db.*` host-service wire (SQL over the
-//! host bridge, mirroring `tswift.defaults.*`/`tswift.fs.*` — see ADR-0014):
-//! [`db`] owns the tagged SQL-value codec and the wire op names/signatures;
-//! [`install`] declares those signatures on the interpreter when the
-//! platform backs [`tswift_core::HostService::Database`].
+//! Two layers ship here:
 //!
-//! There is **no Swift-facing `SwiftData`/`@Model` API here yet** — that is
-//! future work layered on top of this substrate. This crate intentionally
-//! stays framework-agnostic about *SwiftData* semantics (no `@Model`
-//! macro-expansion knowledge, no query-builder types) while still living
-//! outside `tswift-core` (SQL/database framework logic does not belong in
-//! the generic evaluator spine).
+//! - [`db`] — the `tswift.db.*` host-service wire (SQL over the host bridge,
+//!   mirroring `tswift.defaults.*`/`tswift.fs.*` — see ADR-0014): the tagged
+//!   SQL-value codec and the wire op names/signatures. Host-agnostic.
+//! - [`model`] — the Swift-facing SwiftData core surface (`@Model`,
+//!   `ModelContainer`, `ModelConfiguration`, `ModelContext`) implemented
+//!   natively over that wire. `@Model` is discovered generically from the
+//!   user's class declaration (no macro expansion) via
+//!   [`tswift_core::StdContext::nominal_type_info`]; there is no
+//!   SwiftData-specific knowledge in `tswift-core`.
+//!
+//! [`install`] declares the wire signatures when the platform backs
+//! [`tswift_core::HostService::Database`] and always registers the
+//! Swift-facing surface (whose initializer raises a clean capability
+//! diagnostic when the database service is absent). This crate lives outside
+//! `tswift-core` because SQL/database framework logic does not belong in the
+//! generic evaluator spine.
 //!
 //! See `docs/adr/0015-db-host-service-wire.md` for the full wire contract.
 
 pub mod db;
+mod model;
 
 use tswift_core::Interpreter;
 
@@ -34,12 +41,14 @@ use tswift_core::StdContext;
 /// `StdContext::is_host_fn` check degrades gracefully instead of panicking
 /// an otherwise behaviour-preserving install.
 pub fn install(interp: &mut Interpreter<'_>, available: bool) {
-    if !available {
-        return;
+    if available {
+        for signature_json in db::HOST_FN_SIGNATURES {
+            let _ = interp.register_host_fn(signature_json, None);
+        }
     }
-    for signature_json in db::HOST_FN_SIGNATURES {
-        let _ = interp.register_host_fn(signature_json, None);
-    }
+    // Always register the Swift-facing surface; `ModelContainer(for:)` raises a
+    // catchable diagnostic at call time when the database service is absent.
+    model::install(interp);
 }
 
 #[cfg(test)]

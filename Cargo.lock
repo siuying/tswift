@@ -569,6 +569,7 @@ dependencies = [
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
+ "tswift-swiftdata",
  "tswift-swiftui",
 ]
 
@@ -641,6 +642,7 @@ dependencies = [
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
+ "tswift-swiftdata",
  "tswift-swiftui",
  "wasm-bindgen",
 ]

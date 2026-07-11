@@ -283,6 +283,10 @@ struct SubscriptDef {
 /// A struct type declaration.
 #[derive(Default)]
 struct StructDef {
+    /// Declaration attributes with their leading `@` stripped (`"Model"`, …),
+    /// in source order. Surfaced generically via
+    /// `StdContext::nominal_type_info`.
+    attributes: Vec<String>,
     stored: Vec<StoredProp>,
     computed: std::collections::HashMap<String, ComputedProp>,
     methods: std::collections::HashMap<String, MethodDef>,
@@ -355,6 +359,10 @@ struct ClassDef {
     deinit: Option<Node<'static>>,
     /// A `static subscript`, addressed as `Type[index]`.
     static_subscript: Option<MethodDef>,
+    /// Declaration attributes with their leading `@` stripped (`"Model"`,
+    /// …), in source order. Surfaced generically via
+    /// [`crate::StdContext::nominal_type_info`]; core assigns them no meaning.
+    attributes: Vec<String>,
 }
 
 /// The interpreter's registry of user-declared nominal types — the `struct`,
@@ -957,7 +965,26 @@ pub struct Interpreter<'w> {
     /// a separate table from `statics` (no bare `.name` shorthand fallback
     /// consults it).
     singletons: HashMap<String, SwiftValue>,
+    /// Finalizer closures registered by frameworks via
+    /// [`StdContext::register_finalizer`], run once each (in registration
+    /// order) at interpreter teardown so a framework holding a native resource
+    /// (e.g. an open database handle in a thread-local registry) can release it
+    /// deterministically. Drained by [`Interpreter::teardown`], which the
+    /// `Drop` impl also calls, so each finalizer runs exactly once.
+    finalizers: Vec<crate::stdlib::Finalizer>,
+    /// A process-unique, monotonically-assigned identity for this interpreter,
+    /// handed out at construction from [`NEXT_INTERPRETER_ID`]. Exposed
+    /// generically via [`StdContext::interpreter_id`] so a framework holding
+    /// per-interpreter native state in a shared (e.g. thread-local) registry
+    /// can scope its bucket to exactly this interpreter instead of colliding
+    /// with other interpreters sharing the thread. Core assigns it no further
+    /// meaning.
+    id: u64,
 }
+
+/// Source of process-unique [`Interpreter::id`] values. A relaxed atomic
+/// counter — identities need only be distinct, not ordered across threads.
+static NEXT_INTERPRETER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Seed for the interpreter's SplitMix64 RNG.
 ///
@@ -990,6 +1017,15 @@ fn now_unix_seconds() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
         0.0
+    }
+}
+
+impl Drop for Interpreter<'_> {
+    fn drop(&mut self) {
+        // Release framework-held native resources deterministically at end of
+        // session. Idempotent: `teardown` drains the finalizer list, so an
+        // explicit `teardown()` before drop leaves this a no-op.
+        self.teardown();
     }
 }
 
@@ -1026,6 +1062,21 @@ impl<'w> Interpreter<'w> {
             response_disposition: None,
             response_disposition_token: 0,
             singletons: HashMap::new(),
+            finalizers: Vec::new(),
+            id: NEXT_INTERPRETER_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Run all registered finalizers (in registration order) and clear them, so
+    /// a subsequent call — including the one the `Drop` impl makes — is a no-op.
+    /// Frameworks register finalizers via [`StdContext::register_finalizer`] to
+    /// release native resources (e.g. close open database handles) at end of
+    /// session. Safe to call explicitly for a deterministic teardown ahead of
+    /// drop.
+    pub fn teardown(&mut self) {
+        let finalizers = std::mem::take(&mut self.finalizers);
+        for finalizer in finalizers {
+            finalizer(self);
         }
     }
 
@@ -4954,6 +5005,37 @@ impl StdContext for Interpreter<'_> {
         Interpreter::is_host_fn(self, name)
     }
 
+    fn nominal_type_info(&self, type_name: &str) -> Option<crate::stdlib::NominalTypeInfo> {
+        use crate::stdlib::{NominalProperty, NominalTypeInfo};
+        if let Some(def) = self.types.class_def(type_name) {
+            return Some(NominalTypeInfo {
+                attributes: def.attributes.clone(),
+                stored: def
+                    .stored
+                    .iter()
+                    .map(|p| NominalProperty {
+                        name: p.name.clone(),
+                        declared_type: p.ty.clone(),
+                    })
+                    .collect(),
+            });
+        }
+        if let Some(def) = self.types.struct_def(type_name) {
+            return Some(NominalTypeInfo {
+                attributes: def.attributes.clone(),
+                stored: def
+                    .stored
+                    .iter()
+                    .map(|p| NominalProperty {
+                        name: p.name.clone(),
+                        declared_type: p.ty.clone(),
+                    })
+                    .collect(),
+            });
+        }
+        None
+    }
+
     fn singleton(&mut self, key: &str, init: fn() -> SwiftValue) -> SwiftValue {
         if let Some(v) = self.singletons.get(key) {
             return v.clone();
@@ -4961,6 +5043,14 @@ impl StdContext for Interpreter<'_> {
         let v = init();
         self.singletons.insert(key.to_string(), v.clone());
         v
+    }
+
+    fn register_finalizer(&mut self, finalizer: crate::stdlib::Finalizer) {
+        self.finalizers.push(finalizer);
+    }
+
+    fn interpreter_id(&self) -> u64 {
+        self.id
     }
 
     fn value_less_than(&mut self, a: &SwiftValue, b: &SwiftValue) -> Option<bool> {
@@ -6613,6 +6703,42 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         // A fresh interpreter starts with an empty cache.
         let interp = Interpreter::new(&mut buf);
         assert_eq!(interp.fragment_cache.len(), 0);
+    }
+
+    #[test]
+    fn nominal_type_info_reports_struct_attributes() {
+        use crate::stdlib::StdContext;
+        let analysis =
+            Analysis::analyze("@Model struct Movie { var title: String }\n", "test.swift")
+                .expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let mut buf: Vec<u8> = Vec::new();
+        let mut interp = Interpreter::new(&mut buf);
+        interp.run(analysis).expect("run");
+        let info = StdContext::nominal_type_info(&interp, "Movie").expect("info");
+        // Struct declaration attributes are reported (not fabricated-empty).
+        assert!(info.attributes.iter().any(|a| a == "Model"));
+        assert_eq!(info.stored.len(), 1);
+        assert_eq!(info.stored[0].name, "title");
+    }
+
+    #[test]
+    fn registered_finalizers_run_on_drop_and_teardown_is_idempotent() {
+        use crate::stdlib::StdContext;
+        use std::cell::Cell;
+        use std::rc::Rc as R;
+        let ran = R::new(Cell::new(0));
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            let r = R::clone(&ran);
+            interp.register_finalizer(Box::new(move |_ctx| r.set(r.get() + 1)));
+            assert_eq!(ran.get(), 0, "finalizer must not run at registration");
+            // Explicit teardown runs it once; drop must not run it again.
+            interp.teardown();
+            assert_eq!(ran.get(), 1);
+        }
+        assert_eq!(ran.get(), 1, "finalizer runs exactly once");
     }
 
     #[test]

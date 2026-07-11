@@ -453,6 +453,14 @@ impl<'w> Interpreter<'w> {
             return;
         }
         self.record_conformances(&name, node);
+        // Declaration attributes (`@Model`, …) with the leading `@` already
+        // stripped by the frontend, in source order. Surfaced generically via
+        // `StdContext::nominal_type_info`.
+        let attributes: Vec<String> = node
+            .children()
+            .filter(|c| c.kind() == NodeKind::Attribute)
+            .filter_map(|c| c.text())
+            .collect();
         let superclass = node
             .children()
             .find(|c| c.kind() == NodeKind::TypeRef)
@@ -591,6 +599,7 @@ impl<'w> Interpreter<'w> {
                 init_overloads,
                 deinit,
                 static_subscript,
+                attributes,
             },
         );
         // Evaluate static stored-property initializers now the class exists.
@@ -608,11 +617,16 @@ impl<'w> Interpreter<'w> {
             return;
         }
         self.record_conformances(&name, node);
-        // `@main` attribute marks the program entry point.
-        if node
+        // Declaration attributes (`@Model`, …) with the leading `@` already
+        // stripped by the frontend, in source order. Surfaced generically via
+        // `StdContext::nominal_type_info`.
+        let attributes: Vec<String> = node
             .children()
-            .any(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("main"))
-        {
+            .filter(|c| c.kind() == NodeKind::Attribute)
+            .filter_map(|c| c.text())
+            .collect();
+        // `@main` attribute marks the program entry point.
+        if attributes.iter().any(|a| a == "main") {
             self.main_type = Some(name.clone());
         }
         // `@dynamicMemberLookup` routes unresolved member access through the
@@ -765,6 +779,7 @@ impl<'w> Interpreter<'w> {
         self.types.insert_struct(
             name.clone(),
             StructDef {
+                attributes,
                 stored,
                 computed,
                 methods,

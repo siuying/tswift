@@ -107,6 +107,16 @@ impl<'i, 'w> Session<'i, 'w> {
         })
     }
 
+    /// Run the interpreter's teardown finalizers (closing any framework-held
+    /// native resources, e.g. open SwiftData database handles) ahead of the
+    /// session being dropped. Idempotent — `Interpreter::teardown` drains its
+    /// finalizer list. A caller that leaks the interpreter (so its `Drop` never
+    /// runs) must call this when discarding a session to avoid leaking those
+    /// native resources.
+    pub fn teardown(&mut self) {
+        self.interp.teardown();
+    }
+
     /// Evaluate the root view's `body` into a fresh UIIR tree, caching it for
     /// event routing.
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {

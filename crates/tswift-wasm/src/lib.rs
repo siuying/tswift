@@ -352,12 +352,20 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
     // service in `globalThis.tswiftHostServices`).
     platform::install_host_call_handler(&mut interp);
     tswift_foundation::install_with(&mut interp, platform::host_capabilities());
+    tswift_swiftdata::install(
+        &mut interp,
+        platform::host_capabilities().contains(tswift_core::HostService::Database),
+    );
     interp.set_filename(filename);
     platform::install_http_transport(&mut interp);
     platform::install_registered_host_fns(&mut interp);
 
     let run_result = interp.run(analysis);
     let run_elapsed = elapsed_ms(run_started);
+    // Drop the interpreter before reading its output buffer: this runs any
+    // registered finalizers (e.g. closing SwiftData database handles) and
+    // releases the `&mut stdout` borrow.
+    drop(interp);
     let stdout = String::from_utf8_lossy(&stdout);
 
     let run_stderr = match &run_result {

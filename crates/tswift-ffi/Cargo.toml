@@ -16,4 +16,5 @@ tswift-core.workspace = true
 tswift-frontend.workspace = true
 tswift-std.workspace = true
 tswift-foundation.workspace = true
+tswift-swiftdata.workspace = true
 tswift-swiftui.workspace = true

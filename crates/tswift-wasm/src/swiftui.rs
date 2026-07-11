@@ -10,8 +10,13 @@
 //! State is kept in a `thread_local` because wasm is single-threaded and a
 //! `Session` borrows a leaked `'static` interpreter (mirroring the `Box::leak`
 //! pattern the stateless entry point already uses for `Analysis`). Recompiling
-//! replaces the session; the previous interpreter's allocation is intentionally
-//! leaked — acceptable for a throwaway browser sandbox.
+//! replaces the session; the previous interpreter's *allocation* is
+//! intentionally leaked (acceptable for a throwaway browser sandbox), but its
+//! [`Interpreter::teardown`] finalizers are run first via [`clear_session`] so
+//! framework-held native resources — notably open SwiftData database handles —
+//! are released at replacement instead of accumulating. The only remaining leak
+//! is on page unload (no session-replacement event fires), where the browser
+//! reclaims the whole wasm instance anyway.
 
 use std::cell::RefCell;
 
@@ -39,8 +44,9 @@ thread_local! {
 pub fn swiftui_compile(source: &str) -> String {
     install_panic_hook();
     // Drop any prior session first so a failed recompile leaves no stale tree
-    // for `swiftUIDispatch` to mutate.
-    SESSION.with(|s| *s.borrow_mut() = None);
+    // for `swiftUIDispatch` to mutate, running its teardown finalizers so the
+    // leaked interpreter's native resources (db handles) are released.
+    clear_session();
     compile_impl(source)
 }
 
@@ -50,7 +56,7 @@ pub fn swiftui_compile(source: &str) -> String {
 #[wasm_bindgen(js_name = swiftUICompileModule)]
 pub fn swiftui_compile_module(module_json: &str) -> String {
     install_panic_hook();
-    SESSION.with(|s| *s.borrow_mut() = None);
+    clear_session();
     let module = match crate::parse_module(module_json) {
         Ok(m) => m,
         Err(e) => return compile_error(&e),
@@ -99,6 +105,18 @@ pub fn swiftui_dispatch(id: &str, event: &str, value: &str) -> String {
     })
 }
 
+/// Clear the live session, running the outgoing interpreter's teardown
+/// finalizers before its (leaked) allocation is discarded so framework-held
+/// native resources — open SwiftData database handles — are released at
+/// replacement rather than accumulating across recompiles.
+fn clear_session() {
+    SESSION.with(|s| {
+        if let Some(mut old) = s.borrow_mut().take() {
+            old.teardown();
+        }
+    });
+}
+
 fn compile_impl(source: &str) -> String {
     let program = format!("{PRELUDE}\n{source}");
     let analysis = match Analysis::analyze(&program, "main.swift") {
@@ -130,6 +148,10 @@ fn compile_impl(source: &str) -> String {
     let mut interp = Interpreter::new(out);
     tswift_std::install(&mut interp);
     tswift_foundation::install_with(&mut interp, crate::platform::host_capabilities());
+    tswift_swiftdata::install(
+        &mut interp,
+        crate::platform::host_capabilities().contains(tswift_core::HostService::Database),
+    );
     tswift_swiftui::install(&mut interp);
     interp.set_filename("main.swift");
     if let Err(error) = interp.run(analysis) {
