@@ -107,19 +107,34 @@ struct Module {
 }
 
 impl Module {
-    fn merge(&self) -> (String, &str) {
-        let filename = self
-            .files
+    /// The entry filename for runtime diagnostics: the first file's path.
+    fn entry_filename(&self) -> &str {
+        self.files
             .first()
             .map(|(p, _)| p.as_str())
-            .unwrap_or("main.swift");
+            .unwrap_or("main.swift")
+    }
+
+    /// Concatenate all file contents (single newline separated) with the entry
+    /// filename. Retained for the SwiftUI compile path, which wraps the merged
+    /// source before analysis.
+    fn merge(&self) -> (String, &str) {
         let source = self
             .files
             .iter()
             .map(|(_, c)| c.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        (source, filename)
+        (source, self.entry_filename())
+    }
+
+    /// Convert to the ordered `[SourceFile]` program-input model consumed by
+    /// [`Analysis::analyze_program`].
+    fn source_files(&self) -> Vec<tswift_frontend::SourceFile> {
+        self.files
+            .iter()
+            .map(|(p, c)| tswift_frontend::SourceFile::new(p.clone(), c.clone()))
+            .collect()
     }
 }
 
@@ -201,8 +216,10 @@ pub fn swift_diagnostics(source: &str) -> String {
 /// Compile and run a multi-file Swift module, returning a JSON result.
 ///
 /// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`. Files are
-/// concatenated in order; the first file's path is used for diagnostics.
-/// Additive — `runSwift` remains unchanged.
+/// analyzed together as one compilation unit ([`Analysis::analyze_program`]);
+/// each diagnostic is attributed to its true originating file and file-local
+/// line/col, not just the first file. Additive — `runSwift` remains
+/// unchanged.
 #[wasm_bindgen(js_name = runSwiftModule)]
 pub fn run_swift_module(module_json: &str) -> String {
     install_panic_hook();
@@ -221,8 +238,7 @@ pub fn run_swift_module(module_json: &str) -> String {
             );
         }
     };
-    let (source, filename) = module.merge();
-    run_swift_impl_named(&source, filename)
+    run_program_impl(&module.source_files())
 }
 
 /// Lint a multi-file Swift module and return diagnostics JSON.
@@ -238,8 +254,36 @@ pub fn swift_diagnostics_module(module_json: &str) -> String {
             return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &e)]);
         }
     };
-    let (source, _filename) = module.merge();
-    diagnose_impl(&source)
+    diagnose_program_impl(&module.source_files())
+}
+
+/// Lint a multi-file program via [`Analysis::analyze_program`], emitting
+/// diagnostics whose JSON carries the originating file path (additive `file`
+/// field). Single-file `diagnose_impl` is unchanged.
+fn diagnose_program_impl(files: &[tswift_frontend::SourceFile]) -> String {
+    let analysis = match Analysis::analyze_program(files) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return diagnostics_json(false, &[diagnostic_json(1, 1, "error", &error.to_string())])
+        }
+    };
+    let mut items = Vec::new();
+    let mut had_error = false;
+    for diagnostic in analysis.diagnostics() {
+        let severity = match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        };
+        had_error |= diagnostic.is_error();
+        items.push(diagnostic_json_with_file(
+            diagnostic.line,
+            diagnostic.col,
+            severity,
+            &diagnostic.message,
+            diagnostic.file.as_deref(),
+        ));
+    }
+    diagnostics_json(!had_error, &items)
 }
 
 fn diagnose_impl(source: &str) -> String {
@@ -275,12 +319,60 @@ fn diagnostic_json(line: u32, col: u32, severity: &str, message: &str) -> String
     )
 }
 
+/// Like [`diagnostic_json`] but additively includes a `"file"` field when the
+/// diagnostic's originating file is known (multi-file programs).
+fn diagnostic_json_with_file(
+    line: u32,
+    col: u32,
+    severity: &str,
+    message: &str,
+    file: Option<&str>,
+) -> String {
+    match file {
+        Some(file) => format!(
+            "{{\"file\":\"{}\",\"line\":{line},\"col\":{col},\"severity\":\"{severity}\",\"message\":\"{}\"}}",
+            escape(file),
+            escape(message)
+        ),
+        None => diagnostic_json(line, col, severity, message),
+    }
+}
+
 fn diagnostics_json(ok: bool, items: &[String]) -> String {
     format!("{{\"ok\":{ok},\"diagnostics\":[{}]}}", items.join(","))
 }
 
 fn run_swift_impl(source: &str) -> String {
     run_swift_impl_named(source, "main.swift")
+}
+
+/// Format an analysis's diagnostics into the newline-joined `stderr`-style
+/// text embedded in the compile report. When `include_file` is set (multi-file
+/// programs), each line is prefixed with the diagnostic's originating file
+/// (`path:line:col: kind: message`); single-source runs keep the historical
+/// `line:col: kind: message` shape unchanged.
+fn collect_diagnostics(analysis: &Analysis, include_file: bool) -> (String, bool) {
+    let mut diagnostics = String::new();
+    let mut had_error = false;
+    for diagnostic in analysis.diagnostics() {
+        let kind = if diagnostic.is_error() {
+            "error"
+        } else {
+            "warning"
+        };
+        match (include_file, &diagnostic.file) {
+            (true, Some(file)) => diagnostics.push_str(&format!(
+                "{file}:{}:{}: {kind}: {}\n",
+                diagnostic.line, diagnostic.col, diagnostic.message
+            )),
+            _ => diagnostics.push_str(&format!(
+                "{}:{}: {kind}: {}\n",
+                diagnostic.line, diagnostic.col, diagnostic.message
+            )),
+        }
+        had_error |= diagnostic.is_error();
+    }
+    (diagnostics, had_error)
 }
 
 fn run_swift_impl_named(source: &str, filename: &str) -> String {
@@ -301,21 +393,43 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
             );
         }
     };
+    run_from_analysis(analysis, filename, started, false)
+}
 
-    let mut diagnostics = String::new();
-    let mut had_error = false;
-    for diagnostic in analysis.diagnostics() {
-        let kind = if diagnostic.is_error() {
-            "error"
-        } else {
-            "warning"
-        };
-        diagnostics.push_str(&format!(
-            "{}:{}: {kind}: {}\n",
-            diagnostic.line, diagnostic.col, diagnostic.message
-        ));
-        had_error |= diagnostic.is_error();
-    }
+/// Compile and run a multi-file program (ordered `[SourceFile]`) via
+/// [`Analysis::analyze_program`], returning the same JSON envelope as
+/// [`run_swift_impl_named`]. Diagnostics carry their per-file paths.
+fn run_program_impl(files: &[tswift_frontend::SourceFile]) -> String {
+    let started = now_ms();
+    let analysis = match Analysis::analyze_program(files) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return result_json::result(
+                BACKEND,
+                CompileReport {
+                    ok: false,
+                    diagnostics: &error.to_string(),
+                    ast_preview: "",
+                    elapsed_ms: elapsed_ms(started),
+                },
+                None,
+            );
+        }
+    };
+    let filename = files
+        .first()
+        .map(|f| f.path.clone())
+        .unwrap_or_else(|| "main.swift".to_string());
+    run_from_analysis(analysis, &filename, started, true)
+}
+
+fn run_from_analysis(
+    analysis: Analysis,
+    filename: &str,
+    started: f64,
+    include_file: bool,
+) -> String {
+    let (diagnostics, had_error) = collect_diagnostics(&analysis, include_file);
 
     let ast_preview = analysis.root().dump_json();
     let compile_elapsed = elapsed_ms(started);
@@ -1043,6 +1157,40 @@ mod tests {
         let json = run_swift_impl("let x = 1");
         assert!(json.contains("astPreview"), "json={json}");
         assert!(json.contains("source_file"), "json={json}");
+    }
+
+    #[test]
+    fn run_swift_module_resolves_cross_file() {
+        let module = r#"{"files":[
+            {"path":"models.swift","contents":"struct P { let x: Int }\n"},
+            {"path":"main.swift","contents":"let p = P(x: 7)\nprint(p.x)\n"}
+        ]}"#;
+        let json = run_swift_module(module);
+        assert_eq!(bool_field(&json, "ok"), Some(true), "json={json}");
+        assert!(json.contains("\"stdout\":\"7\\n\""), "json={json}");
+    }
+
+    #[test]
+    fn run_swift_module_top_level_outside_main_fails() {
+        let module = r#"{"files":[
+            {"path":"helpers.swift","contents":"func f() {}\nprint(\"nope\")\n"},
+            {"path":"main.swift","contents":"f()\n"}
+        ]}"#;
+        let json = run_swift_module(module);
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("helpers.swift"), "json={json}");
+    }
+
+    #[test]
+    fn diagnostics_module_carries_file_and_local_line() {
+        let module = r#"{"files":[
+            {"path":"a.swift","contents":"struct A {}\nstruct B {}\n"},
+            {"path":"main.swift","contents":"let x = 1\n#error(\"boom\")\n"}
+        ]}"#;
+        let json = swift_diagnostics_module(module);
+        assert_eq!(bool_field(&json, "ok"), Some(false), "json={json}");
+        assert!(json.contains("\"file\":\"main.swift\""), "json={json}");
+        assert!(json.contains("\"line\":2"), "json={json}");
     }
 
     #[test]

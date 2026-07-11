@@ -15,6 +15,37 @@ final class TSwiftCoreTests: XCTestCase {
         XCTAssertTrue(result.diagnostics.contains("boom"), result.diagnostics)
     }
 
+    func testRunModuleResolvesCrossFile() {
+        let module = TSwiftModule(files: [
+            TSwiftSourceFile(path: "models.swift", contents: "struct Point { let x: Int }\n"),
+            TSwiftSourceFile(path: "main.swift", contents: "let p = Point(x: 8)\nprint(p.x)\n"),
+        ])
+        let result = TSwiftCore.run(module: module)
+        XCTAssertTrue(result.ok, result.raw)
+        XCTAssertEqual(result.stdout, "8\n")
+    }
+
+    func testRunModuleDiagnosticNamesSecondFile() {
+        let module = TSwiftModule(files: [
+            TSwiftSourceFile(path: "a.swift", contents: "struct A {}\nstruct B {}\n"),
+            TSwiftSourceFile(path: "main.swift", contents: "let x = 1\n#error(\"boom\")\n"),
+        ])
+        let result = TSwiftCore.run(module: module)
+        XCTAssertFalse(result.ok, result.raw)
+        XCTAssertTrue(result.diagnostics.contains("main.swift:2:"), result.diagnostics)
+        XCTAssertTrue(result.diagnostics.contains("boom"), result.diagnostics)
+    }
+
+    func testRunModuleRejectsTopLevelOutsideMain() {
+        let module = TSwiftModule(files: [
+            TSwiftSourceFile(path: "helpers.swift", contents: "func f() {}\nprint(\"nope\")\n"),
+            TSwiftSourceFile(path: "main.swift", contents: "f()\n"),
+        ])
+        let result = TSwiftCore.run(module: module)
+        XCTAssertFalse(result.ok, result.raw)
+        XCTAssertTrue(result.diagnostics.contains("helpers.swift"), result.diagnostics)
+    }
+
     func testContextReuseAcrossRuns() {
         let context = TSwiftContext()
         let first = TSwiftCore.run(#"print("one")"#, in: context)

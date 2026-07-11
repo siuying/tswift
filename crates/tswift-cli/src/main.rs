@@ -2,6 +2,7 @@
 //!
 //! Usage:
 //!   tswift run <file.swift> [more.swift ...]
+//!   tswift run <dir>              (all *.swift in <dir>; main.swift is entry)
 //!   tswift dump [--json] <file.swift>
 //!
 //! `run` analyzes a Swift source file and evaluates it through the tswift
@@ -22,7 +23,7 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use tswift_core::Interpreter;
-use tswift_frontend::{Analysis, AnalyzeError};
+use tswift_frontend::{Analysis, AnalyzeError, SourceFile};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -35,7 +36,7 @@ fn main() -> ExitCode {
             let paths: Vec<String> = rest.into_iter().filter(|a| !a.starts_with("--")).collect();
             if paths.is_empty() {
                 eprintln!(
-                    "error: `run` requires a file path\n\nusage: tswift run [--allow-network] <file.swift> [more.swift ...]"
+                    "error: `run` requires a file or directory path\n\nusage: tswift run [--allow-network] <file.swift> [more.swift ...]\n       tswift run [--allow-network] <dir>"
                 );
                 ExitCode::FAILURE
             } else {
@@ -64,7 +65,7 @@ fn main() -> ExitCode {
         }
         None => {
             eprintln!(
-                "usage: tswift run <file.swift> [more.swift ...]\n       tswift dump [--json] <file.swift>"
+                "usage: tswift run <file.swift> [more.swift ...]\n       tswift run <dir>\n       tswift dump [--json] <file.swift>"
             );
             ExitCode::FAILURE
         }
@@ -104,25 +105,74 @@ fn analyze_source(source: &str, filename: &str) -> Result<Analysis, AnalyzeError
     Analysis::analyze(source, filename)
 }
 
-/// Analyze and evaluate the Swift file(s) at `paths`. Multiple files form one
-/// module: their sources are concatenated so cross-file references resolve.
-fn run(paths: &[String], allow_network: bool) -> ExitCode {
-    let mut source = String::new();
-    for path in paths {
-        match std::fs::read_to_string(path) {
-            Ok(s) => {
-                source.push_str(&s);
-                source.push('\n');
+/// Expand `run` path arguments into an ordered list of [`SourceFile`]s.
+///
+/// A single directory argument is expanded to every `*.swift` file it directly
+/// contains, sorted for determinism. Explicit file arguments are read in the
+/// order given. Directories load `main.swift` as the program entry.
+fn collect_source_files(paths: &[String]) -> Result<Vec<SourceFile>, String> {
+    // `tswift run <dir>`: expand the directory's `.swift` files.
+    if paths.len() == 1 {
+        let meta =
+            std::fs::metadata(&paths[0]).map_err(|e| format!("cannot read `{}`: {e}", paths[0]))?;
+        if meta.is_dir() {
+            let dir = &paths[0];
+            let mut entries: Vec<String> = std::fs::read_dir(dir)
+                .map_err(|e| format!("cannot read directory `{dir}`: {e}"))?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().map(|x| x == "swift").unwrap_or(false))
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            entries.sort();
+            if entries.is_empty() {
+                return Err(format!("no `.swift` files found in `{dir}`"));
             }
-            Err(e) => {
-                eprintln!("error: cannot read `{path}`: {e}");
-                return ExitCode::FAILURE;
-            }
+            return read_all(&entries);
         }
     }
-    let path = paths[0].as_str();
+    read_all(paths)
+}
 
-    let analysis = match analyze_source(&source, path) {
+/// Read every path into a [`SourceFile`], preserving order.
+fn read_all(paths: &[String]) -> Result<Vec<SourceFile>, String> {
+    paths
+        .iter()
+        .map(|path| {
+            std::fs::read_to_string(path)
+                .map(|source| SourceFile::new(path.clone(), source))
+                .map_err(|e| format!("cannot read `{path}`: {e}"))
+        })
+        .collect()
+}
+
+/// Analyze and evaluate the Swift program at `paths` (files or a directory).
+/// Multiple files form one compilation unit analyzed via
+/// [`Analysis::analyze_program`], so cross-file references resolve and
+/// diagnostics report the correct `file:line`.
+fn run(paths: &[String], allow_network: bool) -> ExitCode {
+    let files = match collect_source_files(paths) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // Entry file for runtime diagnostics: the `main.swift` if present, else the
+    // first file in order.
+    let path = files
+        .iter()
+        .find(|f| {
+            std::path::Path::new(&f.path)
+                .file_name()
+                .map(|n| n == "main.swift")
+                .unwrap_or(false)
+        })
+        .or_else(|| files.first())
+        .map(|f| f.path.clone())
+        .unwrap_or_else(|| "main.swift".to_string());
+    let path = path.as_str();
+
+    let analysis = match Analysis::analyze_program(&files) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("error: {e}");
@@ -130,12 +180,14 @@ fn run(paths: &[String], allow_network: bool) -> ExitCode {
         }
     };
     // Surface diagnostics: warnings (e.g. `#warning`) print and continue;
-    // errors (e.g. `#error`, type errors) abort before execution.
+    // errors (e.g. `#error`, type errors) abort before execution. Each
+    // diagnostic reports its own file path (multi-file aware).
     let mut had_error = false;
     for diag in analysis.diagnostics() {
         let kind = if diag.is_error() { "error" } else { "warning" };
+        let file = diag.file.as_deref().unwrap_or(path);
         eprintln!(
-            "{path}:{}:{}: {kind}: {}",
+            "{file}:{}:{}: {kind}: {}",
             diag.line, diag.col, diag.message
         );
         had_error |= diag.is_error();

@@ -5,8 +5,8 @@ import TSwiftFFI
 
 /// A single named Swift source file in a multi-file module.
 public struct TSwiftSourceFile: Sendable {
-    /// The file's name (e.g. `"main.swift"`, `"helpers.swift"`). Used for
-    /// diagnostic attribution; only the first file's name surfaces in output.
+    /// The file's name (e.g. `"main.swift"`, `"helpers.swift"`). Diagnostics
+    /// are attributed per file: an error reports its own `path:line:col`.
     public let path: String
     /// The file's Swift source text.
     public let contents: String
@@ -59,9 +59,10 @@ public enum TSwiftCore {
 
     /// Compile and run a multi-file `module`, returning its decoded result.
     ///
-    /// Files are concatenated in order; the first file's path is used for
-    /// diagnostic attribution. Creates a fresh context per call by default;
-    /// pass an existing `context` to reuse interpreter state across runs.
+    /// The ordered files form one compilation unit; each diagnostic reports its
+    /// own file (`path:line:col`). Only `main.swift` (or a single-file program)
+    /// may contain top-level executable statements. Creates a fresh context per
+    /// call by default; pass an existing `context` to reuse interpreter state.
     public static func run(
         module: TSwiftModule,
         in context: TSwiftContext = TSwiftContext()

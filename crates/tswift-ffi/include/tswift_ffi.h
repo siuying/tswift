@@ -174,8 +174,9 @@ char *tswift_diagnostics(const char *source);
 
 /* `module_json` shape for all three functions below:
  *   {"files":[{"path":"<name.swift>","contents":"<source>"},...]}.
- * Files are concatenated in order; the first file's path is used for
- * diagnostic attribution. These are additive — the single-string
+ * Files are concatenated in order (as one compilation unit); each diagnostic
+ * is attributed to its true originating file and file-local line/col, not
+ * just the first file. These are additive — the single-string
  * tswift_run / tswift_diagnostics / tswift_swiftui_compile remain unchanged. */
 
 /* Compile and run a multi-file Swift module, returning owned result JSON

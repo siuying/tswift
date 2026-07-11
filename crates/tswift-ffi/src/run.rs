@@ -7,7 +7,7 @@
 
 use tswift_core::json::{self, Json};
 use tswift_core::result_json::{self, CompileReport, RunReport};
-use tswift_frontend::Analysis;
+use tswift_frontend::{Analysis, SourceFile};
 
 use crate::util::{elapsed_ms, now_ms};
 
@@ -52,7 +52,74 @@ fn run_impl_named(
             );
         }
     };
+    run_with_analysis(
+        analysis,
+        filename,
+        started,
+        false,
+        http,
+        stream_http,
+        host_fns,
+        caps,
+    )
+}
 
+/// Compile and run an ordered `[SourceFile]` program via
+/// [`Analysis::analyze_program`]. Diagnostics carry their per-file paths.
+#[allow(clippy::too_many_arguments)]
+fn run_program_impl_files(
+    files: &[SourceFile],
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+    host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
+) -> String {
+    let started = now_ms();
+    let filename = files
+        .first()
+        .map(|f| f.path.clone())
+        .unwrap_or_else(|| "main.swift".to_string());
+    let analysis = match Analysis::analyze_program(files) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            return result_json::result(
+                BACKEND,
+                CompileReport {
+                    ok: false,
+                    diagnostics: &error.to_string(),
+                    ast_preview: "",
+                    elapsed_ms: elapsed_ms(started),
+                },
+                None,
+            );
+        }
+    };
+    run_with_analysis(
+        analysis,
+        &filename,
+        started,
+        true,
+        http,
+        stream_http,
+        host_fns,
+        caps,
+    )
+}
+
+/// Shared tail of the run path: format diagnostics (per-file when
+/// `include_file`), then compile-gate and evaluate. Single-source callers pass
+/// `include_file = false` to keep the historical `line:col:` diagnostic shape.
+#[allow(clippy::too_many_arguments)]
+fn run_with_analysis(
+    analysis: Analysis,
+    filename: &str,
+    started: f64,
+    include_file: bool,
+    http: Option<crate::http::HostHttpHandler>,
+    stream_http: Option<crate::http::StreamingHandlerConfig>,
+    host_fns: &[crate::host::HostFnRegistration],
+    caps: tswift_core::Capabilities,
+) -> String {
     let mut diagnostics = String::new();
     let mut had_error = false;
     for diagnostic in analysis.diagnostics() {
@@ -61,10 +128,16 @@ fn run_impl_named(
         } else {
             "warning"
         };
-        diagnostics.push_str(&format!(
-            "{}:{}: {kind}: {}\n",
-            diagnostic.line, diagnostic.col, diagnostic.message
-        ));
+        match (include_file, &diagnostic.file) {
+            (true, Some(file)) => diagnostics.push_str(&format!(
+                "{file}:{}:{}: {kind}: {}\n",
+                diagnostic.line, diagnostic.col, diagnostic.message
+            )),
+            _ => diagnostics.push_str(&format!(
+                "{}:{}: {kind}: {}\n",
+                diagnostic.line, diagnostic.col, diagnostic.message
+            )),
+        }
         had_error |= diagnostic.is_error();
     }
 
@@ -167,6 +240,15 @@ impl Module {
             .join("\n");
         (source, filename)
     }
+
+    /// Convert to the ordered `[SourceFile]` program-input model consumed by
+    /// [`Analysis::analyze_program`].
+    pub fn source_files(&self) -> Vec<SourceFile> {
+        self.files
+            .iter()
+            .map(|(p, c)| SourceFile::new(p.clone(), c.clone()))
+            .collect()
+    }
 }
 
 /// Parse a `{"files":[{"path":"…","contents":"…"},…]}` JSON string.
@@ -214,6 +296,6 @@ pub(crate) fn run_module_impl(
             );
         }
     };
-    let (source, filename) = module.merge();
-    run_impl_named(&source, filename, http, stream_http, host_fns, caps)
+    let files = module.source_files();
+    run_program_impl_files(&files, http, stream_http, host_fns, caps)
 }

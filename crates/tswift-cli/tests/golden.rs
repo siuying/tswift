@@ -194,6 +194,59 @@ fn multi_file_modules_match() {
     }
 }
 
+/// `tswift run <dir>` loads every `.swift` file in the directory as one
+/// program (with `main.swift` as the entry). Running the `shapes` case as a
+/// directory must produce the same output as passing its files explicitly.
+#[test]
+fn run_directory_loads_all_swift_files() {
+    let case = fixtures_dir().join("multifile/shapes");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(&case)
+        .output()
+        .expect("spawn tswift");
+    assert!(
+        output.status.success(),
+        "run <dir> failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = std::fs::read_to_string(case.join("expected.txt")).expect("read expected.txt");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+}
+
+/// A compile error in a *second* file must report that file's path and its
+/// file-local line number (not a combined/concatenated line).
+#[test]
+fn diagnostic_reports_correct_file_and_line() {
+    let dir = unique_temp_dir("multifile-diag");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    // First file: two lines of valid declarations.
+    std::fs::write(dir.join("a_types.swift"), "struct A {}\nstruct B {}\n").expect("write a");
+    // Second file: `#error` on its 2nd line -> must report b_main.swift:2.
+    std::fs::write(
+        dir.join("b_main.swift"),
+        "let x = 1\n#error(\"boom in second file\")\n",
+    )
+    .expect("write b");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(dir.join("a_types.swift"))
+        .arg(dir.join("b_main.swift"))
+        .output()
+        .expect("spawn tswift");
+    assert!(!output.status.success(), "expected a compile failure");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("b_main.swift:2:"),
+        "diagnostic should point at b_main.swift line 2, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("boom in second file"),
+        "diagnostic should carry the message, got:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
 /// AST shape: `tswift dump` must reproduce the snapshot byte-for-byte.
 

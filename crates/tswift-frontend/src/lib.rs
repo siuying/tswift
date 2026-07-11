@@ -23,6 +23,27 @@ pub use tswift_ast::NodeKind;
 /// element, dictionary key/value) instead of re-parsing the flat string.
 pub use tswift_ast::{TypeRepr, TypeReprKind};
 
+/// One input source file of a (possibly multi-file) Swift program: a `path`
+/// used for diagnostics and a `source` body. This is the deterministic,
+/// ordered program-input unit shared by every entrypoint (CLI, wasm, FFI).
+#[derive(Debug, Clone)]
+pub struct SourceFile {
+    /// Path/label for this file — reported in diagnostics as `path:line:col`.
+    pub path: String,
+    /// The Swift source text of this file.
+    pub source: String,
+}
+
+impl SourceFile {
+    /// Construct a [`SourceFile`] from any string-like `path` and `source`.
+    pub fn new(path: impl Into<String>, source: impl Into<String>) -> SourceFile {
+        SourceFile {
+            path: path.into(),
+            source: source.into(),
+        }
+    }
+}
+
 /// An owned Swift analysis result: the parse AST (parsed and type-resolved)
 /// plus diagnostics for one Swift source file.
 pub struct Analysis {
@@ -51,6 +72,7 @@ impl Analysis {
                             tswift_sema::Severity::Warning => Severity::Warning,
                             tswift_sema::Severity::Error => Severity::Error,
                         },
+                        file: Some(filename.to_string()),
                     })
                     .collect();
                 (ast, diagnostics)
@@ -64,10 +86,119 @@ impl Analysis {
                     line: e.line,
                     col: e.col,
                     severity: Severity::Error,
+                    file: Some(filename.to_string()),
                 }],
             ),
         };
         Ok(Analysis { ast, diagnostics })
+    }
+
+    /// Analyze a multi-file Swift program as one compilation unit.
+    ///
+    /// **R1 outcome / design (see `docs/adr/0017-multi-file-program-input.md`):**
+    /// `tswift-sema` models a compilation unit as a single `tswift_ast::Ast`
+    /// produced from one source string, so a true multi-AST merge is out of
+    /// scope for v1. Instead the ordered `files` are concatenated **once** into
+    /// a single combined source (one lex/parse/analyze pass — no per-file
+    /// re-lexing) and a line-offset table maps every combined line back to its
+    /// originating `(path, local_line)`. Diagnostics therefore report the
+    /// correct `file:line:col`.
+    ///
+    /// Swift's top-level-code rule is enforced: only `main.swift` (or a
+    /// single-file program) may contain top-level executable statements; a
+    /// top-level statement in any other file yields an error diagnostic
+    /// pointing at that file.
+    pub fn analyze_program(files: &[SourceFile]) -> Result<Analysis, AnalyzeError> {
+        // NUL guard mirrors `analyze` (interior NUL breaks the C-string seam).
+        for f in files {
+            if f.source.as_bytes().contains(&0) || f.path.as_bytes().contains(&0) {
+                return Err(AnalyzeError::InteriorNul);
+            }
+        }
+
+        // Concatenate once, recording where each file starts in the combined
+        // source (1-based line). A `\n` separator is inserted between files so
+        // tokens never merge across a file boundary.
+        let mut combined = String::new();
+        let mut spans: Vec<FileSpan> = Vec::with_capacity(files.len());
+        let mut cur_line: u32 = 1;
+        for f in files {
+            spans.push(FileSpan {
+                start_line: cur_line,
+                path: f.path.clone(),
+            });
+            let newlines = f.source.bytes().filter(|&b| b == b'\n').count() as u32;
+            combined.push_str(&f.source);
+            let added = if f.source.ends_with('\n') {
+                newlines
+            } else {
+                combined.push('\n');
+                newlines + 1
+            };
+            cur_line += added;
+        }
+
+        // One analysis pass over the whole program. The synthetic filename is
+        // only a fallback; every diagnostic is remapped to its real file below.
+        let entry = spans
+            .first()
+            .map(|s| s.path.as_str())
+            .unwrap_or("main.swift");
+        let mut analysis = Analysis::analyze(&combined, entry)?;
+
+        // Remap each diagnostic's combined line to (file, local line).
+        for diag in &mut analysis.diagnostics {
+            if let Some(span) = FileSpan::containing(&spans, diag.line) {
+                diag.file = Some(span.path.clone());
+                diag.line = diag.line - span.start_line + 1;
+            }
+        }
+
+        // Enforce Swift's top-level-code rule across files.
+        analysis.enforce_top_level_rule(files, &spans);
+
+        Ok(analysis)
+    }
+
+    /// Append an error diagnostic for every top-level executable statement that
+    /// lives outside the program's entry file. A single-file program (or the
+    /// designated `main.swift`) is always allowed top-level code.
+    fn enforce_top_level_rule(&mut self, files: &[SourceFile], spans: &[FileSpan]) {
+        // Single-file programs behave like a script: top-level code allowed.
+        if files.len() <= 1 {
+            return;
+        }
+        // The entry file is the one named `main.swift` (by basename). If none
+        // exists, no file is permitted top-level code.
+        let entry_path = files
+            .iter()
+            .map(|f| f.path.as_str())
+            .find(|p| basename(p) == "main.swift");
+
+        let mut extra: Vec<Diagnostic> = Vec::new();
+        for child in self.root().children() {
+            if !is_top_level_executable(child.kind()) {
+                continue;
+            }
+            let combined_line = child.line();
+            let Some(span) = FileSpan::containing(spans, combined_line) else {
+                continue;
+            };
+            if Some(span.path.as_str()) == entry_path {
+                continue;
+            }
+            extra.push(Diagnostic {
+                message: format!(
+                    "top-level executable statements are only allowed in 'main.swift'; '{}' may contain declarations only",
+                    basename(&span.path)
+                ),
+                line: combined_line - span.start_line + 1,
+                col: 1,
+                severity: Severity::Error,
+                file: Some(span.path.clone()),
+            });
+        }
+        self.diagnostics.extend(extra);
     }
 
     /// The root `source_file` node of the AST.
@@ -550,19 +681,97 @@ pub enum Severity {
 }
 
 /// One analysis diagnostic (syntax or semantic error/warning).
+///
+/// `#[non_exhaustive]`: fields may grow (as `file` did) without breaking
+/// downstream struct-literal construction outside this crate. Build one with
+/// [`Diagnostic::new`] (or, in-crate, `Diagnostic { .. }` literals remain
+/// legal since `non_exhaustive` only restricts other crates).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub message: String,
     pub line: u32,
     pub col: u32,
     pub severity: Severity,
+    /// The originating source file's path, if known. Set to the analyzed
+    /// filename for single-file `analyze`, and to the true per-file path for
+    /// multi-file [`Analysis::analyze_program`]. Additive: existing single-file
+    /// callers that only read `line`/`col`/`message` are unaffected.
+    pub file: Option<String>,
 }
 
 impl Diagnostic {
+    /// Construct a [`Diagnostic`]. The preferred constructor for callers
+    /// outside this crate (`#[non_exhaustive]` disallows their struct
+    /// literals); pass `file: None` for a diagnostic with no known origin
+    /// file.
+    pub fn new(
+        message: impl Into<String>,
+        line: u32,
+        col: u32,
+        severity: Severity,
+        file: Option<String>,
+    ) -> Diagnostic {
+        Diagnostic {
+            message: message.into(),
+            line,
+            col,
+            severity,
+            file,
+        }
+    }
+
     /// Whether this diagnostic is an error (blocks execution).
     pub fn is_error(&self) -> bool {
         self.severity == Severity::Error
     }
+}
+
+/// Where a source file starts in the concatenated combined program source.
+/// Internal to the concatenation-based multi-file model (R1 v1).
+struct FileSpan {
+    /// 1-based line in the combined source where this file's first line lands.
+    start_line: u32,
+    /// The originating file path.
+    path: String,
+}
+
+impl FileSpan {
+    /// The span that contains combined 1-based `line` (the last span whose
+    /// `start_line <= line`), if any.
+    fn containing(spans: &[FileSpan], line: u32) -> Option<&FileSpan> {
+        spans.iter().rev().find(|s| s.start_line <= line.max(1))
+    }
+}
+
+/// The final path component of `path` (after the last `/`).
+fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Whether a top-level AST node is an executable statement (as opposed to a
+/// declaration). Only executable statements are restricted to `main.swift`.
+/// Unknown/declaration kinds default to allowed to avoid false positives.
+fn is_top_level_executable(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::ExprStmt
+            | NodeKind::CallExpr
+            | NodeKind::AssignExpr
+            | NodeKind::IfStmt
+            | NodeKind::GuardStmt
+            | NodeKind::WhileStmt
+            | NodeKind::RepeatStmt
+            | NodeKind::ForStmt
+            | NodeKind::SwitchStmt
+            | NodeKind::DoStmt
+            | NodeKind::ThrowStmt
+            | NodeKind::DeferStmt
+            | NodeKind::ReturnStmt
+            | NodeKind::BreakStmt
+            | NodeKind::ContinueStmt
+            | NodeKind::FallthroughStmt
+    )
 }
 
 /// Why [`Analysis::analyze`] could not produce a result.
@@ -585,6 +794,131 @@ impl std::error::Error for AnalyzeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A multi-file program analyzes as one unit: a type declared in one file is
+    /// visible to `main.swift`, and analysis succeeds.
+    #[test]
+    fn analyze_program_cross_file_ok() {
+        let files = [
+            SourceFile::new("models.swift", "struct Point { let x: Int }\n"),
+            SourceFile::new("main.swift", "let p = Point(x: 3)\nprint(p.x)\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+    }
+
+    /// A diagnostic in the second file reports that file's path and its
+    /// file-local line (not the combined line).
+    #[test]
+    fn analyze_program_diagnostic_carries_file_and_local_line() {
+        let files = [
+            SourceFile::new("a.swift", "struct A {}\nstruct B {}\n"),
+            // `#error` on the 2nd line of the 2nd file -> global line 4.
+            SourceFile::new("main.swift", "let ok = 1\n#error(\"boom\")\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        let err = a
+            .diagnostics()
+            .into_iter()
+            .find(|d| d.is_error())
+            .expect("an error diagnostic");
+        assert_eq!(err.file.as_deref(), Some("main.swift"));
+        assert_eq!(err.line, 2, "should be file-local line, not combined");
+    }
+
+    /// Top-level executable code outside `main.swift` is rejected with a clear
+    /// diagnostic pointing at the offending file.
+    #[test]
+    fn analyze_program_rejects_top_level_code_outside_main() {
+        let files = [
+            SourceFile::new("helpers.swift", "func f() {}\nprint(\"side effect\")\n"),
+            SourceFile::new("main.swift", "f()\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        let err = a
+            .diagnostics()
+            .into_iter()
+            .find(|d| d.is_error())
+            .expect("an error diagnostic");
+        assert_eq!(err.file.as_deref(), Some("helpers.swift"));
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("main.swift"), "{}", err.message);
+    }
+
+    /// A single-file program may freely contain top-level statements.
+    #[test]
+    fn analyze_program_single_file_allows_top_level() {
+        let files = [SourceFile::new("main.swift", "print(\"hi\")\n")];
+        let a = Analysis::analyze_program(&files).unwrap();
+        assert!(a.is_ok(), "unexpected diagnostics: {:?}", a.diagnostics());
+    }
+
+    /// Boundary: a diagnostic on the very first line of the very first file
+    /// reports that file at local line 1 (the combined line and the local
+    /// line coincide at this boundary, so this also guards against an
+    /// off-by-one in `FileSpan::containing`/the line-offset subtraction).
+    #[test]
+    fn analyze_program_diagnostic_in_first_file_first_line() {
+        let files = [
+            SourceFile::new("a.swift", "#error(\"boom\")\n"),
+            SourceFile::new("main.swift", "print(1)\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        let err = a
+            .diagnostics()
+            .into_iter()
+            .find(|d| d.is_error())
+            .expect("an error diagnostic");
+        assert_eq!(err.file.as_deref(), Some("a.swift"));
+        assert_eq!(err.line, 1);
+    }
+
+    /// Boundary: a diagnostic on the very last line of the very last file
+    /// (behind two earlier files) still reports the correct file and
+    /// file-local line, not the combined line.
+    #[test]
+    fn analyze_program_diagnostic_in_last_file_last_line() {
+        let files = [
+            SourceFile::new("a.swift", "struct A {}\n"),
+            SourceFile::new("b.swift", "struct B {}\nstruct C {}\n"),
+            SourceFile::new("main.swift", "let ok = 1\nlet ok2 = 2\n#error(\"boom\")\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        let err = a
+            .diagnostics()
+            .into_iter()
+            .find(|d| d.is_error())
+            .expect("an error diagnostic");
+        assert_eq!(err.file.as_deref(), Some("main.swift"));
+        assert_eq!(err.line, 3, "should be main.swift's local last line");
+    }
+
+    /// A middle file with no trailing newline must still get a synthetic
+    /// separator `\n` inserted before the next file's text (so tokens don't
+    /// merge across the file boundary), and the line-offset table must
+    /// account for that inserted line when attributing a diagnostic in the
+    /// file *after* it. If the concatenator ever stops inserting the missing
+    /// separator, `struct Middle` and `let m = ...` would merge onto one
+    /// line and either fail to parse as written or shift every later file's
+    /// line numbers by one — this test pins both failure modes.
+    #[test]
+    fn analyze_program_middle_file_without_trailing_newline() {
+        let files = [
+            SourceFile::new("helpers.swift", "func helper() {}\n"),
+            // No trailing newline: the concatenator must still separate this
+            // file's last line from the next file's first line.
+            SourceFile::new("middle.swift", "struct Middle { let y: Int }"),
+            SourceFile::new("main.swift", "let m = Middle(y: 1)\n#error(\"boom\")\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        let err = a
+            .diagnostics()
+            .into_iter()
+            .find(|d| d.is_error())
+            .expect("an error diagnostic");
+        assert_eq!(err.file.as_deref(), Some("main.swift"));
+        assert_eq!(err.line, 2, "main.swift's local line must not drift");
+    }
 
     /// The pipeline round-trips: analyze `print(42)`, walk the AST, read payloads.
     #[test]

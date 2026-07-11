@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const wasmDir = new URL('../src/wasm/', import.meta.url);
-const { initSync, runSwift, registerHostFunction, clearHostFunctions } = await import(new URL('qswift_wasm.js', wasmDir));
+const { initSync, runSwift, runSwiftModule, registerHostFunction, clearHostFunctions } = await import(new URL('qswift_wasm.js', wasmDir));
 initSync({ module: readFileSync(new URL('qswift_wasm_bg.wasm', wasmDir)) });
 
 let failures = 0;
@@ -71,6 +71,36 @@ for (const p of supported) {
     assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r.run || r.compile)}`);
   });
 }
+
+// 4b. Multi-file program: a type declared in one file resolves in main.swift.
+check('runSwiftModule resolves cross-file references', () => {
+  const module = JSON.stringify({
+    files: [
+      { path: 'models.swift', contents: 'struct Point { let x: Int }\n' },
+      { path: 'main.swift', contents: 'let p = Point(x: 9)\nprint(p.x)\n' },
+    ],
+  });
+  const r = JSON.parse(runSwiftModule(module));
+  assert(r.ok === true, `expected ok=true, got ${JSON.stringify(r.compile || r)}`);
+  assert(r.run && r.run.stdout.trim() === '9', `bad stdout: ${JSON.stringify(r.run)}`);
+});
+
+// 4c. Top-level executable code outside main.swift is rejected, and the
+//     diagnostic names the offending file.
+check('runSwiftModule rejects top-level code outside main.swift', () => {
+  const module = JSON.stringify({
+    files: [
+      { path: 'helpers.swift', contents: 'func f() {}\nprint("nope")\n' },
+      { path: 'main.swift', contents: 'f()\n' },
+    ],
+  });
+  const r = JSON.parse(runSwiftModule(module));
+  assert(r.ok === false, `expected ok=false, got ${JSON.stringify(r)}`);
+  assert(
+    r.compile && r.compile.stderr.includes('helpers.swift'),
+    `diagnostic should name helpers.swift: ${JSON.stringify(r.compile)}`,
+  );
+});
 
 // 5. tswiftHost hook — host-native function bridge (issue #249).
 //

@@ -450,9 +450,11 @@ pub unsafe extern "C" fn tswift_diagnostics(source: *const c_char) -> *mut c_cha
 /// [`tswift_string_free`].
 ///
 /// `module_json` is a NUL-terminated JSON string:
-/// `{"files":[{"path":"…","contents":"…"},…]}`. Files are analyzed in order;
-/// the first file's path is used as the diagnostic source path. The existing
-/// `tswift_run` single-string entry point is unchanged (additive).
+/// `{"files":[{"path":"…","contents":"…"},…]}`. Files are analyzed together
+/// as one compilation unit ([`Analysis::analyze_program`]); each diagnostic is
+/// attributed to its true originating file and file-local line/col, not just
+/// the first file. The existing `tswift_run` single-string entry point is
+/// unchanged (additive).
 ///
 /// # Safety
 /// `ctx` must be a live pointer from [`tswift_context_new`]. `module_json`
@@ -630,6 +632,66 @@ mod tests {
         let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
         unsafe { tswift_string_free(ptr) };
         assert!(json.contains("null context"), "{json}");
+    }
+
+    /// A multi-file program run through `tswift_run_module` resolves cross-file
+    /// references (a type in one file used from `main.swift`).
+    #[test]
+    fn run_module_resolves_cross_file() {
+        let ctx = tswift_context_new();
+        let module = CString::new(
+            r#"{"files":[
+                {"path":"models.swift","contents":"struct P { let x: Int }\n"},
+                {"path":"main.swift","contents":"let p = P(x: 5)\nprint(p.x)\n"}
+            ]}"#,
+        )
+        .unwrap();
+        let out = unsafe { tswift_run_module(ctx, module.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("\"ok\":true"), "unexpected result: {json}");
+        assert!(json.contains("5"), "unexpected stdout: {json}");
+    }
+
+    /// A compile error in the second file reports that file's path and its
+    /// file-local line number through the module entry point.
+    #[test]
+    fn run_module_diagnostic_carries_file_and_line() {
+        let ctx = tswift_context_new();
+        let module = CString::new(
+            r#"{"files":[
+                {"path":"a.swift","contents":"struct A {}\nstruct B {}\n"},
+                {"path":"main.swift","contents":"let x = 1\n#error(\"boom\")\n"}
+            ]}"#,
+        )
+        .unwrap();
+        let out = unsafe { tswift_run_module(ctx, module.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("\"ok\":false"), "expected failure: {json}");
+        assert!(json.contains("main.swift:2:"), "expected file:line: {json}");
+    }
+
+    /// Top-level executable code outside `main.swift` is rejected with a
+    /// diagnostic naming the offending file.
+    #[test]
+    fn run_module_rejects_top_level_outside_main() {
+        let ctx = tswift_context_new();
+        let module = CString::new(
+            r#"{"files":[
+                {"path":"helpers.swift","contents":"func f() {}\nprint(\"nope\")\n"},
+                {"path":"main.swift","contents":"f()\n"}
+            ]}"#,
+        )
+        .unwrap();
+        let out = unsafe { tswift_run_module(ctx, module.as_ptr()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        unsafe { tswift_context_free(ctx) };
+        assert!(json.contains("\"ok\":false"), "expected failure: {json}");
+        assert!(json.contains("helpers.swift"), "expected file name: {json}");
     }
 
     /// A host function `hostDeviceName() -> String` registered through the FFI
