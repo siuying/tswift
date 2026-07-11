@@ -11,6 +11,7 @@ const byFramework = Object.fromEntries(
 const stdlib = byFramework.stdlib.totals;
 const foundation = byFramework.foundation.totals;
 const swiftui = byFramework.swiftui.totals;
+const swiftdata = byFramework.swiftdata.totals;
 const languageTiers = parseLanguageTiers();
 const language = sumTiers(languageTiers, 0, 7);
 ---
@@ -90,7 +91,7 @@ const language = sumTiers(languageTiers, 0, 7);
       <a href="/how-it-works/libraries" class="card" style="text-decoration:none;color:inherit">
         <div class="card-icon">📦</div>
         <h3>Libraries</h3>
-        <p>Native Rust implementations of Swift's stdlib, with Foundation and SwiftUI on the roadmap.</p>
+        <p>Native Rust implementations of Swift's stdlib, Foundation (incl. UserDefaults/FileManager persistence), SwiftUI, and a SwiftData subset.</p>
       </a>
     </div>
     <div style="margin-top:1.25rem;text-align:center">
@@ -102,7 +103,7 @@ const language = sumTiers(languageTiers, 0, 7);
   <section class="section" style="border-top:1px solid var(--border)">
     <h2 class="section-title">Implementation status</h2>
     <p class="section-subtitle">
-      tswift covers 8 tiers of the Swift 6.3 language surface, plus stdlib and Foundation.
+      tswift covers 8 tiers of the Swift 6.3 language surface, plus stdlib, Foundation, SwiftUI, and SwiftData.
     </p>
 
     <div style="max-width:680px">
@@ -110,6 +111,7 @@ const language = sumTiers(languageTiers, 0, 7);
       <CoverageBar label="Standard Library" implemented={stdlib.implemented} partial={stdlib.partial} total={stdlib.total} href="/status/stdlib" />
       <CoverageBar label="Foundation" implemented={foundation.implemented} partial={foundation.partial} total={foundation.total} href="/status/foundation" />
       <CoverageBar label="SwiftUI" implemented={swiftui.implemented} partial={swiftui.partial} total={swiftui.total} href="/status/swiftui" />
+      <CoverageBar label="SwiftData" implemented={swiftdata.implemented} partial={swiftdata.partial} total={swiftdata.total} href="/status/swiftdata" />
     </div>
 
     <div style="margin-top:1.5rem">

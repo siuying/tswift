@@ -1,0 +1,726 @@
+{
+  "framework": "SwiftData",
+  "sections": [
+    {
+      "name": "PersistentModel",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "createBackingData",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "getTransformableValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "getValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hasChanges",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "id",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isDeleted",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "modelContext",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "persistentModelID",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "setTransformableValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "setValue",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 12,
+        "out_of_scope": 0,
+        "total": 12
+      }
+    },
+    {
+      "name": "Schema",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "encodingVersion",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "entities",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "entitiesByName",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "entity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "entityName",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "load",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "save",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "schemaEncodingVersion",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "version",
+          "kind": "let",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 15,
+        "out_of_scope": 0,
+        "total": 15
+      }
+    },
+    {
+      "name": "SchemaProperty",
+      "members": [
+        {
+          "name": "isAttribute",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isOptional",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isRelationship",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "isTransient",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 4,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    },
+    {
+      "name": "PersistentIdentifier",
+      "members": [
+        {
+          "name": "<",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "encode",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "entityName",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "id",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "identifier",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "missing"
+        },
+        {
+          "name": "storeIdentifier",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 10,
+        "out_of_scope": 0,
+        "total": 10
+      }
+    },
+    {
+      "name": "ModelContainer",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "configurations",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "deleteAllData",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "erase",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "mainContext",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "migrationPlan",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "schema",
+          "kind": "let",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 2,
+        "partial": 0,
+        "missing": 6,
+        "out_of_scope": 0,
+        "total": 8
+      }
+    },
+    {
+      "name": "ModelConfiguration",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allowsSave",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "cloudKitContainerIdentifier",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "cloudKitDatabase",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "groupAppContainerIdentifier",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "groupContainer",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "id",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isStoredInMemoryOnly",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "name",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "schema",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "url",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "validate",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 0,
+        "missing": 15,
+        "out_of_scope": 0,
+        "total": 16
+      }
+    },
+    {
+      "name": "ModelContext",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "author",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "autosaveEnabled",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "changedModelsArray",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "container",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "debugDescription",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "delete",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "deleteHistory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "deletedModelsArray",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "didSave",
+          "kind": "let",
+          "status": "missing"
+        },
+        {
+          "name": "editingState",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "enumerate",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fetch",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "fetchCount",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fetchHistory",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fetchIdentifiers",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "hasChanges",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "insert",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "insertedModelsArray",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "model",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "processPendingChanges",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "registeredModel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "rollback",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "save",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "transaction",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "undoManager",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "willSave",
+          "kind": "let",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 23,
+        "out_of_scope": 0,
+        "total": 28
+      }
+    },
+    {
+      "name": "FetchDescriptor",
+      "members": [
+        {
+          "name": "==",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "fetchLimit",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "fetchOffset",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "includePendingChanges",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "predicate",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "propertiesToFetch",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "relationshipKeyPathsForPrefetching",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "sortBy",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 0,
+        "missing": 8,
+        "out_of_scope": 0,
+        "total": 9
+      }
+    },
+    {
+      "name": "FetchResultsCollection",
+      "members": [
+        {
+          "name": "endIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "startIndex",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "Query",
+      "members": [
+        {
+          "name": "fetchError",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "modelContext",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "update",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "wrappedValue",
+          "kind": "var",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 1,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "View",
+      "members": [
+        {
+          "name": "modelContainer",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "modelContext",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "Scene",
+      "members": [
+        {
+          "name": "modelContainer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "modelContext",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 2,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 10,
+    "partial": 2,
+    "missing": 102,
+    "out_of_scope": 0,
+    "total": 114
+  }
+}

@@ -1,0 +1,13 @@
+FetchDescriptor.init
+ModelConfiguration.init
+ModelContainer.init
+ModelContainer.mainContext
+ModelContext.delete
+ModelContext.fetch
+ModelContext.init
+ModelContext.insert
+ModelContext.save
+Query.init
+Query.wrappedValue
+SortDescriptor.init
+View.modelContainer

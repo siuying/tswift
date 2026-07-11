@@ -20,10 +20,12 @@ const language = sumTiers(languageTiers, 0, 9);
 const stdlib = byFramework.stdlib.totals;
 const foundation = byFramework.foundation.totals;
 const swiftui = byFramework.swiftui.totals;
+const swiftdata = byFramework.swiftdata.totals;
 const languagePct = pctInfo(language);
 const stdlibPct = pctInfo(stdlib);
 const foundationPct = pctInfo(foundation);
 const swiftuiPct = pctInfo(swiftui);
+const swiftdataPct = pctInfo(swiftdata);
 // Hand-authored tier prose (kept short/curated), paired positionally with
 // counts parsed from docs/swift-runtime/feature-checklist.md — numbers are
 // never hand-typed, only the label text is.
@@ -75,6 +77,12 @@ const tierLabels = [
       <div class={`pct-big ${swiftuiPct.tier}`}>{swiftuiPct.label}</div>
       <p style="font-size:.85rem">Tiers v1–5 + C1–C7 breadth · {swiftui.implemented} implemented · {swiftui.partial} partial · {swiftui.missing} missing (of {swiftui.total})</p>
       <a href="/status/swiftui" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>SwiftData</h3>
+      <div class={`pct-big ${swiftdataPct.tier}`}>{swiftdataPct.label}</div>
+      <p style="font-size:.85rem">@Model, ModelContainer/Context, #Predicate subset · {swiftdata.implemented} implemented · {swiftdata.partial} partial · {swiftdata.missing} missing (of {swiftdata.total})</p>
+      <a href="/status/swiftdata" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
   </div>
 

@@ -66,6 +66,57 @@ struct Query<Element> {
 }
 "#;
 
+/// Every SwiftData entry this crate registers, as coverage keys (see
+/// `tools/framework-inventory/README.md`). Mirrors
+/// `tswift_foundation::registered_keys`'s pattern: `interp.registered_keys()`
+/// only reports free-fn/method-intrinsic seams, so a few surfaces registered
+/// through other seams are injected manually, with a comment explaining why
+/// each one is invisible to the generic introspection.
+pub fn registered_keys() -> Vec<String> {
+    let mut sink = std::io::sink();
+    let mut interp = Interpreter::new(&mut sink);
+    install(&mut interp, true);
+    let mut keys: Vec<String> = interp
+        .registered_keys()
+        .into_iter()
+        .filter_map(|key| match key.as_str() {
+            "ModelContainer" => Some("ModelContainer.init".to_string()),
+            "ModelConfiguration" => Some("ModelConfiguration.init".to_string()),
+            "ModelContext" => Some("ModelContext.init".to_string()),
+            "FetchDescriptor" => Some("FetchDescriptor.init".to_string()),
+            "SortDescriptor" => Some("SortDescriptor.init".to_string()),
+            other
+                if other.starts_with("ModelContainer.")
+                    || other.starts_with("ModelConfiguration.")
+                    || other.starts_with("ModelContext.")
+                    || other.starts_with("FetchDescriptor.")
+                    || other.starts_with("SortDescriptor.") =>
+            {
+                Some(other.to_string())
+            }
+            // Internal plumbing (__tswiftCurrentModelContext) and the
+            // SortOrder builtin enum (register_builtin_enum does not add
+            // qualified `.forward`/`.reverse` keys to the registry) carry no
+            // coverage meaning; excluded by falling through to `_`.
+            _ => None,
+        })
+        .collect();
+    // `.modelContainer(for:)` is a generic struct-method modifier
+    // (Interpreter::register_struct_method), a seam `registered_keys()` does
+    // not introspect (SwiftUI view modifiers are collected separately by
+    // that crate). Injected manually so coverage sees it.
+    keys.push("View.modelContainer".to_string());
+    // `Query` (the `@Query` property wrapper) is declared in Swift source
+    // (`QUERY_PRELUDE`), not registered through any Rust seam at all — same
+    // pattern as SwiftUI's own `@State`/`@Binding` prelude wrappers. Injected
+    // manually; kept in sync by hand with `QUERY_PRELUDE`.
+    keys.push("Query.init".to_string());
+    keys.push("Query.wrappedValue".to_string());
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 #[cfg(test)]
 use tswift_core::StdContext;
 
@@ -141,5 +192,16 @@ mod tests {
                 Some(HostService::Database)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod coverage_dump {
+    #[test]
+    fn dump_registered_keys() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("frameworks/swiftdata/registered_keys.txt");
+        let body = super::registered_keys().join("\n") + "\n";
+        std::fs::write(&path, body).expect("write registered_keys.txt");
     }
 }

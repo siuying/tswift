@@ -16,6 +16,27 @@ registry = "frameworks/stdlib/registered_keys.txt"
 scope = "frameworks/stdlib/scope.toml"
 fixture_prefix = "stdlib_"
 
+[swiftdata]
+display_name = "SwiftData"
+module = "SwiftData"
+kind = "sdk-framework"
+framework_path = "System/Library/Frameworks/SwiftData.framework/Versions/A/Modules/SwiftData.swiftmodule"
+# @Query (the SwiftUI-facing property wrapper/macro) lives in the separate
+# _SwiftData_SwiftUI module, not SwiftData itself. Merge both, mirroring the
+# swiftui/SwiftUICore split above.
+additional_framework_paths = [
+  "System/Library/Frameworks/_SwiftData_SwiftUI.framework/Versions/A/Modules/_SwiftData_SwiftUI.swiftmodule",
+]
+interface_candidates = [
+  "arm64e-apple-macos.swiftinterface",
+  "arm64-apple-macos.swiftinterface",
+  "x86_64-apple-macos.swiftinterface",
+]
+inventory = "frameworks/swiftdata/inventory.md"
+registry = "frameworks/swiftdata/registered_keys.txt"
+scope = "frameworks/swiftdata/scope.toml"
+fixture_prefix = "swiftdata_"
+
 [foundation]
 display_name = "Foundation"
 module = "Foundation"

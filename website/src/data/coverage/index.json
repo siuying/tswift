@@ -23,6 +23,17 @@
       }
     },
     {
+      "framework": "swiftdata",
+      "display_name": "SwiftData",
+      "totals": {
+        "implemented": 10,
+        "partial": 2,
+        "missing": 102,
+        "out_of_scope": 0,
+        "total": 114
+      }
+    },
+    {
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {

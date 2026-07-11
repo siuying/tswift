@@ -1,0 +1,102 @@
+[meta]
+framework = "SwiftData"
+reference = "swiftc 6.3.2 / MacOSX SDK (SwiftData.framework + _SwiftData_SwiftUI.framework for @Query/.modelContainer)"
+stance = """
+tswift-swiftdata (crates/tswift-swiftdata) implements a stage-1 subset: @Model
+classes are discovered structurally (no macro expansion — nominal_type_info
+sees the class's stored properties directly), one SQLite-backed table per
+model type, ModelContainer/ModelContext CRUD (insert/delete/save), a SQL-
+compiling #Predicate subset, SortDescriptor, and @Query/.modelContainer(for:)
+SwiftUI integration. Relationships, migrations, CloudKit sync, history
+tracking, and the custom DataStore SPI are not implemented (out of scope for
+now — see [out_of_scope]). D1–D5 are the targeted stage-1 surface; the
+out-of-scope advanced surfaces are intentionally not listed in any tier (see
+the comment above [out_of_scope]).
+"""
+
+# `@Model` itself is an attached macro (`@attached(member, ...)` in real
+# SwiftData) and never appears as a type in the extracted `.swiftinterface` —
+# there is nothing named "@Model" to track as an inventory section. Its
+# coverage is implicit in D1/D2: a class carrying the `Model` attribute is
+# recognized by `derive_schema` (crates/tswift-swiftdata/src/model.rs) at
+# `ModelContainer(for:)` time, and exercised by
+# `crates/tswift-cli/tests/fixtures/swiftdata_model_crud.swift`.
+
+# FetchDescriptor's `sortBy`/`predicate`/`fetchLimit` are the only supported
+# initializer keywords; `fetchOffset`, `includePendingChanges`,
+# `propertiesToFetch`, and `relationshipKeyPathsForPrefetching` are accepted
+# by real SwiftData but not modelled here (silently absent, not merely unread
+# — a script that reads them back would see the type's default, since this
+# runtime does not expose them as settable/gettable fields at all).
+[core_members]
+# Query is a SwiftUI-facing property wrapper declared as prelude Swift source
+# (`crate::QUERY_PRELUDE`, mirroring SwiftUI's own `@State`/`@Binding`
+# pattern) rather than a Rust-registered intrinsic, so its members never
+# appear in registered_keys.txt. `init()` (bare) and the sort/filter
+# convenience inits collapse to one `init` entry (coverage.py dedups
+# overloads); `wrappedValue` is the only computed property implemented.
+# `fetchError` and the `modelContext` property, and `update()` (the
+# @Query-driven invalidation hook) are not modelled.
+Query = ["init", "wrappedValue"]
+# `.modelContainer(for:)` is a generic struct-method modifier
+# (`Interpreter::register_struct_method`), not the free-fn/method registry,
+# so it never appears in registered_keys.txt either. Only the `View` receiver
+# is wired up in practice (SwiftUI's `App`/`Scene` lifecycle is itself out of
+# scope — see frameworks/swiftui/scope.toml); `.modelContext(_:)` (injecting
+# an existing context directly, vs. opening a new container) is not modelled.
+View = ["modelContainer"]
+
+# ── D1 — model declaration & schema introspection ─────────────────────────
+[[tier]]
+id = "D1"
+title = "@Model schema, PersistentModel identity, Schema introspection"
+types = ["PersistentModel", "Schema", "SchemaProperty", "PersistentIdentifier"]
+
+# ── D2 — container & configuration ────────────────────────────────────────
+[[tier]]
+id = "D2"
+title = "ModelContainer(for:) / ModelConfiguration"
+types = ["ModelContainer", "ModelConfiguration"]
+
+# ── D3 — context CRUD ──────────────────────────────────────────────────────
+[[tier]]
+id = "D3"
+title = "ModelContext insert/delete/save/fetch"
+types = ["ModelContext"]
+
+# ── D4 — fetching & sorting ────────────────────────────────────────────────
+[[tier]]
+id = "D4"
+title = "FetchDescriptor, #Predicate (SQL subset), SortDescriptor, batched fetch"
+types = ["FetchDescriptor", "FetchResultsCollection"]
+
+# ── D5 — SwiftUI integration ───────────────────────────────────────────────
+[[tier]]
+id = "D5"
+title = "@Query, .modelContainer(for:), .modelContext(_:)"
+types = ["Query", "View", "Scene"]
+
+# D6–D8 (persistent history tracking, versioned schema migration, the custom
+# DataStore backend SPI, CloudKit sync, undo) are entirely unimplemented and
+# deliberately **not** listed in any [[tier]] here — same convention as
+# frameworks/foundation/scope.toml's `NSObject`/`Bundle`/etc: a type absent
+# from every tier's `types` list is simply outside the tracked/targeted
+# surface (never appears in a coverage report section), rather than being
+# force-included just to show as "out of scope". The [out_of_scope] table
+# below documents *why*, for readers of this file; it does not change what
+# `coverage.py` reports (types-in-tiers is what's targeted). See
+# docs/plan/... history for the reasoning.
+
+[notes]
+model_macro = "@Model is discovered structurally (nominal_type_info), not by macro expansion; there is no Rust-registered '@Model' inventory entry to track. Data/Date-typed stored properties are rejected with a clear diagnostic (only Int/Bool/Double/String and their optionals derive a column)."
+predicate_subset = "#Predicate<T> compiles eagerly to a SQL WHERE fragment at creation time (captures resolved immediately): &&/||/!, ==/!=/</<=/>/>=, == nil / != nil on optional columns, and String contains/hasPrefix/hasSuffix (-> LIKE). Anything else raises a clear diagnostic rather than silently mis-filtering or full-scanning. See ADR-0016."
+autosave = "ModelContext.autosaveEnabled/mainContext autosave-on-run-loop-tick is OFF (no run loop to hang it off); callers must call save() explicitly."
+column_types = "Only Int/Int*/UInt*/Bool -> INTEGER, Double/Float/CGFloat -> REAL, String -> TEXT (+ their T? optionals) are supported; Data and Date columns are deferred (this runtime has no primitive SwiftValue for either)."
+persistent_model_id = "persistentModelID is tracked internally as the backing SQLite rowid for identity/idempotency, but is not yet exposed as a Swift-visible .persistentModelID/.id property on the model instance (member access on a user class routes through its ClassDef, not this crate's builtin dispatch)."
+relationships = "Relationships (@Relationship, to-one/to-many model references) are not modelled at all: derive_schema only derives scalar columns from stored properties."
+query_env_scoping = "@Query resolves the nearest-ancestor .modelContainer(for:) via a subtree-scoped stack the SwiftUI renderer brackets around each custom View's body; there is no change-notification hook, so a post-save() render reflects new rows only because the renderer re-evaluates body on every dispatch event (ADR-0016 Slice 10b), not via a KVO/Combine-style publisher."
+
+[out_of_scope]
+history_tracking = ["HistoryDescriptor", "HistoryChange", "HistoryTombstone", "DefaultHistoryDelete", "DefaultHistoryInsert", "DefaultHistoryToken", "DefaultHistoryTransaction", "DefaultHistoryUpdate"]
+migration = ["MigrationStage"]
+custom_data_store_spi = ["DataStore", "DataStoreConfiguration", "DataStoreError", "DataStoreFetchRequest", "DataStoreFetchResult", "DataStoreSaveChangesRequest", "DataStoreSaveChangesResult", "DataStoreSnapshotCodingKey", "DefaultSerialModelExecutor", "DefaultSnapshot", "DefaultStore", "EditingState", "ModelActor"]

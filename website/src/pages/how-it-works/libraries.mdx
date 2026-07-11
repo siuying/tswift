@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Doc.astro
 title: Libraries
-description: tswift's native Rust implementations of Swift's standard library, Foundation, and the roadmap for SwiftUI.
+description: tswift's native Rust implementations of Swift's standard library, Foundation, SwiftUI, and SwiftData.
 section: how-it-works
 ---
 
@@ -26,15 +26,14 @@ flowchart BT
     rt["tswift-core\\nEvaluator"]
     std["tswift-std\\nStandard library"]
     fnd["Foundation\\n(partial)"]
-    swiftui["SwiftUI\\n(future)"]
+    swiftui["SwiftUI\\n(partial)"]
+    swiftdata["SwiftData\\n(subset)"]
 
     src --> fe --> rt
     std --> rt
-    fnd -.->|planned| rt
-    swiftui -.->|future| rt
-
-    style swiftui stroke-dasharray: 5 5,color:#eef0f6
-    style fnd    stroke-dasharray: 5 5,color:#eef0f6
+    fnd --> rt
+    swiftui --> rt
+    swiftdata --> rt
 `}
 </Mermaid>
 
@@ -104,28 +103,50 @@ The current proof slice:
 |-----|--------|
 | `Data` — core constructors and properties | ✅ Done |
 | `UUID` — constructors and `uuidString` | ✅ Done |
-| `IndexPath`, `IndexSet` | 🔴 Todo |
-| `URL`, `URLComponents`, `URLQueryItem` | 🔴 Todo |
-| `DateFormatter`, `JSONDecoder`, `JSONEncoder` | 🔴 Todo |
-| `NotificationCenter`, `UserDefaults` | 🔴 Todo |
+| `IndexPath`, `IndexSet` | ✅ Done |
+| `URL`, `URLComponents`, `URLQueryItem` | ✅ Done |
+| `DateFormatter`, `JSONDecoder`, `JSONEncoder` | ✅ Done |
+| `URLSession`, `URLRequest` | 🟡 Partial |
+| `UserDefaults` | 🟡 Partial (host-service backed; see below) |
+| `FileManager` | 🟡 Partial (host-service backed; see below) |
+| `NotificationCenter` | 🔴 Todo |
+
+**Persistence (`UserDefaults`/`FileManager`)** runs over a *host-service* seam
+(`tswift.defaults.*` / `tswift.fs.*`, `tswift_core::host_services`), not the
+real Darwin APIs directly: the CLI backs it with an in-process store / the
+real filesystem, wasm backs `UserDefaults` with `localStorage` (no real
+filesystem there and no file-based persistence yet), and an embedding that
+hasn't wired the service up gets a clean, catchable "unavailable on this
+platform" diagnostic rather than a crash. See
+[Foundation scope notes →](/status/foundation) for the exact member list.
 
 See the [Foundation status page →](/status/foundation).
 
 ---
 
-## SwiftUI (future)
+## SwiftUI (partial)
 
-SwiftUI requires a **result-builder transform** (the `@ViewBuilder` macro) plus
-a layout/rendering engine. Both are significant undertakings:
+SwiftUI runs as a **render host**, not a native platform renderer: `body` is
+evaluated by the tree-walking interpreter into a host-neutral UIIR, which an
+embedding (DOM for the web, a native host elsewhere) turns into pixels. State
+(`@State`, `@Binding`), stacks/lists/navigation, controls, gestures, and basic
+animation are implemented; full layout fidelity and a native (non-web)
+rendering target remain open work.
 
-1. **Result builders** (Tier 8 — macros) need a macro-expansion engine over
-   the AST — the biggest outstanding language feature.
-2. **Layout** — SwiftUI's layout algorithm is non-trivial; a headless
-   approximation (for testing) is the practical first step.
-3. **Platform bridge** — full SwiftUI output ultimately needs a platform
-   rendering target (DOM for the web, Metal for macOS).
+See the [SwiftUI status page →](/status/swiftui) for detailed counts.
 
-See the [SwiftUI status page →](/status/swiftui) for the current plan.
+---
+
+## SwiftData (subset)
+
+SwiftData implements a stage-1 subset over a SQLite-backed host service:
+`@Model` classes (discovered structurally, no macro expansion),
+`ModelContainer`/`ModelContext` CRUD, a SQL-compiling `#Predicate` subset, and
+`@Query`/`.modelContainer(for:)` SwiftUI integration. Relationships,
+migrations, CloudKit sync, and persistent history tracking are not
+implemented.
+
+See the [SwiftData status page →](/status/swiftdata) for detailed counts.
 
 ---
 
