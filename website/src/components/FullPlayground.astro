@@ -635,6 +635,12 @@ print("intersection: \\(set1.intersection(set2).sorted())")` },
 
   async function initWasm() {
     try {
+      // Back `tswift.defaults.*`/`tswift.fs.*` (UserDefaults/FileManager) with
+      // the web degraded tier (localStorage-backed virtual store; see the
+      // module for the documented platform-tier limits) before the wasm
+      // module runs any script.
+      const { installTSwiftHostServices } = await import('../lib/tswift-host-services.js');
+      installTSwiftHostServices();
       // Load the wasm-bindgen glue from /public. We bypass Vite's import
       // pipeline (which rewrites public-file imports with ?import/?url and
       // breaks them in dev) by importing an absolute URL via indirect import.

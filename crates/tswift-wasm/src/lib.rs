@@ -340,10 +340,21 @@ fn run_swift_impl_named(source: &str, filename: &str) -> String {
     let mut stdout = Vec::new();
     let mut interp = Interpreter::new(&mut stdout);
     tswift_std::install(&mut interp);
+    // The default host-call handler MUST be installed before
+    // `tswift_foundation::install_with`: `HostBridge::register` resolves a
+    // `None` handler against the default handler *at registration time*
+    // (`crates/tswift-core/src/host_bridge.rs`), not lazily per-call. Since
+    // Foundation's `tswift.defaults.*`/`tswift.fs.*` registrations pass
+    // `None` (they don't own a handler — the platform does), registering them
+    // before a default handler exists silently fails the registration
+    // (`is_host_fn` then reports `false`, degrading every UserDefaults/
+    // FileManager call as "unavailable" even when the page declared the
+    // service in `globalThis.tswiftHostServices`).
+    platform::install_host_call_handler(&mut interp);
     tswift_foundation::install_with(&mut interp, platform::host_capabilities());
     interp.set_filename(filename);
     platform::install_http_transport(&mut interp);
-    platform::install_host_handler(&mut interp);
+    platform::install_registered_host_fns(&mut interp);
 
     let run_result = interp.run(analysis);
     let run_elapsed = elapsed_ms(run_started);
@@ -646,20 +657,24 @@ pub(crate) mod platform {
         HOST_FN_SCHEMAS.with(|schemas| schemas.borrow_mut().clear());
     }
 
-    /// Install the JS-backed host-call handler on `interp` and register every
-    /// schema that was pushed via [`register_host_function_schema`].
-    ///
-    /// A no-op when no schemas have been registered, so pages that do not use
-    /// host functions pay no overhead.
-    pub(super) fn install_host_handler(interp: &mut tswift_core::Interpreter<'_>) {
+    /// Install the JS-backed host-call handler on `interp` as its **default**
+    /// handler. Unconditional (not gated on any schema being registered): both
+    /// custom `registerHostFunction` calls *and* Foundation's
+    /// `tswift.defaults.*`/`tswift.fs.*` registrations (which pass `None` for
+    /// their handler) resolve against this default. Must run before
+    /// `tswift_foundation::install_with` — see the call site's comment.
+    pub(super) fn install_host_call_handler(interp: &mut tswift_core::Interpreter<'_>) {
         use std::sync::Arc;
+        interp.set_host_call_handler(Arc::new(JsHostCallHandler));
+    }
+
+    /// Register every custom host-fn schema pushed via
+    /// [`register_host_function_schema`]. Must run after
+    /// [`install_host_call_handler`] (schemas resolve `None` against whatever
+    /// default handler is installed at registration time).
+    pub(super) fn install_registered_host_fns(interp: &mut tswift_core::Interpreter<'_>) {
         HOST_FN_SCHEMAS.with(|schemas| {
-            let schemas = schemas.borrow();
-            if schemas.is_empty() {
-                return;
-            }
-            interp.set_host_call_handler(Arc::new(JsHostCallHandler));
-            for sig_json in schemas.iter() {
+            for sig_json in schemas.borrow().iter() {
                 // Schemas were validated at registration time; ignore any
                 // residual error (should not occur in practice).
                 let _ = interp.register_host_fn(sig_json, None);
@@ -723,15 +738,19 @@ pub(crate) mod platform {
     /// On native there is no JS hook, so registered functions always fail with
     /// "tswiftHost hook is not available" when called.  This mirrors the wasm
     /// absent-hook degraded tier so the error path is exercisable in tests.
-    pub(super) fn install_host_handler(interp: &mut tswift_core::Interpreter<'_>) {
+    /// Unconditional, matching wasm's `install_host_call_handler` — see that
+    /// function's doc comment for why it must run before `install_with`.
+    pub(super) fn install_host_call_handler(interp: &mut tswift_core::Interpreter<'_>) {
         use std::sync::Arc;
+        interp.set_host_call_handler(Arc::new(NativeUnavailableHandler));
+    }
+
+    /// Register every custom host-fn schema pushed via
+    /// [`register_host_function_schema`]. Must run after
+    /// [`install_host_call_handler`].
+    pub(super) fn install_registered_host_fns(interp: &mut tswift_core::Interpreter<'_>) {
         HOST_FN_SCHEMAS.with(|schemas| {
-            let schemas = schemas.borrow();
-            if schemas.is_empty() {
-                return;
-            }
-            interp.set_host_call_handler(Arc::new(NativeUnavailableHandler));
-            for sig_json in schemas.iter() {
+            for sig_json in schemas.borrow().iter() {
                 let _ = interp.register_host_fn(sig_json, None);
             }
         });
@@ -1072,7 +1091,7 @@ mod tests {
     // registerHostFunction / tswiftHost transport — native-exercisable tests
     // -----------------------------------------------------------------------
     //
-    // On native, `install_host_handler` uses `NativeUnavailableHandler` which
+    // On native, `install_host_call_handler` uses `NativeUnavailableHandler` which
     // always returns "tswiftHost hook is not available".  That lets us verify:
     //  (a) schema validation in `register_host_function`,
     //  (b) that the registered function is wired into the interpreter,

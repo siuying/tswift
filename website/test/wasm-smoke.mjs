@@ -338,6 +338,274 @@ check('swiftDiagnostics reports an error with line/col/severity', () => {
   assert(d.message.includes('boom'), `expected message to carry 'boom': ${JSON.stringify(d)}`);
 });
 
+// 6. `tswift.defaults.*` / `tswift.fs.*` host services (Slice 4) — the web
+//    degraded tier from `src/lib/tswift-host-services.js`, backed here by a
+//    minimal in-memory `localStorage` shim (Node has none). Exercises real
+//    Swift source through `UserDefaults.standard` and `FileManager.default`,
+//    matching the wire contract `crates/tswift-foundation` implements.
+if (typeof globalThis.localStorage === 'undefined') {
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    get length() { return store.size; },
+    key: (i) => [...store.keys()][i] ?? null,
+  };
+}
+const { installTSwiftHostServices, __resetTSwiftHostServicesForTests, tswiftHostServiceCall } = await import(
+  new URL('../src/lib/tswift-host-services.js', import.meta.url)
+);
+
+installTSwiftHostServices();
+
+check('tswiftHostServices declares defaults + fs namespaces', () => {
+  assert(
+    Array.isArray(globalThis.tswiftHostServices) &&
+      globalThis.tswiftHostServices.includes('tswift.defaults') &&
+      globalThis.tswiftHostServices.includes('tswift.fs'),
+    `bad tswiftHostServices: ${JSON.stringify(globalThis.tswiftHostServices)}`,
+  );
+  assert(typeof globalThis.tswiftHost === 'function', 'tswiftHost hook missing');
+});
+
+check('UserDefaults round-trips through localStorage', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let d = UserDefaults.standard',
+    'd.set("web", forKey: "language")',
+    'd.set(6, forKey: "version")',
+    'print(d.string(forKey: "language") ?? "nil")',
+    'print(d.integer(forKey: "version"))',
+    'd.removeObject(forKey: "language")',
+    'print(d.string(forKey: "language") ?? "nil")',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'web\n6\nnil\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('FileManager writes and reads a file through the virtual fs', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let fm = FileManager.default',
+    'let path = "/tmp/tswift-playground/greeting.txt"',
+    // The virtual fs (like the CLI\'s real one) requires the parent
+    // directory to already exist before a write — no implicit `mkdir -p`.
+    'try fm.createDirectory(atPath: "/tmp/tswift-playground", withIntermediateDirectories: true)',
+    'try "hello playground".write(toFile: path, atomically: true, encoding: .utf8)',
+    'print(fm.fileExists(atPath: path))',
+    'let text = try String(contentsOfFile: path)',
+    'print(text)',
+    'try fm.removeItem(atPath: path)',
+    'print(fm.fileExists(atPath: path))',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'true\nhello playground\nfalse\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('FileManager write fails without an existing parent directory', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let path = "/tmp/tswift-no-such-dir/greeting.txt"',
+    'do {',
+    '    try "hi".write(toFile: path, atomically: true, encoding: .utf8)',
+    '    print("unexpected success")',
+    '} catch {',
+    '    print("caught")',
+    '}',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'caught\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('FileManager write fails over an existing directory', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let fm = FileManager.default',
+    'try fm.createDirectory(atPath: "/tmp/tswift-dir-target", withIntermediateDirectories: true)',
+    'do {',
+    '    try "hi".write(toFile: "/tmp/tswift-dir-target", atomically: true, encoding: .utf8)',
+    '    print("unexpected success")',
+    '} catch {',
+    '    print("caught")',
+    '}',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'caught\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('FileManager createFile with non-base64 contents is rejected, not stored as arbitrary text', () => {
+  __resetTSwiftHostServicesForTests();
+  const okResult = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.write', JSON.stringify(['/tmp/tswift-b64-test.txt', 'not-valid-base64!!', false])),
+  );
+  assert(okResult === false, `expected invalid base64 content to be rejected, got ${JSON.stringify(okResult)}`);
+  const existsResult = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.exists', JSON.stringify(['/tmp/tswift-b64-test.txt'])),
+  );
+  assert(existsResult === false, 'a rejected write must not create the file');
+});
+
+check('FileManager \'..\' traversal resolves to the same virtual entry', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let fm = FileManager.default',
+    'try fm.createDirectory(atPath: "/tmp/tswift-dotdot", withIntermediateDirectories: true)',
+    'try "payload".write(toFile: "/tmp/tswift-dotdot/a.txt", atomically: true, encoding: .utf8)',
+    'let text = try String(contentsOfFile: "/tmp/tswift-dotdot/sub/../a.txt")',
+    'print(text)',
+    'print(fm.fileExists(atPath: "/tmp//tswift-dotdot/./a.txt"))',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'payload\ntrue\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('listing the root directory works', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let fm = FileManager.default',
+    'try fm.createDirectory(atPath: "/tswift-root-list-test", withIntermediateDirectories: true)',
+    'let names = try fm.contentsOfDirectory(atPath: "/")',
+    'print(names.contains("tswift-root-list-test"))',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'true\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('FileManager surfaces a thrown host error as a catchable Swift error', () => {
+  __resetTSwiftHostServicesForTests();
+  const src = [
+    'import Foundation',
+    'let fm = FileManager.default',
+    'do {',
+    '    try fm.removeItem(atPath: "/tmp/tswift-playground/does-not-exist.txt")',
+    '    print("unexpected success")',
+    '} catch {',
+    '    print("caught")',
+    '}',
+  ].join('\n');
+  const r = JSON.parse(runSwift(src));
+  assert(r.run?.ok === true,
+    `expected run.ok=true, got ${JSON.stringify({ compile: r.compile?.stderr, stderr: r.run?.stderr })}`);
+  assert(r.run.stdout === 'caught\n', `unexpected stdout: ${JSON.stringify(r.run.stdout)}`);
+});
+
+check('mkdir with intermediates fails, not-a-directory-style, through an existing file component', () => {
+  __resetTSwiftHostServicesForTests();
+  tswiftHostServiceCall('tswift.fs.mkdir', JSON.stringify(['/tmp', true]));
+  const write = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.write', JSON.stringify(['/tmp/tswift-mkdir-blocker', 'aGk=', false])),
+  );
+  assert(write === true, 'setup write must succeed');
+
+  const mkdirReply = JSON.parse(
+    tswiftHostServiceCall(
+      'tswift.fs.mkdir',
+      JSON.stringify(['/tmp/tswift-mkdir-blocker/sub/deeper', true]),
+    ),
+  );
+  assert(
+    typeof mkdirReply === 'object' && typeof mkdirReply.$thrown === 'string' &&
+      mkdirReply.$thrown.includes('not a directory'),
+    `expected a "not a directory" thrown error, got ${JSON.stringify(mkdirReply)}`,
+  );
+
+  // Nothing must have been created underneath the file component.
+  const subExists = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.exists', JSON.stringify(['/tmp/tswift-mkdir-blocker/sub'])),
+  );
+  assert(subExists === false, `mkdir must not create descendants beneath a file, got exists=${subExists}`);
+});
+
+check('copy/move refuse a destination with a missing or non-directory parent', () => {
+  __resetTSwiftHostServicesForTests();
+  tswiftHostServiceCall('tswift.fs.mkdir', JSON.stringify(['/tmp', true]));
+  const write = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.write', JSON.stringify(['/tmp/tswift-cm-src.txt', 'aGk=', false])),
+  );
+  assert(write === true, 'setup write must succeed');
+  const parentFileWrite = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.write', JSON.stringify(['/tmp/tswift-cm-parent-is-file', 'aGk=', false])),
+  );
+  assert(parentFileWrite === true, 'setup write must succeed');
+
+  const copyMissingParent = JSON.parse(
+    tswiftHostServiceCall(
+      'tswift.fs.copy',
+      JSON.stringify(['/tmp/tswift-cm-src.txt', '/tmp/tswift-cm-no-such-dir/dst.txt']),
+    ),
+  );
+  assert(
+    typeof copyMissingParent === 'object' &&
+      copyMissingParent.$thrown &&
+      copyMissingParent.$thrown.includes('no such file or directory'),
+    `expected a "no such file or directory" thrown error, got ${JSON.stringify(copyMissingParent)}`,
+  );
+
+  const copyParentIsFile = JSON.parse(
+    tswiftHostServiceCall(
+      'tswift.fs.copy',
+      JSON.stringify(['/tmp/tswift-cm-src.txt', '/tmp/tswift-cm-parent-is-file/dst.txt']),
+    ),
+  );
+  assert(
+    typeof copyParentIsFile === 'object' &&
+      copyParentIsFile.$thrown &&
+      copyParentIsFile.$thrown.includes('not a directory'),
+    `expected a "not a directory" thrown error, got ${JSON.stringify(copyParentIsFile)}`,
+  );
+
+  const moveMissingParent = JSON.parse(
+    tswiftHostServiceCall(
+      'tswift.fs.move',
+      JSON.stringify(['/tmp/tswift-cm-src.txt', '/tmp/tswift-cm-no-such-dir/dst.txt']),
+    ),
+  );
+  assert(
+    typeof moveMissingParent === 'object' &&
+      moveMissingParent.$thrown &&
+      moveMissingParent.$thrown.includes('no such file or directory'),
+    `expected a "no such file or directory" thrown error, got ${JSON.stringify(moveMissingParent)}`,
+  );
+
+  const moveParentIsFile = JSON.parse(
+    tswiftHostServiceCall(
+      'tswift.fs.move',
+      JSON.stringify(['/tmp/tswift-cm-src.txt', '/tmp/tswift-cm-parent-is-file/dst.txt']),
+    ),
+  );
+  assert(
+    typeof moveParentIsFile === 'object' &&
+      moveParentIsFile.$thrown &&
+      moveParentIsFile.$thrown.includes('not a directory'),
+    `expected a "not a directory" thrown error, got ${JSON.stringify(moveParentIsFile)}`,
+  );
+
+  // The rejected copy/move must not have removed the source.
+  const srcStillExists = JSON.parse(
+    tswiftHostServiceCall('tswift.fs.exists', JSON.stringify(['/tmp/tswift-cm-src.txt'])),
+  );
+  assert(srcStillExists === true, 'a rejected copy/move must leave the source untouched');
+});
+
 if (failures > 0) {
   console.error(`\n${failures} website swiftui wasm smoke check(s) failed`);
   process.exit(1);

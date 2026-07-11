@@ -1,6 +1,50 @@
 /* @ts-self-types="./tswift_wasm.d.ts" */
 import { tswift_http_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline0.js';
+import { tswift_host_services } from './snippets/tswift-wasm-5859c2033208ac3c/inline1.js';
+import { tswift_host_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline2.js';
 
+
+/**
+ * Clear all host functions registered via [`register_host_function`].
+ *
+ * Intended for test harnesses that need a clean slate between runs.
+ * Production pages generally register once per page load and never clear.
+ */
+export function clearHostFunctions() {
+    wasm.clearHostFunctions();
+}
+
+/**
+ * Register a host-native function so that interpreted Swift can call it.
+ *
+ * `signature_json` is the compact JSON schema accepted by the core bridge:
+ *
+ * ```json
+ * {"name": "greet", "params": [{"label": "name", "type": "String"}], "returns": "String"}
+ * ```
+ *
+ * Returns `{"ok":true}` on success or `{"ok":false,"error":"…"}` when the
+ * schema is malformed.  Registered functions are wired into every subsequent
+ * `runSwift` / `runSwiftModule` call; the embedding page must also define a
+ * **synchronous** `globalThis.tswiftHost(name, argsJson)` hook that services
+ * the calls (see `platform` docs below).
+ * @param {string} signature_json
+ * @returns {string}
+ */
+export function registerHostFunction(signature_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(signature_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.registerHostFunction(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
 
 /**
  * Compile and run a single Swift source string, returning a JSON result.
@@ -17,6 +61,30 @@ export function runSwift(source) {
         const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.runSwift(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Compile and run a multi-file Swift module, returning a JSON result.
+ *
+ * `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`. Files are
+ * concatenated in order; the first file's path is used for diagnostics.
+ * Additive — `runSwift` remains unchanged.
+ * @param {string} module_json
+ * @returns {string}
+ */
+export function runSwiftModule(module_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(module_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.runSwiftModule(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -54,6 +122,29 @@ export function swiftDiagnostics(source) {
 }
 
 /**
+ * Lint a multi-file Swift module and return diagnostics JSON.
+ *
+ * `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.
+ * Additive — `swiftDiagnostics` remains unchanged.
+ * @param {string} module_json
+ * @returns {string}
+ */
+export function swiftDiagnosticsModule(module_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(module_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.swiftDiagnosticsModule(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Compile a SwiftUI program, render its root `View`, and start an interactive
  * session. Returns a JSON envelope:
  * `{"ok":bool,"root":string|null,"tree":<uiir>|null,"error":string|null}`.
@@ -67,6 +158,28 @@ export function swiftUICompile(source) {
         const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.swiftUICompile(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Compile a multi-file SwiftUI module, render its root `View`, and start an
+ * interactive session. `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.
+ * Returns the same JSON envelope as `swiftUICompile`.
+ * @param {string} module_json
+ * @returns {string}
+ */
+export function swiftUICompileModule(module_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(module_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.swiftUICompileModule(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -113,6 +226,20 @@ function __wbg_get_imports() {
         __wbg_now_992e0a0bee8e39ce: function() {
             const ret = performance.now();
             return ret;
+        },
+        __wbg_tswift_host_call_21459fde346e5eab: function(arg0, arg1, arg2, arg3, arg4) {
+            const ret = tswift_host_call(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+        },
+        __wbg_tswift_host_services_51b14282d047cd4b: function(arg0) {
+            const ret = tswift_host_services();
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg_tswift_http_call_33ac9073e212e5b3: function(arg0, arg1, arg2) {
             const ret = tswift_http_call(getStringFromWasm0(arg1, arg2));
