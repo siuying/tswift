@@ -61,6 +61,14 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Calendar", calendar_init);
     interp.register_free_fn("TimeZone", timezone_init);
     interp.register_static(BuiltinReceiver::Calendar, "current", calendar_current);
+    // Under this runtime's fixed Gregorian/UTC/en_US model there is no
+    // locale/timezone tracking, so `autoupdatingCurrent` is identical to
+    // `current` (an alias). See frameworks/foundation/scope.toml.
+    interp.register_static(
+        BuiltinReceiver::Calendar,
+        "autoupdatingCurrent",
+        calendar_current,
+    );
     interp.register_property(BuiltinReceiver::Calendar, "identifier", calendar_identifier);
 
     // en_US Gregorian symbol tables (locale-independent in this runtime; see
@@ -149,6 +157,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("range", calendar_range_of),
         ("ordinality", calendar_ordinality),
         ("nextDate", calendar_next_date),
+        ("nextWeekend", calendar_next_weekend),
+        ("dateIntervalOfWeekend", calendar_date_interval_of_weekend),
     ] {
         interp.register_labeled_intrinsic(
             BuiltinReceiver::Calendar,
@@ -1406,6 +1416,86 @@ fn calendar_next_date(
         found
     };
 
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// nextWeekend / dateIntervalOfWeekend
+// ---------------------------------------------------------------------------
+//
+// "Weekend" here is Saturday + Sunday, the Gregorian convention under this
+// runtime's fixed en_US/Gregorian stance. Darwin's real behaviour is
+// Locale-dependent (some locales use Fri/Sat); documented in scope.toml.
+
+const WEEKEND_DURATION: f64 = 2.0 * SECONDS_PER_DAY;
+
+/// Ref-seconds of midnight (UTC) for a day index since 1970-01-01.
+fn midnight_ref(day: i64) -> f64 {
+    day as f64 * SECONDS_PER_DAY - REFERENCE_DATE_UNIX_OFFSET
+}
+
+/// `Calendar.nextWeekend(startingAfter:) -> DateInterval?`.
+///
+/// Returns the Saturday 00:00 .. Monday 00:00 span whose start is the first
+/// Saturday-midnight strictly after `date`. (Under a fixed Gregorian calendar
+/// this never returns nil; the optional matches Darwin's signature.)
+fn calendar_next_weekend(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    let date_val = match labels.as_slice() {
+        [Some("startingAfter")] => &args[0].value,
+        _ => return Ok(None),
+    };
+    let after = date_seconds(date_val)?;
+    let unix_after = after + REFERENCE_DATE_UNIX_OFFSET;
+    let (after_day, _) = floor_div_day(unix_after);
+    // First Saturday (weekday 7) midnight strictly after `date`.
+    let mut result = SwiftValue::Nil;
+    for day in after_day..(after_day + 8) {
+        if weekday_of_day(day) == 7 {
+            let start = midnight_ref(day);
+            if start > after {
+                result = date_interval_value(start, WEEKEND_DURATION);
+                break;
+            }
+        }
+    }
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+/// `Calendar.dateIntervalOfWeekend(containing:) -> DateInterval?`.
+///
+/// If `date` falls on a Saturday or Sunday, returns the enclosing
+/// Saturday 00:00 .. Monday 00:00 interval; otherwise nil. Monday 00:00 is the
+/// exclusive end, so it is *not* considered part of the weekend.
+fn calendar_date_interval_of_weekend(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let labels: Vec<Option<&str>> = args.iter().map(|a| a.label.as_deref()).collect();
+    let date_val = match labels.as_slice() {
+        [Some("containing")] => &args[0].value,
+        _ => return Ok(None),
+    };
+    let ref_secs = date_seconds(date_val)?;
+    let (day, _) = floor_div_day(ref_secs + REFERENCE_DATE_UNIX_OFFSET);
+    let weekday = weekday_of_day(day);
+    // Saturday = 7, Sunday = 1. The weekend starts on the most-recent Saturday.
+    let result = match weekday {
+        7 => date_interval_value(midnight_ref(day), WEEKEND_DURATION),
+        1 => date_interval_value(midnight_ref(day - 1), WEEKEND_DURATION),
+        _ => SwiftValue::Nil,
+    };
     Ok(Some(Outcome {
         result,
         receiver: recv,

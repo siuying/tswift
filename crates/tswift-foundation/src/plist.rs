@@ -29,8 +29,11 @@
 //!   they cannot be represented as UTF-8 `Data` in this runtime.
 //! * **Default format**: Foundation's `PropertyListEncoder` defaults to
 //!   `.binary`; this runtime defaults to `.xml` (the only supported format).
-//! * **`userInfo`**: Not implemented — `[CodingUserInfoKey: Any]` dictionary
-//!   type is not modelled in this runtime.
+//! * **`userInfo`**: Settable/gettable `[CodingUserInfoKey: Any]` dictionary,
+//!   stored on the coder Object. Like `JSONEncoder.userInfo`, it round-trips
+//!   but does NOT thread through to a custom `Encodable.encode(to:)` — this
+//!   runtime's Codable support is hand-written and does not surface an
+//!   `Encoder` with a live `userInfo` to user code.
 //! * **`Nil` top-level values**: throw an encoding error (matching Foundation).
 //! * **Non-finite Double**: encoded as `nan` / `+infinity` / `-infinity`
 //!   matching Foundation's XML plist output (plist unlike JSON permits them).
@@ -56,6 +59,7 @@ pub fn registered_keys() -> Vec<String> {
         "PropertyListEncoder.encode".to_string(),
         "PropertyListEncoder.init".to_string(),
         "PropertyListEncoder.outputFormat".to_string(),
+        "PropertyListEncoder.userInfo".to_string(),
     ]
 }
 
