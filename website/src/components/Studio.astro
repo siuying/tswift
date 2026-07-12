@@ -21,17 +21,29 @@
   </header>
 
   <div class="st-body">
-    <!-- Sidebar: files + outline -->
+    <!-- Sidebar: compact Files / Report / Symbols mode switcher -->
     <aside class="st-sidebar">
-      <div class="st-panel st-files">
+      <div class="st-mode-switcher" role="tablist" aria-label="Sidebar panels">
+        <button type="button" role="tab" id="st-mode-files" class="st-mode-btn active"
+          data-mode="files" aria-selected="true" aria-controls="st-panel-files" tabindex="0">Files</button>
+        <button type="button" role="tab" id="st-mode-report" class="st-mode-btn"
+          data-mode="report" aria-selected="false" aria-controls="st-panel-report" tabindex="-1">
+          Report <span id="st-problem-count" class="st-badge">0</span></button>
+        <button type="button" role="tab" id="st-mode-symbols" class="st-mode-btn"
+          data-mode="symbols" aria-selected="false" aria-controls="st-panel-symbols" tabindex="-1">Symbols</button>
+      </div>
+
+      <div id="st-panel-files" class="st-panel st-files" role="tabpanel" aria-labelledby="st-mode-files">
         <div class="st-panel-head">
           <span>Files</span>
           <button id="st-add-file" class="st-icon-btn" title="New file">＋</button>
         </div>
         <ul id="st-file-tree" class="st-file-tree"></ul>
       </div>
-      <div class="st-panel st-outline">
-        <div class="st-panel-head"><span>Outline</span></div>
+      <div id="st-panel-report" class="st-panel st-report" role="tabpanel" aria-labelledby="st-mode-report" hidden>
+        <ul id="st-problems" class="st-problems"><li class="st-empty">No problems.</li></ul>
+      </div>
+      <div id="st-panel-symbols" class="st-panel st-outline" role="tabpanel" aria-labelledby="st-mode-symbols" hidden>
         <ul id="st-outline" class="st-outline-tree"><li class="st-empty">—</li></ul>
       </div>
     </aside>
@@ -47,7 +59,6 @@
       <div class="st-right-tabs">
         <button data-rtab="preview" id="st-rtab-preview" class="st-rtab" style="display:none">Preview</button>
         <button data-rtab="console" class="st-rtab active">Console</button>
-        <button data-rtab="problems" class="st-rtab">Problems <span id="st-problem-count" class="st-badge">0</span></button>
       </div>
       <div id="st-preview-wrap" class="st-preview" style="display:none">
         <div class="st-device"><div class="st-screen">
@@ -55,7 +66,6 @@
         </div></div>
       </div>
       <pre id="st-console" class="st-console">Ready.</pre>
-      <ul id="st-problems" class="st-problems"><li class="st-empty">No problems.</li></ul>
     </section>
   </div>
 
@@ -118,9 +128,22 @@
   @media (max-width: 900px) { .st-body { grid-template-columns: 1fr; grid-auto-rows: minmax(180px, auto); } }
 
   .st-sidebar { border-right: 1px solid var(--st-line); display: flex; flex-direction: column; min-height: 0; background: var(--st-chrome); }
-  .st-panel { display: flex; flex-direction: column; min-height: 0; }
-  .st-files { flex: 1 1 55%; border-bottom: 1px solid var(--st-line); }
-  .st-outline { flex: 1 1 45%; }
+
+  .st-mode-switcher {
+    display: flex; flex-shrink: 0; gap: 2px; padding: .3rem; border-bottom: 1px solid var(--st-line);
+  }
+  .st-mode-btn {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: .3rem;
+    padding: .35rem .3rem; border: none; border-radius: 6px; background: transparent;
+    color: var(--st-muted); font-size: .7rem; font-weight: 700; letter-spacing: .03em;
+    cursor: pointer; white-space: nowrap;
+  }
+  .st-mode-btn:hover { color: var(--st-text); background: rgba(255,255,255,.04); }
+  .st-mode-btn.active { color: var(--st-text); background: var(--accent-soft); }
+  .st-mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .st-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .st-panel[hidden] { display: none; }
   .st-panel-head {
     display: flex; align-items: center; justify-content: space-between;
     padding: .45rem .7rem; font-size: .68rem; font-weight: 700; letter-spacing: .1em;
@@ -226,6 +249,7 @@
   import * as store from '../lib/studio/project.js';
   import { moduleJson, isSwiftUIProject } from '../lib/studio/module.js';
   import { buildOutline, quickOpenIndex, filterEntries } from '../lib/studio/outline.js';
+  import { applySidebarMode, nextSidebarMode } from '../lib/studio/sidebar-mode.js';
   import { SAMPLES, sampleById } from '../lib/studio/samples.js';
 
   // ── State ────────────────────────────────────────────────────────
@@ -264,6 +288,8 @@
   const previewWrap = $('st-preview-wrap');
   const canvas    = $('st-canvas');
   const rtabs     = document.querySelectorAll('.st-rtab');
+  const modeBtns  = document.querySelectorAll('.st-mode-btn');
+  const modePanels = { files: $('st-panel-files'), report: $('st-panel-report'), symbols: $('st-panel-symbols') };
 
   const editor = createStudioEditor({
     parent: $('st-editor'),
@@ -449,7 +475,6 @@
   function showRightTab(name) {
     previewWrap.style.display = name === 'preview' ? 'flex' : 'none';
     consoleEl.style.display = name === 'console' ? '' : 'none';
-    problemsEl.style.display = name === 'problems' ? '' : 'none';
     rtabs.forEach((t) => t.classList.toggle('active', t.dataset.rtab === name));
   }
   rtabs.forEach((t) => t.addEventListener('click', () => showRightTab(t.dataset.rtab)));
@@ -457,6 +482,22 @@
     $('st-rtab-preview').style.display = on ? '' : 'none';
     if (!on && $('st-rtab-preview').classList.contains('active')) showRightTab('console');
   }
+
+  // ── Sidebar mode switcher (Files / Report / Symbols) ──────────────
+  // State machine + keyboard nav live in ../lib/studio/sidebar-mode.js so the
+  // production behavior is exercised by the unit test, not re-implemented.
+  function showSidebarMode(mode) {
+    applySidebarMode(mode, { panels: modePanels, buttons: modeBtns });
+  }
+  modeBtns.forEach((b) => b.addEventListener('click', () => { showSidebarMode(b.dataset.mode); b.focus(); }));
+  document.querySelector('.st-mode-switcher').addEventListener('keydown', (e) => {
+    const next = nextSidebarMode(document.activeElement?.dataset?.mode, e.key);
+    if (next) {
+      e.preventDefault();
+      showSidebarMode(next);
+      $(`st-mode-${next}`).focus();
+    }
+  });
 
   // ── Analyze (diagnostics + symbols), debounced ───────────────────
   let analyzeTimer = null;
@@ -488,10 +529,21 @@
     const payload = value == null ? '' : JSON.stringify(value);
     try {
       const res = JSON.parse(swiftUIDispatch(id, event, payload));
-      if (res.ok) canvas.applyPatches(res.patches);
-      else setStatus('error', 'event error');
-    } catch { setStatus('error', 'event crash'); }
+      if (res.ok) { canvas.applyPatches(res.patches); return; }
+      reportEventFailure('event error', res.error || 'SwiftUI event dispatch failed.');
+    } catch (err) {
+      reportEventFailure('event crash', String(err.message || err));
+    }
   });
+  // A SwiftUI event-dispatch or runtime failure must surface diagnostics on
+  // Report just like a Run failure does, not silently sit in the status pill.
+  function reportEventFailure(status, message) {
+    consoleEl.textContent = message;
+    consoleEl.className = 'st-console error';
+    setStatus('error', status);
+    showRightTab('console');
+    showSidebarMode('report');
+  }
 
   runBtn.addEventListener('click', () => {
     if (!runSwiftModule) return;
@@ -512,6 +564,7 @@
       consoleEl.className = 'st-console error';
       setPreviewAvailable(false);
       showRightTab('console');
+      showSidebarMode('report');
       setStatus('error', 'compile error');
       return;
     }
@@ -523,18 +576,24 @@
         consoleEl.textContent = out || '(no output)';
         consoleEl.className = result.run.ok ? 'st-console' : 'st-console error';
         setStatus(result.run.ok ? 'ok' : 'error', `${result.run.ok ? 'ok' : 'failed'} (${result.run.elapsedMs}ms)`);
+        if (!result.run.ok) {
+          showRightTab('console');
+          showSidebarMode('report');
+        }
       } else {
         const msg = result.compile?.stderr || 'Compile failed.';
         consoleEl.textContent = msg;
         consoleEl.className = 'st-console error';
         setStatus('error', 'compile error');
-        showRightTab('problems');
+        showRightTab('console');
+        showSidebarMode('report');
       }
-      showRightTab(result.run ? 'console' : 'problems');
     } catch (err) {
       consoleEl.textContent = String(err.message || err);
       consoleEl.className = 'st-console error';
       setStatus('error', 'error');
+      showRightTab('console');
+      showSidebarMode('report');
     }
   });
 
