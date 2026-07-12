@@ -53,28 +53,35 @@ public final class PreviewSession: ObservableObject {
 
     /// Compile a multi-file `module`, mount its initial UIIR tree, and start a
     /// render session. Files are concatenated in order for analysis.
-    public func compile(module: TSwiftModule) {
+    ///
+    /// When `autoRunMountTasks` is true (the default), pending `.task {}`
+    /// closures fire on the next main-actor tick. Pass `false` when the caller
+    /// drives mount tasks itself (e.g. a widget timeline provider that must
+    /// snapshot the fully-resolved tree synchronously) — firing them twice
+    /// re-invokes every `.task`.
+    public func compile(module: TSwiftModule, autoRunMountTasks: Bool = true) {
         let moduleJSON = module.toJSON()
         let raw = moduleJSON.withCString { cJSON -> String in
             guard let ptr = tswift_swiftui_compile_module(context.handle, cJSON) else { return "" }
             defer { tswift_string_free(ptr) }
             return String(cString: ptr)
         }
-        applyCompileResult(raw: raw)
+        applyCompileResult(raw: raw, autoRunMountTasks: autoRunMountTasks)
     }
 
     /// Compile `source`, mount its initial UIIR tree, and start a render session.
-    public func compile(_ source: String) {
+    /// See `compile(module:autoRunMountTasks:)` for `autoRunMountTasks`.
+    public func compile(_ source: String, autoRunMountTasks: Bool = true) {
         let raw = source.withCString { cSource -> String in
             guard let ptr = tswift_swiftui_compile(context.handle, cSource) else { return "" }
             defer { tswift_string_free(ptr) }
             return String(cString: ptr)
         }
-        applyCompileResult(raw: raw)
+        applyCompileResult(raw: raw, autoRunMountTasks: autoRunMountTasks)
     }
 
     /// Decode the raw FFI result JSON and update session state.
-    private func applyCompileResult(raw: String) {
+    private func applyCompileResult(raw: String, autoRunMountTasks: Bool = true) {
         let envelope: CompileEnvelope
         do {
             envelope = try JSONDecoder().decode(CompileEnvelope.self, from: Data(raw.utf8))
@@ -93,6 +100,9 @@ public final class PreviewSession: ObservableObject {
         root = envelope.root
         lastError = nil
         model = RenderModel(root: tree)
+        // A caller that drives mount tasks itself opts out here to avoid
+        // firing every `.task` twice.
+        guard autoRunMountTasks else { return }
         // Fire `.task {}` closures on the next main-actor tick, not inline: the
         // cooperative executor runs their `await`s to completion (blocking this
         // thread — e.g. a networked fetch), so deferring lets SwiftUI paint the
