@@ -15,7 +15,12 @@ id = "C1"
 title = "Chart container, BarMark, PlottableValue.value"
 types = ["Chart", "BarMark", "PlottableValue"]
 
+# ── C2 — remaining core mark leaves (UIIR view values) ───────────────────────
+[[tier]]
+id = "C2"
+title = "Core marks: Line/Point/Area/Rule/Rectangle/Sector"
+types = ["LineMark", "PointMark", "AreaMark", "RuleMark", "RectangleMark", "SectorMark"]
+
 # ── Explicitly excluded (type names only — members are not listed here) ───────
 [out_of_scope]
-marks = ["LineMark", "PointMark", "AreaMark", "RuleMark", "RectangleMark", "SectorMark"]
 axes = ["AxisMarks", "AxisValueLabel", "AxisGridLine", "AxisTick"]

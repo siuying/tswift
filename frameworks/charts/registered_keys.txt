@@ -1,3 +1,9 @@
+AreaMark.init
 BarMark.init
 Chart.init
+LineMark.init
 PlottableValue.value
+PointMark.init
+RectangleMark.init
+RuleMark.init
+SectorMark.init
