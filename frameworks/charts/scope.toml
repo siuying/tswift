@@ -21,6 +21,12 @@ id = "C2"
 title = "Core marks: Line/Point/Area/Rule/Rectangle/Sector"
 types = ["LineMark", "PointMark", "AreaMark", "RuleMark", "RectangleMark", "SectorMark"]
 
+# ── C3 — ChartContent mark modifiers (shared `_modifiers` list) ───────────────
+[[tier]]
+id = "C3"
+title = "Mark modifiers: style, symbol, line, annotation, layout"
+types = ["ChartContent"]
+
 # ── Explicitly excluded (type names only — members are not listed here) ───────
 [out_of_scope]
 axes = ["AxisMarks", "AxisValueLabel", "AxisGridLine", "AxisTick"]

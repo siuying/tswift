@@ -5,10 +5,10 @@
       "display_name": "Charts",
       "totals": {
         "implemented": 0,
-        "partial": 9,
-        "missing": 1,
+        "partial": 19,
+        "missing": 12,
         "out_of_scope": 0,
-        "total": 10
+        "total": 31
       }
     },
     {

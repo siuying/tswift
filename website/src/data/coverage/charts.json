@@ -158,13 +158,130 @@
         "out_of_scope": 0,
         "total": 1
       }
+    },
+    {
+      "name": "ChartContent",
+      "members": [
+        {
+          "name": "accessibilityHidden",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityIdentifier",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityLabel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "accessibilityValue",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "alignsMarkStylesWithPlotArea",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "annotation",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "blur",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "clipShape",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "compositingLayer",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "cornerRadius",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "foregroundStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "interpolationMethod",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "lineStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "mask",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "offset",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "opacity",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "position",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "shadow",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "symbol",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "symbolSize",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "zIndex",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 10,
+        "missing": 11,
+        "out_of_scope": 0,
+        "total": 21
+      }
     }
   ],
   "totals": {
     "implemented": 0,
-    "partial": 9,
-    "missing": 1,
+    "partial": 19,
+    "missing": 12,
     "out_of_scope": 0,
-    "total": 10
+    "total": 31
   }
 }

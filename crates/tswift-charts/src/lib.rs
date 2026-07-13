@@ -10,6 +10,8 @@
 //! constructors into an interpreter, and [`registered_keys`] exposes the live
 //! registry to the framework-inventory coverage tooling.
 
+mod modifiers;
+
 use std::rc::Rc;
 
 use tswift_core::{
@@ -24,6 +26,10 @@ use tswift_swiftui::{collect_children, container_value, view_value};
 /// interpreter's implicit-static-method path when `BarMark(x:y:)` pushes a
 /// `PlottableValue` contextual type. Prepend this ahead of user source the
 /// same way hosts prepend `tswift_swiftui::PRELUDE`.
+///
+/// Token namespaces (`InterpolationMethod`, `ChartSymbolShape`,
+/// `AnnotationPosition`) mirror SwiftUI's `Color`/`Font` pattern so leading-dot
+/// forms resolve under typed mark-modifier parameter hints.
 pub const PRELUDE: &str = r#"
 // `PlottableValue` — label + plottable datum pair used as mark x/y args
 // (`BarMark(x: .value("Name", "A"), y: .value("Count", 3))`). Real Charts is
@@ -34,6 +40,48 @@ struct PlottableValue {
     static func value(_ label: String, _ value: Any) -> PlottableValue {
         PlottableValue(label: label, value: value)
     }
+}
+// Line/area interpolation token (`.interpolationMethod(.catmullRom)`).
+struct InterpolationMethod {
+    let token: String
+    static let linear = InterpolationMethod(token: "linear")
+    static let catmullRom = InterpolationMethod(token: "catmullRom")
+    static let monotone = InterpolationMethod(token: "monotone")
+    static let cardinal = InterpolationMethod(token: "cardinal")
+    static let stepStart = InterpolationMethod(token: "stepStart")
+    static let stepCenter = InterpolationMethod(token: "stepCenter")
+    static let stepEnd = InterpolationMethod(token: "stepEnd")
+}
+// Point symbol shape token (`.symbol(.circle)`).
+struct ChartSymbolShape {
+    let token: String
+    static let circle = ChartSymbolShape(token: "circle")
+    static let square = ChartSymbolShape(token: "square")
+    static let diamond = ChartSymbolShape(token: "diamond")
+    static let triangle = ChartSymbolShape(token: "triangle")
+    static let cross = ChartSymbolShape(token: "cross")
+    static let plus = ChartSymbolShape(token: "plus")
+    static let asterisk = ChartSymbolShape(token: "asterisk")
+    static let pentagon = ChartSymbolShape(token: "pentagon")
+}
+// Annotation placement token (`.annotation(position: .top) { … }`).
+struct AnnotationPosition {
+    let token: String
+    static let automatic = AnnotationPosition(token: "automatic")
+    static let top = AnnotationPosition(token: "top")
+    static let bottom = AnnotationPosition(token: "bottom")
+    static let leading = AnnotationPosition(token: "leading")
+    static let trailing = AnnotationPosition(token: "trailing")
+    static let overlay = AnnotationPosition(token: "overlay")
+    static let topLeading = AnnotationPosition(token: "topLeading")
+    static let topTrailing = AnnotationPosition(token: "topTrailing")
+    static let bottomLeading = AnnotationPosition(token: "bottomLeading")
+    static let bottomTrailing = AnnotationPosition(token: "bottomTrailing")
+}
+// Minimal `StrokeStyle` so `.lineStyle(StrokeStyle(lineWidth: 2))` stores args.
+struct StrokeStyle {
+    let lineWidth: Double
+    init(lineWidth: Double = 1.0) { self.lineWidth = lineWidth }
 }
 "#;
 
@@ -96,6 +144,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // (resolve_implicit_static_method only sees user-declared statics).
     let plottable = BuiltinReceiver::register_extension("PlottableValue");
     interp.register_static(plottable, "value", plottable_value_static);
+    // ChartContent mark modifiers (any mark view value; COW `_modifiers` append).
+    modifiers::install(interp);
 }
 
 /// `Chart { marks… }` — container view collecting content-builder children.
@@ -242,6 +292,13 @@ pub fn registered_keys() -> Vec<String> {
     if !keys.iter().any(|k| k == "PlottableValue.value") {
         keys.push("PlottableValue.value".into());
     }
+    // Mark modifiers are members of the `ChartContent` protocol in the SDK
+    // inventory (not `View.*` — that key belongs to SwiftUI coverage).
+    keys.extend(
+        modifiers::MARK_MODIFIER_FNS
+            .iter()
+            .map(|(m, _)| format!("ChartContent.{m}")),
+    );
     keys.sort();
     keys.dedup();
     keys
@@ -267,7 +324,8 @@ mod tests {
     use std::rc::Rc;
     use tswift_core::{Interpreter, StructObj, SwiftValue};
     use tswift_swiftui::{
-        render_root, uiir, view_type_name, CHILDREN_FIELD, PRELUDE as SWIFTUI_PRELUDE,
+        render_root, uiir, view_type_name, CHILDREN_FIELD, MODIFIERS_FIELD,
+        PRELUDE as SWIFTUI_PRELUDE,
     };
 
     /// Same prelude stack hosts use (`tswift-cli` / `tswift-wasm` prepare):
@@ -296,22 +354,54 @@ mod tests {
     }
 
     #[test]
-    fn registered_keys_cover_core_marks() {
+    fn registered_keys_cover_core_marks_and_modifiers() {
         let keys = registered_keys();
-        assert_eq!(
-            keys,
-            vec![
-                "AreaMark.init".to_string(),
-                "BarMark.init".to_string(),
-                "Chart.init".to_string(),
-                "LineMark.init".to_string(),
-                "PlottableValue.value".to_string(),
-                "PointMark.init".to_string(),
-                "RectangleMark.init".to_string(),
-                "RuleMark.init".to_string(),
-                "SectorMark.init".to_string(),
-            ]
-        );
+        for expected in [
+            "AreaMark.init",
+            "BarMark.init",
+            "Chart.init",
+            "ChartContent.annotation",
+            "ChartContent.cornerRadius",
+            "ChartContent.foregroundStyle",
+            "ChartContent.interpolationMethod",
+            "ChartContent.lineStyle",
+            "ChartContent.offset",
+            "ChartContent.opacity",
+            "ChartContent.position",
+            "ChartContent.symbol",
+            "ChartContent.symbolSize",
+            "LineMark.init",
+            "PlottableValue.value",
+            "PointMark.init",
+            "RectangleMark.init",
+            "RuleMark.init",
+            "SectorMark.init",
+        ] {
+            assert!(
+                keys.iter().any(|k| k == expected),
+                "missing coverage key {expected}; keys={keys:?}"
+            );
+        }
+    }
+
+    /// First `_Modifier` on a mark with the given `name`, or panic.
+    fn mark_modifier<'a>(mark: &'a StructObj, name: &str) -> &'a StructObj {
+        let Some(SwiftValue::Array(mods)) = mark.get(MODIFIERS_FIELD) else {
+            panic!("expected _modifiers on mark");
+        };
+        for m in mods.iter() {
+            let SwiftValue::Struct(obj) = m else {
+                continue;
+            };
+            if obj.get("name") == Some(&SwiftValue::Str(name.into())) {
+                return obj;
+            }
+        }
+        panic!("modifier `{name}` not found in {:?}", mods);
+    }
+
+    fn assert_has_modifier(mark: &StructObj, name: &str) {
+        let _ = mark_modifier(mark, name);
     }
 
     /// Assert `Chart { mark }` has one child of `kind` and returns that child struct.
@@ -589,6 +679,214 @@ struct Demo: View {
             assert_eq!(view_type_name(&children[0]), Some("LineMark"));
             assert_eq!(view_type_name(&children[1]), Some("PointMark"));
             assert_uiir_kinds(&view, &["Chart", "LineMark", "PointMark"]);
+        });
+    }
+
+    // ── Slice 3: mark modifiers → `_Modifier` records on the mark ───────────
+
+    #[test]
+    fn mark_foreground_style_color_and_by() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .foregroundStyle(.red)
+            BarMark(x: .value("N", "B"), y: .value("C", 2))
+                .foregroundStyle(by: .value("Type", "x"))
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let Some(SwiftValue::Array(children)) = chart.get(CHILDREN_FIELD) else {
+                panic!("children");
+            };
+            assert_eq!(children.len(), 2);
+            let SwiftValue::Struct(m0) = &children[0] else {
+                panic!("mark0");
+            };
+            let mod0 = mark_modifier(m0, "foregroundStyle");
+            let Some(SwiftValue::Struct(color)) = mod0.get("value") else {
+                panic!("expected positional color, got {:?}", mod0);
+            };
+            assert_eq!(color.type_name, "Color");
+            assert_eq!(color.get("token"), Some(&SwiftValue::Str("red".into())));
+
+            let SwiftValue::Struct(m1) = &children[1] else {
+                panic!("mark1");
+            };
+            let mod1 = mark_modifier(m1, "foregroundStyle");
+            let Some(SwiftValue::Struct(by)) = mod1.get("by") else {
+                panic!("expected by: PlottableValue, got {:?}", mod1);
+            };
+            assert_eq!(by.type_name, "PlottableValue");
+            assert_eq!(by.get("label"), Some(&SwiftValue::Str("Type".into())));
+        });
+    }
+
+    #[test]
+    fn mark_symbol_and_symbol_size() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            PointMark(x: .value("X", 1), y: .value("Y", 2))
+                .symbol(.circle)
+                .symbolSize(40)
+            PointMark(x: .value("X", 3), y: .value("Y", 4))
+                .symbol(by: .value("Series", "A"))
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let Some(SwiftValue::Array(children)) = chart.get(CHILDREN_FIELD) else {
+                panic!("children");
+            };
+            let SwiftValue::Struct(m0) = &children[0] else {
+                panic!("mark0");
+            };
+            let sym = mark_modifier(m0, "symbol");
+            let Some(SwiftValue::Struct(shape)) = sym.get("value") else {
+                panic!("symbol shape {:?}", sym);
+            };
+            assert_eq!(shape.type_name, "ChartSymbolShape");
+            assert_eq!(shape.get("token"), Some(&SwiftValue::Str("circle".into())));
+            let size = mark_modifier(m0, "symbolSize");
+            assert_eq!(size.get("value"), Some(&SwiftValue::int(40)));
+
+            let SwiftValue::Struct(m1) = &children[1] else {
+                panic!("mark1");
+            };
+            let sym_by = mark_modifier(m1, "symbol");
+            let Some(SwiftValue::Struct(by)) = sym_by.get("by") else {
+                panic!("symbol by {:?}", sym_by);
+            };
+            assert_eq!(by.type_name, "PlottableValue");
+        });
+    }
+
+    #[test]
+    fn mark_line_style_and_interpolation() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            LineMark(x: .value("X", 1), y: .value("Y", 2))
+                .lineStyle(StrokeStyle(lineWidth: 2))
+                .interpolationMethod(.catmullRom)
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "LineMark");
+            let ls = mark_modifier(&mark, "lineStyle");
+            let Some(SwiftValue::Struct(stroke)) = ls.get("value") else {
+                panic!("lineStyle value {:?}", ls);
+            };
+            assert_eq!(stroke.type_name, "StrokeStyle");
+            assert_eq!(stroke.get("lineWidth"), Some(&SwiftValue::Double(2.0)));
+
+            let im = mark_modifier(&mark, "interpolationMethod");
+            let Some(SwiftValue::Struct(method)) = im.get("value") else {
+                panic!("interpolation {:?}", im);
+            };
+            assert_eq!(method.type_name, "InterpolationMethod");
+            assert_eq!(
+                method.get("token"),
+                Some(&SwiftValue::Str("catmullRom".into()))
+            );
+        });
+    }
+
+    #[test]
+    fn mark_annotation_captures_content_child() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 3))
+                .annotation(position: .top) {
+                    Text("label")
+                }
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            let ann = mark_modifier(&mark, "annotation");
+            let Some(SwiftValue::Struct(pos)) = ann.get("position") else {
+                panic!("annotation position {:?}", ann);
+            };
+            assert_eq!(pos.type_name, "AnnotationPosition");
+            assert_eq!(pos.get("token"), Some(&SwiftValue::Str("top".into())));
+            // Content is the trailing @ViewBuilder child (stored as `value`).
+            let Some(content) = ann.get("value") else {
+                panic!("annotation missing content child: {:?}", ann);
+            };
+            assert_eq!(view_type_name(content), Some("Text"));
+        });
+    }
+
+    #[test]
+    fn mark_corner_radius_opacity_offset() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .cornerRadius(4)
+                .opacity(0.5)
+                .offset(x: 2, y: 3)
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            let cr = mark_modifier(&mark, "cornerRadius");
+            assert_eq!(cr.get("value"), Some(&SwiftValue::int(4)));
+            let op = mark_modifier(&mark, "opacity");
+            assert_eq!(op.get("value"), Some(&SwiftValue::Double(0.5)));
+            let off = mark_modifier(&mark, "offset");
+            assert_eq!(off.get("x"), Some(&SwiftValue::int(2)));
+            assert_eq!(off.get("y"), Some(&SwiftValue::int(3)));
+        });
+    }
+
+    #[test]
+    fn mark_position_by() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .position(by: .value("Group", "g1"))
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            let pos = mark_modifier(&mark, "position");
+            let Some(SwiftValue::Struct(by)) = pos.get("by") else {
+                panic!("position by {:?}", pos);
+            };
+            assert_eq!(by.type_name, "PlottableValue");
+            assert_eq!(by.get("label"), Some(&SwiftValue::Str("Group".into())));
+            assert_eq!(by.get("value"), Some(&SwiftValue::Str("g1".into())));
+            assert_has_modifier(&mark, "position");
         });
     }
 

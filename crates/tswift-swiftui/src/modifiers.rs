@@ -735,7 +735,10 @@ fn add_watch(view: SwiftValue, value: SwiftValue, action: SwiftValue) -> StdResu
 
 /// Build a `_Modifier` record: a struct carrying `name` plus each call argument
 /// as a field keyed by its label (positional args use `value`, `value1`, …).
-pub(crate) fn make_modifier(name: &str, args: Vec<Arg>) -> SwiftValue {
+///
+/// Public so sibling render-host frameworks (e.g. Charts mark modifiers) can
+/// append the same `_Modifier` shape without reimplementing the record layout.
+pub fn make_modifier(name: &str, args: Vec<Arg>) -> SwiftValue {
     let mut fields: Vec<(String, SwiftValue)> = vec![("name".into(), SwiftValue::Str(name.into()))];
     let mut positional = 0usize;
     for arg in args {
@@ -761,7 +764,10 @@ pub(crate) fn make_modifier(name: &str, args: Vec<Arg>) -> SwiftValue {
 
 /// Append `modifier` to `view`'s ordered `_modifiers` list, returning a new view
 /// value (copy-on-write; the original is untouched).
-pub(crate) fn append_modifier(view: SwiftValue, modifier: SwiftValue) -> StdResult {
+///
+/// Public so sibling render-host frameworks can share the COW append path used
+/// by SwiftUI view modifiers (a mark is the same view-value shape).
+pub fn append_modifier(view: SwiftValue, modifier: SwiftValue) -> StdResult {
     let SwiftValue::Struct(obj) = &view else {
         return Err(type_error(format!(
             "view modifier applied to non-view value `{}`",

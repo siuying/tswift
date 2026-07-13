@@ -1,6 +1,16 @@
 AreaMark.init
 BarMark.init
 Chart.init
+ChartContent.annotation
+ChartContent.cornerRadius
+ChartContent.foregroundStyle
+ChartContent.interpolationMethod
+ChartContent.lineStyle
+ChartContent.offset
+ChartContent.opacity
+ChartContent.position
+ChartContent.symbol
+ChartContent.symbolSize
 LineMark.init
 PlottableValue.value
 PointMark.init
