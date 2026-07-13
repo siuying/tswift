@@ -165,27 +165,27 @@
         {
           "name": "accessibilityHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "accessibilityIdentifier",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "accessibilityLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "accessibilityValue",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "alignsMarkStylesWithPlotArea",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "annotation",
@@ -195,17 +195,17 @@
         {
           "name": "blur",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "clipShape",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "compositingLayer",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "cornerRadius",
@@ -230,7 +230,7 @@
         {
           "name": "mask",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "offset",
@@ -250,7 +250,7 @@
         {
           "name": "shadow",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "symbol",
@@ -265,13 +265,13 @@
         {
           "name": "zIndex",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
         "implemented": 0,
-        "partial": 10,
-        "missing": 11,
+        "partial": 21,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 21
       }
@@ -282,27 +282,30 @@
         {
           "name": "chart3DCameraProjection",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chart3DPose",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chart3DRenderingStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chartAngleSelection",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartForegroundStyleScale",
@@ -322,12 +325,12 @@
         {
           "name": "chartLineStyleScale",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartOverlay",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartPlotStyle",
@@ -337,27 +340,27 @@
         {
           "name": "chartScrollPosition",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartScrollTargetBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartScrollableAxes",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartSymbolScale",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartSymbolSizeScale",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartXAxis",
@@ -372,7 +375,7 @@
         {
           "name": "chartXAxisStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartXScale",
@@ -387,7 +390,7 @@
         {
           "name": "chartXVisibleDomain",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartYAxis",
@@ -402,7 +405,7 @@
         {
           "name": "chartYAxisStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartYScale",
@@ -412,39 +415,43 @@
         {
           "name": "chartYSelection",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartYVisibleDomain",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "chartZAxis",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chartZAxisLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chartZScale",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         },
         {
           "name": "chartZSelection",
           "kind": "func",
-          "status": "missing"
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
         }
       ],
       "counts": {
         "implemented": 0,
-        "partial": 10,
-        "missing": 22,
-        "out_of_scope": 0,
+        "partial": 24,
+        "missing": 1,
+        "out_of_scope": 7,
         "total": 32
       }
     },
@@ -519,9 +526,9 @@
   ],
   "totals": {
     "implemented": 0,
-    "partial": 33,
-    "missing": 34,
-    "out_of_scope": 0,
+    "partial": 58,
+    "missing": 2,
+    "out_of_scope": 7,
     "total": 67
   }
 }

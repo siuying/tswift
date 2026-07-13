@@ -5,10 +5,10 @@
 //! `_Modifier { name, <args> }` record via the shared COW path in
 //! `tswift_swiftui::{append_modifier, make_modifier}`.
 //!
-//! Shared mark names (`foregroundStyle`, `cornerRadius`, `opacity`, `offset`)
-//! are re-registered here so Charts can attach typed parameter hints
-//! (`by:` → `PlottableValue`, etc.) without changing the append semantics
-//! SwiftUI uses. Charts-only mark names (`symbol`, `lineStyle`, …) and all
+//! Shared mark names (`foregroundStyle`, `cornerRadius`, `opacity`, `offset`,
+//! `clipShape`, `shadow`, `zIndex`) are re-registered here so Charts can attach
+//! typed parameter hints without changing the append semantics SwiftUI uses.
+//! Charts-only mark names (`symbol`, `lineStyle`, `blur`, `mask`, …) and all
 //! chart-level modifiers (`chartXAxis`, …) are registered only here.
 
 use tswift_core::{
@@ -38,6 +38,20 @@ mark_modifier!(modifier_corner_radius, "cornerRadius");
 mark_modifier!(modifier_opacity, "opacity");
 mark_modifier!(modifier_offset, "offset");
 mark_modifier!(modifier_position, "position");
+// Slice 7 — visual / layering mark modifiers (UIIR records; hosts may no-op).
+mark_modifier!(modifier_z_index, "zIndex");
+mark_modifier!(modifier_clip_shape, "clipShape");
+mark_modifier!(modifier_blur, "blur");
+mark_modifier!(modifier_shadow, "shadow");
+// Slice 7 review — public 2D ChartContent a11y / compositing (hosts may no-op).
+mark_modifier!(modifier_accessibility_hidden, "accessibilityHidden");
+mark_modifier!(modifier_accessibility_identifier, "accessibilityIdentifier");
+mark_modifier!(modifier_accessibility_label, "accessibilityLabel");
+mark_modifier!(modifier_accessibility_value, "accessibilityValue");
+mark_modifier!(
+    modifier_aligns_mark_styles_with_plot_area,
+    "alignsMarkStylesWithPlotArea"
+);
 
 /// `.annotation(position:…, …) { content }` — like SwiftUI `overlay`/`background`:
 /// evaluate the `@ViewBuilder` content into a child view value stored on the
@@ -65,6 +79,60 @@ fn modifier_annotation(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
     append_modifier(recv, make_modifier("annotation", meta))
 }
 
+/// `.mask { … }` — ChartContent form: zero-arg content builder → child on value.
+fn modifier_mask(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let mut meta: Vec<Arg> = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("content") | None => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            _ => meta.push(arg),
+        }
+    }
+    push_collected_content(ctx, &mut meta, content_args)?;
+    append_modifier(recv, make_modifier("mask", meta))
+}
+
+/// `.compositingLayer()` / `.compositingLayer { style in … }` — zero-arg form
+/// stores an empty record; style builder expands like chartPlotStyle (never raw
+/// Closure on the `_Modifier`).
+fn modifier_compositing_layer(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    if args.is_empty() {
+        return append_modifier(recv, make_modifier("compositingLayer", vec![]));
+    }
+    let mut meta: Vec<Arg> = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("style") | None => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            _ => meta.push(arg),
+        }
+    }
+    if content_args.is_empty() {
+        return append_modifier(recv, make_modifier("compositingLayer", meta));
+    }
+    let views = expand_param_content(
+        ctx,
+        content_args,
+        view_value("PlaceholderContentView", vec![]),
+        view_value("CompositingLayerContent", vec![]),
+    );
+    push_views_as_value(&mut meta, views);
+    append_modifier(recv, make_modifier("compositingLayer", meta))
+}
+
 /// Mark modifiers registered as generic struct methods (any mark view value).
 /// Coverage keys are `ChartContent.<name>` (inventory owning protocol).
 pub(crate) const MARK_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
@@ -78,6 +146,20 @@ pub(crate) const MARK_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("opacity", modifier_opacity),
     ("offset", modifier_offset),
     ("position", modifier_position),
+    ("zIndex", modifier_z_index),
+    ("clipShape", modifier_clip_shape),
+    ("blur", modifier_blur),
+    ("shadow", modifier_shadow),
+    ("mask", modifier_mask),
+    ("accessibilityHidden", modifier_accessibility_hidden),
+    ("accessibilityIdentifier", modifier_accessibility_identifier),
+    ("accessibilityLabel", modifier_accessibility_label),
+    ("accessibilityValue", modifier_accessibility_value),
+    ("compositingLayer", modifier_compositing_layer),
+    (
+        "alignsMarkStylesWithPlotArea",
+        modifier_aligns_mark_styles_with_plot_area,
+    ),
 ];
 
 // ── Chart-level View modifiers ──────────────────────────────────────────────
@@ -98,6 +180,20 @@ chart_modifier!(
     "chartForegroundStyleScale"
 );
 chart_modifier!(modifier_chart_x_selection, "chartXSelection");
+// Slice 7 — selection / scale / scroll / domain (plain arg storage).
+chart_modifier!(modifier_chart_y_selection, "chartYSelection");
+chart_modifier!(modifier_chart_angle_selection, "chartAngleSelection");
+chart_modifier!(modifier_chart_symbol_scale, "chartSymbolScale");
+chart_modifier!(modifier_chart_symbol_size_scale, "chartSymbolSizeScale");
+chart_modifier!(modifier_chart_line_style_scale, "chartLineStyleScale");
+chart_modifier!(modifier_chart_scrollable_axes, "chartScrollableAxes");
+chart_modifier!(modifier_chart_scroll_position, "chartScrollPosition");
+chart_modifier!(
+    modifier_chart_scroll_target_behavior,
+    "chartScrollTargetBehavior"
+);
+chart_modifier!(modifier_chart_x_visible_domain, "chartXVisibleDomain");
+chart_modifier!(modifier_chart_y_visible_domain, "chartYVisibleDomain");
 
 /// Evaluate trailing builder content (closures / view values) into a single
 /// child (or ZStack of several) and push it as an unlabeled `value` arg.
@@ -276,6 +372,80 @@ fn chart_plot_style_marker() -> SwiftValue {
     view_value("ChartPlotStyleContent", vec![])
 }
 
+/// Placeholder for `.chartBackground` / `.chartOverlay` param closures.
+fn chart_proxy_placeholder() -> SwiftValue {
+    view_value("ChartProxy", vec![])
+}
+
+/// Marker when a ChartProxy content closure cannot be expanded.
+fn chart_proxy_content_marker(name: &str) -> SwiftValue {
+    view_value(name, vec![])
+}
+
+/// Placeholder axis content for `.chartXAxisStyle` / `.chartYAxisStyle`.
+fn chart_axis_content_placeholder() -> SwiftValue {
+    view_value("ChartAxisContent", vec![])
+}
+
+fn chart_axis_style_marker() -> SwiftValue {
+    view_value("ChartAxisStyleContent", vec![])
+}
+
+/// Expand a one-arg ViewBuilder closure (or zero-arg / pre-expanded view)
+/// into child views, using `placeholder` when the closure needs a parameter.
+/// Never leaves a raw `Closure` on the modifier record.
+fn expand_param_content(
+    ctx: &mut dyn StdContext,
+    content_args: Vec<Arg>,
+    placeholder: SwiftValue,
+    marker: SwiftValue,
+) -> Vec<SwiftValue> {
+    let mut views: Vec<SwiftValue> = Vec::new();
+    for arg in content_args {
+        match arg.value {
+            SwiftValue::Closure(id) => {
+                match ctx.eval_block_values_with_args(id, vec![placeholder.clone()]) {
+                    Ok(produced) => {
+                        if let Ok(kids) = collect_children(
+                            ctx,
+                            vec![Arg {
+                                label: None,
+                                value: produced,
+                                static_ty: None,
+                            }],
+                        ) {
+                            if !kids.is_empty() {
+                                views.extend(kids);
+                                continue;
+                            }
+                        }
+                        views.push(marker.clone());
+                    }
+                    Err(_) => {
+                        views.push(marker.clone());
+                    }
+                }
+            }
+            other => {
+                if let Ok(kids) = collect_children(
+                    ctx,
+                    vec![Arg {
+                        label: None,
+                        value: other,
+                        static_ty: None,
+                    }],
+                ) {
+                    views.extend(kids);
+                }
+            }
+        }
+    }
+    if views.is_empty() {
+        views.push(marker);
+    }
+    views
+}
+
 /// `.chartPlotStyle { plotArea in … }` — invoke the param closure with a
 /// placeholder `ChartPlotContent` (AsyncImage/ForEach pattern via
 /// `eval_block_values_with_args`), then expand the result into a child view
@@ -299,56 +469,104 @@ fn modifier_chart_plot_style(
         }
     }
 
-    let mut views: Vec<SwiftValue> = Vec::new();
-    for arg in content_args {
-        match arg.value {
-            SwiftValue::Closure(id) => {
-                // Param form: `{ plotArea in plotArea.background(...) }`.
-                // Mirror AsyncImage / ForEach — bind a placeholder view arg.
-                match ctx.eval_block_values_with_args(id, vec![chart_plot_content_placeholder()]) {
-                    Ok(produced) => {
-                        if let Ok(kids) = collect_children(
-                            ctx,
-                            vec![Arg {
-                                label: None,
-                                value: produced,
-                                static_ty: None,
-                            }],
-                        ) {
-                            if !kids.is_empty() {
-                                views.extend(kids);
-                                continue;
-                            }
-                        }
-                        // Invocation ran but produced no view children.
-                        views.push(chart_plot_style_marker());
-                    }
-                    Err(_) => {
-                        // Cannot bind / evaluate — structured marker, not Closure.
-                        views.push(chart_plot_style_marker());
-                    }
-                }
-            }
-            other => {
-                // Already a view value (or zero-arg builder result pre-expanded).
-                if let Ok(kids) = collect_children(
-                    ctx,
-                    vec![Arg {
-                        label: None,
-                        value: other,
-                        static_ty: None,
-                    }],
-                ) {
-                    views.extend(kids);
-                }
-            }
-        }
-    }
-    if views.is_empty() {
-        views.push(chart_plot_style_marker());
-    }
+    let views = expand_param_content(
+        ctx,
+        content_args,
+        chart_plot_content_placeholder(),
+        chart_plot_style_marker(),
+    );
     push_views_as_value(&mut meta, views);
     append_modifier(recv, make_modifier("chartPlotStyle", meta))
+}
+
+/// `.chartBackground(alignment:) { proxy in … }` / `.chartOverlay { proxy in … }`.
+/// Captures alignment as labeled meta; expands the ChartProxy content closure
+/// (placeholder invoke, same as chartPlotStyle) into the modifier `value`.
+fn chart_proxy_content_modifier(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    name: &str,
+    marker_kind: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut meta: Vec<Arg> = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("alignment") => meta.push(arg),
+            Some("content") | None => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            _ => meta.push(arg),
+        }
+    }
+    let views = expand_param_content(
+        ctx,
+        content_args,
+        chart_proxy_placeholder(),
+        chart_proxy_content_marker(marker_kind),
+    );
+    push_views_as_value(&mut meta, views);
+    append_modifier(recv, make_modifier(name, meta))
+}
+
+fn modifier_chart_background(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    chart_proxy_content_modifier(ctx, recv, "chartBackground", "ChartBackgroundContent", args)
+}
+
+fn modifier_chart_overlay(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    chart_proxy_content_modifier(ctx, recv, "chartOverlay", "ChartOverlayContent", args)
+}
+
+/// `.chartXAxisStyle { axis in … }` / `.chartYAxisStyle { axis in … }`.
+fn chart_axis_style_modifier(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    name: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut meta: Vec<Arg> = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("content") | None => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            _ => meta.push(arg),
+        }
+    }
+    let views = expand_param_content(
+        ctx,
+        content_args,
+        chart_axis_content_placeholder(),
+        chart_axis_style_marker(),
+    );
+    push_views_as_value(&mut meta, views);
+    append_modifier(recv, make_modifier(name, meta))
+}
+
+fn modifier_chart_x_axis_style(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    chart_axis_style_modifier(ctx, recv, "chartXAxisStyle", args)
+}
+
+fn modifier_chart_y_axis_style(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    chart_axis_style_modifier(ctx, recv, "chartYAxisStyle", args)
 }
 
 /// Chart-level modifiers registered as generic struct methods (on `Chart` /
@@ -367,6 +585,24 @@ pub(crate) const CHART_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("chartLegend", modifier_chart_legend),
     ("chartPlotStyle", modifier_chart_plot_style),
     ("chartXSelection", modifier_chart_x_selection),
+    // Slice 7
+    ("chartYSelection", modifier_chart_y_selection),
+    ("chartAngleSelection", modifier_chart_angle_selection),
+    ("chartSymbolScale", modifier_chart_symbol_scale),
+    ("chartSymbolSizeScale", modifier_chart_symbol_size_scale),
+    ("chartLineStyleScale", modifier_chart_line_style_scale),
+    ("chartBackground", modifier_chart_background),
+    ("chartOverlay", modifier_chart_overlay),
+    ("chartScrollableAxes", modifier_chart_scrollable_axes),
+    ("chartScrollPosition", modifier_chart_scroll_position),
+    (
+        "chartScrollTargetBehavior",
+        modifier_chart_scroll_target_behavior,
+    ),
+    ("chartXVisibleDomain", modifier_chart_x_visible_domain),
+    ("chartYVisibleDomain", modifier_chart_y_visible_domain),
+    ("chartXAxisStyle", modifier_chart_x_axis_style),
+    ("chartYAxisStyle", modifier_chart_y_axis_style),
 ];
 
 // ── Install ─────────────────────────────────────────────────────────────────
@@ -442,7 +678,13 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("spacing", "CGFloat"),
         ],
     );
+    // `.chartScrollableAxes(.horizontal)` — Axis token from SwiftUI PRELUDE.
+    interp.register_struct_method_typed(
+        "chartScrollableAxes",
+        modifier_chart_scrollable_axes,
+        vec![BuiltinParam::positional("Axis")],
+    );
     // `.chartXAxisLabel("X")` / `.chartYAxisLabel("Y")` — string label form.
     // No special typed hints required.
-    // `.chartXSelection(value: $binding)` — Binding is resolved by `$` sugar.
+    // Selection modifiers take Binding via `$` sugar — no extra type hints.
 }

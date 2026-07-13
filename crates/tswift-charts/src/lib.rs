@@ -480,32 +480,57 @@ mod tests {
             "AxisValueLabel.init",
             "BarMark.init",
             "Chart.init",
+            "ChartContent.accessibilityHidden",
+            "ChartContent.accessibilityIdentifier",
+            "ChartContent.accessibilityLabel",
+            "ChartContent.accessibilityValue",
+            "ChartContent.alignsMarkStylesWithPlotArea",
             "ChartContent.annotation",
+            "ChartContent.blur",
+            "ChartContent.clipShape",
+            "ChartContent.compositingLayer",
             "ChartContent.cornerRadius",
             "ChartContent.foregroundStyle",
             "ChartContent.interpolationMethod",
             "ChartContent.lineStyle",
+            "ChartContent.mask",
             "ChartContent.offset",
             "ChartContent.opacity",
             "ChartContent.position",
+            "ChartContent.shadow",
             "ChartContent.symbol",
             "ChartContent.symbolSize",
+            "ChartContent.zIndex",
             "LineMark.init",
             "PlottableValue.value",
             "PointMark.init",
             "RectangleMark.init",
             "RuleMark.init",
             "SectorMark.init",
+            "View.chartAngleSelection",
+            "View.chartBackground",
             "View.chartForegroundStyleScale",
             "View.chartLegend",
+            "View.chartLineStyleScale",
+            "View.chartOverlay",
             "View.chartPlotStyle",
+            "View.chartScrollPosition",
+            "View.chartScrollTargetBehavior",
+            "View.chartScrollableAxes",
+            "View.chartSymbolScale",
+            "View.chartSymbolSizeScale",
             "View.chartXAxis",
             "View.chartXAxisLabel",
+            "View.chartXAxisStyle",
             "View.chartXScale",
             "View.chartXSelection",
+            "View.chartXVisibleDomain",
             "View.chartYAxis",
             "View.chartYAxisLabel",
+            "View.chartYAxisStyle",
             "View.chartYScale",
+            "View.chartYSelection",
+            "View.chartYVisibleDomain",
         ] {
             assert!(
                 keys.iter().any(|k| k == expected),
@@ -1481,6 +1506,343 @@ struct Demo: View {
             assert_eq!(b.type_name, "Binding");
             // Binding carries the shared `_StateBox`.
             assert!(b.get("box").is_some(), "Binding should have box: {:?}", b);
+        });
+    }
+
+    // ── Slice 7: broader 2D surface (selection/scales/scroll/mark visuals) ──
+
+    #[test]
+    fn chart_y_and_angle_selection_capture_bindings() {
+        let src = r#"
+struct Demo: View {
+    @State private var ySel: Double? = nil
+    @State private var angleSel: Double? = nil
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartYSelection(value: $ySel)
+        .chartAngleSelection(value: $angleSel)
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            for name in ["chartYSelection", "chartAngleSelection"] {
+                let mod_ = chart_modifier(chart, name);
+                let Some(binding) = mod_.get("value") else {
+                    panic!("{name} missing value binding: {:?}", mod_);
+                };
+                let SwiftValue::Struct(b) = binding else {
+                    panic!("{name}: expected Binding, got {:?}", binding);
+                };
+                assert_eq!(b.type_name, "Binding");
+                assert!(b.get("box").is_some(), "{name} Binding needs box");
+            }
+        });
+    }
+
+    #[test]
+    fn chart_symbol_and_line_style_scales_record_args() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            PointMark(x: .value("N", "A"), y: .value("C", 1))
+                .symbol(by: .value("Type", "A"))
+        }
+        .chartSymbolScale(["A": ChartSymbolShape.circle])
+        .chartSymbolSizeScale(domain: 0...10)
+        .chartLineStyleScale(["A": StrokeStyle(lineWidth: 2)])
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            for name in [
+                "chartSymbolScale",
+                "chartSymbolSizeScale",
+                "chartLineStyleScale",
+            ] {
+                let mod_ = chart_modifier(chart, name);
+                assert!(
+                    mod_.fields.iter().any(|(k, _)| k != "name"),
+                    "{name} should store scale args: {:?}",
+                    mod_
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn chart_background_and_overlay_capture_content() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartBackground { proxy in
+            Color.gray
+        }
+        .chartOverlay { proxy in
+            Text("overlay")
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            for (name, kinds) in [
+                (
+                    "chartBackground",
+                    &["Color", "ChartBackgroundContent", "ChartProxy"][..],
+                ),
+                (
+                    "chartOverlay",
+                    &["Text", "ChartOverlayContent", "ChartProxy"][..],
+                ),
+            ] {
+                let mod_ = chart_modifier(chart, name);
+                let Some(content) = mod_.get("value") else {
+                    panic!("{name} missing value: {:?}", mod_);
+                };
+                assert!(
+                    !matches!(content, SwiftValue::Closure(_)),
+                    "{name} must not store raw Closure: {:?}",
+                    content
+                );
+                let SwiftValue::Struct(obj) = content else {
+                    panic!("{name}: expected structured content, got {:?}", content);
+                };
+                assert!(
+                    kinds.iter().any(|k| obj.type_name == *k) || obj.type_name == "ZStack",
+                    "{name} unexpected content type {:?}, want one of {:?}",
+                    obj.type_name,
+                    kinds
+                );
+            }
+            let json = uiir::to_json(&view);
+            assert!(
+                json.contains("chartBackground") && json.contains("chartOverlay"),
+                "UIIR missing background/overlay mods: {json}"
+            );
+        });
+    }
+
+    #[test]
+    fn chart_scroll_and_visible_domain_record_args() {
+        let src = r#"
+struct Demo: View {
+    @State private var scrollX: String = "A"
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartScrollableAxes(.horizontal)
+        .chartScrollPosition(x: $scrollX)
+        .chartScrollTargetBehavior(true)
+        .chartXVisibleDomain(length: 5)
+        .chartYVisibleDomain(length: 10)
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let scroll_axes = chart_modifier(chart, "chartScrollableAxes");
+            let Some(SwiftValue::Struct(axis)) = scroll_axes.get("value") else {
+                panic!("chartScrollableAxes value: {:?}", scroll_axes);
+            };
+            assert_eq!(axis.type_name, "Axis");
+            assert_eq!(
+                axis.get("token"),
+                Some(&SwiftValue::Str("horizontal".into()))
+            );
+
+            let pos = chart_modifier(chart, "chartScrollPosition");
+            let Some(binding) = pos.get("x") else {
+                panic!("chartScrollPosition(x:) missing x: {:?}", pos);
+            };
+            let SwiftValue::Struct(b) = binding else {
+                panic!("expected Binding for scroll x, got {:?}", binding);
+            };
+            assert_eq!(b.type_name, "Binding");
+
+            assert_has_modifier(chart, "chartScrollTargetBehavior");
+
+            let xdom = chart_modifier(chart, "chartXVisibleDomain");
+            assert_eq!(xdom.get("length"), Some(&SwiftValue::int(5)));
+            let ydom = chart_modifier(chart, "chartYVisibleDomain");
+            assert_eq!(ydom.get("length"), Some(&SwiftValue::int(10)));
+        });
+    }
+
+    #[test]
+    fn chart_axis_style_captures_content() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxisStyle { axis in
+            axis
+        }
+        .chartYAxisStyle { axis in
+            axis
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            for name in ["chartXAxisStyle", "chartYAxisStyle"] {
+                let mod_ = chart_modifier(chart, name);
+                let Some(content) = mod_.get("value") else {
+                    panic!("{name} missing value: {:?}", mod_);
+                };
+                assert!(
+                    !matches!(content, SwiftValue::Closure(_)),
+                    "{name} must not store raw Closure"
+                );
+                let SwiftValue::Struct(obj) = content else {
+                    panic!("{name}: expected structured content, got {:?}", content);
+                };
+                assert!(
+                    obj.type_name == "ChartAxisContent" || obj.type_name == "ChartAxisStyleContent",
+                    "{name} unexpected type {:?}",
+                    obj.type_name
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn mark_visual_modifiers_append_records() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .zIndex(2.0)
+                .clipShape(Circle())
+                .blur(radius: 1.5)
+                .shadow(radius: 4, x: 1, y: 2)
+                .mask {
+                    Rectangle()
+                }
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            assert_has_modifier(&mark, "zIndex");
+            assert_has_modifier(&mark, "clipShape");
+            assert_has_modifier(&mark, "blur");
+            assert_has_modifier(&mark, "shadow");
+            assert_has_modifier(&mark, "mask");
+
+            let z = mark_modifier(&mark, "zIndex");
+            assert_eq!(z.get("value"), Some(&SwiftValue::Double(2.0)));
+
+            let blur = mark_modifier(&mark, "blur");
+            assert_eq!(blur.get("radius"), Some(&SwiftValue::Double(1.5)));
+
+            let shadow = mark_modifier(&mark, "shadow");
+            assert_eq!(shadow.get("radius"), Some(&SwiftValue::int(4)));
+
+            let mask = mark_modifier(&mark, "mask");
+            let Some(content) = mask.get("value") else {
+                panic!("mask missing content: {:?}", mask);
+            };
+            assert_eq!(view_type_name(content), Some("Rectangle"));
+
+            let clip = mark_modifier(&mark, "clipShape");
+            let Some(shape) = clip.get("value") else {
+                panic!("clipShape missing shape: {:?}", clip);
+            };
+            assert_eq!(view_type_name(shape), Some("Circle"));
+
+            let view = render_root(interp, "Demo").expect("render");
+            let json = uiir::to_json(&view);
+            for needle in ["zIndex", "clipShape", "blur", "shadow", "mask"] {
+                assert!(json.contains(needle), "UIIR missing {needle}: {json}");
+            }
+        });
+    }
+
+    #[test]
+    fn mark_a11y_and_compositing_modifiers_append_records() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .accessibilityHidden(true)
+                .accessibilityIdentifier("bar-a")
+                .accessibilityLabel("Series A")
+                .accessibilityValue("1")
+                .compositingLayer()
+                .alignsMarkStylesWithPlotArea(true)
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            assert_has_modifier(&mark, "accessibilityHidden");
+            assert_has_modifier(&mark, "accessibilityIdentifier");
+            assert_has_modifier(&mark, "accessibilityLabel");
+            assert_has_modifier(&mark, "accessibilityValue");
+            assert_has_modifier(&mark, "compositingLayer");
+            assert_has_modifier(&mark, "alignsMarkStylesWithPlotArea");
+
+            let hidden = mark_modifier(&mark, "accessibilityHidden");
+            assert_eq!(hidden.get("value"), Some(&SwiftValue::Bool(true)));
+
+            let id = mark_modifier(&mark, "accessibilityIdentifier");
+            assert_eq!(id.get("value"), Some(&SwiftValue::Str("bar-a".into())));
+
+            let label = mark_modifier(&mark, "accessibilityLabel");
+            assert_eq!(
+                label.get("value"),
+                Some(&SwiftValue::Str("Series A".into()))
+            );
+
+            let value = mark_modifier(&mark, "accessibilityValue");
+            assert_eq!(value.get("value"), Some(&SwiftValue::Str("1".into())));
+
+            let aligns = mark_modifier(&mark, "alignsMarkStylesWithPlotArea");
+            assert_eq!(aligns.get("value"), Some(&SwiftValue::Bool(true)));
+
+            let view = render_root(interp, "Demo").expect("render");
+            let json = uiir::to_json(&view);
+            for needle in [
+                "accessibilityHidden",
+                "accessibilityIdentifier",
+                "accessibilityLabel",
+                "accessibilityValue",
+                "compositingLayer",
+                "alignsMarkStylesWithPlotArea",
+            ] {
+                assert!(json.contains(needle), "UIIR missing {needle}: {json}");
+            }
         });
     }
 

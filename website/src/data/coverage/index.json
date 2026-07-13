@@ -5,9 +5,9 @@
       "display_name": "Charts",
       "totals": {
         "implemented": 0,
-        "partial": 33,
-        "missing": 34,
-        "out_of_scope": 0,
+        "partial": 58,
+        "missing": 2,
+        "out_of_scope": 7,
         "total": 67
       }
     },
