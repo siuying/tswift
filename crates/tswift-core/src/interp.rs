@@ -45,9 +45,9 @@ const MAX_CALL_DEPTH: usize = 5000;
 /// Identity of a framework / language module that owns registered symbols
 /// (`"Swift"`, `"Foundation"`, `"SwiftUI"`, `"Charts"`, …).
 ///
-/// Phase A of the module system (ADR-0020) stamps every registration with a
-/// [`ModuleId`]; dispatch still ignores it. Phase B uses receiver-module
-/// resolution via [`Interpreter::type_module`].
+/// Module system (ADR-0020): every registration is stamped with a [`ModuleId`].
+/// Phase B resolves the name-only struct-method seam by the receiver's owning
+/// module via [`Interpreter::type_module`] + per-module candidates.
 ///
 /// Module names are static literals installed by frameworks, so the id is a
 /// cheap `Copy` handle over `&'static str` rather than cloning a `String` into
@@ -59,6 +59,14 @@ impl ModuleId {
     /// The always-present base module (stdlib). Also the default stamp when no
     /// [`Interpreter::module`] scope is active.
     pub const SWIFT: ModuleId = ModuleId("Swift");
+    /// Foundation framework module.
+    pub const FOUNDATION: ModuleId = ModuleId("Foundation");
+    /// SwiftData framework module.
+    pub const SWIFT_DATA: ModuleId = ModuleId("SwiftData");
+    /// SwiftUI framework module.
+    pub const SWIFTUI: ModuleId = ModuleId("SwiftUI");
+    /// Charts framework module.
+    pub const CHARTS: ModuleId = ModuleId("Charts");
 
     /// Create a module id from a static display name
     /// (`"Swift"` / `"Foundation"` / `"SwiftData"` / `"SwiftUI"` / `"Charts"`).
@@ -782,13 +790,15 @@ impl BuiltinMembers {
 /// methods are the read surface `eval_call`/`eval_method_call` use.
 ///
 /// Free-fn / struct-method entries carry a [`ModuleId`]; natives and
-/// algorithms are module-tagged wrappers. Dispatch still uses name-only lookup.
+/// algorithms are module-tagged wrappers. Struct methods hold per-module
+/// candidates (Phase B); free-fn / native lookup stays name-only.
 #[derive(Default)]
 struct GlobalMembers {
     natives: HashMap<String, ModuleTagged<NativeFn>>,
     free_fns: HashMap<String, FreeFnEntry>,
     algorithms: HashMap<String, ModuleTagged<AlgoFn>>,
-    struct_methods: HashMap<String, StructMethodEntry>,
+    /// Name → per-module candidates (same module re-install replaces in place).
+    struct_methods: HashMap<String, Vec<StructMethodEntry>>,
 }
 
 impl GlobalMembers {
@@ -803,8 +813,15 @@ impl GlobalMembers {
         self.algorithms
             .insert(name.to_string(), ModuleTagged::new(f, module));
     }
+    /// Append a candidate for `entry.module`, or replace an existing same-
+    /// (name, module) entry so re-install is idempotent.
     fn add_struct_method(&mut self, name: &str, entry: StructMethodEntry) {
-        self.struct_methods.insert(name.to_string(), entry);
+        let list = self.struct_methods.entry(name.to_string()).or_default();
+        if let Some(slot) = list.iter_mut().find(|e| e.module == entry.module) {
+            *slot = entry;
+        } else {
+            list.push(entry);
+        }
     }
 
     fn native(&self, name: &str) -> Option<NativeFn> {
@@ -819,8 +836,20 @@ impl GlobalMembers {
     fn has_algorithm(&self, name: &str) -> bool {
         self.algorithms.contains_key(name)
     }
-    fn struct_method(&self, name: &str) -> Option<&StructMethodEntry> {
-        self.struct_methods.get(name)
+    fn struct_method_candidates(&self, name: &str) -> &[StructMethodEntry] {
+        self.struct_methods
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+    /// Resolve a struct-method candidate for `receiver_module` (see
+    /// [`resolve_struct_method_candidate`]).
+    fn struct_method(
+        &self,
+        name: &str,
+        receiver_module: Option<ModuleId>,
+    ) -> Option<&StructMethodEntry> {
+        resolve_struct_method_candidate(self.struct_method_candidates(name), receiver_module)
     }
     fn free_fn_names(&self) -> impl Iterator<Item = &String> {
         self.free_fns.keys()
@@ -1006,9 +1035,59 @@ struct FreeFnEntry {
 struct StructMethodEntry {
     f: StructMethodFn,
     params: Option<Vec<Param>>,
-    /// Module that registered this struct method (Phase A metadata; Phase B
-    /// will key candidates by this instead of last-wins).
+    /// Module that registered this candidate (Phase B: pick by receiver module).
     module: ModuleId,
+}
+
+/// Simple static depends-on / re-export edges used when the receiver's own
+/// module has no candidate for a shared name (ADR-0020 Phase B).
+///
+/// `Charts` → `SwiftUI` (ChartContent falls back to View modifiers);
+/// every other framework → `Swift` base. Expand only when a real re-export
+/// graph is needed (see ADR tripwires).
+fn module_depends_on(module: ModuleId) -> &'static [ModuleId] {
+    const CHARTS_DEPS: &[ModuleId] = &[ModuleId::SWIFTUI, ModuleId::SWIFT];
+    const BASE_DEPS: &[ModuleId] = &[ModuleId::SWIFT];
+    match module.as_str() {
+        "Charts" => CHARTS_DEPS,
+        "SwiftUI" | "SwiftData" | "Foundation" => BASE_DEPS,
+        _ => BASE_DEPS,
+    }
+}
+
+/// Pick a struct-method candidate for a receiver owned by `receiver_module`.
+///
+/// Priority (deterministic; never registration / insertion order):
+/// 1. Exact match on the receiver's own module
+/// 2. A module in the receiver module's depends-on / re-export chain
+/// 3. Base language module [`ModuleId::SWIFT`]
+/// 4. Stable tiebreak: alphabetical by module id among remaining candidates
+///
+/// Unknown / untagged receivers skip (1)–(2) and use (3)–(4), so "any install
+/// still wins" for generic seams, but the winner does not flip with install order.
+fn resolve_struct_method_candidate(
+    candidates: &[StructMethodEntry],
+    receiver_module: Option<ModuleId>,
+) -> Option<&StructMethodEntry> {
+    if candidates.is_empty() {
+        return None;
+    }
+    if let Some(m) = receiver_module {
+        if let Some(e) = candidates.iter().find(|e| e.module == m) {
+            return Some(e);
+        }
+        for dep in module_depends_on(m) {
+            if let Some(e) = candidates.iter().find(|e| e.module == *dep) {
+                return Some(e);
+            }
+        }
+    }
+    // Base language module, if present among candidates.
+    if let Some(e) = candidates.iter().find(|e| e.module == ModuleId::SWIFT) {
+        return Some(e);
+    }
+    // Stable tiebreak: alphabetical by module id (never insertion order).
+    candidates.iter().min_by_key(|e| e.module.as_str())
 }
 
 /// A resolved `Type.member` type reference: the concrete type name (after
@@ -1295,9 +1374,32 @@ impl<'w> Interpreter<'w> {
         self.type_modules.get(name).map(|m| m.as_str())
     }
 
-    /// Module that registered the (last-wins) struct-method named `name`.
+    /// Modules that registered a struct-method candidate named `name`
+    /// (registration order). Empty when none.
+    pub fn struct_method_modules(&self, name: &str) -> Vec<&'static str> {
+        self.globals
+            .struct_method_candidates(name)
+            .iter()
+            .map(|e| e.module.as_str())
+            .collect()
+    }
+
+    /// Module of the candidate that would be selected for a receiver owned by
+    /// `receiver_type` (via [`Self::type_module`]), or the deterministic
+    /// fallback when the type is unknown / untagged.
+    pub fn struct_method_module_for(&self, name: &str, receiver_type: &str) -> Option<&str> {
+        let recv_mod = self.type_modules.get(receiver_type).copied();
+        self.globals
+            .struct_method(name, recv_mod)
+            .map(|e| e.module.as_str())
+    }
+
+    /// Module of the fallback-resolved candidate for `name` (no receiver type).
+    /// Prefer [`Self::struct_method_module_for`] when the receiver is known.
     pub fn struct_method_module(&self, name: &str) -> Option<&str> {
-        self.globals.struct_method(name).map(|e| e.module.as_str())
+        self.globals
+            .struct_method(name, None)
+            .map(|e| e.module.as_str())
     }
 
     /// Module that registered the host-native function named `name`, if any.
@@ -6233,7 +6335,7 @@ mod tests {
         });
         interp.module("Charts", |i| {
             i.register_free_fn("BarMark", free);
-            // Last-wins for the shared name; stamps the winning entry.
+            // Per-module candidate coexists with SwiftUI's (Phase B).
             i.register_struct_method("padding", method);
         });
         interp.module("SwiftData", |i| {
@@ -6246,7 +6348,18 @@ mod tests {
 
         assert_eq!(interp.type_module("Text"), Some("SwiftUI"));
         assert_eq!(interp.type_module("BarMark"), Some("Charts"));
-        assert_eq!(interp.struct_method_module("padding"), Some("Charts"));
+        // Both modules keep a `padding` candidate; receiver routes selection.
+        let padding_mods = interp.struct_method_modules("padding");
+        assert!(padding_mods.contains(&"SwiftUI"));
+        assert!(padding_mods.contains(&"Charts"));
+        assert_eq!(
+            interp.struct_method_module_for("padding", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("padding", "BarMark"),
+            Some("Charts")
+        );
         assert_eq!(interp.macro_module("Predicate"), Some("SwiftData"));
         assert_eq!(interp.host_fn_module("deviceName"), Some("SwiftData"));
         // Scope restored after nested modules.
@@ -6266,6 +6379,161 @@ mod tests {
         assert!(result.is_err());
         // RAII guard must restore even when the install panics (caught unwind).
         assert_eq!(interp.current_module().as_str(), "Swift");
+    }
+
+    #[test]
+    fn struct_method_candidates_resolve_by_receiver_module() {
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str(format!(
+                "swiftui:{}",
+                match &recv {
+                    SwiftValue::Struct(o) => o.type_name.as_str(),
+                    _ => "?",
+                }
+            )))
+        }
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str(format!(
+                "charts:{}",
+                match &recv {
+                    SwiftValue::Struct(o) => o.type_name.as_str(),
+                    _ => "?",
+                }
+            )))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        // Register Charts first, then SwiftUI — old last-wins would leave SwiftUI only.
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("foregroundStyle", swiftui_fg);
+        });
+
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "BarMark"),
+            Some("Charts")
+        );
+        // Unknown receiver → base Swift miss → alphabetical (Charts < SwiftUI).
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+
+        // Same-module re-install is idempotent (still one Charts candidate).
+        interp.module("Charts", |i| {
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        assert_eq!(
+            interp.struct_method_modules("foregroundStyle").len(),
+            2,
+            "re-install must replace, not duplicate"
+        );
+    }
+
+    /// Fallback branch (no exact match, no depends-on hit) is install-order
+    /// independent: alphabetical by module id, never `candidates.first()`.
+    #[test]
+    fn struct_method_fallback_is_install_order_independent() {
+        fn alpha_handler(
+            _ctx: &mut dyn StdContext,
+            _recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str("alpha".into()))
+        }
+        fn zebra_handler(
+            _ctx: &mut dyn StdContext,
+            _recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str("zebra".into()))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        // Install Zebra first, then Alpha — insertion order would pick Zebra.
+        let mut sink = std::io::sink();
+        let mut zebra_first = Interpreter::new(&mut sink);
+        zebra_first.module("Zebra", |i| {
+            i.register_free_fn("ZebraType", free);
+            i.register_struct_method("twist", zebra_handler);
+        });
+        zebra_first.module("Alpha", |i| {
+            i.register_free_fn("AlphaType", free);
+            i.register_struct_method("twist", alpha_handler);
+        });
+        // Foundation receiver: depends-on is only Swift (no Alpha/Zebra) → fallback.
+        zebra_first.module("Foundation", |i| {
+            i.register_free_fn("Date", free);
+        });
+
+        // Opposite install order.
+        let mut sink2 = std::io::sink();
+        let mut alpha_first = Interpreter::new(&mut sink2);
+        alpha_first.module("Alpha", |i| {
+            i.register_free_fn("AlphaType", free);
+            i.register_struct_method("twist", alpha_handler);
+        });
+        alpha_first.module("Zebra", |i| {
+            i.register_free_fn("ZebraType", free);
+            i.register_struct_method("twist", zebra_handler);
+        });
+        alpha_first.module("Foundation", |i| {
+            i.register_free_fn("Date", free);
+        });
+
+        // Exact match still wins when the receiver owns a candidate.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "ZebraType"),
+            Some("Zebra")
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "AlphaType"),
+            Some("Alpha")
+        );
+
+        // Fallback: Foundation has no `twist` and depends only on Swift →
+        // alphabetical Alpha < Zebra, regardless of install order.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "Date"),
+            Some("Alpha"),
+            "zebra-first install must still fall back alphabetically to Alpha"
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "Date"),
+            Some("Alpha"),
+            "alpha-first install must still fall back alphabetically to Alpha"
+        );
+        // Unknown receiver uses the same fallback branch.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "UserWidget"),
+            Some("Alpha")
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "UserWidget"),
+            Some("Alpha")
+        );
     }
 
     #[test]

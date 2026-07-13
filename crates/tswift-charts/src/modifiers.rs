@@ -5,11 +5,11 @@
 //! `_Modifier { name, <args> }` record via the shared COW path in
 //! `tswift_swiftui::{append_modifier, make_modifier}`.
 //!
-//! Shared mark names (`foregroundStyle`, `cornerRadius`, `opacity`, `offset`,
-//! `clipShape`, `shadow`, `zIndex`) are re-registered here so Charts can attach
-//! typed parameter hints without changing the append semantics SwiftUI uses.
-//! Charts-only mark names (`symbol`, `lineStyle`, `blur`, `mask`, …) and all
-//! chart-level modifiers (`chartXAxis`, …) are registered only here.
+//! Under ADR-0020 Phase B, SwiftUI and Charts each own their candidates; dispatch
+//! picks by the receiver's module (`Text` → SwiftUI, `BarMark` → Charts). Shared
+//! names (`foregroundStyle`, `opacity`, `cornerRadius`, …) are registered under
+//! **both** modules — they coexist, they do not clobber. Charts stays
+//! self-contained (std+charts alone still resolves ChartContent members).
 
 use tswift_core::{
     Arg, BuiltinParam, Interpreter, StdContext, StdError, StdResult, StructMethodFn, SwiftValue,
@@ -38,7 +38,7 @@ mark_modifier!(modifier_corner_radius, "cornerRadius");
 mark_modifier!(modifier_opacity, "opacity");
 mark_modifier!(modifier_offset, "offset");
 mark_modifier!(modifier_position, "position");
-// Slice 7 — visual / layering mark modifiers (UIIR records; hosts may no-op).
+// Shared visual / layering (also on SwiftUI View; Charts owns ChartContent forms).
 mark_modifier!(modifier_z_index, "zIndex");
 mark_modifier!(modifier_clip_shape, "clipShape");
 mark_modifier!(modifier_blur, "blur");
@@ -133,9 +133,12 @@ fn modifier_compositing_layer(
     append_modifier(recv, make_modifier("compositingLayer", meta))
 }
 
-/// Mark modifiers registered as generic struct methods (any mark view value).
-/// Coverage keys are `ChartContent.<name>` (inventory owning protocol).
+/// ChartContent mark modifiers **registered under module Charts**. Coverage keys
+/// are `ChartContent.<name>` (inventory owning protocol). Shared names also
+/// exist under SwiftUI as separate candidates — dispatch selects by receiver
+/// module, so neither install order-clobbers the other.
 pub(crate) const MARK_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
+    // Charts form includes `foregroundStyle(by: PlottableValue)` via typed re-reg.
     ("foregroundStyle", modifier_foreground_style),
     ("symbol", modifier_symbol),
     ("symbolSize", modifier_symbol_size),
@@ -607,7 +610,9 @@ pub(crate) const CHART_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
 
 // ── Install ─────────────────────────────────────────────────────────────────
 
-/// Register mark + chart modifiers and typed parameter hints for leading-dot.
+/// Register Charts-owned mark + chart modifiers and typed parameter hints.
+/// Shared View/ChartContent names are registered here as **module Charts**
+/// candidates alongside SwiftUI's (Phase B coexistence — no global clobber).
 pub(crate) fn install(interp: &mut Interpreter<'_>) {
     for (name, func) in MARK_MODIFIER_FNS {
         interp.register_struct_method(name, *func);
@@ -616,7 +621,8 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
         interp.register_struct_method(name, *func);
     }
 
-    // `.foregroundStyle(by: .value(...))` and positional ShapeStyle/Color.
+    // Charts-owned typed `foregroundStyle`: `by: PlottableValue` + Color.
+    // Coexists with SwiftUI's View.foregroundStyle (same name, other module).
     interp.register_struct_method_typed(
         "foregroundStyle",
         modifier_foreground_style,

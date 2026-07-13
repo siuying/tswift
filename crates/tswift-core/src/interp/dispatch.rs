@@ -1450,9 +1450,10 @@ impl<'w> Interpreter<'w> {
     }
 
     /// Dispatch a method on a struct/enum receiver: a user-declared method
-    /// first, then the generic struct-method fallback (the SwiftUI view-modifier
-    /// seam) dispatched on any struct receiver by name. Returns `Ok(None)` when
-    /// neither matches, leaving the caller to report an unsupported method.
+    /// first, then the generic struct-method fallback (the SwiftUI / Charts
+    /// modifier seam). The seam holds per-module candidates; the receiver's
+    /// owning module (via `type_modules`) selects which handler + typed params
+    /// apply (ADR-0020 Phase B). Returns `Ok(None)` when neither matches.
     fn try_struct_receiver_method(
         &mut self,
         base_value: SwiftValue,
@@ -1465,15 +1466,28 @@ impl<'w> Interpreter<'w> {
             SwiftValue::Enum(e) => Some(e.type_name.clone()),
             _ => None,
         };
+        // Receiver module from type_modules; user/unknown types → None so the
+        // deterministic fallback (receiver-module → depends-on → base "Swift" →
+        // alphabetical by module) still resolves shared modifiers (preserves
+        // today's "any struct can take a View modifier" behavior).
+        let receiver_module = type_name
+            .as_ref()
+            .and_then(|tn| self.type_modules.get(tn.as_str()).copied());
+        // Snapshot handler + params before any &mut self call (candidate
+        // borrow must not overlap eval_args / call_struct_method).
+        let (selected_f, selected_params) = {
+            let entry = self.globals.struct_method(method, receiver_module);
+            (
+                entry.map(|e| e.f),
+                entry
+                    .and_then(|e| e.params.as_ref())
+                    .map(|p| clone_params(p)),
+            )
+        };
         let method_params = type_name
             .as_ref()
             .and_then(|tn| self.user_method_params(tn, method))
-            .or_else(|| {
-                self.globals
-                    .struct_method(method)
-                    .and_then(|e| e.params.as_ref())
-                    .map(|p| clone_params(p))
-            });
+            .or(selected_params);
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
         if let Some(type_name) = type_name {
             if self.type_has_method(&type_name, method) {
@@ -1484,10 +1498,10 @@ impl<'w> Interpreter<'w> {
             }
         }
 
-        // Generic struct-method fallback (SwiftUI view modifiers): dispatched on
-        // any struct receiver by name, after user methods and builtin receivers.
+        // Generic struct-method fallback: per-module candidates, selected by
+        // the receiver's owning module (same candidate used for params above).
         if matches!(base_value, SwiftValue::Struct(_)) {
-            if let Some(func) = self.globals.struct_method(method).map(|e| e.f) {
+            if let Some(func) = selected_f {
                 let labeled: Vec<Arg> = args.into_iter().map(Arg::from).collect();
                 return func(self, base_value, labeled)
                     .map(Some)
