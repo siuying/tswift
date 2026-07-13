@@ -5,7 +5,7 @@
 //! construct that handles it — without panicking. Real interpreter failures ride
 //! the same channel as [`Signal::Error`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::rc::Rc;
 
@@ -47,7 +47,9 @@ const MAX_CALL_DEPTH: usize = 5000;
 ///
 /// Module system (ADR-0020): every registration is stamped with a [`ModuleId`].
 /// Phase B resolves the name-only struct-method seam by the receiver's owning
-/// module via [`Interpreter::type_module`] + per-module candidates.
+/// module via [`Interpreter::type_module`] + per-module candidates. Phase C
+/// records program `import`s (lenient: no gating; import is a same-tier
+/// fallback tie-break only).
 ///
 /// Module names are static literals installed by frameworks, so the id is a
 /// cheap `Copy` handle over `&'static str` rather than cloning a `String` into
@@ -101,6 +103,27 @@ impl AsRef<str> for ModuleId {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
+}
+
+/// Map an import path's leading component (or a host-seeded name) to a
+/// [`ModuleId`]. Known framework names reuse the constants; any other name is
+/// interned once via `Box::leak` so it can live as a `Copy` id (import sets
+/// are tiny — one entry per imported module per program).
+fn module_id_for_import_name(name: &str) -> ModuleId {
+    match name {
+        "Swift" => ModuleId::SWIFT,
+        "Foundation" => ModuleId::FOUNDATION,
+        "SwiftData" => ModuleId::SWIFT_DATA,
+        "SwiftUI" => ModuleId::SWIFTUI,
+        "Charts" => ModuleId::CHARTS,
+        other => ModuleId::new(Box::leak(other.to_string().into_boxed_str())),
+    }
+}
+
+/// Leading component of an import path (`SwiftUI` from `SwiftUI` or
+/// `SwiftUI.Foo`). Submodule / `.` tails are ignored (Phase C).
+fn import_path_leading_component(path: &str) -> &str {
+    path.split('.').next().unwrap_or(path)
 }
 
 /// A value stamped with the module that registered it. Phase A metadata only —
@@ -843,13 +866,19 @@ impl GlobalMembers {
             .unwrap_or(&[])
     }
     /// Resolve a struct-method candidate for `receiver_module` (see
-    /// [`resolve_struct_method_candidate`]).
+    /// [`resolve_struct_method_candidate`]). `imported` is the program's
+    /// import set (Phase C lenient tie-break only).
     fn struct_method(
         &self,
         name: &str,
         receiver_module: Option<ModuleId>,
+        imported: &HashSet<ModuleId>,
     ) -> Option<&StructMethodEntry> {
-        resolve_struct_method_candidate(self.struct_method_candidates(name), receiver_module)
+        resolve_struct_method_candidate(
+            self.struct_method_candidates(name),
+            receiver_module,
+            imported,
+        )
     }
     fn free_fn_names(&self) -> impl Iterator<Item = &String> {
         self.free_fns.keys()
@@ -1061,14 +1090,19 @@ fn module_depends_on(module: ModuleId) -> &'static [ModuleId] {
 /// 1. Exact match on the receiver's own module
 /// 2. A module in the receiver module's depends-on / re-export chain
 /// 3. Base language module [`ModuleId::SWIFT`]
-/// 4. Stable tiebreak: alphabetical by module id among remaining candidates
+/// 4. Same-tier preference: a candidate whose module is in `imported` (Phase C
+///    lenient; `Swift` is always treated as imported)
+/// 5. Stable tiebreak: alphabetical by module id among remaining candidates
 ///
-/// Unknown / untagged receivers skip (1)–(2) and use (3)–(4), so "any install
+/// Unknown / untagged receivers skip (1)–(2) and use (3)–(5), so "any install
 /// still wins" for generic seams, but the winner does not flip with install order.
-fn resolve_struct_method_candidate(
-    candidates: &[StructMethodEntry],
+/// With an empty/user-less import set (only base `Swift`), (4) is a no-op and
+/// behavior matches Phase B alphabetical fallback.
+fn resolve_struct_method_candidate<'a>(
+    candidates: &'a [StructMethodEntry],
     receiver_module: Option<ModuleId>,
-) -> Option<&StructMethodEntry> {
+    imported: &HashSet<ModuleId>,
+) -> Option<&'a StructMethodEntry> {
     if candidates.is_empty() {
         return None;
     }
@@ -1086,8 +1120,18 @@ fn resolve_struct_method_candidate(
     if let Some(e) = candidates.iter().find(|e| e.module == ModuleId::SWIFT) {
         return Some(e);
     }
-    // Stable tiebreak: alphabetical by module id (never insertion order).
-    candidates.iter().min_by_key(|e| e.module.as_str())
+    // Same-tier: prefer an imported module's candidate, then alphabetical
+    // (never insertion order). Lenient — does not gate; only reorders.
+    candidates.iter().min_by_key(|e| {
+        let not_imported = !candidate_module_is_imported(e.module, imported);
+        (not_imported, e.module.as_str())
+    })
+}
+
+/// Whether `module` counts as imported for the Phase C same-tier preference.
+/// [`ModuleId::SWIFT`] is always imported (stdlib implicit).
+fn candidate_module_is_imported(module: ModuleId, imported: &HashSet<ModuleId>) -> bool {
+    module == ModuleId::SWIFT || imported.contains(&module)
 }
 
 /// A resolved `Type.member` type reference: the concrete type name (after
@@ -1118,6 +1162,12 @@ pub struct Interpreter<'w> {
     /// Defaults to [`ModuleId::swift`]; framework `install()` scopes set this
     /// while registering their symbols.
     current_module: ModuleId,
+    /// Modules the current program has imported (ADR-0020 Phase C). Seeded with
+    /// base [`ModuleId::SWIFT`] (stdlib always implicitly imported). Populated
+    /// from top-level `ImportDecl` during hoist; hosts may also
+    /// [`mark_module_imported`][Interpreter::mark_module_imported]. Lenient:
+    /// does not gate resolution — only same-tier fallback preference.
+    imported_modules: HashSet<ModuleId>,
     /// Type / constructor name → owning module. Populated by free-fn, enum,
     /// and static-value registration. Phase B uses this to resolve the
     /// receiver's module for struct-method dispatch.
@@ -1301,6 +1351,7 @@ impl<'w> Interpreter<'w> {
             builtins: BuiltinMembers::default(),
             globals: GlobalMembers::default(),
             current_module: ModuleId::swift(),
+            imported_modules: HashSet::from([ModuleId::SWIFT]),
             type_modules: HashMap::new(),
             static_modules: HashMap::new(),
             host_fn_modules: HashMap::new(),
@@ -1390,7 +1441,7 @@ impl<'w> Interpreter<'w> {
     pub fn struct_method_module_for(&self, name: &str, receiver_type: &str) -> Option<&str> {
         let recv_mod = self.type_modules.get(receiver_type).copied();
         self.globals
-            .struct_method(name, recv_mod)
+            .struct_method(name, recv_mod, &self.imported_modules)
             .map(|e| e.module.as_str())
     }
 
@@ -1398,8 +1449,38 @@ impl<'w> Interpreter<'w> {
     /// Prefer [`Self::struct_method_module_for`] when the receiver is known.
     pub fn struct_method_module(&self, name: &str) -> Option<&str> {
         self.globals
-            .struct_method(name, None)
+            .struct_method(name, None, &self.imported_modules)
             .map(|e| e.module.as_str())
+    }
+
+    /// Modules the current program has imported (includes base `"Swift"`).
+    pub fn imported_modules(&self) -> &HashSet<ModuleId> {
+        &self.imported_modules
+    }
+
+    /// Whether module `name` is imported. Base `"Swift"` (stdlib) is always
+    /// true. Leading component only — `name` may be a bare module id.
+    pub fn is_module_imported(&self, name: &str) -> bool {
+        if name == ModuleId::SWIFT.as_str() {
+            return true;
+        }
+        self.imported_modules.iter().any(|m| m.as_str() == name)
+    }
+
+    /// Record that `name` is imported (host/test pre-seed, or hoist of
+    /// `ImportDecl`). Accepts a full import path; only the leading component
+    /// is stored (`SwiftUI.Foo` → `SwiftUI`). Idempotent.
+    pub fn mark_module_imported(&mut self, name: &str) {
+        let leading = import_path_leading_component(name);
+        if leading.is_empty() {
+            return;
+        }
+        // Avoid re-leaking unknown names on repeated marks.
+        if self.imported_modules.iter().any(|m| m.as_str() == leading) {
+            return;
+        }
+        self.imported_modules
+            .insert(module_id_for_import_name(leading));
     }
 
     /// Module that registered the host-native function named `name`, if any.
@@ -1929,7 +2010,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::PrecedenceGroupDecl
             | NodeKind::TypeAliasDecl
             | NodeKind::MacroDecl
-            | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
+            | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted (import set); no runtime effect
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::AwaitExpr => self.eval_await(node),
@@ -6533,6 +6614,175 @@ mod tests {
         assert_eq!(
             alpha_first.struct_method_module_for("twist", "UserWidget"),
             Some("Alpha")
+        );
+    }
+
+    /// Phase C: `import` decls seed `imported_modules`; base Swift is always on.
+    #[test]
+    fn import_decl_collects_modules_lenient() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert!(interp.is_module_imported("Swift"));
+        assert!(!interp.is_module_imported("SwiftUI"));
+        assert!(!interp.is_module_imported("Charts"));
+        // Set always contains base Swift at construction.
+        assert!(interp
+            .imported_modules()
+            .iter()
+            .any(|m| *m == ModuleId::SWIFT));
+
+        let src = "import SwiftUI\nlet x = 1\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        interp.run(analysis).expect("run");
+
+        assert!(interp.is_module_imported("SwiftUI"));
+        assert!(interp.is_module_imported("Swift"));
+        assert!(!interp.is_module_imported("Charts"));
+        // Submodule path records only the leading component.
+        let mut sink2 = std::io::sink();
+        let mut interp2 = Interpreter::new(&mut sink2);
+        let src2 = "import Foundation.Data\n";
+        let a2 = Analysis::analyze(src2, "test.swift").expect("analyze");
+        let a2: &'static Analysis = Box::leak(Box::new(a2));
+        interp2.run(a2).expect("run");
+        assert!(interp2.is_module_imported("Foundation"));
+        assert!(!interp2.is_module_imported("Foundation.Data"));
+    }
+
+    /// Host-prepended PRELUDE has no imports; only user `import`s are recorded.
+    #[test]
+    fn import_collection_ignores_prelude_picks_user_imports() {
+        // Stand-in for host PRELUDE (no import lines).
+        let prelude = "struct Visibility { static let hidden = 0 }\n";
+        let with_import = format!("{prelude}import Charts\nlet y = 1\n");
+        let without_import = format!("{prelude}let y = 1\n");
+
+        let mut sink = std::io::sink();
+        let mut with = Interpreter::new(&mut sink);
+        let a = Analysis::analyze(&with_import, "test.swift").expect("analyze");
+        let a: &'static Analysis = Box::leak(Box::new(a));
+        with.run(a).expect("run");
+        assert!(with.is_module_imported("Charts"));
+        assert!(with.is_module_imported("Swift"));
+        assert!(!with.is_module_imported("SwiftUI"));
+
+        let mut sink2 = std::io::sink();
+        let mut without = Interpreter::new(&mut sink2);
+        let a2 = Analysis::analyze(&without_import, "test.swift").expect("analyze");
+        let a2: &'static Analysis = Box::leak(Box::new(a2));
+        without.run(a2).expect("run");
+        assert!(!without.is_module_imported("Charts"));
+        assert!(without.is_module_imported("Swift"));
+    }
+
+    /// Host/test pre-seed API for framework injection without a source import.
+    #[test]
+    fn mark_module_imported_preseeds_set() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert!(!interp.is_module_imported("SwiftUI"));
+        interp.mark_module_imported("SwiftUI");
+        assert!(interp.is_module_imported("SwiftUI"));
+        // Idempotent; dotted path also works.
+        interp.mark_module_imported("SwiftUI.View");
+        assert!(interp.is_module_imported("SwiftUI"));
+        assert_eq!(
+            interp
+                .imported_modules()
+                .iter()
+                .filter(|m| m.as_str() == "SwiftUI")
+                .count(),
+            1
+        );
+    }
+
+    /// Import-less programs keep Phase B alphabetical fallback (lenient; no
+    /// gating). Exact receiver-module match still wins when present.
+    #[test]
+    fn import_less_program_resolves_modifiers_lenient() {
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("foregroundStyle", swiftui_fg);
+        });
+
+        // No import decls → only base Swift in the set.
+        let src = "let n = 1\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        interp.run(analysis).expect("run");
+        assert!(!interp.is_module_imported("SwiftUI"));
+        assert!(!interp.is_module_imported("Charts"));
+
+        // Exact match unchanged.
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "BarMark"),
+            Some("Charts")
+        );
+        // Unknown receiver: import-less → alphabetical Charts < SwiftUI.
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+    }
+
+    /// Same-tier fallback prefers an imported module before alphabetical.
+    #[test]
+    fn same_tier_fallback_prefers_imported_module() {
+        fn handler(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        interp.module("Charts", |i| {
+            i.register_struct_method("foregroundStyle", handler);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_struct_method("foregroundStyle", handler);
+        });
+        // Without import: alphabetical → Charts.
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+        // With SwiftUI imported: prefer imported over alphabetical.
+        interp.mark_module_imported("SwiftUI");
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("SwiftUI")
         );
     }
 

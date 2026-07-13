@@ -1476,7 +1476,9 @@ impl<'w> Interpreter<'w> {
         // Snapshot handler + params before any &mut self call (candidate
         // borrow must not overlap eval_args / call_struct_method).
         let (selected_f, selected_params) = {
-            let entry = self.globals.struct_method(method, receiver_module);
+            let entry = self
+                .globals
+                .struct_method(method, receiver_module, &self.imported_modules);
             (
                 entry.map(|e| e.f),
                 entry

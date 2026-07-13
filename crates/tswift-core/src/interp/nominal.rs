@@ -9,9 +9,10 @@ use crate::value::{IntWidth, SwiftValue};
 
 impl<'w> Interpreter<'w> {
     /// Pre-declare function and struct declarations in `node` so forward
-    /// references resolve.
+    /// references resolve. Also records top-level `import` modules (ADR-0020
+    /// Phase C) so they are known before body evaluation.
     pub(super) fn hoist(&mut self, node: &Node<'static>) {
-        // First pass: type and protocol declarations.
+        // First pass: type and protocol declarations + import collection.
         for child in expand_directives(node) {
             match child.kind() {
                 NodeKind::FuncDecl => self.declare_func(&child),
@@ -32,6 +33,13 @@ impl<'w> Interpreter<'w> {
                 }
                 NodeKind::ProtocolDecl => self.register_protocol(&child),
                 NodeKind::TypeAliasDecl => self.register_typealias(&child),
+                // Phase C: collect imported modules before body evaluation.
+                // Lenient — no gating; path leading component only.
+                NodeKind::ImportDecl => {
+                    if let Some(path) = child.text() {
+                        self.mark_module_imported(&path);
+                    }
+                }
                 _ => {}
             }
         }
