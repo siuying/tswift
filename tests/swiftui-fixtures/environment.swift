@@ -1,6 +1,8 @@
 // Environment tab — a shared ObservableObject injected via .environmentObject
 // and read by a child through @EnvironmentObject. Tapping toggles the theme,
 // mutating the injected object without an owner reference in scope.
+import SwiftUI
+
 class Settings: ObservableObject {
     @Published var theme = "Dark"
     func toggle() { theme = theme == "Dark" ? "Light" : "Dark" }

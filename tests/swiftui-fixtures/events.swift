@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct EventsView: View {
     @State private var taps = 0
     @State private var doubled = 0

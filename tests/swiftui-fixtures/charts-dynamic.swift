@@ -1,5 +1,8 @@
 // Charts — dynamic data: button bumps @State, must emit setArgs on BarMark
 // so the web host re-paints SVG (Slice 5 dynamic-patch coverage).
+import SwiftUI
+import Charts
+
 struct V: View {
     @State private var sales = 40
 

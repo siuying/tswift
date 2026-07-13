@@ -1,4 +1,6 @@
 // C1 — text & universal styling modifiers (issue #188).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack {

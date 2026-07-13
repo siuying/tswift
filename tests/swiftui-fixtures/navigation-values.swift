@@ -2,6 +2,8 @@
 // resolves the enclosing `.navigationDestination(for:)`; a `NavigationPath`
 // bound via `NavigationStack(path:)` drives the stack depth, so both a value
 // link and a programmatic `path.append(_)` push, and `back` pops the path.
+import SwiftUI
+
 struct RootView: View {
     @State private var path = NavigationPath()
     var body: some View {

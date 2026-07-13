@@ -1,4 +1,6 @@
 // Stack tab — ZStack depth composition over shapes, each filled and framed.
+import SwiftUI
+
 struct StackView: View {
     var body: some View {
         ZStack {

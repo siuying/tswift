@@ -1,5 +1,7 @@
 // Observation tab — MVVM with an ObservableObject view model owned by a
 // @StateObject. Button actions mutate @Published state; the view re-renders.
+import SwiftUI
+
 class CounterModel: ObservableObject {
     @Published var count = 0
     func increment() { count += 1 }

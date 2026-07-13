@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct ModifiersTier2View: View {
     var body: some View {
         VStack {

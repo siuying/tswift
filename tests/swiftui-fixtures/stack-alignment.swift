@@ -2,6 +2,8 @@
 // their cross axis, with the leading-dot token resolved against the right
 // 1-D/2-D namespace (issue #203). Also exercises `Spacer(minLength:)` and
 // `offset` alongside the alignment.
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

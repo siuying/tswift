@@ -1,4 +1,7 @@
 // Charts — series split via foregroundStyle(by:) with axes + legend hidden.
+import SwiftUI
+import Charts
+
 struct V: View {
     var body: some View {
         Chart {

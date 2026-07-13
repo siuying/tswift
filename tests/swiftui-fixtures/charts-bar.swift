@@ -1,4 +1,7 @@
 // Charts — bar marks with series coloring + axis label.
+import SwiftUI
+import Charts
+
 struct V: View {
     var body: some View {
         Chart {

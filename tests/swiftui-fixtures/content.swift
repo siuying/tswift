@@ -1,5 +1,7 @@
 // C5 — content views: Label, Image(systemName:), Image(_ name), ProgressView
 // (issue #192).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(spacing: 12) {

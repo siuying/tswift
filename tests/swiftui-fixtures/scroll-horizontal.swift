@@ -1,4 +1,6 @@
 // C3 — horizontal ScrollView axis (issue #190).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         ScrollView(.horizontal) {

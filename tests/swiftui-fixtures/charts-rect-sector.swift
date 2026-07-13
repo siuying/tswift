@@ -1,4 +1,7 @@
 // Charts — RectangleMark (x/y/width/height) + SectorMark (lone full arc).
+import SwiftUI
+import Charts
+
 struct V: View {
     var body: some View {
         VStack(spacing: 16) {

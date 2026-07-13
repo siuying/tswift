@@ -1,6 +1,8 @@
 // C2 — layout modifiers & container args (issue #189).
 // Collision-free subset: stack spacing, numeric frame min/max, Spacer
 // minLength, offset. (alignment + .infinity + edge padding deferred.)
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(spacing: 24) {

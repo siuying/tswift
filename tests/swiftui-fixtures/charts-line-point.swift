@@ -1,4 +1,7 @@
 // Charts — line + point + area marks with axis labels.
+import SwiftUI
+import Charts
+
 struct V: View {
     var body: some View {
         Chart {
