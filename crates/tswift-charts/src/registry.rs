@@ -11,6 +11,12 @@ use crate::modifiers;
 
 /// Register every currently-supported Charts constructor into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
+    interp.module("Charts", |interp| {
+        install_inner(interp);
+    });
+}
+
+fn install_inner(interp: &mut Interpreter<'_>) {
     // `Chart { … }` — trailing content-builder closure becomes `_children`
     // (same shape as SwiftUI containers).
     interp.register_free_fn("Chart", chart_init);

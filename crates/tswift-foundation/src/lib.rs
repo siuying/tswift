@@ -79,6 +79,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
 /// unaffected by `caps`, and the host-backed builtins that consume it land in
 /// later slices ([`gate_host_services`] is their registration point).
 pub fn install_with(interp: &mut Interpreter<'_>, caps: Capabilities) {
+    interp.module("Foundation", |interp| {
+        install_with_inner(interp, caps);
+    });
+}
+
+fn install_with_inner(interp: &mut Interpreter<'_>, caps: Capabilities) {
     gate_host_services(interp, caps);
     url::install(interp);
     network::install(interp);

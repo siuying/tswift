@@ -42,6 +42,98 @@ use self::concurrency::Scheduler;
 /// overflow.
 const MAX_CALL_DEPTH: usize = 5000;
 
+/// Identity of a framework / language module that owns registered symbols
+/// (`"Swift"`, `"Foundation"`, `"SwiftUI"`, `"Charts"`, …).
+///
+/// Phase A of the module system (ADR-0020) stamps every registration with a
+/// [`ModuleId`]; dispatch still ignores it. Phase B uses receiver-module
+/// resolution via [`Interpreter::type_module`].
+///
+/// Module names are static literals installed by frameworks, so the id is a
+/// cheap `Copy` handle over `&'static str` rather than cloning a `String` into
+/// every registry entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleId(&'static str);
+
+impl ModuleId {
+    /// The always-present base module (stdlib). Also the default stamp when no
+    /// [`Interpreter::module`] scope is active.
+    pub const SWIFT: ModuleId = ModuleId("Swift");
+
+    /// Create a module id from a static display name
+    /// (`"Swift"` / `"Foundation"` / `"SwiftData"` / `"SwiftUI"` / `"Charts"`).
+    pub fn new(name: &'static str) -> Self {
+        Self(name)
+    }
+
+    /// The base / default module.
+    pub fn swift() -> Self {
+        Self::SWIFT
+    }
+
+    /// Borrow the module name.
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl Default for ModuleId {
+    fn default() -> Self {
+        Self::swift()
+    }
+}
+
+impl std::fmt::Display for ModuleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for ModuleId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// A value stamped with the module that registered it. Phase A metadata only —
+/// query helpers return the inner value so dispatch is unchanged.
+#[derive(Clone, Copy)]
+struct ModuleTagged<T> {
+    value: T,
+    /// Owning module at registration time (read by Phase B / tests).
+    #[allow(dead_code)]
+    module: ModuleId,
+}
+
+impl<T> ModuleTagged<T> {
+    fn new(value: T, module: ModuleId) -> Self {
+        Self { value, module }
+    }
+}
+
+/// Restores [`Interpreter::current_module`] when dropped (normal return or
+/// unwind). Used by [`Interpreter::module`] so a panic inside an install cannot
+/// leak the module scope into subsequent installs.
+struct ModuleScopeGuard {
+    /// Points at the interpreter's `current_module` field for the duration of
+    /// the scoped install. Valid because the guard lives only while the
+    /// exclusive `&mut Interpreter` borrow of `module()` is active (including
+    /// on unwind).
+    slot: *mut ModuleId,
+    previous: ModuleId,
+}
+
+impl Drop for ModuleScopeGuard {
+    fn drop(&mut self) {
+        // SAFETY: `slot` is the address of `Interpreter::current_module` taken
+        // under an exclusive borrow in `module()`; the interpreter outlives
+        // this guard; only this Drop writes through the pointer.
+        unsafe {
+            *self.slot = self.previous;
+        }
+    }
+}
+
 /// Maximum number of elements a custom sequence algorithm may eagerly
 /// materialize before trapping. `for-in` remains lazy and can still terminate an
 /// unbounded sequence with `break`; eager algorithms like `map` cannot.
@@ -546,72 +638,110 @@ impl TypeTable {
 /// receiver-keyed maps behind one module keeps builtin-member storage in a
 /// single place; the `add_*` methods are the install seam and the singular
 /// query methods are the read surface the dispatcher uses.
+///
+/// Each entry is module-tagged (Phase A); lookups still return the bare value
+/// so dispatch behavior is unchanged.
 #[derive(Default)]
 struct BuiltinMembers {
-    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
-    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
-    properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
-    typed_properties: HashMap<(BuiltinReceiver, String), TypedPropertyFn>,
-    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
-    static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
+    intrinsics: HashMap<(BuiltinReceiver, String), ModuleTagged<MethodEntry>>,
+    labeled_intrinsics: HashMap<(BuiltinReceiver, String), ModuleTagged<LabeledMethodEntry>>,
+    properties: HashMap<(BuiltinReceiver, String), ModuleTagged<PropertyFn>>,
+    typed_properties: HashMap<(BuiltinReceiver, String), ModuleTagged<TypedPropertyFn>>,
+    contextual_properties: HashMap<(BuiltinReceiver, String), ModuleTagged<ContextualPropertyFn>>,
+    static_methods: HashMap<(BuiltinReceiver, String), ModuleTagged<StaticFn>>,
     /// Built-in computed-property setters (validate + mutate the receiver).
-    setters: HashMap<(BuiltinReceiver, String), PropertySetterFn>,
+    setters: HashMap<(BuiltinReceiver, String), ModuleTagged<PropertySetterFn>>,
 }
 
 impl BuiltinMembers {
-    fn add_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
-        self.intrinsics.insert((recv, name.to_string()), entry);
+    fn add_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: MethodEntry,
+        module: ModuleId,
+    ) {
+        self.intrinsics
+            .insert((recv, name.to_string()), ModuleTagged::new(entry, module));
     }
     fn add_labeled_intrinsic(
         &mut self,
         recv: BuiltinReceiver,
         name: &str,
         entry: LabeledMethodEntry,
+        module: ModuleId,
     ) {
         self.labeled_intrinsics
-            .insert((recv, name.to_string()), entry);
+            .insert((recv, name.to_string()), ModuleTagged::new(entry, module));
     }
-    fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
-        self.properties.insert((recv, name.to_string()), f);
+    fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn, module: ModuleId) {
+        self.properties
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_typed_property(&mut self, recv: BuiltinReceiver, name: &str, f: TypedPropertyFn) {
-        self.typed_properties.insert((recv, name.to_string()), f);
+    fn add_typed_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: TypedPropertyFn,
+        module: ModuleId,
+    ) {
+        self.typed_properties
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
     fn add_contextual_property(
         &mut self,
         recv: BuiltinReceiver,
         name: &str,
         f: ContextualPropertyFn,
+        module: ModuleId,
     ) {
         self.contextual_properties
-            .insert((recv, name.to_string()), f);
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_static_method(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
-        self.static_methods.insert((recv, name.to_string()), f);
+    fn add_static_method(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: StaticFn,
+        module: ModuleId,
+    ) {
+        self.static_methods
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_setter(&mut self, recv: BuiltinReceiver, name: &str, f: PropertySetterFn) {
-        self.setters.insert((recv, name.to_string()), f);
+    fn add_setter(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: PropertySetterFn,
+        module: ModuleId,
+    ) {
+        self.setters
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
 
     fn intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<MethodEntry> {
-        self.intrinsics.get(&(recv, name.to_string())).copied()
+        self.intrinsics
+            .get(&(recv, name.to_string()))
+            .map(|t| t.value)
     }
     fn labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<LabeledMethodEntry> {
         self.labeled_intrinsics
             .get(&(recv, name.to_string()))
-            .copied()
+            .map(|t| t.value)
     }
     fn has_labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> bool {
         self.labeled_intrinsics
             .contains_key(&(recv, name.to_string()))
     }
     fn property(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertyFn> {
-        self.properties.get(&(recv, name.to_string())).copied()
+        self.properties
+            .get(&(recv, name.to_string()))
+            .map(|t| t.value)
     }
     fn typed_property(&self, recv: BuiltinReceiver, name: &str) -> Option<TypedPropertyFn> {
         self.typed_properties
             .get(&(recv, name.to_string()))
-            .copied()
+            .map(|t| t.value)
     }
     fn contextual_property(
         &self,
@@ -620,13 +750,15 @@ impl BuiltinMembers {
     ) -> Option<ContextualPropertyFn> {
         self.contextual_properties
             .get(&(recv, name.to_string()))
-            .copied()
+            .map(|t| t.value)
     }
     fn static_method(&self, recv: BuiltinReceiver, name: &str) -> Option<StaticFn> {
-        self.static_methods.get(&(recv, name.to_string())).copied()
+        self.static_methods
+            .get(&(recv, name.to_string()))
+            .map(|t| t.value)
     }
     fn setter(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertySetterFn> {
-        self.setters.get(&(recv, name.to_string())).copied()
+        self.setters.get(&(recv, name.to_string())).map(|t| t.value)
     }
 
     /// Every registered member as a `"Receiver.name"` string, for the
@@ -648,36 +780,41 @@ impl BuiltinMembers {
 /// seam). Owning the four maps behind one module concentrates global-member
 /// storage; the `add_*` methods are the install seam and the singular query
 /// methods are the read surface `eval_call`/`eval_method_call` use.
+///
+/// Free-fn / struct-method entries carry a [`ModuleId`]; natives and
+/// algorithms are module-tagged wrappers. Dispatch still uses name-only lookup.
 #[derive(Default)]
 struct GlobalMembers {
-    natives: HashMap<String, NativeFn>,
+    natives: HashMap<String, ModuleTagged<NativeFn>>,
     free_fns: HashMap<String, FreeFnEntry>,
-    algorithms: HashMap<String, AlgoFn>,
+    algorithms: HashMap<String, ModuleTagged<AlgoFn>>,
     struct_methods: HashMap<String, StructMethodEntry>,
 }
 
 impl GlobalMembers {
-    fn add_native(&mut self, name: &str, f: NativeFn) {
-        self.natives.insert(name.to_string(), f);
+    fn add_native(&mut self, name: &str, f: NativeFn, module: ModuleId) {
+        self.natives
+            .insert(name.to_string(), ModuleTagged::new(f, module));
     }
     fn add_free_fn(&mut self, name: &str, entry: FreeFnEntry) {
         self.free_fns.insert(name.to_string(), entry);
     }
-    fn add_algorithm(&mut self, name: &str, f: AlgoFn) {
-        self.algorithms.insert(name.to_string(), f);
+    fn add_algorithm(&mut self, name: &str, f: AlgoFn, module: ModuleId) {
+        self.algorithms
+            .insert(name.to_string(), ModuleTagged::new(f, module));
     }
     fn add_struct_method(&mut self, name: &str, entry: StructMethodEntry) {
         self.struct_methods.insert(name.to_string(), entry);
     }
 
     fn native(&self, name: &str) -> Option<NativeFn> {
-        self.natives.get(name).copied()
+        self.natives.get(name).map(|t| t.value)
     }
     fn free_fn(&self, name: &str) -> Option<&FreeFnEntry> {
         self.free_fns.get(name)
     }
     fn algorithm(&self, name: &str) -> Option<AlgoFn> {
-        self.algorithms.get(name).copied()
+        self.algorithms.get(name).map(|t| t.value)
     }
     fn has_algorithm(&self, name: &str) -> bool {
         self.algorithms.contains_key(name)
@@ -858,6 +995,10 @@ impl From<&CallArg> for Arg {
 struct FreeFnEntry {
     f: FreeFn,
     params: Option<Vec<Param>>,
+    /// Module that registered this free function (Phase A metadata; also
+    /// mirrored into `type_modules` for constructor names).
+    #[allow(dead_code)]
+    module: ModuleId,
 }
 
 /// A registered generic struct-method intrinsic (SwiftUI modifier seam) and its
@@ -865,6 +1006,9 @@ struct FreeFnEntry {
 struct StructMethodEntry {
     f: StructMethodFn,
     params: Option<Vec<Param>>,
+    /// Module that registered this struct method (Phase A metadata; Phase B
+    /// will key candidates by this instead of last-wins).
+    module: ModuleId,
 }
 
 /// A resolved `Type.member` type reference: the concrete type name (after
@@ -891,6 +1035,23 @@ pub struct Interpreter<'w> {
     /// `Sequence` algorithms, and generic struct-method intrinsics — behind one
     /// registry seam.
     globals: GlobalMembers,
+    /// Module currently receiving registrations (see [`Interpreter::module`]).
+    /// Defaults to [`ModuleId::swift`]; framework `install()` scopes set this
+    /// while registering their symbols.
+    current_module: ModuleId,
+    /// Type / constructor name → owning module. Populated by free-fn, enum,
+    /// and static-value registration. Phase B uses this to resolve the
+    /// receiver's module for struct-method dispatch.
+    type_modules: HashMap<String, ModuleId>,
+    /// Module stamp for each `Type.member` key written by
+    /// [`Interpreter::register_static_value`]. Phase A metadata only.
+    #[allow(dead_code)]
+    static_modules: HashMap<String, ModuleId>,
+    /// Module stamp for each host-native function registered via
+    /// [`Interpreter::register_host_fn`]. Phase A metadata only; dispatch
+    /// still goes through [`Self::host_bridge`] by name alone.
+    #[allow(dead_code)]
+    host_fn_modules: HashMap<String, ModuleId>,
     env: Env,
     funcs: Vec<FuncDef>,
     /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
@@ -979,19 +1140,22 @@ pub struct Interpreter<'w> {
     /// (e.g. an open database handle in a thread-local registry) can release it
     /// deterministically. Drained by [`Interpreter::teardown`], which the
     /// `Drop` impl also calls, so each finalizer runs exactly once.
-    finalizers: Vec<crate::stdlib::Finalizer>,
+    /// Module-tagged for registry uniformity (always-active; not import-gated).
+    finalizers: Vec<ModuleTagged<crate::stdlib::Finalizer>>,
     /// Render-scope hook pairs registered by frameworks via
     /// [`Interpreter::register_view_scope`]. The SwiftUI renderer brackets each
     /// custom `View`'s `body` evaluation with `view_scope_enter`/`_exit`, which
     /// invoke every pair's enter (registration order) / exit (reverse order) so
     /// a framework can push and restore subtree-scoped state a modifier carries.
     /// Core assigns the view value no meaning.
-    view_scopes: Vec<(crate::stdlib::ViewScopeFn, crate::stdlib::ViewScopeFn)>,
+    /// Module-tagged for registry uniformity (always-active; not import-gated).
+    view_scopes: Vec<ModuleTagged<(crate::stdlib::ViewScopeFn, crate::stdlib::ViewScopeFn)>>,
     /// Freestanding-macro handlers registered by frameworks via
     /// [`Interpreter::register_macro`], keyed by the macro name (`"Predicate"`
     /// for `#Predicate`). Consulted by [`Interpreter::eval_macro`] before the
-    /// builtin macros. Core assigns the name no meaning.
-    macros: HashMap<String, crate::stdlib::MacroFn>,
+    /// builtin macros. Core assigns the name no meaning. Module-tagged (Phase A);
+    /// lookup still returns the bare handler.
+    macros: HashMap<String, ModuleTagged<crate::stdlib::MacroFn>>,
     /// A process-unique, monotonically-assigned identity for this interpreter,
     /// handed out at construction from [`NEXT_INTERPRETER_ID`]. Exposed
     /// generically via [`StdContext::interpreter_id`] so a framework holding
@@ -1057,6 +1221,10 @@ impl<'w> Interpreter<'w> {
             builtin_ctors: Self::builtin_ctor_table(),
             builtins: BuiltinMembers::default(),
             globals: GlobalMembers::default(),
+            current_module: ModuleId::swift(),
+            type_modules: HashMap::new(),
+            static_modules: HashMap::new(),
+            host_fn_modules: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             funcs: Vec::new(),
@@ -1090,6 +1258,64 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Run `f` with `name` as the active registration module. Every
+    /// `register_*` call inside stamps its entry with that module. The previous
+    /// module is restored when the scope ends, including if `f` panics (RAII
+    /// [`ModuleScopeGuard`]), so a caught unwind cannot leak the module scope
+    /// into subsequent installs. Nesting is supported.
+    pub fn module<R>(&mut self, name: &'static str, f: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = std::mem::replace(&mut self.current_module, ModuleId::new(name));
+        // SAFETY: exclusive `&mut self` borrow is held for this whole call
+        // (including unwind). The guard only writes `previous` back on Drop.
+        let _guard = ModuleScopeGuard {
+            slot: std::ptr::addr_of_mut!(self.current_module),
+            previous,
+        };
+        f(self)
+    }
+
+    /// Set the active registration module without a scope (pair with
+    /// [`end_module`][Interpreter::end_module]). Prefer [`module`] when possible.
+    pub fn begin_module(&mut self, name: &'static str) -> ModuleId {
+        std::mem::replace(&mut self.current_module, ModuleId::new(name))
+    }
+
+    /// Restore a module previously returned by [`begin_module`].
+    pub fn end_module(&mut self, previous: ModuleId) {
+        self.current_module = previous;
+    }
+
+    /// The module currently receiving registrations.
+    pub fn current_module(&self) -> ModuleId {
+        self.current_module
+    }
+
+    /// Owning module of a registered type / constructor name, if any.
+    pub fn type_module(&self, name: &str) -> Option<&str> {
+        self.type_modules.get(name).map(|m| m.as_str())
+    }
+
+    /// Module that registered the (last-wins) struct-method named `name`.
+    pub fn struct_method_module(&self, name: &str) -> Option<&str> {
+        self.globals.struct_method(name).map(|e| e.module.as_str())
+    }
+
+    /// Module that registered the host-native function named `name`, if any.
+    pub fn host_fn_module(&self, name: &str) -> Option<&str> {
+        self.host_fn_modules.get(name).map(|m| m.as_str())
+    }
+
+    /// Module that registered the freestanding macro named `name`, if any.
+    pub fn macro_module(&self, name: &str) -> Option<&str> {
+        self.macros.get(name).map(|t| t.module.as_str())
+    }
+
+    /// Record that `name` is a type/constructor owned by the current module.
+    fn record_type_module(&mut self, name: &str) {
+        self.type_modules
+            .insert(name.to_string(), self.current_module);
+    }
+
     /// Run all registered finalizers (in registration order) and clear them, so
     /// a subsequent call — including the one the `Drop` impl makes — is a no-op.
     /// Frameworks register finalizers via [`StdContext::register_finalizer`] to
@@ -1098,8 +1324,8 @@ impl<'w> Interpreter<'w> {
     /// drop.
     pub fn teardown(&mut self) {
         let finalizers = std::mem::take(&mut self.finalizers);
-        for finalizer in finalizers {
-            finalizer(self);
+        for tagged in finalizers {
+            (tagged.value)(self);
         }
     }
 
@@ -1135,7 +1361,10 @@ impl<'w> Interpreter<'w> {
         signature_json: &str,
         handler: Option<std::sync::Arc<dyn crate::host_bridge::HostCallHandler>>,
     ) -> Result<String, String> {
-        self.host_bridge.register(signature_json, handler)
+        let name = self.host_bridge.register(signature_json, handler)?;
+        self.host_fn_modules
+            .insert(name.clone(), self.current_module);
+        Ok(name)
     }
 
     /// Run the shared host-call trampoline for a registered host function.
@@ -1164,13 +1393,20 @@ impl<'w> Interpreter<'w> {
 
     /// Register a native function callable from Swift source by `name`.
     pub fn register_native(&mut self, name: &str, f: NativeFn) {
-        self.globals.add_native(name, f);
+        self.globals.add_native(name, f, self.current_module);
     }
 
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
-        self.globals
-            .add_free_fn(name, FreeFnEntry { f, params: None });
+        self.globals.add_free_fn(
+            name,
+            FreeFnEntry {
+                f,
+                params: None,
+                module: self.current_module,
+            },
+        );
+        self.record_type_module(name);
     }
 
     /// Register a freestanding-macro handler served through the [`StdContext`]
@@ -1178,9 +1414,10 @@ impl<'w> Interpreter<'w> {
     /// handles `#Predicate`). Consulted by the macro evaluator before the
     /// builtin macros, so a framework can give `#Name<T> { … }` custom
     /// semantics (e.g. compiling a predicate closure to SQL). Core assigns the
-    /// name and node shape no meaning.
+    /// name and node shape no meaning. Stamped with the current module (Phase A).
     pub fn register_macro(&mut self, name: &str, f: crate::stdlib::MacroFn) {
-        self.macros.insert(name.to_string(), f);
+        self.macros
+            .insert(name.to_string(), ModuleTagged::new(f, self.current_module));
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -1194,8 +1431,10 @@ impl<'w> Interpreter<'w> {
             FreeFnEntry {
                 f,
                 params: Some(params),
+                module: self.current_module,
             },
         );
+        self.record_type_module(name);
     }
 
     /// Register a simple builtin enum so shorthand `.case` members resolve to it
@@ -1222,6 +1461,7 @@ impl<'w> Interpreter<'w> {
             },
         );
         self.types.mark_builtin_enum(name);
+        self.record_type_module(name);
     }
 
     /// Register a builtin enum whose cases may carry positional associated
@@ -1251,6 +1491,7 @@ impl<'w> Interpreter<'w> {
             },
         );
         self.types.mark_builtin_enum(name);
+        self.record_type_module(name);
     }
 
     /// The keys of every registered standard-library entry, for coverage
@@ -1271,7 +1512,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
-        self.builtins.add_property(recv, name, f);
+        self.builtins
+            .add_property(recv, name, f, self.current_module);
     }
 
     /// Register a computed-property intrinsic that also receives the receiver's
@@ -1282,7 +1524,8 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: TypedPropertyFn,
     ) {
-        self.builtins.add_typed_property(recv, name, f);
+        self.builtins
+            .add_typed_property(recv, name, f, self.current_module);
     }
 
     /// Register a computed-property **setter** on a builtin receiver type.
@@ -1296,7 +1539,7 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: PropertySetterFn,
     ) {
-        self.builtins.add_setter(recv, name, f);
+        self.builtins.add_setter(recv, name, f, self.current_module);
     }
 
     /// Register a context-aware computed-property intrinsic on a builtin type.
@@ -1306,23 +1549,29 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: ContextualPropertyFn,
     ) {
-        self.builtins.add_contextual_property(recv, name, f);
+        self.builtins
+            .add_contextual_property(recv, name, f, self.current_module);
     }
 
     /// Register a static *property value* on a (possibly non-builtin) type, so
     /// `Type.name` and implicit `.name` resolve to it (e.g. `UnitLength.meters`).
     pub fn register_static_value(&mut self, type_name: &str, name: &str, value: SwiftValue) {
-        self.statics.insert(format!("{type_name}.{name}"), value);
+        let key = format!("{type_name}.{name}");
+        self.statics.insert(key.clone(), value);
+        self.static_modules.insert(key, self.current_module);
+        self.record_type_module(type_name);
     }
 
     /// Register a static (type-level) method intrinsic on a builtin type.
     pub fn register_static(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
-        self.builtins.add_static_method(recv, name, f);
+        self.builtins
+            .add_static_method(recv, name, f, self.current_module);
+        self.record_type_module(recv.type_name());
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
     pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
-        self.globals.add_algorithm(name, f);
+        self.globals.add_algorithm(name, f, self.current_module);
     }
 
     /// Register a generic method intrinsic dispatched on any struct receiver by
@@ -1330,8 +1579,14 @@ impl<'w> Interpreter<'w> {
     /// methods and builtin-receiver intrinsics fail to match, so a user method
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
-        self.globals
-            .add_struct_method(name, StructMethodEntry { f, params: None });
+        self.globals.add_struct_method(
+            name,
+            StructMethodEntry {
+                f,
+                params: None,
+                module: self.current_module,
+            },
+        );
     }
 
     /// Register a generic struct-method intrinsic together with a declared
@@ -1351,6 +1606,7 @@ impl<'w> Interpreter<'w> {
             StructMethodEntry {
                 f,
                 params: Some(params),
+                module: self.current_module,
             },
         );
     }
@@ -1363,12 +1619,15 @@ impl<'w> Interpreter<'w> {
     /// wins, no leakage across siblings). Core assigns the view value no
     /// meaning — SwiftData uses it to publish/withdraw the environment's
     /// `ModelContext` for `@Query`.
+    /// Always-active hook (not import-gated); tagged with the current module
+    /// for registry uniformity / future per-module hook management.
     pub fn register_view_scope(
         &mut self,
         enter: crate::stdlib::ViewScopeFn,
         exit: crate::stdlib::ViewScopeFn,
     ) {
-        self.view_scopes.push((enter, exit));
+        self.view_scopes
+            .push(ModuleTagged::new((enter, exit), self.current_module));
     }
 
     /// Instantiate a user struct `type_name` with `args` (label, value) pairs,
@@ -1419,7 +1678,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a method intrinsic on a builtin receiver type.
     pub fn register_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
-        self.builtins.add_intrinsic(recv, name, entry);
+        self.builtins
+            .add_intrinsic(recv, name, entry, self.current_module);
     }
 
     /// Register a label-aware method intrinsic on a builtin receiver type.
@@ -1429,7 +1689,8 @@ impl<'w> Interpreter<'w> {
         name: &str,
         entry: LabeledMethodEntry,
     ) {
-        self.builtins.add_labeled_intrinsic(recv, name, entry);
+        self.builtins
+            .add_labeled_intrinsic(recv, name, entry, self.current_module);
     }
 
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
@@ -3304,7 +3565,7 @@ impl<'w> Interpreter<'w> {
         // up. The handler inspects the node's children (generic type args +
         // trailing-closure body) itself.
         let macro_name = which.strip_prefix('#').unwrap_or(&which);
-        if let Some(handler) = self.macros.get(macro_name).copied() {
+        if let Some(handler) = self.macros.get(macro_name).map(|t| t.value) {
             return handler(self, node).map_err(Self::std_error_to_signal);
         }
         match which.as_str() {
@@ -5194,14 +5455,17 @@ impl StdContext for Interpreter<'_> {
     }
 
     fn register_finalizer(&mut self, finalizer: crate::stdlib::Finalizer) {
-        self.finalizers.push(finalizer);
+        // Always-active teardown hook (not import-gated); tagged with the
+        // current module for registry uniformity / future per-module hooks.
+        self.finalizers
+            .push(ModuleTagged::new(finalizer, self.current_module));
     }
 
     fn view_scope_enter(&mut self, view: &SwiftValue) {
         // Snapshot the fn pointers first (they are `Copy`) so we don't hold a
         // borrow of `self` across the callback, which takes `self` as context.
         let enters: Vec<crate::stdlib::ViewScopeFn> =
-            self.view_scopes.iter().map(|(enter, _)| *enter).collect();
+            self.view_scopes.iter().map(|t| t.value.0).collect();
         for enter in enters {
             enter(self, view);
         }
@@ -5209,12 +5473,8 @@ impl StdContext for Interpreter<'_> {
 
     fn view_scope_exit(&mut self, view: &SwiftValue) {
         // Reverse registration order so exits unwind the matched enters.
-        let exits: Vec<crate::stdlib::ViewScopeFn> = self
-            .view_scopes
-            .iter()
-            .rev()
-            .map(|(_, exit)| *exit)
-            .collect();
+        let exits: Vec<crate::stdlib::ViewScopeFn> =
+            self.view_scopes.iter().rev().map(|t| t.value.1).collect();
         for exit in exits {
             exit(self, view);
         }
@@ -5942,6 +6202,73 @@ mod tests {
     }
 
     #[test]
+    fn module_scope_stamps_registrations_and_type_module() {
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+        fn method(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn macro_handler(
+            _ctx: &mut dyn StdContext,
+            _node: &tswift_frontend::Node<'static>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        // Untagged (default base module).
+        interp.register_free_fn("BaseType", free);
+        assert_eq!(interp.type_module("BaseType"), Some("Swift"));
+        assert_eq!(interp.current_module().as_str(), "Swift");
+
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("padding", method);
+        });
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            // Last-wins for the shared name; stamps the winning entry.
+            i.register_struct_method("padding", method);
+        });
+        interp.module("SwiftData", |i| {
+            i.register_macro("Predicate", macro_handler);
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| Ok("null".into())));
+            i.set_host_call_handler(handler);
+            i.register_host_fn(r#"{"name":"deviceName","returns":"Void"}"#, None)
+                .expect("register host fn");
+        });
+
+        assert_eq!(interp.type_module("Text"), Some("SwiftUI"));
+        assert_eq!(interp.type_module("BarMark"), Some("Charts"));
+        assert_eq!(interp.struct_method_module("padding"), Some("Charts"));
+        assert_eq!(interp.macro_module("Predicate"), Some("SwiftData"));
+        assert_eq!(interp.host_fn_module("deviceName"), Some("SwiftData"));
+        // Scope restored after nested modules.
+        assert_eq!(interp.current_module().as_str(), "Swift");
+    }
+
+    #[test]
+    fn module_scope_restores_current_module_on_panic() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert_eq!(interp.current_module().as_str(), "Swift");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.module("Charts", |_i| {
+                panic!("install blew up");
+            });
+        }));
+        assert!(result.is_err());
+        // RAII guard must restore even when the install panics (caught unwind).
+        assert_eq!(interp.current_module().as_str(), "Swift");
+    }
+
+    #[test]
     fn global_members_registry_stores_free_fns_and_algorithms() {
         fn id(_: &mut dyn StdContext, _: Vec<Arg>) -> crate::stdlib::StdResult {
             Ok(SwiftValue::Void)
@@ -5953,6 +6280,7 @@ mod tests {
             FreeFnEntry {
                 f: id,
                 params: None,
+                module: ModuleId::swift(),
             },
         );
         assert!(g.free_fn("abs").is_some());
@@ -5968,7 +6296,7 @@ mod tests {
         }
         let mut b = BuiltinMembers::default();
         assert!(b.property(BuiltinReceiver::Array, "count").is_none());
-        b.add_property(BuiltinReceiver::Array, "count", count);
+        b.add_property(BuiltinReceiver::Array, "count", count, ModuleId::swift());
         assert!(b.property(BuiltinReceiver::Array, "count").is_some());
         // Distinct receivers do not collide on the same member name.
         assert!(b.property(BuiltinReceiver::String, "count").is_none());

@@ -538,6 +538,12 @@ struct AnyTransition {
 /// Register every currently-supported SwiftUI view constructor and modifier
 /// into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
+    interp.module("SwiftUI", |interp| {
+        install_inner(interp);
+    });
+}
+
+fn install_inner(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Text", text_init);
     // Stacks carry a typed `alignment:` so its leading-dot token resolves
     // against the right 1-D/2-D namespace (`VStack` → `HorizontalAlignment`,
