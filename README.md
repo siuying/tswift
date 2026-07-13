@@ -54,6 +54,9 @@ in the stack (`tswift-frontend` is `#![forbid(unsafe_code)]`).
 > [`docs/swift-runtime/feature-checklist.md`](docs/swift-runtime/feature-checklist.md)
 > for the per-feature status.
 
+> **Framework hosts:** SwiftUI rendering includes Charts support on the web
+> (SVG) and iOS (native `Charts`).
+
 ---
 
 ## How it works
@@ -165,6 +168,10 @@ uniqueness, value-copy semantics, pattern matching, and the AST accessors.
 - [`docs/swift-runtime/feature-checklist.md`](docs/swift-runtime/feature-checklist.md)
   — the full Swift 6.3 feature surface with per-feature frontend/runtime/phase status.
 - [`docs/adr/`](docs/adr) — architectural decision records.
+- [`docs/adr/0019-charts-render-host.md`](docs/adr/0019-charts-render-host.md)
+  — Charts on the shared SwiftUI render host.
+- [`docs/plan/charts-support.md`](docs/plan/charts-support.md) — shipped Charts
+  support, verification, and backlog.
 - [`docs/research/`](docs/research) — background research on the frontend and VM design.
 
 ---
