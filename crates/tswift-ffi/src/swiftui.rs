@@ -422,6 +422,7 @@ mod tests {
     use super::*;
 
     const COUNTER: &str = r#"
+import SwiftUI
 struct CounterView: View {
     @State private var count = 0
     var body: some View {
@@ -462,6 +463,7 @@ struct CounterView: View {
         let result = compile(
             &mut slot,
             r#"
+import SwiftUI
 struct V: View {
     @State private var ready = false
     var body: some View {

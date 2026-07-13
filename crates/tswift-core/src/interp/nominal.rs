@@ -290,8 +290,13 @@ impl<'w> Interpreter<'w> {
                 // Fall back to a registered builtin property `description`.
                 if user_desc.is_none() {
                     let kind = crate::stdlib::BuiltinReceiver::of(value);
-                    kind.and_then(|k| self.builtins.property(k, "description"))
-                        .and_then(|f| f(value.clone()).ok())
+                    kind.and_then(|k| {
+                        self.builtins.property(k, "description").and_then(|t| {
+                            self.module_symbol_visible(t.module)
+                                .then_some(t.value)
+                                .and_then(|f| f(value.clone()).ok())
+                        })
+                    })
                 } else {
                     user_desc
                 }
@@ -310,8 +315,13 @@ impl<'w> Interpreter<'w> {
                 // (`ClassName(field: value, …)`).
                 if user_desc.is_none() && self.types.class_def(&cn).is_none() {
                     let kind = crate::stdlib::BuiltinReceiver::of(value);
-                    kind.and_then(|k| self.builtins.property(k, "description"))
-                        .and_then(|f| f(value.clone()).ok())
+                    kind.and_then(|k| {
+                        self.builtins.property(k, "description").and_then(|t| {
+                            self.module_symbol_visible(t.module)
+                                .then_some(t.value)
+                                .and_then(|f| f(value.clone()).ok())
+                        })
+                    })
                 } else {
                     user_desc
                 }

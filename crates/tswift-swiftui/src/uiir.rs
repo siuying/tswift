@@ -464,7 +464,7 @@ mod tests {
     /// Prepend the `PRELUDE`, analyze + run `src`, and hand the ready
     /// interpreter to `f`. The single scaffolding all the golden helpers share.
     fn with_interp<R>(src: &str, f: impl FnOnce(&mut Interpreter) -> R) -> R {
-        let src = format!("{PRELUDE}\n{src}\n");
+        let src = format!("import SwiftUI\n{PRELUDE}\n{src}\n");
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();

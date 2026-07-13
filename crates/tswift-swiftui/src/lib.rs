@@ -1345,7 +1345,7 @@ struct Loop: View {
     var body: some View { Loop() }
 }
 "#;
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
@@ -1736,7 +1736,7 @@ struct V: View {
     /// Render `root_type`'s `body` from `src` for assertions, with the token
     /// prelude prepended (as the render CLI will do).
     fn render_to_string(src: &str, root_type: &str) -> SwiftValue {
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
@@ -1748,7 +1748,7 @@ struct V: View {
 
     /// Render `root_type` expecting a failure, returning the error message.
     fn render_err(src: &str, root_type: &str) -> String {
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();

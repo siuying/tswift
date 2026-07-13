@@ -44,7 +44,13 @@ impl<'w> Interpreter<'w> {
         base_place: Option<Place>,
     ) -> Option<Eval> {
         let kind = BuiltinReceiver::of(&recv_value)?;
-        let entry = self.builtins.labeled_intrinsic(kind, method)?;
+        let (entry, module) = self
+            .builtins
+            .labeled_intrinsic(kind, method)
+            .map(|t| (t.value, t.module))?;
+        if !self.module_symbol_visible(module) {
+            return None;
+        }
         let outcome = (entry.func)(self, recv_value, args);
         match outcome {
             Ok(Some(outcome)) => {
@@ -497,10 +503,17 @@ impl<'w> Interpreter<'w> {
                     if self.is_user_nominal_type(&name) {
                         None
                     } else {
-                        self.globals
-                            .free_fn(&name)
-                            .and_then(|e| e.params.as_ref())
-                            .map(|p| clone_params(p))
+                        let (module, params) = match self.globals.free_fn(&name) {
+                            Some(e) => (
+                                Some(e.module),
+                                e.params.as_ref().map(|p| clone_params(p.as_slice())),
+                            ),
+                            None => (None, None),
+                        };
+                        match (module, params) {
+                            (Some(m), Some(p)) if self.module_symbol_visible(m) => Some(p),
+                            _ => None,
+                        }
                     }
                 }
             })
@@ -514,6 +527,35 @@ impl<'w> Interpreter<'w> {
             if let Some(name) = callee.text() {
                 if matches!(self.env.get(&name), Some(SwiftValue::Nil)) {
                     return Ok(SwiftValue::Nil);
+                }
+            }
+        }
+        // Strict import-gate framework free-fns / natives / host-fns / builtin
+        // ctors *before* argument evaluation so a gated callee yields the clear
+        // import-hint diagnostic rather than a secondary arg-resolution error
+        // (e.g. `.plain (unresolved type)`).
+        //
+        // Exception: when a core `builtin_ctors` entry shares the name (e.g.
+        // `String(...)` conversion ctor + Foundation's `String(data:encoding:)`
+        // free_fn), defer free_fn gating to the post-eval ladder so the stdlib
+        // ctor can still accept the args first.
+        if callee.kind() == NodeKind::IdentExpr {
+            if let Some(name) = callee.text() {
+                if self.env.get(&name).is_none() && !self.is_user_nominal_type(&name) {
+                    let has_builtin_ctor = self.builtin_ctors.ctor(&name).is_some();
+                    if let Some(e) = self.globals.free_fn(&name) {
+                        if !has_builtin_ctor {
+                            self.gate_module_symbol(&name, e.module)?;
+                        }
+                    } else if let Some(t) = self.globals.native(&name) {
+                        self.gate_module_symbol(&name, t.module)?;
+                    } else if let Some(module) = self.host_fn_modules.get(&name).copied() {
+                        self.gate_module_symbol(&name, module)?;
+                    } else if has_builtin_ctor {
+                        if let Some(module) = super::builtin_ctor_module(&name) {
+                            self.gate_module_symbol(&name, module)?;
+                        }
+                    }
                 }
             }
         }
@@ -557,12 +599,15 @@ impl<'w> Interpreter<'w> {
             }
             // `EnumType(rawValue:)` — failable lookup of the case with that raw
             // value, returning the case or `nil` (RawRepresentable synthesis).
+            // Framework enums require their module (same central gate as other
+            // type-name seams).
             if self.types.is_enum(&name) {
                 if let Some(raw) = args
                     .iter()
                     .find(|a| a.label.as_deref() == Some("rawValue"))
                     .map(|a| a.value.clone())
                 {
+                    self.gate_type_name(&name)?;
                     let case = self
                         .types
                         .enum_def(&name)
@@ -680,6 +725,11 @@ impl<'w> Interpreter<'w> {
             // through to the rest of the ladder.
             if self.is_unshadowed(&name) {
                 if let Some(ctor) = self.builtin_ctors.ctor(&name) {
+                    // Framework-owned builtin ctors (JSONEncoder/JSONDecoder/
+                    // PropertyListEncoder) require their module import.
+                    if let Some(module) = super::builtin_ctor_module(&name) {
+                        self.gate_module_symbol(&name, module)?;
+                    }
                     if let Some(v) = ctor(self, &name, &args)? {
                         return Ok(v);
                     }
@@ -692,13 +742,17 @@ impl<'w> Interpreter<'w> {
             // user-type/binding dispatch and gated by the shadow check so a
             // same-named user type or binding wins (Swift shadowing).
             if self.is_unshadowed(&name) && self.is_host_fn(&name) {
+                if let Some(module) = self.host_fn_modules.get(&name).copied() {
+                    self.gate_module_symbol(&name, module)?;
+                }
                 let host_args: Vec<(Option<String>, SwiftValue)> =
                     args.into_iter().map(|a| (a.label, a.value)).collect();
                 return self.call_host_fn(&name, &host_args);
             }
 
             // Free-function intrinsic served through the StdContext seam.
-            if let Some(free) = self.globals.free_fn(&name).map(|e| e.f) {
+            if let Some((free, module)) = self.globals.free_fn(&name).map(|e| (e.f, e.module)) {
+                self.gate_module_symbol(&name, module)?;
                 // Attach each argument's statically inferred type spelling so
                 // `print`/`debugPrint` can render optionals as Swift does. Only
                 // valid when args line up 1:1 with the syntactic arg nodes (no
@@ -719,7 +773,9 @@ impl<'w> Interpreter<'w> {
                     .collect();
                 return free(self, labeled).map_err(Self::std_error_to_signal);
             }
-            if let Some(native) = self.globals.native(&name) {
+            if let Some((native, module)) = self.globals.native(&name).map(|t| (t.value, t.module))
+            {
+                self.gate_module_symbol(&name, module)?;
                 let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
                 return Ok(native(self.out, &plain));
             }
@@ -945,15 +1001,21 @@ impl<'w> Interpreter<'w> {
                             value: after_arg.value.clone(),
                             static_ty: None,
                         }];
-                        if let Some(entry) = self.builtins.labeled_intrinsic(kind, "index") {
-                            let outcome = (entry.func)(self, base_value.clone(), index_args);
-                            match outcome {
-                                Ok(Some(o)) => {
-                                    self.write_place(&idx_place, o.result)?;
-                                    return Ok(Some(SwiftValue::Void));
+                        if let Some((entry, module)) = self
+                            .builtins
+                            .labeled_intrinsic(kind, "index")
+                            .map(|t| (t.value, t.module))
+                        {
+                            if self.module_symbol_visible(module) {
+                                let outcome = (entry.func)(self, base_value.clone(), index_args);
+                                match outcome {
+                                    Ok(Some(o)) => {
+                                        self.write_place(&idx_place, o.result)?;
+                                        return Ok(Some(SwiftValue::Void));
+                                    }
+                                    Ok(None) => {} // fall through
+                                    Err(e) => return Err(Self::std_error_to_signal(e)),
                                 }
-                                Ok(None) => {} // fall through
-                                Err(e) => return Err(Self::std_error_to_signal(e)),
                             }
                         }
                     }
@@ -985,72 +1047,80 @@ impl<'w> Interpreter<'w> {
         // Standard-library intrinsic registry (layer 1): type-specific members
         // such as `Array.append`. Consulted before the ad-hoc algorithm paths.
         if let Some(kind) = BuiltinReceiver::of(base_value) {
-            if let Some(entry) = self.builtins.intrinsic(kind, method) {
-                let args = match evaluated_args.take() {
-                    Some(args) => args,
-                    None => self.eval_args(arg_nodes)?,
-                };
-                // `IndexPath`/`IndexSet` intrinsics take positional arguments.
-                // Exceptions: a handful of IndexSet methods are label-sensitive.
-                if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
-                    let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
-                    // Methods that carry specific argument labels:
-                    let is_intersects = kind == BuiltinReceiver::IndexSet && method == "intersects";
-                    let is_shift = kind == BuiltinReceiver::IndexSet && method == "shift";
-                    let is_filtered =
-                        kind == BuiltinReceiver::IndexSet && method == "filteredIndexSet";
-                    let labels_valid = args.iter().enumerate().all(|(i, arg)| {
-                        match arg.label.as_deref() {
-                            Some("with") => is_update,
-                            Some("integersIn") => is_intersects,
-                            Some("startingAt") => is_shift && i == 0,
-                            Some("by") => is_shift && i == 1,
-                            Some("includeInteger") => is_filtered,
-                            Some(_) => false,
-                            // Trailing-closure syntax passes filteredIndexSet's
-                            // closure without a label; allow unlabeled for it.
-                            None => !is_update && !is_intersects && !is_shift,
+            if let Some((entry, module)) = self
+                .builtins
+                .intrinsic(kind, method)
+                .map(|t| (t.value, t.module))
+            {
+                if self.module_symbol_visible(module) {
+                    let args = match evaluated_args.take() {
+                        Some(args) => args,
+                        None => self.eval_args(arg_nodes)?,
+                    };
+                    // `IndexPath`/`IndexSet` intrinsics take positional arguments.
+                    // Exceptions: a handful of IndexSet methods are label-sensitive.
+                    if matches!(kind, BuiltinReceiver::IndexPath | BuiltinReceiver::IndexSet) {
+                        let is_update = kind == BuiltinReceiver::IndexSet && method == "update";
+                        // Methods that carry specific argument labels:
+                        let is_intersects =
+                            kind == BuiltinReceiver::IndexSet && method == "intersects";
+                        let is_shift = kind == BuiltinReceiver::IndexSet && method == "shift";
+                        let is_filtered =
+                            kind == BuiltinReceiver::IndexSet && method == "filteredIndexSet";
+                        let labels_valid = args.iter().enumerate().all(|(i, arg)| {
+                            match arg.label.as_deref() {
+                                Some("with") => is_update,
+                                Some("integersIn") => is_intersects,
+                                Some("startingAt") => is_shift && i == 0,
+                                Some("by") => is_shift && i == 1,
+                                Some("includeInteger") => is_filtered,
+                                Some(_) => false,
+                                // Trailing-closure syntax passes filteredIndexSet's
+                                // closure without a label; allow unlabeled for it.
+                                None => !is_update && !is_intersects && !is_shift,
+                            }
+                        });
+                        if !labels_valid {
+                            return Err(EvalError::Type(format!(
+                                "{}.{} called with unexpected argument label(s)",
+                                kind.type_name(),
+                                method
+                            ))
+                            .into());
                         }
-                    });
-                    if !labels_valid {
-                        return Err(EvalError::Type(format!(
-                            "{}.{} called with unexpected argument label(s)",
-                            kind.type_name(),
-                            method
-                        ))
-                        .into());
                     }
+                    let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                    let place = self.resolve_place(base);
+                    return match (entry.func)(self, base_value.clone(), plain) {
+                        Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                        Err(err) => Err(Self::std_error_to_signal(err)),
+                    }
+                    .map(Some);
                 }
-                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
-                let place = self.resolve_place(base);
-                return match (entry.func)(self, base_value.clone(), plain) {
-                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
-                    Err(err) => Err(Self::std_error_to_signal(err)),
-                }
-                .map(Some);
             }
         }
 
         // Standard-library algorithm layer (layer 2): `Sequence`/`Collection`
         // methods (`map`/`filter`/`sorted`/…) over any builtin sequence.
-        if self.globals.has_algorithm(method) {
-            let items = if let Some(items) = materialize_sequence(base_value) {
-                Some(items)
-            } else if self.is_custom_sequence(base_value) {
-                Some(self.materialize_custom_sequence(base_value.clone())?)
-            } else {
-                None
-            };
-            if let Some(items) = items {
-                let func = self.globals.algorithm(method).unwrap();
-                let labeled: Vec<Arg> = self
-                    .eval_args(arg_nodes)?
-                    .into_iter()
-                    .map(Arg::from)
-                    .collect();
-                return func(self, items, labeled)
-                    .map(Some)
-                    .map_err(Self::std_error_to_signal);
+        if let Some((func, module)) = self.globals.algorithm(method).map(|t| (t.value, t.module)) {
+            if self.module_symbol_visible(module) {
+                let items = if let Some(items) = materialize_sequence(base_value) {
+                    Some(items)
+                } else if self.is_custom_sequence(base_value) {
+                    Some(self.materialize_custom_sequence(base_value.clone())?)
+                } else {
+                    None
+                };
+                if let Some(items) = items {
+                    let labeled: Vec<Arg> = self
+                        .eval_args(arg_nodes)?
+                        .into_iter()
+                        .map(Arg::from)
+                        .collect();
+                    return func(self, items, labeled)
+                        .map(Some)
+                        .map_err(Self::std_error_to_signal);
+                }
             }
         }
 
@@ -1088,7 +1158,12 @@ impl<'w> Interpreter<'w> {
         let user_defined = reference.user_defined;
         if !user_defined {
             if let Some(recv) = BuiltinReceiver::from_type_name(&tn) {
-                if let Some(func) = self.builtins.static_method(recv, method) {
+                if let Some((func, module)) = self
+                    .builtins
+                    .static_method(recv, method)
+                    .map(|t| (t.value, t.module))
+                {
+                    self.gate_module_symbol(method, module)?;
                     let labeled: Vec<Arg> = self
                         .eval_args(arg_nodes)?
                         .into_iter()
@@ -1118,7 +1193,10 @@ impl<'w> Interpreter<'w> {
                 return self.instantiate_struct(method, &simple).map(Some);
             }
         }
+        // Framework builtin enum case with associated values: `Type.case(...)`.
+        // Gate by the enum type's owning module before constructing.
         if self.enum_has_case(&tn, method) {
+            self.gate_type_name(&tn)?;
             let args = self.eval_args(arg_nodes)?;
             let payload = args.into_iter().map(|a| a.value).collect();
             return Ok(Some(self.make_enum_case(&tn, method, payload)?.unwrap()));
@@ -1159,6 +1237,10 @@ impl<'w> Interpreter<'w> {
                 let args = self.eval_args(arg_nodes)?;
                 let payload = args.into_iter().map(|a| a.value).collect();
                 return Ok(self.make_enum_case(&tn, &method, payload)?.unwrap());
+            }
+            // Contextual framework enum is gated out → clear import-hint.
+            if let Some(err) = self.gated_contextual_enum_error(member, &method) {
+                return Err(err.into());
             }
             // Implicit member static method: `.custom(x)` where the contextual
             // type declares `static func custom`.
@@ -1288,22 +1370,28 @@ impl<'w> Interpreter<'w> {
         // optional-chained call already unwraps and dispatches to the wrapped
         // type.
         if method == "take" && !member.is_optional_chain() && self.receiver_is_optional(&base) {
-            if let Some(entry) = self.builtins.intrinsic(BuiltinReceiver::Optional, "take") {
-                // `take()` takes no arguments; reject `take(x)` (matches Swift's
-                // arity) rather than silently ignoring the extra argument.
-                if !arg_nodes.is_empty() {
-                    return Err(EvalError::Type(
-                        "argument passed to call that takes no arguments".into(),
-                    )
-                    .into());
+            if let Some((entry, module)) = self
+                .builtins
+                .intrinsic(BuiltinReceiver::Optional, "take")
+                .map(|t| (t.value, t.module))
+            {
+                if self.module_symbol_visible(module) {
+                    // `take()` takes no arguments; reject `take(x)` (matches Swift's
+                    // arity) rather than silently ignoring the extra argument.
+                    if !arg_nodes.is_empty() {
+                        return Err(EvalError::Type(
+                            "argument passed to call that takes no arguments".into(),
+                        )
+                        .into());
+                    }
+                    let args = self.eval_args(arg_nodes)?;
+                    let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
+                    let place = self.resolve_place(&base);
+                    return match (entry.func)(self, base_value.clone(), plain) {
+                        Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
+                        Err(err) => Err(Self::std_error_to_signal(err)),
+                    };
                 }
-                let args = self.eval_args(arg_nodes)?;
-                let plain: Vec<SwiftValue> = args.into_iter().map(|a| a.value).collect();
-                let place = self.resolve_place(&base);
-                return match (entry.func)(self, base_value.clone(), plain) {
-                    Ok(outcome) => self.apply_method_outcome(outcome, entry.mutating, place),
-                    Err(err) => Err(Self::std_error_to_signal(err)),
-                };
             }
         }
 
@@ -1476,9 +1564,12 @@ impl<'w> Interpreter<'w> {
         // Snapshot handler + params before any &mut self call (candidate
         // borrow must not overlap eval_args / call_struct_method).
         let (selected_f, selected_params) = {
-            let entry = self
-                .globals
-                .struct_method(method, receiver_module, &self.imported_modules);
+            let entry = self.globals.struct_method(
+                method,
+                receiver_module,
+                &self.imported_modules,
+                self.strict_imports,
+            );
             (
                 entry.map(|e| e.f),
                 entry
@@ -1486,13 +1577,24 @@ impl<'w> Interpreter<'w> {
                     .map(|p| clone_params(p)),
             )
         };
+        let has_user_method = type_name
+            .as_ref()
+            .is_some_and(|tn| self.type_has_method(tn, method));
+        // Receiver owns a gated-out framework method → import-hint diagnostic
+        // *before* argument evaluation so side effects / secondary generic
+        // errors cannot fire under an unimported module.
+        if matches!(base_value, SwiftValue::Struct(_)) && selected_f.is_none() && !has_user_method {
+            if let Some(err) = self.gated_struct_method_error(method, receiver_module) {
+                return Err(err.into());
+            }
+        }
         let method_params = type_name
             .as_ref()
             .and_then(|tn| self.user_method_params(tn, method))
             .or(selected_params);
         let args = self.eval_args_with(arg_nodes, method_params.as_deref())?;
-        if let Some(type_name) = type_name {
-            if self.type_has_method(&type_name, method) {
+        if has_user_method {
+            if let Some(type_name) = type_name {
                 let place = self.resolve_place(base);
                 return self
                     .call_struct_method(base_value, &type_name, method, args, place)

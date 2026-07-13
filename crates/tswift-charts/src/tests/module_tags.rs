@@ -13,6 +13,9 @@ fn install_scopes_stamp_type_and_struct_method_modules() {
     tswift_std::install(&mut interp);
     tswift_swiftui::install(&mut interp);
     crate::install(&mut interp);
+    // Query APIs honor strict gating; seed imports as if the program imported both.
+    interp.mark_module_imported("SwiftUI");
+    interp.mark_module_imported("Charts");
 
     assert_eq!(interp.type_module("Text"), Some("SwiftUI"));
     assert_eq!(interp.type_module("BarMark"), Some("Charts"));
@@ -223,7 +226,7 @@ fn user_struct_fallback_resolves_shared_modifier() {
 fn charts_only_install_resolves_own_foreground_style() {
     // Capture print so we can prove the method call actually executed.
     let program = format!(
-        "{PRELUDE}\n\
+        "import Charts\n{PRELUDE}\n\
          let mark = BarMark(\n\
              x: .value(\"N\", \"A\"),\n\
              y: .value(\"V\", 1)\n\
@@ -245,6 +248,9 @@ fn charts_only_install_resolves_own_foreground_style() {
         fg_mods.contains(&"Charts") && !fg_mods.contains(&"SwiftUI"),
         "expected Charts-only foregroundStyle, got {fg_mods:?}"
     );
+    // Query APIs honor strict gating; seed import before pre-run checks
+    // (hoist will re-record the same module from the source import).
+    interp.mark_module_imported("Charts");
     assert_eq!(
         interp.struct_method_module_for("foregroundStyle", "BarMark"),
         Some("Charts")
@@ -281,7 +287,7 @@ fn install_std_charts_swiftui(interp: &mut Interpreter<'_>) {
 
 fn run_uiir_json(install_fn: fn(&mut Interpreter<'_>), user: &str) -> String {
     let program = format!(
-        "{SWIFTUI_PRELUDE}\n{}\n{PRELUDE}\n{user}\n",
+        "import SwiftUI\nimport Charts\n{SWIFTUI_PRELUDE}\n{}\n{PRELUDE}\n{user}\n",
         tswift_swiftdata::QUERY_PRELUDE,
     );
     let analysis =

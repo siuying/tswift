@@ -253,6 +253,7 @@ mod tests {
     fn compiles_and_renders_a_counter() {
         let json = swiftui_compile(
             r#"
+import SwiftUI
 struct CounterView: View {
     @State private var count = 0
     var body: some View {
@@ -274,6 +275,7 @@ struct CounterView: View {
     fn dispatch_taps_a_button_and_returns_a_patch_stream() {
         swiftui_compile(
             r#"
+import SwiftUI
 struct CounterView: View {
     @State private var count = 0
     var body: some View {

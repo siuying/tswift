@@ -373,7 +373,7 @@ mod tests {
 
     fn counter_session_json() -> String {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct CounterView: View {
     @State var count = 0
@@ -427,7 +427,7 @@ struct CounterView: View {
             .collect::<Vec<_>>()
             .join(", ");
         let src = format!(
-            "{PRELUDE}\nstruct V: View {{ var body: some View {{ \
+            "import SwiftUI\n{PRELUDE}\nstruct V: View {{ var body: some View {{ \
              ForEach([{literal}], id: \\.self) {{ name in Text(name) }} }} }}\n"
         );
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
@@ -494,7 +494,7 @@ struct CounterView: View {
             .collect::<Vec<_>>()
             .join(", ");
         let src = format!(
-            "{PRELUDE}\nstruct V: View {{ var body: some View {{ \
+            "import SwiftUI\n{PRELUDE}\nstruct V: View {{ var body: some View {{ \
              List([{literal}], id: \\.self) {{ name in Text(name) }} }} }}\n"
         );
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");

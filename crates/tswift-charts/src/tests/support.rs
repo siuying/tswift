@@ -13,8 +13,10 @@ use crate::{install, PRELUDE};
 /// SwiftUI PRELUDE + SwiftData QUERY_PRELUDE + Charts PRELUDE + user source.
 /// Do not invent a different composition here — hosts must stay in lockstep.
 pub(super) fn host_program(user: &str) -> String {
+    // Test harness prepends imports so strict import-gating resolves framework
+    // symbols. Hosts do NOT auto-import — user program files must import themselves.
     format!(
-        "{SWIFTUI_PRELUDE}\n{}\n{PRELUDE}\n{user}\n",
+        "import SwiftUI\nimport Charts\n{SWIFTUI_PRELUDE}\n{}\n{PRELUDE}\n{user}\n",
         tswift_swiftdata::QUERY_PRELUDE,
     )
 }
