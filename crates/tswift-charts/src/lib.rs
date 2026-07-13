@@ -83,6 +83,15 @@ struct StrokeStyle {
     let lineWidth: Double
     init(lineWidth: Double = 1.0) { self.lineWidth = lineWidth }
 }
+// Axis / legend visibility token (`.chartXAxis(.hidden)`, `.chartLegend(.visible)`).
+// Real SwiftUI `Visibility` lives in SwiftUICore; Charts reuses it. v1 is a
+// Charts-local token so leading-dot resolves under chart-modifier type hints.
+struct Visibility {
+    let token: String
+    static let automatic = Visibility(token: "automatic")
+    static let visible = Visibility(token: "visible")
+    static let hidden = Visibility(token: "hidden")
+}
 "#;
 
 /// PlottableValue-typed x/y params shared by Bar/Line/Point/Area marks.
@@ -138,13 +147,20 @@ pub fn install(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("angularInset", "CGFloat"),
         ],
     );
+    // Axis-content leaves used inside `.chartXAxis { … }` / `.chartYAxis { … }`.
+    // Produce view_value nodes so `collect_children` captures them as children
+    // of the chart-axis modifier (and of AxisMarks when nested in its builder).
+    interp.register_free_fn("AxisMarks", axis_marks_init);
+    interp.register_free_fn("AxisGridLine", axis_grid_line_init);
+    interp.register_free_fn("AxisTick", axis_tick_init);
+    interp.register_free_fn("AxisValueLabel", axis_value_label_init);
     // Also expose `PlottableValue.value` as a Rust static intrinsic so
     // `PlottableValue.value(...)` (qualified) works without the prelude and
     // so coverage sees a live registry key. Leading-dot still needs PRELUDE
     // (resolve_implicit_static_method only sees user-declared statics).
     let plottable = BuiltinReceiver::register_extension("PlottableValue");
     interp.register_static(plottable, "value", plottable_value_static);
-    // ChartContent mark modifiers (any mark view value; COW `_modifiers` append).
+    // ChartContent mark modifiers + Chart-level View modifiers.
     modifiers::install(interp);
 }
 
@@ -223,6 +239,94 @@ fn sector_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     )
 }
 
+// ── Axis content ────────────────────────────────────────────────────────────
+
+/// `AxisMarks(...)` / `AxisMarks { … }` / `AxisMarks(values:) { … }` —
+/// axis-content view. Labeled args (`values`, `preset`, `position`, …) become
+/// fields; trailing `@AxisMarkBuilder` content becomes `_children`.
+fn axis_marks_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("values") | Some("preset") | Some("position") | Some("stroke")
+            | Some("format") => {
+                fields.push((arg.label.expect("label checked"), arg.value));
+            }
+            Some("content") => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            None => content_args.push(arg),
+            Some(other) => fields.push((other.into(), arg.value)),
+        }
+    }
+    if !content_args.is_empty() {
+        let children = collect_children(ctx, content_args)?;
+        if !children.is_empty() {
+            fields.push((
+                tswift_swiftui::CHILDREN_FIELD.into(),
+                SwiftValue::Array(Rc::new(children)),
+            ));
+        }
+    }
+    Ok(view_value("AxisMarks", fields))
+}
+
+/// `AxisGridLine()` — axis-content leaf (grid lines).
+fn axis_grid_line_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    mark_leaf_all_labeled("AxisGridLine", args)
+}
+
+/// `AxisTick()` — axis-content leaf (tick marks).
+fn axis_tick_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    mark_leaf_all_labeled("AxisTick", args)
+}
+
+/// `AxisValueLabel()` / `AxisValueLabel("title")` / `AxisValueLabel { Text… }` —
+/// axis-content leaf. String title stays a field; trailing `@ViewBuilder`
+/// content is child-collected into `_children` (never a raw Closure).
+fn axis_value_label_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut fields = Vec::new();
+    let mut content_args: Vec<Arg> = Vec::new();
+    let mut positional = 0usize;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("content") => content_args.push(Arg {
+                label: None,
+                value: arg.value,
+                static_ty: None,
+            }),
+            Some(other) => fields.push((other.into(), arg.value)),
+            None => match &arg.value {
+                // Trailing `@ViewBuilder` form: `AxisValueLabel { Text("x") }`.
+                SwiftValue::Closure(_) => content_args.push(arg),
+                // String (or other scalar) title form: `AxisValueLabel("title")`.
+                _ => {
+                    let key = if positional == 0 {
+                        "title".into()
+                    } else {
+                        format!("value{positional}")
+                    };
+                    positional += 1;
+                    fields.push((key, arg.value));
+                }
+            },
+        }
+    }
+    if !content_args.is_empty() {
+        let children = collect_children(ctx, content_args)?;
+        if !children.is_empty() {
+            fields.push((
+                tswift_swiftui::CHILDREN_FIELD.into(),
+                SwiftValue::Array(Rc::new(children)),
+            ));
+        }
+    }
+    Ok(view_value("AxisValueLabel", fields))
+}
+
 /// `PlottableValue.value(_ label:, _ value:)` — Rust intrinsic fallback used
 /// for qualified `PlottableValue.value(...)` calls and coverage registration.
 fn plottable_value_static(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
@@ -255,9 +359,14 @@ fn plottable_value_static(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResul
     })))
 }
 
-/// Free-fn mark / container names that become `Type.init` coverage keys.
-const MARK_INIT_NAMES: &[&str] = &[
+/// Free-fn mark / container / axis-content names that become `Type.init`
+/// coverage keys.
+const INIT_NAMES: &[&str] = &[
     "AreaMark",
+    "AxisGridLine",
+    "AxisMarks",
+    "AxisTick",
+    "AxisValueLabel",
     "BarMark",
     "Chart",
     "LineMark",
@@ -277,7 +386,7 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| {
-            if MARK_INIT_NAMES.contains(&key.as_str()) {
+            if INIT_NAMES.contains(&key.as_str()) {
                 Some(format!("{key}.init"))
             } else if key == "PlottableValue.value" {
                 Some(key)
@@ -298,6 +407,13 @@ pub fn registered_keys() -> Vec<String> {
         modifiers::MARK_MODIFIER_FNS
             .iter()
             .map(|(m, _)| format!("ChartContent.{m}")),
+    );
+    // Chart-level modifiers are members of `View` in the Charts inventory
+    // (Charts extends SwiftUICore.View).
+    keys.extend(
+        modifiers::CHART_MODIFIER_FNS
+            .iter()
+            .map(|(m, _)| format!("View.{m}")),
     );
     keys.sort();
     keys.dedup();
@@ -358,6 +474,10 @@ mod tests {
         let keys = registered_keys();
         for expected in [
             "AreaMark.init",
+            "AxisGridLine.init",
+            "AxisMarks.init",
+            "AxisTick.init",
+            "AxisValueLabel.init",
             "BarMark.init",
             "Chart.init",
             "ChartContent.annotation",
@@ -376,6 +496,16 @@ mod tests {
             "RectangleMark.init",
             "RuleMark.init",
             "SectorMark.init",
+            "View.chartForegroundStyleScale",
+            "View.chartLegend",
+            "View.chartPlotStyle",
+            "View.chartXAxis",
+            "View.chartXAxisLabel",
+            "View.chartXScale",
+            "View.chartXSelection",
+            "View.chartYAxis",
+            "View.chartYAxisLabel",
+            "View.chartYScale",
         ] {
             assert!(
                 keys.iter().any(|k| k == expected),
@@ -887,6 +1017,470 @@ struct Demo: View {
             assert_eq!(by.get("label"), Some(&SwiftValue::Str("Group".into())));
             assert_eq!(by.get("value"), Some(&SwiftValue::Str("g1".into())));
             assert_has_modifier(&mark, "position");
+        });
+    }
+
+    // ── Slice 4: chart-level modifiers → `_Modifier` on Chart ───────────────
+
+    /// First `_Modifier` on a chart/view with the given `name`, or panic.
+    fn chart_modifier<'a>(chart: &'a StructObj, name: &str) -> &'a StructObj {
+        mark_modifier(chart, name)
+    }
+
+    #[test]
+    fn chart_x_axis_builder_captures_axis_marks() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxis {
+            AxisMarks()
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            assert_eq!(view_type_name(&view), Some("Chart"));
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartXAxis");
+            // Builder content → AxisMarks child on the modifier `value`.
+            let Some(content) = mod_.get("value") else {
+                panic!("chartXAxis missing AxisMarks child: {:?}", mod_);
+            };
+            assert_eq!(view_type_name(content), Some("AxisMarks"));
+        });
+    }
+
+    #[test]
+    fn chart_y_axis_builder_and_hidden_visibility() {
+        let src = r#"
+struct DemoBuilder: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartYAxis {
+            AxisMarks {
+                AxisGridLine()
+                AxisTick()
+                AxisValueLabel()
+            }
+        }
+    }
+}
+struct DemoHidden: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "DemoBuilder").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartYAxis");
+            let Some(content) = mod_.get("value") else {
+                panic!("chartYAxis missing content: {:?}", mod_);
+            };
+            assert_eq!(view_type_name(content), Some("AxisMarks"));
+            // Nested AxisMarkBuilder children on AxisMarks.
+            let SwiftValue::Struct(marks) = content else {
+                panic!("AxisMarks");
+            };
+            let Some(SwiftValue::Array(kids)) = marks.get(CHILDREN_FIELD) else {
+                panic!("AxisMarks children: {:?}", marks);
+            };
+            assert_eq!(kids.len(), 3, "grid/tick/label");
+            assert_eq!(view_type_name(&kids[0]), Some("AxisGridLine"));
+            assert_eq!(view_type_name(&kids[1]), Some("AxisTick"));
+            assert_eq!(view_type_name(&kids[2]), Some("AxisValueLabel"));
+
+            let hidden = render_root(interp, "DemoHidden").expect("render");
+            let SwiftValue::Struct(chart_h) = &hidden else {
+                panic!("Chart");
+            };
+            let x = chart_modifier(chart_h, "chartXAxis");
+            let Some(SwiftValue::Struct(vis)) = x.get("value") else {
+                panic!("chartXAxis(.hidden) value {:?}", x);
+            };
+            assert_eq!(vis.type_name, "Visibility");
+            assert_eq!(vis.get("token"), Some(&SwiftValue::Str("hidden".into())));
+            let y = chart_modifier(chart_h, "chartYAxis");
+            let Some(SwiftValue::Struct(vis_y)) = y.get("value") else {
+                panic!("chartYAxis(.hidden)");
+            };
+            assert_eq!(vis_y.get("token"), Some(&SwiftValue::Str("hidden".into())));
+        });
+    }
+
+    #[test]
+    fn chart_axis_labels() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxisLabel("Category")
+        .chartYAxisLabel("Count")
+    }
+}
+struct DemoBuilder: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxisLabel {
+            Text("x")
+        }
+        .chartYAxisLabel {
+            Text("y")
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let x = chart_modifier(chart, "chartXAxisLabel");
+            assert_eq!(x.get("value"), Some(&SwiftValue::Str("Category".into())));
+            let y = chart_modifier(chart, "chartYAxisLabel");
+            assert_eq!(y.get("value"), Some(&SwiftValue::Str("Count".into())));
+
+            // Builder forms collect Text children — never a raw Closure.
+            let b = render_root(interp, "DemoBuilder").expect("render");
+            let SwiftValue::Struct(chart_b) = &b else {
+                panic!("Chart");
+            };
+            let xb = chart_modifier(chart_b, "chartXAxisLabel");
+            let Some(x_content) = xb.get("value") else {
+                panic!("chartXAxisLabel builder missing value: {:?}", xb);
+            };
+            assert!(
+                !matches!(x_content, SwiftValue::Closure(_)),
+                "builder must not store raw Closure: {:?}",
+                x_content
+            );
+            assert_eq!(view_type_name(x_content), Some("Text"));
+            let yb = chart_modifier(chart_b, "chartYAxisLabel");
+            let Some(y_content) = yb.get("value") else {
+                panic!("chartYAxisLabel builder missing value: {:?}", yb);
+            };
+            assert!(
+                !matches!(y_content, SwiftValue::Closure(_)),
+                "builder must not store raw Closure: {:?}",
+                y_content
+            );
+            assert_eq!(view_type_name(y_content), Some("Text"));
+        });
+    }
+
+    #[test]
+    fn chart_y_scale_domain() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartYScale(domain: 0...100)
+        .chartXScale(domain: ["A", "B", "C"])
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let y = chart_modifier(chart, "chartYScale");
+            let Some(domain) = y.get("domain") else {
+                panic!("chartYScale missing domain: {:?}", y);
+            };
+            match domain {
+                SwiftValue::Range { lo, hi, inclusive } => {
+                    assert_eq!(*lo, 0);
+                    assert_eq!(*hi, 100);
+                    assert!(*inclusive);
+                }
+                other => panic!("expected domain range, got {:?}", other),
+            }
+            let x = chart_modifier(chart, "chartXScale");
+            let Some(SwiftValue::Array(domain)) = x.get("domain") else {
+                panic!("chartXScale domain {:?}", x);
+            };
+            assert_eq!(domain.len(), 3);
+            assert_eq!(domain[0], SwiftValue::Str("A".into()));
+        });
+    }
+
+    #[test]
+    fn chart_foreground_style_scale_mapping() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .foregroundStyle(by: .value("Type", "A"))
+        }
+        .chartForegroundStyleScale(["A": Color.red, "B": Color.blue])
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartForegroundStyleScale");
+            // Dictionary / KeyValuePairs stored generically as unlabeled value.
+            assert!(
+                mod_.get("value").is_some() || mod_.fields.iter().any(|(k, _)| k != "name"),
+                "chartForegroundStyleScale should store mapping: {:?}",
+                mod_
+            );
+            // Prefer `value` (positional dict).
+            if let Some(v) = mod_.get("value") {
+                match v {
+                    SwiftValue::Dict(_) | SwiftValue::Array(_) | SwiftValue::Struct(_) => {}
+                    other => panic!("unexpected mapping shape {:?}", other),
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn chart_legend_visibility_and_position() {
+        let src = r#"
+struct DemoHidden: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartLegend(.hidden)
+    }
+}
+struct DemoPos: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartLegend(position: .top)
+    }
+}
+struct DemoBuilder: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartLegend {
+            Text("Legend")
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let h = render_root(interp, "DemoHidden").expect("render");
+            let SwiftValue::Struct(chart) = &h else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartLegend");
+            let Some(SwiftValue::Struct(vis)) = mod_.get("value") else {
+                panic!("chartLegend(.hidden) {:?}", mod_);
+            };
+            assert_eq!(vis.type_name, "Visibility");
+            assert_eq!(vis.get("token"), Some(&SwiftValue::Str("hidden".into())));
+
+            let p = render_root(interp, "DemoPos").expect("render");
+            let SwiftValue::Struct(chart_p) = &p else {
+                panic!("Chart");
+            };
+            let mod_p = chart_modifier(chart_p, "chartLegend");
+            let Some(SwiftValue::Struct(pos)) = mod_p.get("position") else {
+                panic!("chartLegend(position:) {:?}", mod_p);
+            };
+            assert_eq!(pos.type_name, "AnnotationPosition");
+            assert_eq!(pos.get("token"), Some(&SwiftValue::Str("top".into())));
+
+            // Builder form collects Text child — not a raw Closure.
+            let b = render_root(interp, "DemoBuilder").expect("render");
+            let SwiftValue::Struct(chart_b) = &b else {
+                panic!("Chart");
+            };
+            let mod_b = chart_modifier(chart_b, "chartLegend");
+            let Some(content) = mod_b.get("value") else {
+                panic!("chartLegend builder missing value: {:?}", mod_b);
+            };
+            assert!(
+                !matches!(content, SwiftValue::Closure(_)),
+                "builder must not store raw Closure: {:?}",
+                content
+            );
+            assert_eq!(view_type_name(content), Some("Text"));
+        });
+    }
+
+    #[test]
+    fn chart_plot_style_records_modifier() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartPlotStyle { plotArea in
+            plotArea.background(Color.gray)
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartPlotStyle");
+            let Some(content) = mod_.get("value") else {
+                panic!("chartPlotStyle missing value: {:?}", mod_);
+            };
+            // Must be a structured view/marker — never a raw Closure / (Function).
+            assert!(
+                !matches!(content, SwiftValue::Closure(_)),
+                "chartPlotStyle must not store raw Closure: {:?}",
+                content
+            );
+            let SwiftValue::Struct(content_obj) = content else {
+                panic!("expected structured plot-style content, got {:?}", content);
+            };
+            // Prefer expanded ChartPlotContent (placeholder + .background);
+            // ChartPlotStyleContent marker is the fallback.
+            assert!(
+                content_obj.type_name == "ChartPlotContent"
+                    || content_obj.type_name == "ChartPlotStyleContent",
+                "unexpected plot-style content type: {:?}",
+                content_obj.type_name
+            );
+            if content_obj.type_name == "ChartPlotContent" {
+                // Placeholder was invoked; .background should be on _modifiers.
+                let Some(SwiftValue::Array(mods)) = content_obj.get(MODIFIERS_FIELD) else {
+                    panic!("ChartPlotContent missing modifiers: {:?}", content_obj);
+                };
+                assert!(
+                    mods.iter().any(|m| {
+                        matches!(m, SwiftValue::Struct(o) if o.get("name")
+                            == Some(&SwiftValue::Str("background".into())))
+                    }),
+                    "expected .background on plot content: {:?}",
+                    mods
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn axis_marks_values_and_value_label_builder() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXAxis {
+            AxisMarks(values: [0, 50, 100]) {
+                AxisGridLine()
+                AxisValueLabel {
+                    Text("tick")
+                }
+            }
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartXAxis");
+            let Some(content) = mod_.get("value") else {
+                panic!("chartXAxis missing content: {:?}", mod_);
+            };
+            assert_eq!(view_type_name(content), Some("AxisMarks"));
+            let SwiftValue::Struct(marks) = content else {
+                panic!("AxisMarks");
+            };
+            // values: stored as a field.
+            let Some(SwiftValue::Array(vals)) = marks.get("values") else {
+                panic!("AxisMarks(values:) missing values: {:?}", marks);
+            };
+            assert_eq!(vals.len(), 3, "values: [0, 50, 100]");
+            // Nested builder children include AxisGridLine + AxisValueLabel.
+            let Some(SwiftValue::Array(kids)) = marks.get(CHILDREN_FIELD) else {
+                panic!("AxisMarks(values:) children missing: {:?}", marks);
+            };
+            assert_eq!(kids.len(), 2, "grid + value label: {:?}", kids);
+            assert_eq!(view_type_name(&kids[0]), Some("AxisGridLine"));
+            assert_eq!(view_type_name(&kids[1]), Some("AxisValueLabel"));
+            // AxisValueLabel builder collected Text child.
+            let SwiftValue::Struct(label) = &kids[1] else {
+                panic!("AxisValueLabel");
+            };
+            let Some(SwiftValue::Array(label_kids)) = label.get(CHILDREN_FIELD) else {
+                panic!("AxisValueLabel builder children: {:?}", label);
+            };
+            assert_eq!(label_kids.len(), 1);
+            assert_eq!(view_type_name(&label_kids[0]), Some("Text"));
+            assert!(
+                !label
+                    .fields
+                    .iter()
+                    .any(|(_, v)| matches!(v, SwiftValue::Closure(_))),
+                "AxisValueLabel must not store raw Closure: {:?}",
+                label
+            );
+        });
+    }
+
+    #[test]
+    fn chart_x_selection_captures_binding() {
+        let src = r#"
+struct Demo: View {
+    @State private var selected: String? = nil
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+        }
+        .chartXSelection(value: $selected)
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let SwiftValue::Struct(chart) = &view else {
+                panic!("Chart");
+            };
+            let mod_ = chart_modifier(chart, "chartXSelection");
+            let Some(binding) = mod_.get("value") else {
+                panic!("chartXSelection missing value binding: {:?}", mod_);
+            };
+            let SwiftValue::Struct(b) = binding else {
+                panic!("expected Binding struct, got {:?}", binding);
+            };
+            assert_eq!(b.type_name, "Binding");
+            // Binding carries the shared `_StateBox`.
+            assert!(b.get("box").is_some(), "Binding should have box: {:?}", b);
         });
     }
 

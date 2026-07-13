@@ -27,6 +27,12 @@ id = "C3"
 title = "Mark modifiers: style, symbol, line, annotation, layout"
 types = ["ChartContent"]
 
+# ── C4 — Chart-level View modifiers + axis-content leaves ─────────────────────
+[[tier]]
+id = "C4"
+title = "Chart axes/scales/legend/selection + AxisMarks content"
+types = ["View", "AxisMarks", "AxisGridLine", "AxisTick", "AxisValueLabel"]
+
 # ── Explicitly excluded (type names only — members are not listed here) ───────
 [out_of_scope]
-axes = ["AxisMarks", "AxisValueLabel", "AxisGridLine", "AxisTick"]
+# (axes moved into C4)

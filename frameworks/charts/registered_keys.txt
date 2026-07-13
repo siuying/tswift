@@ -1,4 +1,8 @@
 AreaMark.init
+AxisGridLine.init
+AxisMarks.init
+AxisTick.init
+AxisValueLabel.init
 BarMark.init
 Chart.init
 ChartContent.annotation
@@ -17,3 +21,13 @@ PointMark.init
 RectangleMark.init
 RuleMark.init
 SectorMark.init
+View.chartForegroundStyleScale
+View.chartLegend
+View.chartPlotStyle
+View.chartXAxis
+View.chartXAxisLabel
+View.chartXScale
+View.chartXSelection
+View.chartYAxis
+View.chartYAxisLabel
+View.chartYScale
