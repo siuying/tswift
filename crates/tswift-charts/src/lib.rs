@@ -1484,6 +1484,164 @@ struct Demo: View {
         });
     }
 
+    // ── Slice 6 review: plottable wire form + long modifier chains ──────────
+
+    /// PlottableValue UIIR: string stays string (even numeric-looking), Double
+    /// is a JSON number, non-string/non-number coerces to a string, quotes escape.
+    #[test]
+    fn plottable_value_uiir_is_always_string_or_number() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(
+                x: .value("Label", "3"),
+                y: .value("Y", 1.5)
+            )
+            BarMark(
+                x: .value("La\"bel", "a\"b"),
+                y: .value("Flag", true)
+            )
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let json = uiir::to_json(&view);
+            // Numeric-looking String → JSON string, not number.
+            assert!(
+                json.contains(r#""$":"plottable","label":"Label","value":"3""#),
+                "string plottable must stay JSON string: {json}"
+            );
+            // Double → JSON number.
+            assert!(
+                json.contains(r#""$":"plottable","label":"Y","value":1.5"#),
+                "double plottable must be JSON number: {json}"
+            );
+            // Quote escaping in label and value.
+            assert!(
+                json.contains(r#""$":"plottable","label":"La\"bel","value":"a\"b""#),
+                "quotes must be escaped in plottable label/value: {json}"
+            );
+            // Bool (or any non-string/non-number) → JSON string via display form.
+            assert!(
+                json.contains(r#""$":"plottable","label":"Flag","value":"true""#),
+                "bool plottable must coerce to JSON string, not bool: {json}"
+            );
+            assert!(
+                !json.contains(r#""label":"Flag","value":true"#),
+                "bool must not serialize as JSON boolean: {json}"
+            );
+        });
+    }
+
+    /// RuleMark range forms keep every bound in the UIIR args object.
+    #[test]
+    fn rule_mark_range_forms_carry_all_bounds_in_uiir() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            RuleMark(
+                xStart: .value("From", 1),
+                xEnd: .value("To", 4),
+                y: .value("Band", "A")
+            )
+            RuleMark(
+                yStart: .value("Low", 0),
+                yEnd: .value("High", 10),
+                x: .value("Cat", "B")
+            )
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let view = render_root(interp, "Demo").expect("render");
+            let json = uiir::to_json(&view);
+            // Horizontal segment: xStart + xEnd + y all present.
+            assert!(
+                json.contains(r#""xStart":{"$":"plottable","label":"From","value":1}"#),
+                "missing xStart: {json}"
+            );
+            assert!(
+                json.contains(r#""xEnd":{"$":"plottable","label":"To","value":4}"#),
+                "missing xEnd: {json}"
+            );
+            assert!(
+                json.contains(r#""y":{"$":"plottable","label":"Band","value":"A"}"#),
+                "missing y on x-range rule: {json}"
+            );
+            // Vertical segment: yStart + yEnd + x all present.
+            assert!(
+                json.contains(r#""yStart":{"$":"plottable","label":"Low","value":0}"#),
+                "missing yStart: {json}"
+            );
+            assert!(
+                json.contains(r#""yEnd":{"$":"plottable","label":"High","value":10}"#),
+                "missing yEnd: {json}"
+            );
+            assert!(
+                json.contains(r#""x":{"$":"plottable","label":"Cat","value":"B"}"#),
+                "missing x on y-range rule: {json}"
+            );
+        });
+    }
+
+    /// >12 mark modifiers must all appear on the mark UIIR (no host-style cap
+    /// at the runtime serialization layer).
+    #[test]
+    fn mark_with_more_than_twelve_modifiers_keeps_all_in_uiir() {
+        let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            BarMark(x: .value("N", "A"), y: .value("C", 1))
+                .opacity(0.01)
+                .opacity(0.02)
+                .opacity(0.03)
+                .opacity(0.04)
+                .opacity(0.05)
+                .opacity(0.06)
+                .opacity(0.07)
+                .opacity(0.08)
+                .opacity(0.09)
+                .opacity(0.10)
+                .opacity(0.11)
+                .opacity(0.12)
+                .opacity(0.13)
+                .cornerRadius(4)
+        }
+    }
+}
+"#;
+        with_interp(src, |interp| {
+            let mark = chart_single_mark(interp, "Demo", "BarMark");
+            let Some(SwiftValue::Array(mods)) = mark.get(MODIFIERS_FIELD) else {
+                panic!("expected _modifiers");
+            };
+            assert_eq!(
+                mods.len(),
+                14,
+                "runtime must keep all 14 modifiers, got {mods:?}"
+            );
+            // Last is cornerRadius; thirteenth opacity is still present.
+            let last = mark_modifier(&mark, "cornerRadius");
+            assert_eq!(last.get("value"), Some(&SwiftValue::int(4)));
+            let json = uiir::to_json(&render_root(interp, "Demo").expect("render"));
+            let opacity_count = json.matches(r#""name":"opacity""#).count();
+            assert_eq!(
+                opacity_count, 13,
+                "UIIR must list all 13 opacity modifiers: {json}"
+            );
+            assert!(
+                json.contains(r#""name":"cornerRadius""#),
+                "UIIR missing cornerRadius after long chain: {json}"
+            );
+        });
+    }
+
     /// Integration: leading-dot `.value(...)` works under the exact host prelude
     /// composition (no test-only extra prepend). Proves cli/wasm prepare wiring.
     #[test]

@@ -227,11 +227,46 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         SwiftValue::Struct(obj) if obj.type_name == "Animation" => write_animation(obj, out),
         // An `AnyTransition` serializes as a tagged `{"$":"transition",…}`.
         SwiftValue::Struct(obj) if obj.type_name == "AnyTransition" => write_transition(obj, out),
+        // `PlottableValue` preserves declared value type (JSON string vs number)
+        // so hosts do not coerce String("3") into a numeric plottable.
+        SwiftValue::Struct(obj) if obj.type_name == "PlottableValue" => {
+            write_plottable_value(obj, out)
+        }
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),
         other => write_string(&other.to_string(), out),
     }
+}
+
+/// Serialize Charts `PlottableValue` as `{"$":"plottable","label":…,"value":…}`.
+///
+/// Wire guarantee: the nested `value` is **always** a JSON string or number —
+/// `Str` → JSON string, `Int`/`Double` → JSON number. Any other `SwiftValue`
+/// (bool, nil, array, object, token, …) is coerced to a JSON string via its
+/// display form. Hosts can therefore treat plottable `value` as string|number
+/// only (numeric-looking strings like `"3"` stay categorical strings).
+fn write_plottable_value(obj: &StructObj, out: &mut String) {
+    let field = |name: &str| obj.fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    out.push_str("{\"$\":\"plottable\",\"label\":");
+    match field("label") {
+        Some(SwiftValue::Str(s)) => write_string(s, out),
+        Some(other) => write_string(&other.to_string(), out),
+        None => write_string("", out),
+    }
+    out.push_str(",\"value\":");
+    match field("value") {
+        Some(SwiftValue::Str(s)) => write_string(s, out),
+        Some(SwiftValue::Int(i)) => out.push_str(&i.raw.to_string()),
+        // Non-finite doubles are rare as plottables; still emit a JSON number
+        // token when finite, else coerce to a display string (never null/object).
+        Some(SwiftValue::Double(d)) if d.is_finite() => {
+            out.push_str(&tswift_core::format_double(*d));
+        }
+        Some(other) => write_string(&other.to_string(), out),
+        None => write_string("", out),
+    }
+    out.push('}');
 }
 
 /// Serialize a `GridItem` as `{"kind":…,"value":…,"spacing":…?}`. `spacing` is

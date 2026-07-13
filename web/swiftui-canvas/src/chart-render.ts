@@ -62,20 +62,61 @@ const LABEL_FILL = "#3a3a3c";
 
 export interface Plottable {
   label: string;
-  /** Raw value string as serialized by the runtime Display impl. */
+  /** Canonical string form of the value (for category keys / series ids). */
   raw: string;
-  /** Numeric parse when possible; otherwise NaN. */
+  /** Numeric value when `isNumeric`; otherwise NaN. */
   num: number;
+  /**
+   * True only when the declared plottable value is a JSON number.
+   * A String `"3"` stays categorical (band scale), not linear.
+   */
   isNumeric: boolean;
 }
 
-/** Parse `"PlottableValue(label: Name, value: A)"` Display strings. */
+/**
+ * Parse a Charts PlottableValue arg.
+ *
+ * Preferred wire form: `{"$":"plottable","label":…,"value":…}` — JSON string
+ * vs number preserves declared type (String categories stay strings).
+ * Legacy Display strings `PlottableValue(label: L, value: V)` still accepted.
+ */
 export function parsePlottable(input: unknown): Plottable | undefined {
+  // Structured form: {"$":"plottable","label":L,"value":V}
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const o = input as Record<string, unknown>;
+    if (o.$ === "plottable") {
+      const label = typeof o.label === "string" ? o.label : String(o.label ?? "");
+      const value = o.value;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return { label, raw: String(value), num: value, isNumeric: true };
+      }
+      if (typeof value === "string") {
+        // Declared String stays categorical even when numeric-looking.
+        return { label, raw: value, num: NaN, isNumeric: false };
+      }
+      if (value === null || value === undefined) {
+        return { label, raw: "", num: NaN, isNumeric: false };
+      }
+      if (typeof value === "boolean") {
+        return { label, raw: value ? "true" : "false", num: NaN, isNumeric: false };
+      }
+      const raw = String(value);
+      return { label, raw, num: NaN, isNumeric: false };
+    }
+  }
+
+  // Legacy Display string: `PlottableValue(label: Name, value: A)`.
+  // degraded: cannot distinguish String("3") from Int(3) when unquoted.
   if (typeof input !== "string") return undefined;
   const m = /^PlottableValue\(label:\s*(.*?),\s*value:\s*(.*)\)\s*$/.exec(input);
   if (!m) return undefined;
   const label = m[1] ?? "";
-  const raw = (m[2] ?? "").trim();
+  let raw = (m[2] ?? "").trim();
+  // Quoted string → always categorical.
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    raw = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    return { label, raw, num: NaN, isNumeric: false };
+  }
   const num = Number(raw);
   const isNumeric = raw !== "" && Number.isFinite(num);
   return { label, raw, num: isNumeric ? num : NaN, isNumeric };

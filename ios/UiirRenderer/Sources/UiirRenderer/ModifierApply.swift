@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 /// Applies an ordered UIIR modifier list onto a view, mirroring the order and
@@ -27,6 +28,11 @@ enum ModifierApply {
         nodeId: String,
         sink: any UiirEventSink
     ) -> AnyView {
+        // Charts view modifiers (`.chartXAxis`, `.chartLegend`, …) live in
+        // ChartRender.swift; try them before the general SwiftUI table.
+        if let charted = applyChartModifier(mod, to: view, nodeId: nodeId, sink: sink) {
+            return charted
+        }
         switch mod.name {
         // Lifecycle / gesture / submit events (ADR-0013 §3): the runtime carries
         // only these markers; the captured closures live in its handler map, so
