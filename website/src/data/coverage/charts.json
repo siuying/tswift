@@ -1,0 +1,68 @@
+{
+  "framework": "Charts",
+  "sections": [
+    {
+      "name": "Chart",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "BarMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "PlottableValue",
+      "members": [
+        {
+          "name": "value",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 0,
+    "partial": 3,
+    "missing": 1,
+    "out_of_scope": 0,
+    "total": 4
+  }
+}

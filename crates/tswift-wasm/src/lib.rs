@@ -1070,7 +1070,8 @@ print("acc=\(acc_N) len=\(v_N.length)")
         const SAMPLES: usize = 51;
 
         let query_prelude = tswift_swiftdata::QUERY_PRELUDE;
-        let prelude = format!("{PRELUDE}\n{query_prelude}\n");
+        let charts_prelude = tswift_charts::PRELUDE;
+        let prelude = format!("{PRELUDE}\n{query_prelude}\n{charts_prelude}\n");
         let prelude_lines = prelude.lines().count();
 
         // (a) install: build a full interpreter + run every framework install,
@@ -1085,6 +1086,7 @@ print("acc=\(acc_N) len=\(v_N.length)")
             tswift_foundation::install_with(&mut interp, tswift_core::Capabilities::all());
             tswift_swiftdata::install(&mut interp, true);
             tswift_swiftui::install(&mut interp);
+            tswift_charts::install(&mut interp);
             install.push(t.elapsed().as_secs_f64() * 1000.0);
             drop(interp);
         }

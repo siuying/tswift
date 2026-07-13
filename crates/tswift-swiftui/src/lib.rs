@@ -25,13 +25,14 @@ pub mod uiir;
 pub(crate) mod values;
 pub(crate) mod views;
 
+pub use views::collect_children;
 pub(crate) use views::{
-    button_init, capsule_init, circle_init, collect_children, divider_init, ellipse_init,
-    foreach_init, form_init, grid_init, grid_row_init, group_init, hstack_init, image_init,
-    label_init, lazy_hgrid_init, lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init,
-    picker_init, progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init,
-    section_init, secure_field_init, slider_init, spacer_init, stepper_init, tabview_init,
-    text_field_init, text_init, toggle_init, vstack_init, zstack_init,
+    button_init, capsule_init, circle_init, divider_init, ellipse_init, foreach_init, form_init,
+    grid_init, grid_row_init, group_init, hstack_init, image_init, label_init, lazy_hgrid_init,
+    lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init, picker_init,
+    progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init, section_init,
+    secure_field_init, slider_init, spacer_init, stepper_init, tabview_init, text_field_init,
+    text_init, toggle_init, vstack_init, zstack_init,
 };
 
 pub(crate) use async_image::async_image_init;
@@ -46,8 +47,8 @@ pub use navigation::{
     path_append, path_remove_last, pushed_value, read_path_items, realize_pushed_screen,
     NAV_PATH_ITEMS_FIELD,
 };
-pub use values::{child_id, key_of, token_of, view_type_name};
-pub(crate) use values::{container_value, type_error, view_value};
+pub(crate) use values::type_error;
+pub use values::{child_id, container_value, key_of, token_of, view_type_name, view_value};
 
 use tswift_core::{BuiltinParam, EvalError, Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, Node, NodeKind};

@@ -1,12 +1,23 @@
 {
   "frameworks": [
     {
+      "framework": "charts",
+      "display_name": "Charts",
+      "totals": {
+        "implemented": 0,
+        "partial": 3,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    },
+    {
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {
-        "implemented": 335,
+        "implemented": 399,
         "partial": 32,
-        "missing": 248,
+        "missing": 184,
         "out_of_scope": 0,
         "total": 615
       }

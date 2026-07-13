@@ -1,0 +1,21 @@
+[meta]
+framework = "Charts"
+reference = "swiftc 6.3.2 / iPhoneSimulator SDK (iOS is the target platform)"
+stance = """
+Render-host semantics, not value semantics: Chart/mark types are evaluated into
+the shared SwiftUI UIIR (same view-value tree as tswift-swiftui). Marks are
+content-builder children of Chart; plottable helpers (PlottableValue.value)
+produce struct values stored on mark constructor args. Hosts (web/iOS) map
+kind Chart/BarMark in later slices; this scope tracks the runtime surface only.
+"""
+
+# ── C1 — vertical slice: Chart container + BarMark + PlottableValue ───────────
+[[tier]]
+id = "C1"
+title = "Chart container, BarMark, PlottableValue.value"
+types = ["Chart", "BarMark", "PlottableValue"]
+
+# ── Explicitly excluded (type names only — members are not listed here) ───────
+[out_of_scope]
+marks = ["LineMark", "PointMark", "AreaMark", "RuleMark", "RectangleMark", "SectorMark"]
+axes = ["AxisMarks", "AxisValueLabel", "AxisGridLine", "AxisTick"]

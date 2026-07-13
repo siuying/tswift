@@ -122,10 +122,15 @@ fn clear_session() {
 }
 
 fn compile_impl(source: &str, cache_key: String) -> String {
-    // Prepend the SwiftUI token prelude and the SwiftData `@Query` prelude
-    // (ADR-0016 Slice 10b) so `@Query`/`.modelContainer(for:)` resolve; the
-    // fetch degrades to `[]` when the host doesn't back `tswift.db`.
-    let program = format!("{PRELUDE}\n{}\n{source}", tswift_swiftdata::QUERY_PRELUDE);
+    // Prepend the SwiftUI token prelude, the SwiftData `@Query` prelude
+    // (ADR-0016 Slice 10b), and the Charts prelude (PlottableValue.value for
+    // leading-dot `.value(...)` on mark args). `@Query` degrades to `[]`
+    // when the host doesn't back `tswift.db`.
+    let program = format!(
+        "{PRELUDE}\n{}\n{}\n{source}",
+        tswift_swiftdata::QUERY_PRELUDE,
+        tswift_charts::PRELUDE,
+    );
     // Warm-start cache: a re-submitted byte-identical program (Studio re-run,
     // embed refresh) reuses the prior `Analysis` instead of re-lexing/parsing/
     // analyzing. The interpreter below is still built + run fresh, so this is
@@ -178,6 +183,7 @@ fn compile_impl(source: &str, cache_key: String) -> String {
     crate::platform::install_http_transport(&mut interp);
     crate::platform::install_registered_host_fns(&mut interp);
     tswift_swiftui::install(&mut interp);
+    tswift_charts::install(&mut interp);
     interp.set_filename("main.swift");
     // The session (below) is leaked to `'static` and holds `Node<'static>`
     // cursors into this AST across dispatch calls, so the interpreter must

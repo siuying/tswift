@@ -540,10 +540,22 @@ name = "tswift-ast"
 version = "0.0.0"
 
 [[package]]
+name = "tswift-charts"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+ "tswift-frontend",
+ "tswift-std",
+ "tswift-swiftdata",
+ "tswift-swiftui",
+]
+
+[[package]]
 name = "tswift-cli"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "tswift-charts",
  "tswift-core",
  "tswift-foundation",
  "tswift-frontend",
@@ -639,6 +651,7 @@ dependencies = [
 name = "tswift-wasm"
 version = "0.0.0"
 dependencies = [
+ "tswift-charts",
  "tswift-core",
  "tswift-foundation",
  "tswift-frontend",
