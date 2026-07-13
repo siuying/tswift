@@ -7,6 +7,7 @@ import { applyModifiers, FRAME_ALIGN } from "./modifier-css.js";
 import type { Modifier, UiirValue } from "./modifier-css.js";
 import { playTransitionEnter, playTransitionLeave } from "./animation-css.js";
 import { sfGlyph } from "./sf-symbols.js";
+import { renderChart, type ChartNode } from "./chart-render.js";
 
 /** A UIIR node from `tswift swiftui render` / patch payloads. */
 export interface UiirNode {
@@ -16,6 +17,24 @@ export interface UiirNode {
   modifiers: Modifier[];
   children: UiirNode[];
 }
+
+/**
+ * Chart mark / axis leaves: addressable by the diff engine, but never layout
+ * chrome. The Chart host paints their data into a single SVG.
+ */
+const CHART_DATA_KINDS = new Set([
+  "BarMark",
+  "LineMark",
+  "PointMark",
+  "AreaMark",
+  "RuleMark",
+  "RectangleMark",
+  "SectorMark",
+  "AxisMarks",
+  "AxisGridLine",
+  "AxisTick",
+  "AxisValueLabel",
+]);
 
 /** A patch op from `tswift swiftui dispatch`. */
 export type Patch =
@@ -49,6 +68,13 @@ export class PatchApplier {
    * new marker set (a conditional `.onTapGesture`/`.onSubmit` toggled across a
    * re-render must not leave stale listeners). */
   private handlerAborts = new Map<string, AbortController>();
+  /** Full UIIR trees for `Chart` nodes so SVG can re-paint from current
+   * subtree state after any descendant mark/axis patch. */
+  private chartTrees = new Map<string, UiirNode>();
+  /** Fast lookup: any node id inside a Chart subtree → that Chart's id. */
+  private nodeChartId = new Map<string, string>();
+  /** Fast lookup: node id → mutable UIIR node object inside `chartTrees`. */
+  private chartNodeById = new Map<string, UiirNode>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -60,12 +86,65 @@ export class PatchApplier {
     for (const patch of patches) this.applyOne(patch);
   }
 
+  /** Index a Chart tree (and all descendants) for patch → re-paint lookup. */
+  private indexChartTree(chartId: string, node: UiirNode): void {
+    this.chartNodeById.set(node.id, node);
+    this.nodeChartId.set(node.id, chartId);
+    for (const child of node.children) this.indexChartTree(chartId, child);
+  }
+
+  /** Drop a Chart-subtree index entry (and descendants). */
+  private unindexChartSubtree(id: string): void {
+    const node = this.chartNodeById.get(id);
+    if (!node) {
+      this.chartNodeById.delete(id);
+      this.nodeChartId.delete(id);
+      return;
+    }
+    const walk = (n: UiirNode) => {
+      this.chartNodeById.delete(n.id);
+      this.nodeChartId.delete(n.id);
+      for (const c of n.children) walk(c);
+    };
+    walk(node);
+  }
+
+  /** Remove `id` from its parent Chart tree's `children` array. */
+  private removeChartTreeChild(id: string): void {
+    const chartId = this.nodeChartId.get(id);
+    if (!chartId || id === chartId) return;
+    const chart = this.chartTrees.get(chartId);
+    if (!chart) return;
+    const strip = (parent: UiirNode): boolean => {
+      const idx = parent.children.findIndex((c) => c.id === id);
+      if (idx >= 0) {
+        parent.children.splice(idx, 1);
+        return true;
+      }
+      return parent.children.some((c) => strip(c));
+    };
+    strip(chart);
+  }
+
+  /** Re-paint the Chart that owns `nodeId` (if any) from its indexed tree. */
+  private repaintOwningChart(nodeId: string): void {
+    const chartId = this.nodeChartId.get(nodeId);
+    if (!chartId) return;
+    const host = this.nodes.get(chartId);
+    const tree = this.chartTrees.get(chartId);
+    if (!host || !tree) return;
+    renderChart(host, tree as unknown as ChartNode);
+  }
+
   private applyOne(patch: Patch): void {
     switch (patch.op) {
       case "mount": {
         this.root.replaceChildren();
         this.nodes.clear();
         this.mods.clear();
+        this.chartTrees.clear();
+        this.nodeChartId.clear();
+        this.chartNodeById.clear();
         this.disappearIds.clear();
         for (const ac of this.handlerAborts.values()) ac.abort();
         this.handlerAborts.clear();
@@ -83,6 +162,14 @@ export class PatchApplier {
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         parent.insertBefore(el, patchRef(parent, patch.index));
+        // Keep Chart subtree UIIR in sync so SVG re-paints from live data.
+        const parentTree = this.chartNodeById.get(patch.parentId);
+        if (parentTree) {
+          const chartId = this.nodeChartId.get(patch.parentId)!;
+          parentTree.children.splice(patch.index, 0, patch.node);
+          this.indexChartTree(chartId, patch.node);
+          this.repaintOwningChart(patch.parentId);
+        }
         // If the node declares a `.transition`, tween it in (no-op otherwise).
         playTransitionEnter(el);
         // A screen pushed onto a faux NavigationStack: re-sync bar + visibility.
@@ -92,6 +179,12 @@ export class PatchApplier {
       case "remove": {
         const el = this.nodes.get(patch.id);
         const parent = el?.parentElement ?? null;
+        // Chart-tree remove before forget (forget drops the index entries).
+        const chartIdToRepaint = this.nodeChartId.get(patch.id);
+        if (chartIdToRepaint && patch.id !== chartIdToRepaint) {
+          this.removeChartTreeChild(patch.id);
+          this.unindexChartSubtree(patch.id);
+        }
         // Forget the id mapping now (the node is logically gone), but defer the
         // DOM removal until a `.transition` leave tween finishes. Without a
         // transition, `playTransitionLeave` calls back synchronously.
@@ -100,6 +193,9 @@ export class PatchApplier {
           el?.remove();
           // A screen popped off a faux NavigationStack: re-sync bar + visibility.
           if (parent?.dataset.kind === "NavigationStack") this.syncNavStack(parent);
+          if (chartIdToRepaint && this.chartTrees.has(chartIdToRepaint)) {
+            this.repaintOwningChart(chartIdToRepaint);
+          }
         };
         if (el) playTransitionLeave(el, finalize);
         else finalize();
@@ -115,15 +211,48 @@ export class PatchApplier {
         if (!parent || !el) return;
         const ref = patchRef(parent, patch.index, el);
         if (ref !== el) parent.insertBefore(el, ref);
+        // Mirror the reorder in the Chart UIIR tree when the parent is tracked.
+        const parentTree = this.chartNodeById.get(patch.parentId);
+        const moved = this.chartNodeById.get(patch.id);
+        if (parentTree && moved) {
+          const from = parentTree.children.findIndex((c) => c.id === patch.id);
+          if (from >= 0) {
+            parentTree.children.splice(from, 1);
+            const to = Math.min(patch.index, parentTree.children.length);
+            parentTree.children.splice(to, 0, moved);
+            this.repaintOwningChart(patch.parentId);
+          }
+        }
         break;
       }
       case "replace": {
         const old = this.nodes.get(patch.id);
         if (!old) return;
+        const chartId = this.nodeChartId.get(patch.id);
+        const isChartRoot = chartId !== undefined && chartId === patch.id;
+        // Splice the new UIIR into the Chart tree *before* forget drops indexes.
+        if (chartId && !isChartRoot) {
+          const chart = this.chartTrees.get(chartId);
+          if (chart) {
+            const splice = (parent: UiirNode): boolean => {
+              const idx = parent.children.findIndex((c) => c.id === patch.id);
+              if (idx >= 0) {
+                parent.children[idx] = patch.node;
+                return true;
+              }
+              return parent.children.some((c) => splice(c));
+            };
+            splice(chart);
+          }
+        }
         // Forget the old subtree's ids *before* building the replacement, which
         // re-registers the same ids — otherwise `forget` would delete the new
         // entries and later patches/events for the subtree become no-ops.
         this.forget(patch.id);
+        // Re-index the spliced Chart descendant (forget cleared its entries).
+        if (chartId && !isChartRoot) {
+          this.indexChartTree(chartId, patch.node);
+        }
         // Replacing a Picker option keeps it an <option>.
         const el =
           old instanceof HTMLOptionElement
@@ -133,6 +262,8 @@ export class PatchApplier {
         // Restore the ZStack overlay placement the parent applies at build time
         // (a freshly built replacement has not been through that child loop).
         if (el.parentElement?.dataset.zstack === "1") el.style.gridArea = "1 / 1";
+        // Chart root: `build` already painted. Mark/axis leaf: re-paint owner.
+        if (chartId && !isChartRoot) this.repaintOwningChart(chartId);
         break;
       }
       case "setText": {
@@ -162,6 +293,12 @@ export class PatchApplier {
           // that appeared, detach ones that were removed, and re-sync disappear
           // tracking. Not a fresh mount, so `onAppear` does not re-fire.
           this.attachHandlers(el, patch.id, patch.modifiers, false);
+          // Chart host or mark/axis leaf: keep UIIR tree in sync and re-paint SVG.
+          const chartTreeNode = this.chartNodeById.get(patch.id);
+          if (chartTreeNode) {
+            chartTreeNode.modifiers = patch.modifiers;
+            this.repaintOwningChart(patch.id);
+          }
           // A screen root's navigationTitle may have changed: refresh the bar.
           if (el.parentElement?.dataset.kind === "NavigationStack") {
             this.syncNavStack(el.parentElement);
@@ -193,6 +330,12 @@ export class PatchApplier {
           // The cssText reset drops the composite anchoring (position/isolation);
           // rebuild the layers from the remembered modifiers (#204).
           this.applyComposites(el, mods);
+        }
+        // Chart mark/axis args (e.g. BarMark y value) drive the SVG, not CSS.
+        const chartTreeNode = this.chartNodeById.get(patch.id);
+        if (chartTreeNode) {
+          chartTreeNode.args = patch.args;
+          this.repaintOwningChart(patch.id);
         }
         break;
       }
@@ -288,10 +431,18 @@ export class PatchApplier {
    * for any unmounted node that registered `.onDisappear` (ADR-0013 §3). */
   private forget(id: string): void {
     const prefix = `${id}.`;
+    // Chart indexes: drop the whole Chart tree or a single indexed subtree.
+    if (this.chartTrees.has(id)) {
+      this.unindexChartSubtree(id);
+      this.chartTrees.delete(id);
+    } else if (this.chartNodeById.has(id)) {
+      this.unindexChartSubtree(id);
+    }
     for (const key of [...this.nodes.keys()]) {
       if (key === id || key.startsWith(prefix)) {
         this.nodes.delete(key);
         this.mods.delete(key);
+        this.chartTrees.delete(key);
         this.handlerAborts.get(key)?.abort();
         this.handlerAborts.delete(key);
         if (this.disappearIds.delete(key)) this.emit(key, "disappear", null);
@@ -418,6 +569,15 @@ export class PatchApplier {
       this.buildTabView(el, node);
     } else if (node.kind === "NavigationStack") {
       this.buildNavStack(el, node);
+    } else if (node.kind === "Chart") {
+      // Marks/axis leaves register as hidden tracking nodes so the diff engine
+      // can address them by id; the only visible output is the Chart SVG.
+      this.chartTrees.set(node.id, node);
+      this.indexChartTree(node.id, node);
+      for (const child of node.children) {
+        el.appendChild(this.build(child));
+      }
+      renderChart(el, node as unknown as ChartNode);
     } else if (node.kind === "AsyncImage" && node.args.phase !== undefined) {
       // v1.5: render children (runtime-owned phase content), start image preload
       // when the node arrives in the "empty" phase (initial mount).
@@ -853,8 +1013,40 @@ export class PatchApplier {
         el.style.cssText = "display:flex;flex-direction:column;position:relative;";
         return el;
       }
+      case "Chart": {
+        // Plot host: marks paint into a fixed-viewBox SVG (see chart-render.ts).
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:flex;flex-direction:column;align-items:stretch;" +
+          "min-width:320px;min-height:220px;width:100%;box-sizing:border-box;";
+        return el;
+      }
+      case "BarMark":
+      case "LineMark":
+      case "PointMark":
+      case "AreaMark":
+      case "RuleMark":
+      case "RectangleMark":
+      case "SectorMark":
+      case "AxisMarks":
+      case "AxisGridLine":
+      case "AxisTick":
+      case "AxisValueLabel": {
+        // Chart data leaves: addressable by id for patches, never layout chrome.
+        const el = document.createElement("span");
+        el.style.cssText = "display:none !important;";
+        el.dataset.chartData = "1";
+        return el;
+      }
       case "Text":
       default:
+        // Unknown kinds under a Chart still stay out of layout (no stray DOM).
+        if (CHART_DATA_KINDS.has(node.kind)) {
+          const el = document.createElement("span");
+          el.style.cssText = "display:none !important;";
+          el.dataset.chartData = "1";
+          return el;
+        }
         return document.createElement("span");
     }
   }
@@ -1185,7 +1377,10 @@ function patchRef(
       // A TabView's synthetic bottom tab bar is not a patch-addressed child.
       !c.classList.contains("tab-bar") &&
       // Composite background/overlay layers are not patch-addressed children.
-      !c.classList.contains("composite-layer"),
+      !c.classList.contains("composite-layer") &&
+      // Chart SVG/legend chrome is host-owned, not a mark child.
+      !c.classList.contains("chart-svg") &&
+      !c.classList.contains("chart-legend"),
   );
   return addressable[index] ?? null;
 }
