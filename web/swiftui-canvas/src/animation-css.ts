@@ -7,7 +7,7 @@
 // This module owns the ANIM/TRANS → CSS timing-string translation so
 // `modifier-css.ts` stays a flat switch.
 
-import type { UiirValue } from "./modifier-css.js";
+import type { UiirValue } from "./uiir-types.js";
 
 /** A decoded SwiftUI `Animation` object (the `{"$":"animation",…}` payload). */
 interface AnimObject {

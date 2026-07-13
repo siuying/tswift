@@ -5,7 +5,7 @@
 // listens for `swiftui-event`s to round-trip back to the runtime.
 
 import { PatchApplier, mountPatch } from "./apply-patch.js";
-import type { Patch, UiirNode } from "./apply-patch.js";
+import type { Patch, UiirNode } from "./uiir-types.js";
 
 /** Detail of the `swiftui-event` CustomEvent dispatched on user interaction. */
 export interface SwiftUIEventDetail {

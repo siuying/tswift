@@ -4,21 +4,9 @@
 // iOS-vs-web color/typography drift lives here by design.
 
 import { applyAnimation, applyTransition } from "./animation-css.js";
+import type { Modifier, UiirValue } from "./uiir-types.js";
 
-/** A UIIR modifier value: a tagged-union token, a scalar, or an object. */
-export type UiirValue =
-  | null
-  | number
-  | string
-  | boolean
-  | { $: string; name: string }
-  | UiirValue[]
-  | { [key: string]: UiirValue };
-
-export interface Modifier {
-  name: string;
-  value: UiirValue;
-}
+export type { Modifier, UiirValue } from "./uiir-types.js";
 
 /** `.font(.largeTitle)` text styles → CSS `font-size` (pt → px, 1:1). */
 const TEXT_STYLE_SIZE: Record<string, string> = {

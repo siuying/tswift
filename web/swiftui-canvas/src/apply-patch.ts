@@ -4,19 +4,13 @@
 // did the diffing.
 
 import { applyModifiers, FRAME_ALIGN } from "./modifier-css.js";
-import type { Modifier, UiirValue } from "./modifier-css.js";
+import type { Modifier, UiirValue } from "./uiir-types.js";
+import type { Patch, UiirNode } from "./uiir-types.js";
 import { playTransitionEnter, playTransitionLeave } from "./animation-css.js";
 import { sfGlyph } from "./sf-symbols.js";
-import { renderChart, type ChartNode } from "./chart-render.js";
+import { renderChart } from "./chart-render.js";
 
-/** A UIIR node from `tswift swiftui render` / patch payloads. */
-export interface UiirNode {
-  id: string;
-  kind: string;
-  args: Record<string, unknown>;
-  modifiers: Modifier[];
-  children: UiirNode[];
-}
+export type { Patch, UiirNode, Modifier, UiirValue } from "./uiir-types.js";
 
 /**
  * Chart mark / axis leaves: addressable by the diff engine, but never layout
@@ -35,17 +29,6 @@ const CHART_DATA_KINDS = new Set([
   "AxisTick",
   "AxisValueLabel",
 ]);
-
-/** A patch op from `tswift swiftui dispatch`. */
-export type Patch =
-  | { op: "mount"; node: UiirNode }
-  | { op: "insert"; parentId: string; index: number; node: UiirNode }
-  | { op: "remove"; id: string }
-  | { op: "replace"; id: string; node: UiirNode }
-  | { op: "setText"; id: string; text: string }
-  | { op: "setModifiers"; id: string; modifiers: Modifier[] }
-  | { op: "setArgs"; id: string; args: Record<string, unknown> }
-  | { op: "move"; parentId: string; id: string; index: number };
 
 /** How a host node reports an event back to the runtime. */
 export type EventSink = (id: string, event: string, value: unknown) => void;
@@ -133,7 +116,7 @@ export class PatchApplier {
     const host = this.nodes.get(chartId);
     const tree = this.chartTrees.get(chartId);
     if (!host || !tree) return;
-    renderChart(host, tree as unknown as ChartNode);
+    renderChart(host, tree);
   }
 
   private applyOne(patch: Patch): void {
@@ -577,7 +560,7 @@ export class PatchApplier {
       for (const child of node.children) {
         el.appendChild(this.build(child));
       }
-      renderChart(el, node as unknown as ChartNode);
+      renderChart(el, node);
     } else if (node.kind === "AsyncImage" && node.args.phase !== undefined) {
       // v1.5: render children (runtime-owned phase content), start image preload
       // when the node arrives in the "empty" phase (initial mount).
