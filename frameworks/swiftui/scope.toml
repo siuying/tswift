@@ -43,7 +43,7 @@ LongPressGesture = ["init", "onEnded"]
 # implemented members here. `.default` is deferred (lexer lacks backtick-
 # identifier escape); interactiveSpring/interpolatingSpring/timingCurve and the
 # velocity/animate/shouldMerge internals remain out of reach v1.
-Animation = ["easeIn", "easeInOut", "easeOut", "linear", "spring", "bouncy", "smooth", "snappy", "delay", "speed", "repeatCount", "repeatForever"]
+Animation = ["easeIn", "easeInOut", "easeOut", "linear", "spring", "bouncy", "smooth", "snappy", "delay", "speed", "repeatCount", "repeatForever", "default", "timingCurve", "interpolatingSpring", "interactiveSpring"]
 # AnyTransition: opacity/identity/slide/scale + move/push/offset/scale(_:) +
 # combined/asymmetric. `.animation(_:)` on a transition and the ViewModifier
 # `modifier(active:identity:)` form remain out of scope.

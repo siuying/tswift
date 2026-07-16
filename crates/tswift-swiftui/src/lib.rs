@@ -439,11 +439,20 @@ struct Animation {
     var repeatKind: String? = nil
     var repeatCountValue: Int? = nil
     var autoreversesValue: Bool? = nil
+    // `timingCurve` cubic Bézier control points (p1 = c0x/c0y, p2 = c1x/c1y).
+    var c0x: Double? = nil
+    var c0y: Double? = nil
+    var c1x: Double? = nil
+    var c1y: Double? = nil
+    // `interpolatingSpring` physical parameters.
+    var mass: Double? = nil
+    var stiffness: Double? = nil
+    var damping: Double? = nil
+    var initialVelocity: Double? = nil
 
-    // NOTE: SwiftUI's `.default` cannot be declared here yet — `default` is a
-    // reserved keyword and the lexer has no backtick-identifier escape, so a
-    // member literally named `default` neither lexes nor parses. Deferred to a
-    // lexer slice (see notes.md). All other curve factories are available.
+    // `Animation.default` — the standard implicit curve. Reachable now that the
+    // lexer escapes reserved words as identifiers (`` `default` ``).
+    static let `default` = Animation(kind: "default")
 
     static let linear = Animation(kind: "linear")
     static func linear(duration: Double) -> Animation {
@@ -489,6 +498,28 @@ struct Animation {
     static let snappy = Animation(kind: "snappy")
     static func snappy(duration: Double = 0.5, extraBounce: Double = 0.0) -> Animation {
         Animation(kind: "snappy", duration: duration)
+    }
+
+    // `timingCurve(_:_:_:_:duration:)` — a custom cubic Bézier curve defined by
+    // two control points, matching SwiftUI's parameter order.
+    static func timingCurve(_ c0x: Double, _ c0y: Double, _ c1x: Double, _ c1y: Double, duration: Double = 0.35) -> Animation {
+        Animation(kind: "timingCurve", duration: duration, c0x: c0x, c0y: c0y, c1x: c1x, c1y: c1y)
+    }
+
+    // `interpolatingSpring(mass:stiffness:damping:initialVelocity:)` — a spring
+    // driven by physical constants (additive across concurrent animations).
+    static func interpolatingSpring(mass: Double = 1.0, stiffness: Double, damping: Double, initialVelocity: Double = 0.0) -> Animation {
+        Animation(kind: "interpolatingSpring", mass: mass, stiffness: stiffness, damping: damping, initialVelocity: initialVelocity)
+    }
+    // Modern `interpolatingSpring(duration:bounce:initialVelocity:)` form.
+    static func interpolatingSpring(duration: Double = 0.5, bounce: Double = 0.0, initialVelocity: Double = 0.0) -> Animation {
+        Animation(kind: "interpolatingSpring", duration: duration, bounce: bounce, initialVelocity: initialVelocity)
+    }
+
+    // `interactiveSpring(response:dampingFraction:blendDuration:)` — a lower-
+    // duration spring tuned for gesture-tracking interactions.
+    static func interactiveSpring(response: Double = 0.15, dampingFraction: Double = 0.86, blendDuration: Double = 0.25) -> Animation {
+        Animation(kind: "interactiveSpring", response: response, dampingFraction: dampingFraction, blendDuration: blendDuration)
     }
 
     func delay(_ delay: Double) -> Animation {

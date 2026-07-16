@@ -347,6 +347,45 @@ impl<'a> Lexer<'a> {
             // `\.path`). In-string interpolation `\(…)` is handled by the string
             // lexer, so a `\` reaching here is always a key-path sigil.
             b'\\' => self.single(TokenKind::Oper),
+            // A backtick-escaped identifier — `` `default` `` — lets a reserved
+            // word be used as a plain name. It lexes as a single
+            // [`TokenKind::Identifier`] whose text is the *inner* slice (the
+            // backticks are stripped), so `` `default` `` and a hypothetical
+            // non-keyword `default` are indistinguishable to the parser.
+            b'`' => {
+                self.advance_byte(); // opening backtick
+                let inner_start = self.pos;
+                while let Some(b) = self.peek() {
+                    if b < 0x80 {
+                        if !is_ident_continue(b) {
+                            break;
+                        }
+                        self.advance_byte();
+                    } else {
+                        let (ch, len) = self.scalar_at(self.pos);
+                        if is_unicode_operator_scalar(ch) {
+                            break;
+                        }
+                        self.take(len);
+                    }
+                }
+                let inner_end = self.pos;
+                if inner_end > inner_start && self.peek() == Some(b'`') {
+                    self.advance_byte(); // closing backtick
+                    return Ok(Token {
+                        kind: TokenKind::Identifier,
+                        text: &self.src[inner_start..inner_end],
+                        line,
+                        col,
+                        leading_newline: self.pending_newline,
+                    });
+                }
+                return Err(LexError {
+                    message: "unterminated backtick-escaped identifier".to_string(),
+                    line,
+                    col,
+                });
+            }
             b'0'..=b'9' => self.number(),
             // A non-ASCII scalar is either a unicode *operator* character
             // (TSPL operator-head: `√`, `°`, `±`, arrows, math symbols, …) or
@@ -1171,5 +1210,26 @@ mod tests {
                 (TokenKind::Directive, "#warning"),
             ]
         );
+    }
+
+    #[test]
+    fn backtick_escapes_reserved_word_as_identifier() {
+        // The inner slice (backticks stripped) is the token text, so a
+        // backtick-escaped keyword is indistinguishable from a plain name.
+        assert_eq!(
+            lex("let `default` = `class`"),
+            vec![
+                (TokenKind::Keyword, "let"),
+                (TokenKind::Identifier, "default"),
+                (TokenKind::Oper, "="),
+                (TokenKind::Identifier, "class"),
+            ]
+        );
+    }
+
+    #[test]
+    fn unterminated_backtick_identifier_errors() {
+        assert!(tokenize("let `oops = 1").is_err());
+        assert!(tokenize("let `` = 1").is_err());
     }
 }

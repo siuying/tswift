@@ -365,6 +365,14 @@ fn write_animation(obj: &StructObj, out: &mut String) {
         ("blendDuration", "blendDuration"),
         ("bounce", "bounce"),
         ("extraBounce", "extraBounce"),
+        ("c0x", "c0x"),
+        ("c0y", "c0y"),
+        ("c1x", "c1x"),
+        ("c1y", "c1y"),
+        ("mass", "mass"),
+        ("stiffness", "stiffness"),
+        ("damping", "damping"),
+        ("initialVelocity", "initialVelocity"),
         ("delayValue", "delay"),
         ("speedValue", "speed"),
     ] {
@@ -583,6 +591,38 @@ mod tests {
         assert_eq!(
             asym,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"transition","value":{"$":"transition","type":"asymmetric","insertion":{"$":"transition","type":"scale"},"removal":{"$":"transition","type":"opacity"}}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn animation_default_serializes() {
+        assert_eq!(
+            anim_json("Animation.default"),
+            r#"{"$":"animation","kind":"default"}"#
+        );
+    }
+
+    #[test]
+    fn animation_timing_curve_serializes() {
+        assert_eq!(
+            anim_json("Animation.timingCurve(0.2, 0.0, 0.8, 1.0, duration: 0.5)"),
+            r#"{"$":"animation","kind":"timingCurve","duration":0.5,"c0x":0.2,"c0y":0.0,"c1x":0.8,"c1y":1.0}"#
+        );
+    }
+
+    #[test]
+    fn animation_interpolating_spring_serializes() {
+        assert_eq!(
+            anim_json("Animation.interpolatingSpring(mass: 1.0, stiffness: 100.0, damping: 10.0, initialVelocity: 0.0)"),
+            r#"{"$":"animation","kind":"interpolatingSpring","mass":1.0,"stiffness":100.0,"damping":10.0,"initialVelocity":0.0}"#
+        );
+    }
+
+    #[test]
+    fn animation_interactive_spring_serializes() {
+        assert_eq!(
+            anim_json("Animation.interactiveSpring(response: 0.15, dampingFraction: 0.86, blendDuration: 0.25)"),
+            r#"{"$":"animation","kind":"interactiveSpring","response":0.15,"dampingFraction":0.86,"blendDuration":0.25}"#
         );
     }
 
