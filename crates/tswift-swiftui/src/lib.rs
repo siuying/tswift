@@ -226,6 +226,13 @@ struct Color {
         self.blue = nil
         self.opacity = nil
     }
+    init(token: String, opacity: Double) {
+        self.token = token
+        self.red = nil
+        self.green = nil
+        self.blue = nil
+        self.opacity = opacity
+    }
     init(red: Double, green: Double, blue: Double, opacity: Double = 1) {
         self.token = nil
         self.red = red
@@ -251,6 +258,17 @@ struct Color {
     static let brown = Color(token: "brown")
     static let gray = Color(token: "gray")
     static let clear = Color(token: "clear")
+    static let accentColor = Color(token: "accentColor")
+
+    // `.opacity(_:)` — multiply the color's alpha. A named token keeps its
+    // semantic name plus the applied opacity; an explicit RGB color adjusts
+    // its alpha component directly.
+    func opacity(_ opacity: Double) -> Color {
+        if let token = token {
+            return Color(token: token, opacity: opacity)
+        }
+        return Color(red: red ?? 0, green: green ?? 0, blue: blue ?? 0, opacity: opacity)
+    }
 }
 struct Font {
     let token: String

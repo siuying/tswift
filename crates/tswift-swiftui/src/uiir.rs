@@ -282,6 +282,12 @@ fn write_color(color: &StructObj, out: &mut String) {
     if let Some(SwiftValue::Str(name)) = color.get("token") {
         out.push_str(r#"{"$":"color","name":"#);
         write_string(name, out);
+        // A named color carries an opacity only after `.opacity(_:)`; emit it
+        // so the host applies the alpha to the resolved semantic color.
+        if let Some(SwiftValue::Double(a)) = color.get("opacity") {
+            out.push_str(",\"opacity\":");
+            out.push_str(&tswift_core::format_double(*a));
+        }
         out.push('}');
         return;
     }
@@ -763,6 +769,15 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.25,0.5,0.75,0.4]}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn named_color_opacity_serializes_with_alpha() {
+        let json = render_json(r#"Text("hi").foregroundColor(.blue.opacity(0.5))"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","name":"blue","opacity":0.5}}],"children":[]}"#
         );
     }
 

@@ -31,8 +31,10 @@ ObservedObject = ["init", "wrappedValue"]
 EnvironmentObject = ["init", "wrappedValue"]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
-# Explicit RGB colors are prelude values and serialize to host-neutral RGBA.
-Color = ["init"]
+# Explicit RGB colors are prelude values and serialize to host-neutral RGBA;
+# named system colors stay semantic tokens. `.opacity(_:)` adjusts alpha on
+# either form. `.gradient`/`.mix`/`cgColor`/HDR resolution remain out of scope.
+Color = ["init", "opacity", "primary", "secondary", "white", "black", "red", "orange", "yellow", "green", "mint", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown", "gray", "clear", "accentColor"]
 # Gesture value types (slice 7): init + onEnded lowering via .gesture(_:).
 # DragGesture/streaming gestures remain out of scope (need async event channel).
 TapGesture = ["init", "onEnded"]
