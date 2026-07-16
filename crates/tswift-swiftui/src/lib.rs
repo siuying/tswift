@@ -204,7 +204,27 @@ struct EnvironmentObject<ObjectType> {
     init() { store = nil }
 }
 struct Color {
-    let token: String
+    // Named system colors remain semantic tokens for host-specific resolution.
+    // Explicit RGB values instead cross the UIIR boundary as RGBA components.
+    let token: String?
+    let red: Double?
+    let green: Double?
+    let blue: Double?
+    let opacity: Double?
+    init(token: String) {
+        self.token = token
+        self.red = nil
+        self.green = nil
+        self.blue = nil
+        self.opacity = nil
+    }
+    init(red: Double, green: Double, blue: Double, opacity: Double = 1) {
+        self.token = nil
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.opacity = opacity
+    }
     static let primary = Color(token: "primary")
     static let secondary = Color(token: "secondary")
     static let white = Color(token: "white")

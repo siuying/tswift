@@ -1,0 +1,1 @@
+{"id":"0","kind":"VStack","args":{},"modifiers":[],"children":[{"id":"0.0","kind":"Text","args":{"verbatim":"Ocean"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.1,0.4,0.8,1.0]}}],"children":[]},{"id":"0.1","kind":"Circle","args":{},"modifiers":[{"name":"fill","value":{"$":"color","rgba":[0.9,0.2,0.1,0.35]}}],"children":[]}]}

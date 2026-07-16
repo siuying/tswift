@@ -168,6 +168,12 @@ fn write_modifier(modifier: &SwiftValue, out: &mut String) {
 /// Write a Swift value with the plan's tagged-union encoding: prelude tokens
 /// become `{"$":tag,"name":…}`; scalars stay numeric / string / bool / null.
 fn write_value(value: &SwiftValue, out: &mut String) {
+    if let SwiftValue::Struct(color) = value {
+        if color.type_name == "Color" {
+            write_color(color, out);
+            return;
+        }
+    }
     if let Some((namespace, token)) = token_of(value) {
         let tag = match namespace {
             "Color" => "color",
@@ -267,6 +273,32 @@ fn write_plottable_value(obj: &StructObj, out: &mut String) {
         None => write_string("", out),
     }
     out.push('}');
+}
+
+/// Write a SwiftUI `Color` without lowering it to host pixels. Named colors
+/// stay semantic tokens; explicit RGB colors retain their normalized RGBA
+/// components so every host receives the same declared value.
+fn write_color(color: &StructObj, out: &mut String) {
+    if let Some(SwiftValue::Str(name)) = color.get("token") {
+        out.push_str(r#"{"$":"color","name":"#);
+        write_string(name, out);
+        out.push('}');
+        return;
+    }
+
+    let component = |name: &str| match color.get(name) {
+        Some(SwiftValue::Double(value)) => *value,
+        Some(SwiftValue::Int(value)) => value.raw as f64,
+        _ => 0.0,
+    };
+    out.push_str(r#"{"$":"color","rgba":["#);
+    for (index, name) in ["red", "green", "blue", "opacity"].iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&tswift_core::format_double(component(name)));
+    }
+    out.push_str("]}");
 }
 
 /// Serialize a `GridItem` as `{"kind":…,"value":…,"spacing":…?}`. `spacing` is
@@ -665,6 +697,17 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"font","value":{"$":"textStyle","name":"largeTitle"}},{"name":"foregroundColor","value":{"$":"color","name":"white"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn explicit_rgb_color_serializes_as_host_neutral_rgba() {
+        let json = render_json(
+            r#"Text("hi").foregroundColor(Color(red: 0.25, green: 0.5, blue: 0.75, opacity: 0.4))"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.25,0.5,0.75,0.4]}}],"children":[]}"#
         );
     }
 

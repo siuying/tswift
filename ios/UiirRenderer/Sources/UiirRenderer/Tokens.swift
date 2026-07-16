@@ -66,9 +66,18 @@ public enum Tokens {
 }
 
 extension UiirValue {
-    /// Resolve a `{ "$": "color", "name": ... }` token to a `Color`.
+    /// Resolve a semantic named color or explicit normalized RGBA value.
     var asColor: Color? {
         if case let .token(tag, name) = self, tag == "color" { return Tokens.color(name) }
+        if case let .object(object) = self,
+           case let .string(tag)? = object["$"], tag == "color",
+           case let .array(components)? = object["rgba"], components.count == 4,
+           let red = components[0].doubleValue,
+           let green = components[1].doubleValue,
+           let blue = components[2].doubleValue,
+           let opacity = components[3].doubleValue {
+            return Color(red: red, green: green, blue: blue, opacity: opacity)
+        }
         return nil
     }
 
