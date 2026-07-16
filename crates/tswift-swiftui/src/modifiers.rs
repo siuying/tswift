@@ -715,6 +715,12 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("onExitCommand", modifier_on_exit_command),
     ("onPlayPauseCommand", modifier_on_play_pause_command),
     ("onDrag", modifier_on_drag),
+    ("onCutCommand", modifier_on_cut_command),
+    ("onCopyCommand", modifier_on_copy_command),
+    ("onMoveCommand", modifier_on_move_command),
+    ("onPencilDoubleTap", modifier_on_pencil_double_tap),
+    ("onPencilSqueeze", modifier_on_pencil_squeeze),
+    ("onContinuousHover", modifier_on_continuous_hover),
     ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
@@ -1026,6 +1032,24 @@ event_handler!(
     "playPauseCommand"
 );
 event_handler!(modifier_on_drag, "onDrag", "drag");
+event_handler!(modifier_on_cut_command, "onCutCommand", "cutCommand");
+event_handler!(modifier_on_copy_command, "onCopyCommand", "copyCommand");
+event_handler!(modifier_on_move_command, "onMoveCommand", "moveCommand");
+event_handler!(
+    modifier_on_pencil_double_tap,
+    "onPencilDoubleTap",
+    "pencilDoubleTap"
+);
+event_handler!(
+    modifier_on_pencil_squeeze,
+    "onPencilSqueeze",
+    "pencilSqueeze"
+);
+event_handler!(
+    modifier_on_continuous_hover,
+    "onContinuousHover",
+    "continuousHover"
+);
 
 /// `.onSubmit(of:_:)` — fire `action` when the user submits a text field. The
 /// `of:` `SubmitTriggers` token is out of scope (all submits route the same);
