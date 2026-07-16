@@ -402,7 +402,7 @@
         {
           "name": "containerRelativeFrame",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "containerShape",
@@ -417,12 +417,12 @@
         {
           "name": "contentCaptureProtected",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contentMargins",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contentShape",
@@ -517,7 +517,7 @@
         {
           "name": "defersSystemGestures",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "deleteDisabled",
@@ -532,7 +532,7 @@
         {
           "name": "dialogPreventsAppTermination",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dialogSeverity",
@@ -902,7 +902,7 @@
         {
           "name": "handlesExternalEvents",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "headerProminence",
@@ -1117,12 +1117,12 @@
         {
           "name": "listRowHoverEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowHoverEffectDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowInsets",
@@ -1297,7 +1297,7 @@
         {
           "name": "navigationDocument",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationLinkIndicatorVisibility",
@@ -1582,7 +1582,7 @@
         {
           "name": "pointerVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "popover",
@@ -1632,7 +1632,7 @@
         {
           "name": "presentationCornerRadius",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentationDetents",
@@ -1672,7 +1672,7 @@
         {
           "name": "previewDevice",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "previewDisplayName",
@@ -1772,7 +1772,7 @@
         {
           "name": "scenePadding",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollBounceBehavior",
@@ -1927,7 +1927,7 @@
         {
           "name": "sliderThumbVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "speechAdjustedPitch",
@@ -2162,17 +2162,17 @@
         {
           "name": "toolbarBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbarBackgroundVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbarColorScheme",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbarForegroundStyle",
@@ -2202,7 +2202,7 @@
         {
           "name": "toolbarVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "touchBar",
@@ -2267,7 +2267,7 @@
         {
           "name": "typeSelectEquivalent",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "typesettingLanguage",
@@ -2297,17 +2297,17 @@
         {
           "name": "windowDismissBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowFullScreenBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowMinimizeBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowResizeAnchor",
@@ -2317,7 +2317,7 @@
         {
           "name": "windowResizeBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowToolbarFullScreenVisibility",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 209,
+        "implemented": 232,
         "partial": 11,
-        "missing": 248,
+        "missing": 225,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 312,
+    "implemented": 335,
     "partial": 20,
-    "missing": 370,
+    "missing": 347,
     "out_of_scope": 0,
     "total": 702
   }
