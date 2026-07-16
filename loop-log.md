@@ -564,3 +564,25 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   previewDevice (String).
 - Cumulative session arc: SwiftUI 47.3% → 50.6% implemented (+23 modifiers)
   across three iterations, all green presubmit + golden-verified.
+
+## Coverage iteration — SwiftUI token-namespace presentation modifiers
+
+- Coverage before → after: SwiftUI implemented 355 → 367 (50.6% → 52.3%),
+  verified 335 → 347 (47.7% → 49.4%). View +12. stdlib/Foundation unchanged.
+- Twelve View modifiers via the typed seam. Ten new token namespaces (one
+  per modifier, no cross-namespace collisions): navigationBarTitleDisplayMode
+  (NavigationBarItemTitleDisplayMode), toolbarTitleDisplayMode
+  (ToolbarTitleDisplayMode), toolbarRole (ToolbarRole), springLoadingBehavior
+  (SpringLoadingBehavior), layoutDirectionBehavior (LayoutDirectionBehavior),
+  textSelection (TextSelectability), previewLayout (PreviewLayout),
+  previewInterfaceOrientation (InterfaceOrientation), symbolColorRenderingMode
+  (SymbolColorRenderingMode), symbolVariableValueMode (SymbolVariableValueMode).
+  Plus edgesIgnoringSafeArea (reuses Edge.Set) and backgroundStyle (Color value
+  passthrough, no token).
+- New-namespace recipe touchpoints: PRELUDE structs (lib.rs), token_of guard
+  (values.rs), UIIR tag map (uiir.rs), typed registration (lib.rs), MODIFIER_FNS
+  table (modifiers.rs), registered_keys_cover_v1_constructors expected list.
+  Verified by new presentation-token-modifiers golden fixture; presubmit green.
+- SwiftUI modifier surface remains highest-yield; stdlib (73.2%) and Foundation
+  (75.3%) remainders dominated by unsafe-pointer / FormatStyle-token APIs a
+  headless interpreter can't implement with real behavior.
