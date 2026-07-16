@@ -40,14 +40,14 @@ LongPressGesture = ["init", "onEnded"]
 # Animation & AnyTransition are prelude value types (crates/tswift-swiftui
 # PRELUDE): factories + chainable methods are implemented in Swift, not the
 # modifier registry, so they never appear in registered_keys.txt. List the
-# implemented members here. `.default` is deferred (lexer lacks backtick-
-# identifier escape); interactiveSpring/interpolatingSpring/timingCurve and the
-# velocity/animate/shouldMerge internals remain out of reach v1.
+# implemented members here. `.default` and the custom curves (timingCurve/
+# interpolatingSpring/interactiveSpring) are implemented; the velocity/animate/
+# shouldMerge internals remain out of reach v1.
 Animation = ["easeIn", "easeInOut", "easeOut", "linear", "spring", "bouncy", "smooth", "snappy", "delay", "speed", "repeatCount", "repeatForever", "default", "timingCurve", "interpolatingSpring", "interactiveSpring"]
 # AnyTransition: opacity/identity/slide/scale + move/push/offset/scale(_:) +
-# combined/asymmetric. `.animation(_:)` on a transition and the ViewModifier
-# `modifier(active:identity:)` form remain out of scope.
-AnyTransition = ["opacity", "identity", "slide", "scale", "move", "push", "offset", "combined", "asymmetric"]
+# combined/asymmetric + `.animation(_:)`. The ViewModifier
+# `modifier(active:identity:)` form remains out of scope.
+AnyTransition = ["opacity", "identity", "slide", "scale", "move", "push", "offset", "combined", "asymmetric", "animation"]
 
 # ── UI1 — v1 Counter slice (proves the whole loop end to end) ─────────────────
 [[tier]]

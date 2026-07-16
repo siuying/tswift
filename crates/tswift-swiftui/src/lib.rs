@@ -564,6 +564,9 @@ struct AnyTransition {
     var transitions: [Any]? = nil
     var insertion: Any? = nil
     var removal: Any? = nil
+    // Animation curve attached via `.animation(_:)` (typed `Any` to avoid a
+    // recursive-size dependency on `Animation`; the serializer reads it back).
+    var animationValue: Any? = nil
 
     static let opacity = AnyTransition(transitionType: "opacity")
     static let identity = AnyTransition(transitionType: "identity")
@@ -590,6 +593,15 @@ struct AnyTransition {
     }
     static func asymmetric(insertion: AnyTransition, removal: AnyTransition) -> AnyTransition {
         AnyTransition(transitionType: "asymmetric", insertion: insertion, removal: removal)
+    }
+
+    // `.animation(_:)` — attach an animation curve to this transition so the
+    // insert/remove runs with the given timing. Returns a copy carrying the
+    // curve; a `nil` curve clears any attached animation.
+    func animation(_ animation: Animation?) -> AnyTransition {
+        var t = self
+        t.animationValue = animation
+        return t
     }
 }
 "#;

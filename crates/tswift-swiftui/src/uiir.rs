@@ -466,6 +466,13 @@ fn write_transition(obj: &StructObj, out: &mut String) {
         }
         _ => {}
     }
+    // `.animation(_:)` attaches a curve to any transition, emitted last.
+    if let Some(SwiftValue::Struct(anim)) = field("animationValue") {
+        if anim.type_name == "Animation" {
+            out.push_str(",\"animation\":");
+            write_animation(anim, out);
+        }
+    }
     out.push('}');
 }
 
@@ -565,6 +572,14 @@ mod tests {
         assert_eq!(
             transition_json("AnyTransition.asymmetric(insertion: .scale, removal: .opacity)"),
             r#"{"$":"transition","type":"asymmetric","insertion":{"$":"transition","type":"scale"},"removal":{"$":"transition","type":"opacity"}}"#
+        );
+    }
+
+    #[test]
+    fn transition_animation_attaches_curve() {
+        assert_eq!(
+            transition_json("AnyTransition.slide.animation(.easeInOut(duration: 0.3))"),
+            r#"{"$":"transition","type":"slide","animation":{"$":"animation","kind":"easeInOut","duration":0.3}}"#
         );
     }
 
