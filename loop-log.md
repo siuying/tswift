@@ -263,3 +263,30 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   same reason `.automatic`-only styles (groupBox/labeledContent/disclosure
   Group) are registered but exercised only via qualified tokens (implemented,
   not verified). imageScale/keyboardType deferred (nested-type / UIKit token).
+
+## Coverage iteration — formIndex + label-aware collection index
+
+- Coverage before → after: stdlib implemented/verified 364 → 368 (71.2% →
+  72.0%). Array 65.6%→..., ArraySlice/ContiguousArray/String/Substring each
+  gained `formIndex`. Foundation/SwiftUI/SwiftData unchanged.
+- Fixed a real gap: `Array.index(after:)`/`index(before:)` previously trapped
+  ("index expects two or three integer arguments") because Array's `index` was
+  a plain (non-labeled) intrinsic handling only offsetBy forms. Converted
+  Array + ArraySlice `index` to label-aware `index_labeled`
+  (after:/before:/offsetBy:/limitedBy:), preserving positional-fallback for
+  existing callers and base-relative bounds for slices.
+- Generalized the dispatcher's `formIndex(after:&i)` inout write-back
+  interceptor (previously Set/Dictionary-only) to any builtin receiver with a
+  labeled `index` intrinsic, and to all four forms: `formIndex(after:)`,
+  `formIndex(before:)`, `formIndex(_:offsetBy:)` (Void), and
+  `formIndex(_:offsetBy:limitedBy:)` (returns Bool; writes back only when it
+  moved). Registered `formIndex` on Array/ArraySlice/ContiguousArray/String/
+  Substring for coverage + fallback.
+- Added `stdlib_form_index` golden fixture exercising all forms across Array,
+  ArraySlice, ContiguousArray, String, Substring. Updated unit tests to the
+  new labeled signature. presubmit green.
+- Blockers: Range/ClosedRange/ReversedCollection/CollectionOfOne/
+  EmptyCollection still use plain `index` intrinsics — extending formIndex to
+  them needs converting those to labeled `index` first (deferred). Remaining
+  String/Array missing members are unsafe-pointer/span/Mirror APIs with no
+  runtime memory model (infeasible).
