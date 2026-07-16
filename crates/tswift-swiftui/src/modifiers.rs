@@ -228,6 +228,46 @@ modifier!(modifier_navigation_title, "navigationTitle");
 modifier!(modifier_resizable, "resizable");
 // Slice 3 — `.transition(_:)` records an `AnyTransition` for insert/remove.
 modifier!(modifier_transition, "transition");
+// Chrome-visibility & interaction-disabling toggles. Each records a plain
+// Bool / String / Double value (no leading-dot token), so the host reads the
+// recorded scalar straight off the view node. Bool toggles default to `true`
+// in SwiftUI when called with no argument, but our fixtures always pass the
+// argument explicitly.
+modifier!(
+    modifier_navigation_bar_back_button_hidden,
+    "navigationBarBackButtonHidden"
+);
+modifier!(modifier_navigation_bar_hidden, "navigationBarHidden");
+modifier!(modifier_status_bar_hidden, "statusBarHidden");
+modifier!(modifier_navigation_subtitle, "navigationSubtitle");
+modifier!(modifier_preview_display_name, "previewDisplayName");
+modifier!(modifier_privacy_sensitive, "privacySensitive");
+modifier!(modifier_focus_effect_disabled, "focusEffectDisabled");
+modifier!(modifier_hover_effect_disabled, "hoverEffectDisabled");
+modifier!(modifier_replace_disabled, "replaceDisabled");
+modifier!(modifier_find_disabled, "findDisabled");
+modifier!(modifier_symbol_effects_removed, "symbolEffectsRemoved");
+modifier!(modifier_scroll_target_layout, "scrollTargetLayout");
+modifier!(modifier_scroll_indicators_flash, "scrollIndicatorsFlash");
+modifier!(
+    modifier_allows_window_activation_events,
+    "allowsWindowActivationEvents"
+);
+// Accessibility speech-synthesis hints (recorded on the node for the serialized
+// UIIR — no on-device speech synthesizer in a headless runtime).
+modifier!(modifier_speech_adjusted_pitch, "speechAdjustedPitch");
+modifier!(
+    modifier_speech_always_includes_punctuation,
+    "speechAlwaysIncludesPunctuation"
+);
+modifier!(
+    modifier_speech_announcements_queued,
+    "speechAnnouncementsQueued"
+);
+modifier!(
+    modifier_speech_spells_out_characters,
+    "speechSpellsOutCharacters"
+);
 
 /// `.environmentObject(_ object)` — provide an `ObservableObject` to this view
 /// and its subtree. The object is appended to the view's `_env` list (not
@@ -566,6 +606,41 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("animation", modifier_animation),
     // `.transition(_:)` — records an `AnyTransition` (Slice 3).
     ("transition", modifier_transition),
+    // Chrome-visibility & interaction-disabling toggles (Bool/String/Double).
+    (
+        "navigationBarBackButtonHidden",
+        modifier_navigation_bar_back_button_hidden,
+    ),
+    ("navigationBarHidden", modifier_navigation_bar_hidden),
+    ("statusBarHidden", modifier_status_bar_hidden),
+    ("navigationSubtitle", modifier_navigation_subtitle),
+    ("previewDisplayName", modifier_preview_display_name),
+    ("privacySensitive", modifier_privacy_sensitive),
+    ("focusEffectDisabled", modifier_focus_effect_disabled),
+    ("hoverEffectDisabled", modifier_hover_effect_disabled),
+    ("replaceDisabled", modifier_replace_disabled),
+    ("findDisabled", modifier_find_disabled),
+    ("symbolEffectsRemoved", modifier_symbol_effects_removed),
+    ("scrollTargetLayout", modifier_scroll_target_layout),
+    ("scrollIndicatorsFlash", modifier_scroll_indicators_flash),
+    (
+        "allowsWindowActivationEvents",
+        modifier_allows_window_activation_events,
+    ),
+    // Accessibility speech-synthesis hints.
+    ("speechAdjustedPitch", modifier_speech_adjusted_pitch),
+    (
+        "speechAlwaysIncludesPunctuation",
+        modifier_speech_always_includes_punctuation,
+    ),
+    (
+        "speechAnnouncementsQueued",
+        modifier_speech_announcements_queued,
+    ),
+    (
+        "speechSpellsOutCharacters",
+        modifier_speech_spells_out_characters,
+    ),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
