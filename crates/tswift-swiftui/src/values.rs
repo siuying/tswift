@@ -85,6 +85,10 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "SearchToolbarBehavior"
             | "HandGestureShortcut"
             | "ScrollEdgeEffectStyle"
+            | "PresentationContentInteraction"
+            | "PresentationSizing"
+            | "TextInputDictationBehavior"
+            | "WindowToolbarFullScreenVisibility"
     ) {
         return None;
     }

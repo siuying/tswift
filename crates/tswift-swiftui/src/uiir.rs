@@ -243,6 +243,10 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "SearchToolbarBehavior" => "searchToolbarBehavior",
             "HandGestureShortcut" => "handGestureShortcut",
             "ScrollEdgeEffectStyle" => "scrollEdgeEffectStyle",
+            "PresentationContentInteraction" => "presentationContentInteraction",
+            "PresentationSizing" => "presentationSizing",
+            "TextInputDictationBehavior" => "textInputDictationBehavior",
+            "WindowToolbarFullScreenVisibility" => "windowToolbarFullScreenVisibility",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -898,6 +902,17 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"submitLabel","value":{"$":"token","name":"done"}},{"name":"textInputAutocapitalization","value":{"$":"token","name":"words"}},{"name":"autocorrectionDisabled","value":true},{"name":"focusable","value":true}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn presentation_window_modifiers_serialize_tokens_and_values() {
+        let json = render_json(
+            r#"Text("x").presentationContentInteraction(.scrolls).presentationSizing(.form).searchDictationBehavior(.inactive).windowToolbarFullScreenVisibility(.onHover).windowResizeAnchor(.topLeading).submitScope(true)"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"presentationContentInteraction","value":{"$":"presentationContentInteraction","name":"scrolls"}},{"name":"presentationSizing","value":{"$":"presentationSizing","name":"form"}},{"name":"searchDictationBehavior","value":{"$":"textInputDictationBehavior","name":"inactive"}},{"name":"windowToolbarFullScreenVisibility","value":{"$":"windowToolbarFullScreenVisibility","name":"onHover"}},{"name":"windowResizeAnchor","value":{"$":"unitPoint","name":"topLeading"}},{"name":"submitScope","value":true}],"children":[]}"#
         );
     }
 

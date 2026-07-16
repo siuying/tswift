@@ -439,6 +439,29 @@ modifier!(
     modifier_background_extension_effect,
     "backgroundExtensionEffect"
 );
+// Presentation/search/window modifiers. Token modifiers with dedicated
+// namespaces (presentationContentInteraction, presentationSizing,
+// searchDictationBehavior, windowToolbarFullScreenVisibility) and reused
+// namespaces (windowResizeAnchor → UnitPoint; scrollEdgeEffectHidden carries a
+// leading Bool + a `for:` Edge.Set) are typed in `install`. presentationBackground
+// (Color) and submitScope (Bool) are plain value passthroughs.
+modifier!(
+    modifier_presentation_content_interaction,
+    "presentationContentInteraction"
+);
+modifier!(modifier_presentation_sizing, "presentationSizing");
+modifier!(
+    modifier_search_dictation_behavior,
+    "searchDictationBehavior"
+);
+modifier!(
+    modifier_window_toolbar_full_screen_visibility,
+    "windowToolbarFullScreenVisibility"
+);
+modifier!(modifier_window_resize_anchor, "windowResizeAnchor");
+modifier!(modifier_scroll_edge_effect_hidden, "scrollEdgeEffectHidden");
+modifier!(modifier_presentation_background, "presentationBackground");
+modifier!(modifier_submit_scope, "submitScope");
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -1047,6 +1070,23 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "backgroundExtensionEffect",
         modifier_background_extension_effect,
     ),
+    (
+        "presentationContentInteraction",
+        modifier_presentation_content_interaction,
+    ),
+    ("presentationSizing", modifier_presentation_sizing),
+    (
+        "searchDictationBehavior",
+        modifier_search_dictation_behavior,
+    ),
+    (
+        "windowToolbarFullScreenVisibility",
+        modifier_window_toolbar_full_screen_visibility,
+    ),
+    ("windowResizeAnchor", modifier_window_resize_anchor),
+    ("scrollEdgeEffectHidden", modifier_scroll_edge_effect_hidden),
+    ("presentationBackground", modifier_presentation_background),
+    ("submitScope", modifier_submit_scope),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),

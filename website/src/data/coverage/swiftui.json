@@ -1612,7 +1612,7 @@
         {
           "name": "presentationBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentationBackgroundInteraction",
@@ -1627,7 +1627,7 @@
         {
           "name": "presentationContentInteraction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentationCornerRadius",
@@ -1652,7 +1652,7 @@
         {
           "name": "presentationSizing",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentedWindowStyle",
@@ -1802,7 +1802,7 @@
         {
           "name": "scrollEdgeEffectHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollEdgeEffectStyle",
@@ -1852,7 +1852,7 @@
         {
           "name": "searchDictationBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchFocused",
@@ -1977,7 +1977,7 @@
         {
           "name": "submitScope",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "supportedVolumeViewpoints",
@@ -2312,7 +2312,7 @@
         {
           "name": "windowResizeAnchor",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowResizeBehavior",
@@ -2322,7 +2322,7 @@
         {
           "name": "windowToolbarFullScreenVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "writingDirection",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 267,
+        "implemented": 275,
         "partial": 11,
-        "missing": 190,
+        "missing": 182,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 370,
+    "implemented": 378,
     "partial": 20,
-    "missing": 312,
+    "missing": 304,
     "out_of_scope": 0,
     "total": 702
   }

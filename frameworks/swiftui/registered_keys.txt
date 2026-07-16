@@ -232,10 +232,13 @@ View.pickerStyle
 View.pointerVisibility
 View.position
 View.preferredColorScheme
+View.presentationBackground
 View.presentationBackgroundInteraction
 View.presentationCompactAdaptation
+View.presentationContentInteraction
 View.presentationCornerRadius
 View.presentationDragIndicator
+View.presentationSizing
 View.previewDevice
 View.previewDisplayName
 View.previewInterfaceOrientation
@@ -258,12 +261,14 @@ View.scrollClipDisabled
 View.scrollContentBackground
 View.scrollDisabled
 View.scrollDismissesKeyboard
+View.scrollEdgeEffectHidden
 View.scrollEdgeEffectStyle
 View.scrollIndicators
 View.scrollIndicatorsFlash
 View.scrollInputBehavior
 View.scrollTargetBehavior
 View.scrollTargetLayout
+View.searchDictationBehavior
 View.searchPresentationToolbarBehavior
 View.searchToolbarBehavior
 View.selectionDisabled
@@ -277,6 +282,7 @@ View.springLoadingBehavior
 View.statusBarHidden
 View.strikethrough
 View.submitLabel
+View.submitScope
 View.symbolColorRenderingMode
 View.symbolEffectsRemoved
 View.symbolRenderingMode
@@ -314,7 +320,9 @@ View.unredacted
 View.windowDismissBehavior
 View.windowFullScreenBehavior
 View.windowMinimizeBehavior
+View.windowResizeAnchor
 View.windowResizeBehavior
+View.windowToolbarFullScreenVisibility
 View.writingToolsAffordanceVisibility
 View.writingToolsBehavior
 View.zIndex

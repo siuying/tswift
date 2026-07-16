@@ -792,6 +792,29 @@ struct ScrollEdgeEffectStyle {
     static let soft = ScrollEdgeEffectStyle(token: "soft")
     static let hard = ScrollEdgeEffectStyle(token: "hard")
 }
+struct PresentationContentInteraction {
+    let token: String
+    static let automatic = PresentationContentInteraction(token: "automatic")
+    static let resizes = PresentationContentInteraction(token: "resizes")
+    static let scrolls = PresentationContentInteraction(token: "scrolls")
+}
+struct PresentationSizing {
+    let token: String
+    static let automatic = PresentationSizing(token: "automatic")
+    static let fitted = PresentationSizing(token: "fitted")
+    static let form = PresentationSizing(token: "form")
+    static let page = PresentationSizing(token: "page")
+}
+struct TextInputDictationBehavior {
+    let token: String
+    static let automatic = TextInputDictationBehavior(token: "automatic")
+    static let inactive = TextInputDictationBehavior(token: "inactive")
+}
+struct WindowToolbarFullScreenVisibility {
+    let token: String
+    static let automatic = WindowToolbarFullScreenVisibility(token: "automatic")
+    static let onHover = WindowToolbarFullScreenVisibility(token: "onHover")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1813,6 +1836,58 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_badge_prominence,
         vec![BuiltinParam::positional("_ControlStyle")],
     );
+    // Presentation/search/window token modifiers. Dedicated namespaces for
+    // presentationContentInteraction/presentationSizing/searchDictationBehavior/
+    // windowToolbarFullScreenVisibility; windowResizeAnchor reuses UnitPoint;
+    // scrollEdgeEffectHidden takes a leading Bool + a `for:` Edge.Set.
+    // `PresentationSizing.page` collides with `_ControlStyle.page`, so the
+    // previously uniqueness-resolved style modifiers that accept `.page`
+    // (tabViewStyle/indexViewStyle) must be typed against `_ControlStyle`.
+    interp.register_struct_method_typed(
+        "tabViewStyle",
+        modifiers::modifier_tab_view_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "indexViewStyle",
+        modifiers::modifier_index_view_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "presentationContentInteraction",
+        modifiers::modifier_presentation_content_interaction,
+        vec![BuiltinParam::positional("PresentationContentInteraction")],
+    );
+    interp.register_struct_method_typed(
+        "presentationSizing",
+        modifiers::modifier_presentation_sizing,
+        vec![BuiltinParam::positional("PresentationSizing")],
+    );
+    interp.register_struct_method_typed(
+        "searchDictationBehavior",
+        modifiers::modifier_search_dictation_behavior,
+        vec![BuiltinParam::positional("TextInputDictationBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "windowToolbarFullScreenVisibility",
+        modifiers::modifier_window_toolbar_full_screen_visibility,
+        vec![BuiltinParam::positional(
+            "WindowToolbarFullScreenVisibility",
+        )],
+    );
+    interp.register_struct_method_typed(
+        "windowResizeAnchor",
+        modifiers::modifier_window_resize_anchor,
+        vec![BuiltinParam::positional("UnitPoint")],
+    );
+    interp.register_struct_method_typed(
+        "scrollEdgeEffectHidden",
+        modifiers::modifier_scroll_edge_effect_hidden,
+        vec![
+            BuiltinParam::positional("Bool"),
+            BuiltinParam::labeled("for", "Edge.Set"),
+        ],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -2337,10 +2412,13 @@ mod tests {
                 "View.pointerVisibility",
                 "View.position",
                 "View.preferredColorScheme",
+                "View.presentationBackground",
                 "View.presentationBackgroundInteraction",
                 "View.presentationCompactAdaptation",
+                "View.presentationContentInteraction",
                 "View.presentationCornerRadius",
                 "View.presentationDragIndicator",
+                "View.presentationSizing",
                 "View.previewDevice",
                 "View.previewDisplayName",
                 "View.previewInterfaceOrientation",
@@ -2363,12 +2441,14 @@ mod tests {
                 "View.scrollContentBackground",
                 "View.scrollDisabled",
                 "View.scrollDismissesKeyboard",
+                "View.scrollEdgeEffectHidden",
                 "View.scrollEdgeEffectStyle",
                 "View.scrollIndicators",
                 "View.scrollIndicatorsFlash",
                 "View.scrollInputBehavior",
                 "View.scrollTargetBehavior",
                 "View.scrollTargetLayout",
+                "View.searchDictationBehavior",
                 "View.searchPresentationToolbarBehavior",
                 "View.searchToolbarBehavior",
                 "View.selectionDisabled",
@@ -2382,6 +2462,7 @@ mod tests {
                 "View.statusBarHidden",
                 "View.strikethrough",
                 "View.submitLabel",
+                "View.submitScope",
                 "View.symbolColorRenderingMode",
                 "View.symbolEffectsRemoved",
                 "View.symbolRenderingMode",
@@ -2419,7 +2500,9 @@ mod tests {
                 "View.windowDismissBehavior",
                 "View.windowFullScreenBehavior",
                 "View.windowMinimizeBehavior",
+                "View.windowResizeAnchor",
                 "View.windowResizeBehavior",
+                "View.windowToolbarFullScreenVisibility",
                 "View.writingToolsAffordanceVisibility",
                 "View.writingToolsBehavior",
                 "View.zIndex",
