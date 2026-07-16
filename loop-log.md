@@ -141,3 +141,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Added `color-named` golden fixture + named-color-opacity unit test.
 - presubmit green. Blockers: `.gradient`/`.mix`/`cgColor`/HDR resolution
   need gradient + color-space plumbing — deferred.
+
+## Coverage iteration — Text typography modifiers
+
+- Coverage before → after: SwiftUI verified 138 → 152 (19.7% → 21.7%),
+  implemented 151 → 165. Text section 1/1 → 15/15 verified.
+- Implemented kerning/tracking/baselineOffset/monospaced/monospacedDigit and
+  registered fontDesign/fontWidth (token-valued, uncredited pending nested
+  Font.Design/Font.Width types). Credited the verified Text styling surface.
+- Added `text-typography` golden fixture; updated registered-keys expectations.
+- presubmit green. Blockers: fontDesign/fontWidth + speech/accessibility text
+  members need nested-type token access and a11y plumbing — deferred.
