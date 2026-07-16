@@ -44,3 +44,9 @@ print(unix.debugDescription)
 let h1 = Date(timeIntervalSinceReferenceDate: 10.0)
 let h2 = Date(timeIntervalSinceReferenceDate: 10.0)
 print(h1.hashValue == h2.hashValue)
+
+// Live-clock APIs are asserted by their ordering, never by a timestamp.
+let now = Date.now
+let future = Date(timeIntervalSinceNow: 60.0)
+print(now.timeIntervalSinceNow <= 0.0)
+print(future.timeIntervalSinceNow > 0.0)

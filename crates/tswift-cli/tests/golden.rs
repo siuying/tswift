@@ -22,17 +22,40 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
+/// Return the optional comma-separated list of fixture stems selected for a
+/// focused local run. Unset means the authoritative full corpus.
+fn fixture_filter() -> Option<Vec<String>> {
+    std::env::var("TSWIFT_GOLDEN_FILTER").ok().map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn matches_filter(path: &Path, filter: Option<&[String]>) -> bool {
+    filter.is_none_or(|names| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| names.iter().any(|name| name == stem))
+    })
+}
+
 /// Collect `(swift_path, expected_path)` pairs, sorted for stable output.
 
 fn fixtures() -> Vec<(PathBuf, PathBuf)> {
     let dir = fixtures_dir();
+    let filter = fixture_filter();
     let mut pairs = Vec::new();
     for entry in std::fs::read_dir(&dir)
         .expect("fixtures dir is readable")
         .flatten()
     {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("swift") {
+        if path.extension().and_then(|e| e.to_str()) == Some("swift")
+            && matches_filter(&path, filter.as_deref())
+        {
             let expected = path.with_extension("expected");
             assert!(
                 expected.exists(),
@@ -118,8 +141,9 @@ fn golden_fixtures_match() {
     let pairs = fixtures();
     assert!(
         !pairs.is_empty(),
-        "no fixtures found in {}",
-        fixtures_dir().display()
+        "no fixtures found in {} matching {:?}",
+        fixtures_dir().display(),
+        fixture_filter()
     );
 
     let mut failures = Vec::new();
@@ -142,6 +166,15 @@ fn golden_fixtures_match() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn fixture_filter_matches_exact_stems() {
+    let filter = vec!["one".to_owned(), "three".to_owned()];
+    assert!(matches_filter(Path::new("one.swift"), Some(&filter)));
+    assert!(matches_filter(Path::new("three.swift"), Some(&filter)));
+    assert!(!matches_filter(Path::new("two.swift"), Some(&filter)));
+    assert!(matches_filter(Path::new("two.swift"), None));
 }
 
 /// Every `fixtures/multifile/<case>/` directory is one multi-file program: all

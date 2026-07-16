@@ -32,3 +32,21 @@ Drop in the files — no code changes needed; the harness discovers them.
   iteration order).
 - Every `.swift` must have its sibling (`.expected`, `expected.txt`, or `.ast`),
   or the harness fails.
+
+## Focused local runs
+
+Set `TSWIFT_GOLDEN_FILTER` to a comma-separated list of exact fixture stems to
+run only the affected runtime fixtures while iterating. The default (unset) is
+the full authoritative corpus used by `scripts/presubmit`.
+
+```sh
+TSWIFT_GOLDEN_FILTER=foundation_filemanager cargo test -p tswift-cli --test golden golden_fixtures_match
+```
+
+The SwiftUI UIIR harness accepts the same opt-in exact-stem filter. Its
+fixtures live in `tests/swiftui-fixtures` and retain the full corpus when the
+variable is unset.
+
+```sh
+TSWIFT_GOLDEN_FILTER=color-rgba cargo test -p tswift-cli --test swiftui_goldens swiftui_goldens_match
+```

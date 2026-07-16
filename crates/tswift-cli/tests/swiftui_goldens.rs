@@ -17,15 +17,45 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/swiftui-fixtures")
 }
 
+fn fixture_filter() -> Option<Vec<String>> {
+    std::env::var("TSWIFT_GOLDEN_FILTER").ok().map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
+fn matches_filter(path: &Path, filter: Option<&[String]>) -> bool {
+    filter.is_none_or(|names| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| names.iter().any(|name| name == stem))
+    })
+}
+
 fn swift_fixtures() -> Vec<PathBuf> {
+    let filter = fixture_filter();
     let mut paths: Vec<PathBuf> = std::fs::read_dir(fixtures_dir())
         .expect("swiftui-fixtures dir is readable")
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("swift"))
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("swift")
+                && matches_filter(p, filter.as_deref())
+        })
         .collect();
     paths.sort();
     paths
+}
+
+#[test]
+fn fixture_filter_matches_exact_stems() {
+    let filter = vec!["counter".to_owned()];
+    assert!(matches_filter(Path::new("counter.swift"), Some(&filter)));
+    assert!(!matches_filter(Path::new("greeting.swift"), Some(&filter)));
+    assert!(matches_filter(Path::new("greeting.swift"), None));
 }
 
 fn run_cli(args: &[&Path]) -> String {

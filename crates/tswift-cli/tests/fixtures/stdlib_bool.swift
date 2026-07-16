@@ -6,6 +6,7 @@ flag.toggle()
 print(flag)
 
 print(true.description, false.description)
+print(!true, !false)
 
 var count = 0
 for value in [true, false, true] where value {
