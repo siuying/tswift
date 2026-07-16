@@ -267,7 +267,7 @@
         {
           "name": "autocorrectionDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "background",
@@ -452,7 +452,7 @@
         {
           "name": "controlGroupStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "controlSize",
@@ -482,7 +482,7 @@
         {
           "name": "datePickerStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "defaultAdaptableTabBarPlacement",
@@ -557,7 +557,7 @@
         {
           "name": "disableAutocorrection",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "disabled",
@@ -567,7 +567,7 @@
         {
           "name": "disclosureGroupStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "dismissalConfirmationDialog",
@@ -757,7 +757,7 @@
         {
           "name": "focusable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focused",
@@ -817,7 +817,7 @@
         {
           "name": "formStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "frame",
@@ -832,7 +832,7 @@
         {
           "name": "gaugeStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "geometryGroup",
@@ -892,7 +892,7 @@
         {
           "name": "groupBoxStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "handGestureShortcut",
@@ -982,7 +982,7 @@
         {
           "name": "indexViewStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "inspector",
@@ -1057,7 +1057,7 @@
         {
           "name": "labeledContentStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "labelsHidden",
@@ -1227,7 +1227,7 @@
         {
           "name": "menuStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "minimumScaleFactor",
@@ -1972,7 +1972,7 @@
         {
           "name": "submitLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "submitScope",
@@ -2062,7 +2062,7 @@
         {
           "name": "tabViewStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tableColumnHeaders",
@@ -2107,7 +2107,7 @@
         {
           "name": "textInputAutocapitalization",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textInputCompletion",
@@ -2152,7 +2152,7 @@
         {
           "name": "toggleStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbar",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 108,
-        "partial": 8,
-        "missing": 352,
+        "implemented": 121,
+        "partial": 11,
+        "missing": 336,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 211,
-    "partial": 17,
-    "missing": 474,
+    "implemented": 224,
+    "partial": 20,
+    "missing": 458,
     "out_of_scope": 0,
     "total": 702
   }

@@ -523,6 +523,47 @@ struct _ControlStyle {
     static let wheel = _ControlStyle(token: "wheel")
     static let inline = _ControlStyle(token: "inline")
     static let roundedBorder = _ControlStyle(token: "roundedBorder")
+    // Toggle / menu / gauge / form / tab / index / disclosure / control-group
+    // styles. Names stay unique across the shared namespace; the host resolves
+    // meaning from the modifier name.
+    static let button = _ControlStyle(token: "button")
+    static let borderlessButton = _ControlStyle(token: "borderlessButton")
+    static let checkbox = _ControlStyle(token: "checkbox")
+    static let columns = _ControlStyle(token: "columns")
+    static let page = _ControlStyle(token: "page")
+    static let card = _ControlStyle(token: "card")
+    static let navigationLink = _ControlStyle(token: "navigationLink")
+    static let accessoryCircular = _ControlStyle(token: "accessoryCircular")
+    static let accessoryLinear = _ControlStyle(token: "accessoryLinear")
+    static let linearCapacity = _ControlStyle(token: "linearCapacity")
+    static let accessoryCircularCapacity = _ControlStyle(token: "accessoryCircularCapacity")
+    static let accessoryLinearCapacity = _ControlStyle(token: "accessoryLinearCapacity")
+    static let graphical = _ControlStyle(token: "graphical")
+    static let compact = _ControlStyle(token: "compact")
+    static let field = _ControlStyle(token: "field")
+    static let stepper = _ControlStyle(token: "stepper")
+}
+// `SubmitLabel` — the keyboard return-key label for `.submitLabel(_:)`.
+struct SubmitLabel {
+    let token: String
+    static let done = SubmitLabel(token: "done")
+    static let go = SubmitLabel(token: "go")
+    static let send = SubmitLabel(token: "send")
+    static let join = SubmitLabel(token: "join")
+    static let route = SubmitLabel(token: "route")
+    static let search = SubmitLabel(token: "search")
+    static let `return` = SubmitLabel(token: "return")
+    static let next = SubmitLabel(token: "next")
+    static let `continue` = SubmitLabel(token: "continue")
+}
+// `TextInputAutocapitalization` — the autocapitalization policy for
+// `.textInputAutocapitalization(_:)`.
+struct TextInputAutocapitalization {
+    let token: String
+    static let never = TextInputAutocapitalization(token: "never")
+    static let words = TextInputAutocapitalization(token: "words")
+    static let sentences = TextInputAutocapitalization(token: "sentences")
+    static let characters = TextInputAutocapitalization(token: "characters")
 }
 // `NavigationPath` — a type-erased list of navigation values driving a
 // `NavigationStack(path:)` (ADR-0013 §1). The runtime derives the stack's depth
@@ -1316,6 +1357,7 @@ mod tests {
                 "View.allowsTightening",
                 "View.animation",
                 "View.aspectRatio",
+                "View.autocorrectionDisabled",
                 "View.background",
                 "View.badge",
                 "View.baselineOffset",
@@ -1331,34 +1373,44 @@ mod tests {
                 "View.colorMultiply",
                 "View.compositingGroup",
                 "View.contrast",
+                "View.controlGroupStyle",
                 "View.controlSize",
                 "View.cornerRadius",
+                "View.datePickerStyle",
                 "View.deleteDisabled",
+                "View.disableAutocorrection",
                 "View.disabled",
+                "View.disclosureGroupStyle",
                 "View.drawingGroup",
                 "View.environmentObject",
                 "View.fill",
                 "View.fixedSize",
                 "View.flipsForRightToLeftLayoutDirection",
+                "View.focusable",
                 "View.font",
                 "View.fontDesign",
                 "View.fontWeight",
                 "View.fontWidth",
                 "View.foregroundColor",
                 "View.foregroundStyle",
+                "View.formStyle",
                 "View.frame",
+                "View.gaugeStyle",
                 "View.geometryGroup",
                 "View.gesture",
                 "View.grayscale",
+                "View.groupBoxStyle",
                 "View.help",
                 "View.hidden",
                 "View.hueRotation",
                 "View.id",
+                "View.indexViewStyle",
                 "View.interactionActivityTrackingTag",
                 "View.interactiveDismissDisabled",
                 "View.invalidatableContent",
                 "View.italic",
                 "View.kerning",
+                "View.labeledContentStyle",
                 "View.labelsHidden",
                 "View.layoutPriority",
                 "View.lineLimit",
@@ -1370,6 +1422,7 @@ mod tests {
                 "View.listSectionSeparatorTint",
                 "View.listSectionSpacing",
                 "View.listStyle",
+                "View.menuStyle",
                 "View.minimumScaleFactor",
                 "View.monospaced",
                 "View.monospacedDigit",
@@ -1402,13 +1455,17 @@ mod tests {
                 "View.selectionDisabled",
                 "View.shadow",
                 "View.strikethrough",
+                "View.submitLabel",
                 "View.symbolRenderingMode",
                 "View.tabItem",
+                "View.tabViewStyle",
                 "View.tag",
                 "View.task",
                 "View.textCase",
                 "View.textFieldStyle",
+                "View.textInputAutocapitalization",
                 "View.tint",
+                "View.toggleStyle",
                 "View.tracking",
                 "View.transition",
                 "View.truncationMode",

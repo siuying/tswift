@@ -131,6 +131,34 @@ modifier!(modifier_list_style, "listStyle");
 modifier!(modifier_picker_style, "pickerStyle");
 modifier!(modifier_text_field_style, "textFieldStyle");
 modifier!(modifier_disabled, "disabled");
+// Additional container/control style modifiers. Each carries a leading-dot
+// `_ControlStyle` token (`.automatic`, `.grouped`, `.page`, `.accessoryCircular`
+// …); the host disambiguates by modifier name, exactly like buttonStyle/
+// listStyle/pickerStyle above.
+modifier!(modifier_toggle_style, "toggleStyle");
+modifier!(modifier_menu_style, "menuStyle");
+modifier!(modifier_gauge_style, "gaugeStyle");
+modifier!(modifier_form_style, "formStyle");
+modifier!(modifier_group_box_style, "groupBoxStyle");
+modifier!(modifier_labeled_content_style, "labeledContentStyle");
+modifier!(modifier_index_view_style, "indexViewStyle");
+modifier!(modifier_tab_view_style, "tabViewStyle");
+modifier!(modifier_date_picker_style, "datePickerStyle");
+modifier!(modifier_disclosure_group_style, "disclosureGroupStyle");
+modifier!(modifier_control_group_style, "controlGroupStyle");
+// Text-input modifiers. `submitLabel` carries a `SubmitLabel` token;
+// `textInputAutocapitalization` a `TextInputAutocapitalization`.
+// `autocorrectionDisabled`/`focusable`/`disableAutocorrection` are Bool toggles
+// (default true). (`colorScheme`/`preferredColorScheme` are deferred: their
+// `.light` token collides with `FontWeight.light` and needs contextual typing.)
+modifier!(modifier_submit_label, "submitLabel");
+modifier!(
+    modifier_text_input_autocapitalization,
+    "textInputAutocapitalization"
+);
+modifier!(modifier_autocorrection_disabled, "autocorrectionDisabled");
+modifier!(modifier_disable_autocorrection, "disableAutocorrection");
+modifier!(modifier_focusable, "focusable");
 // C7 — accessibility no-ops: accepted-and-recorded so snippets using them still
 // render; the hosts ignore them (no visual effect).
 modifier!(modifier_accessibility_label, "accessibilityLabel");
@@ -444,6 +472,25 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("listStyle", modifier_list_style),
     ("pickerStyle", modifier_picker_style),
     ("textFieldStyle", modifier_text_field_style),
+    ("toggleStyle", modifier_toggle_style),
+    ("menuStyle", modifier_menu_style),
+    ("gaugeStyle", modifier_gauge_style),
+    ("formStyle", modifier_form_style),
+    ("groupBoxStyle", modifier_group_box_style),
+    ("labeledContentStyle", modifier_labeled_content_style),
+    ("indexViewStyle", modifier_index_view_style),
+    ("tabViewStyle", modifier_tab_view_style),
+    ("datePickerStyle", modifier_date_picker_style),
+    ("disclosureGroupStyle", modifier_disclosure_group_style),
+    ("controlGroupStyle", modifier_control_group_style),
+    ("submitLabel", modifier_submit_label),
+    (
+        "textInputAutocapitalization",
+        modifier_text_input_autocapitalization,
+    ),
+    ("autocorrectionDisabled", modifier_autocorrection_disabled),
+    ("disableAutocorrection", modifier_disable_autocorrection),
+    ("focusable", modifier_focusable),
     ("disabled", modifier_disabled),
     ("accessibilityLabel", modifier_accessibility_label),
     ("accessibilityHint", modifier_accessibility_hint),

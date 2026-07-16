@@ -820,6 +820,26 @@ mod tests {
     }
 
     #[test]
+    fn style_modifier_serializes_control_style_token() {
+        let json = render_json(r#"Text("x").toggleStyle(.button).gaugeStyle(.accessoryCircular)"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"toggleStyle","value":{"$":"style","name":"button"}},{"name":"gaugeStyle","value":{"$":"style","name":"accessoryCircular"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn text_input_modifiers_serialize_tokens_and_bools() {
+        let json = render_json(
+            r#"Text("x").submitLabel(.done).textInputAutocapitalization(.words).autocorrectionDisabled(true).focusable(true)"#,
+        );
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"submitLabel","value":{"$":"token","name":"done"}},{"name":"textInputAutocapitalization","value":{"$":"token","name":"words"}},{"name":"autocorrectionDisabled","value":true},{"name":"focusable","value":true}],"children":[]}"#
+        );
+    }
+
+    #[test]
     fn accessibility_heading_serializes_level_token() {
         let json = render_json(r#"Text("x").accessibilityHeading(.h2)"#);
         assert_eq!(
