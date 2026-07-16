@@ -48,6 +48,16 @@ modifier!(modifier_bold, "bold");
 modifier!(modifier_italic, "italic");
 modifier!(modifier_underline, "underline");
 modifier!(modifier_strikethrough, "strikethrough");
+// Text typography adjustments (Text -> Text). `kerning`/`tracking`/
+// `baselineOffset` carry a CGFloat; `monospaced`/`monospacedDigit` are Bool
+// toggles (default true); `fontDesign`/`fontWidth` carry a token.
+modifier!(modifier_kerning, "kerning");
+modifier!(modifier_tracking, "tracking");
+modifier!(modifier_baseline_offset, "baselineOffset");
+modifier!(modifier_monospaced, "monospaced");
+modifier!(modifier_monospaced_digit, "monospacedDigit");
+modifier!(modifier_font_design, "fontDesign");
+modifier!(modifier_font_width, "fontWidth");
 modifier!(modifier_opacity, "opacity");
 modifier!(modifier_foreground_style, "foregroundStyle");
 modifier!(modifier_tint, "tint");
@@ -262,6 +272,13 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("italic", modifier_italic),
     ("underline", modifier_underline),
     ("strikethrough", modifier_strikethrough),
+    ("kerning", modifier_kerning),
+    ("tracking", modifier_tracking),
+    ("baselineOffset", modifier_baseline_offset),
+    ("monospaced", modifier_monospaced),
+    ("monospacedDigit", modifier_monospaced_digit),
+    ("fontDesign", modifier_font_design),
+    ("fontWidth", modifier_font_width),
     ("opacity", modifier_opacity),
     ("foregroundStyle", modifier_foreground_style),
     ("tint", modifier_tint),

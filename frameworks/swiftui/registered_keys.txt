@@ -45,6 +45,7 @@ View.accessibilityValue
 View.animation
 View.aspectRatio
 View.background
+View.baselineOffset
 View.bold
 View.border
 View.buttonStyle
@@ -56,15 +57,20 @@ View.environmentObject
 View.fill
 View.fixedSize
 View.font
+View.fontDesign
 View.fontWeight
+View.fontWidth
 View.foregroundColor
 View.foregroundStyle
 View.frame
 View.gesture
 View.italic
+View.kerning
 View.layoutPriority
 View.lineLimit
 View.listStyle
+View.monospaced
+View.monospacedDigit
 View.multilineTextAlignment
 View.navigationDestination
 View.navigationTitle
@@ -90,6 +96,7 @@ View.task
 View.textCase
 View.textFieldStyle
 View.tint
+View.tracking
 View.transition
 View.underline
 View.zIndex

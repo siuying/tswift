@@ -31,6 +31,12 @@ ObservedObject = ["init", "wrappedValue"]
 EnvironmentObject = ["init", "wrappedValue"]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
+# Text typography modifiers (Text -> Text) recorded via the shared modifier
+# table. Weight/emphasis (bold/italic/underline/strikethrough), numeric spacing
+# (kerning/tracking/baselineOffset), the monospacing toggles, and font/weight/
+# foreground styling. fontDesign/fontWidth need Font.Design/Font.Width nested
+# token types (frontend lacks nested-type static access) — out of scope v1.
+Text = ["bold", "italic", "underline", "strikethrough", "kerning", "tracking", "baselineOffset", "monospaced", "monospacedDigit", "font", "fontWeight", "foregroundColor", "foregroundStyle", "accessibilityLabel"]
 # Explicit RGB colors are prelude values and serialize to host-neutral RGBA;
 # named system colors stay semantic tokens. `.opacity(_:)` adjusts alpha on
 # either form. `.gradient`/`.mix`/`cgColor`/HDR resolution remain out of scope.
