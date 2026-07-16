@@ -165,3 +165,15 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   as `{"$":"angle","degrees":…}`; new fixture + unit tests.
 - presubmit green. Blockers: blendMode/mask/rotation3DEffect need token enums
   or nested-view geometry — deferred.
+
+## Coverage iteration — list & scroll styling modifiers
+
+- Coverage before → after: SwiftUI verified 173 → 186 (24.6% → 26.5%),
+  implemented 190 → 203. View section 78 → 96 implemented.
+- Implemented compositingGroup/drawingGroup/unredacted, scrollClipDisabled/
+  interactiveDismissDisabled/accessibilityHidden/flipsForRightToLeftLayout-
+  Direction, listRowSeparator/listSectionSeparator/scrollContentBackground/
+  scrollIndicators (Visibility tokens), listRow/SectionSeparatorTint (Color).
+- Added `Visibility` token type + `list-scroll-styling` fixture + unit test.
+- presubmit green. Blockers: badge/redacted/blendMode/controlSize/imageScale
+  need dedicated token enums or nested types — deferred.
