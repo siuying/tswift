@@ -312,3 +312,25 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   format/formatted/parse/parseStrategy (need FormatStyle plumbing) — deferred.
   Data's remaining gaps are unsafe-pointer/span/region APIs (no runtime memory
   model, infeasible).
+
+## Coverage iteration — SwiftUI visibility-toggle & speech-hint modifiers
+
+- Coverage before → after: SwiftUI implemented 244 → 262 (34.8% → 37.3%),
+  verified 224 → 242 (31.9% → 34.5%). View section +18. stdlib/Foundation/
+  SwiftData unchanged.
+- Implemented 18 passthrough View modifiers carrying plain Bool/String/Double
+  values (no leading-dot token, so no enum-case plumbing needed):
+  navigationBarBackButtonHidden, navigationBarHidden, statusBarHidden,
+  navigationSubtitle, previewDisplayName, privacySensitive,
+  focusEffectDisabled, hoverEffectDisabled, replaceDisabled, findDisabled,
+  symbolEffectsRemoved, scrollTargetLayout, scrollIndicatorsFlash,
+  allowsWindowActivationEvents, and the accessibility speech hints
+  speechAdjustedPitch, speechAlwaysIncludesPunctuation,
+  speechAnnouncementsQueued, speechSpellsOutCharacters. All via the shared
+  `modifier!` macro + MODIFIER_FNS table; updated the hardcoded
+  registered-keys assertion.
+- Added visibility-toggles SwiftUI golden fixture verifying serialization of
+  all 18. presubmit green.
+- Blockers: remaining View modifiers are dominated by token-valued (need enum
+  case registration), closure/binding-valued (sheet/popover/onReceive/toolbar),
+  and preference/geometry APIs — each needs more than a passthrough record.
