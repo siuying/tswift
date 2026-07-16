@@ -159,6 +159,12 @@ modifier!(
     modifier_navigation_split_view_style,
     "navigationSplitViewStyle"
 );
+// Prominence + button-border-shape token modifiers (shared `_ControlStyle`
+// namespace): headerProminence/badgeProminence → .increased/.standard/
+// .decreased; buttonBorderShape → .roundedRectangle/.capsule/.circle.
+modifier!(modifier_header_prominence, "headerProminence");
+modifier!(modifier_badge_prominence, "badgeProminence");
+modifier!(modifier_button_border_shape, "buttonBorderShape");
 // Text-input modifiers. `submitLabel` carries a `SubmitLabel` token;
 // `textInputAutocapitalization` a `TextInputAutocapitalization`.
 // `autocorrectionDisabled`/`focusable`/`disableAutocorrection` are Bool toggles
@@ -578,6 +584,9 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "navigationSplitViewStyle",
         modifier_navigation_split_view_style,
     ),
+    ("headerProminence", modifier_header_prominence),
+    ("badgeProminence", modifier_badge_prominence),
+    ("buttonBorderShape", modifier_button_border_shape),
     ("submitLabel", modifier_submit_label),
     (
         "textInputAutocapitalization",

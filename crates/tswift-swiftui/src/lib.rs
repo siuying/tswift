@@ -553,6 +553,13 @@ struct _ControlStyle {
     static let stack = _ControlStyle(token: "stack")
     static let balanced = _ControlStyle(token: "balanced")
     static let prominentDetail = _ControlStyle(token: "prominentDetail")
+    // Prominence (headerProminence/badgeProminence) + button-border shapes.
+    static let increased = _ControlStyle(token: "increased")
+    static let standard = _ControlStyle(token: "standard")
+    static let decreased = _ControlStyle(token: "decreased")
+    static let roundedRectangle = _ControlStyle(token: "roundedRectangle")
+    static let capsule = _ControlStyle(token: "capsule")
+    static let circle = _ControlStyle(token: "circle")
 }
 // `SubmitLabel` — the keyboard return-key label for `.submitLabel(_:)`.
 struct SubmitLabel {
@@ -1372,12 +1379,14 @@ mod tests {
                 "View.autocorrectionDisabled",
                 "View.background",
                 "View.badge",
+                "View.badgeProminence",
                 "View.baselineOffset",
                 "View.blendMode",
                 "View.blur",
                 "View.bold",
                 "View.border",
                 "View.brightness",
+                "View.buttonBorderShape",
                 "View.buttonStyle",
                 "View.clipShape",
                 "View.clipped",
@@ -1416,6 +1425,7 @@ mod tests {
                 "View.grayscale",
                 "View.gridCellColumns",
                 "View.groupBoxStyle",
+                "View.headerProminence",
                 "View.help",
                 "View.hidden",
                 "View.hoverEffectDisabled",

@@ -61,12 +61,14 @@ View.aspectRatio
 View.autocorrectionDisabled
 View.background
 View.badge
+View.badgeProminence
 View.baselineOffset
 View.blendMode
 View.blur
 View.bold
 View.border
 View.brightness
+View.buttonBorderShape
 View.buttonStyle
 View.clipShape
 View.clipped
@@ -105,6 +107,7 @@ View.gesture
 View.grayscale
 View.gridCellColumns
 View.groupBoxStyle
+View.headerProminence
 View.help
 View.hidden
 View.hoverEffectDisabled
