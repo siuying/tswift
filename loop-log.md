@@ -205,3 +205,16 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   (accessibilityAction/Rotor/Representation/Children), accessibilityFocused
   (FocusState), accessibilityTextContentType (`.plain` collides with control
   styles — needs typing the style modifiers) — deferred.
+
+## Coverage iteration — list-editing & identity modifiers
+
+- Coverage before → after: SwiftUI verified 201 → 211 (28.6% → 30.1%),
+  implemented 218 → 228. View section 106 → 116 implemented.
+- Implemented deleteDisabled/moveDisabled/selectionDisabled (Bool),
+  listRowSpacing/listSectionSpacing (CGFloat), badge (Int), id, geometryGroup,
+  invalidatableContent (no-arg), interactionActivityTrackingTag (String).
+  All record scalar/Bool/String/passthrough values — no leading-dot token, so
+  zero cross-namespace collision risk.
+- Added `list-editing` golden fixture + serialization unit test.
+- presubmit green. Note: `.id(_:)` is recorded as metadata; full view-identity
+  semantics (state reset on id change) remain a deeper feature — deferred.
