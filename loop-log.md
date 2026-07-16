@@ -152,3 +152,16 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Added `text-typography` golden fixture; updated registered-keys expectations.
 - presubmit green. Blockers: fontDesign/fontWidth + speech/accessibility text
   members need nested-type token access and a11y plumbing — deferred.
+
+## Coverage iteration — graphic-effect modifiers + Angle
+
+- Coverage before → after: SwiftUI verified 152 → 173 (21.7% → 24.6%),
+  implemented 165 → 190. View section 49 → 78 implemented, 70 verified.
+- Implemented visual-effect modifiers (blur/brightness/contrast/saturation/
+  grayscale/colorInvert/colorMultiply/scaleEffect/rotationEffect/hueRotation)
+  and layout/visibility toggles (hidden/allowsHitTesting/lineSpacing/
+  minimumScaleFactor/allowsTightening/labelsHidden/help/scrollDisabled).
+- Added `Angle` value type (degrees canonical, radians converted) serialized
+  as `{"$":"angle","degrees":…}`; new fixture + unit tests.
+- presubmit green. Blockers: blendMode/mask/rotation3DEffect need token enums
+  or nested-view geometry — deferred.
