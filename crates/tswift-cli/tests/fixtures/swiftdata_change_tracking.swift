@@ -61,6 +61,23 @@ do {
     }
     print("fetchCount after transaction: \(try ctx.fetchCount(FetchDescriptor<Book>()))")
     print("hasChanges after transaction: \(ctx.hasChanges)")
+
+    // ModelConfiguration value-type properties reflect init state.
+    print("config inMemory: \(config.isStoredInMemoryOnly)")
+    let named = ModelConfiguration("Library", isStoredInMemoryOnly: true)
+    print("config name: \(named.name ?? "nil")")
+
+    // FetchDescriptor properties reflect its configured state, and fetchOffset
+    // paginates the SELECT.
+    var descriptor = FetchDescriptor<Book>(sortBy: [SortDescriptor(\.pages)])
+    descriptor.fetchLimit = 2
+    descriptor.fetchOffset = 1
+    print("descriptor limit: \(descriptor.fetchLimit ?? -1)")
+    print("descriptor offset: \(descriptor.fetchOffset)")
+    print("descriptor sortBy count: \(descriptor.sortBy.count)")
+    print("descriptor has predicate: \(descriptor.predicate != nil)")
+    let page = try ctx.fetch(descriptor)
+    print("paged titles: \(page.map { $0.title })")
 } catch {
     print("unexpected: \(error)")
 }

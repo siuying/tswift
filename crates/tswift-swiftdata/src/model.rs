@@ -335,6 +335,31 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
     interp.register_contextual_property(context, "insertedModelsArray", context_inserted_models);
     interp.register_contextual_property(context, "changedModelsArray", context_changed_models);
     interp.register_contextual_property(context, "deletedModelsArray", context_deleted_models);
+
+    // ModelConfiguration value-type properties: faithfully return the values
+    // captured at init.
+    let config = BuiltinReceiver::register_extension("ModelConfiguration");
+    interp.register_contextual_property(config, "isStoredInMemoryOnly", |_ctx, recv| {
+        config_property(&recv, "isStoredInMemoryOnly")
+    });
+    interp
+        .register_contextual_property(config, "name", |_ctx, recv| config_property(&recv, "name"));
+
+    // FetchDescriptor value-type properties: fetchLimit/fetchOffset/sortBy/
+    // predicate, each reflecting the descriptor's configured state.
+    let descriptor = BuiltinReceiver::register_extension("FetchDescriptor");
+    interp.register_contextual_property(descriptor, "fetchLimit", |_ctx, recv| {
+        fetch_descriptor_property(&recv, "fetchLimit")
+    });
+    interp.register_contextual_property(descriptor, "fetchOffset", |_ctx, recv| {
+        fetch_descriptor_property(&recv, "fetchOffset")
+    });
+    interp.register_contextual_property(descriptor, "sortBy", |_ctx, recv| {
+        fetch_descriptor_property(&recv, "sortBy")
+    });
+    interp.register_contextual_property(descriptor, "predicate", |_ctx, recv| {
+        fetch_descriptor_property(&recv, "predicate")
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1734,6 +1759,8 @@ fn fetch_descriptor_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
     let mut type_name = SwiftValue::Nil;
     let mut sort_by = SwiftValue::Array(Rc::new(Vec::new()));
     let mut fetch_limit = SwiftValue::Nil;
+    let mut fetch_offset = SwiftValue::int(0);
+    let mut predicate = SwiftValue::Nil;
     for arg in &args {
         match arg.label.as_deref() {
             Some("predicate") | None => {
@@ -1747,6 +1774,7 @@ fn fetch_descriptor_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
                         if let Some(t) = o.get("__type") {
                             type_name = t.clone();
                         }
+                        predicate = arg.value.clone();
                     }
                 }
             }
@@ -1760,6 +1788,11 @@ fn fetch_descriptor_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
                     fetch_limit = arg.value.clone();
                 }
             }
+            Some("fetchOffset") => {
+                if matches!(&arg.value, SwiftValue::Int(_)) {
+                    fetch_offset = arg.value.clone();
+                }
+            }
             _ => {}
         }
     }
@@ -1771,8 +1804,28 @@ fn fetch_descriptor_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult
             ("__type".into(), type_name),
             ("sortBy".into(), sort_by),
             ("fetchLimit".into(), fetch_limit),
+            ("fetchOffset".into(), fetch_offset),
+            ("predicate".into(), predicate),
         ],
     ))
+}
+
+fn fetch_descriptor_property(recv: &SwiftValue, field: &str) -> StdResult {
+    let SwiftValue::Object(o) = recv else {
+        return Err(type_error(
+            "FetchDescriptor property on a non-descriptor value",
+        ));
+    };
+    Ok(o.borrow().get(field).cloned().unwrap_or(SwiftValue::Nil))
+}
+
+fn config_property(recv: &SwiftValue, field: &str) -> StdResult {
+    let SwiftValue::Object(o) = recv else {
+        return Err(type_error(
+            "ModelConfiguration property on a non-configuration value",
+        ));
+    };
+    Ok(o.borrow().get(field).cloned().unwrap_or(SwiftValue::Nil))
 }
 
 // ---------------------------------------------------------------------------
@@ -1786,6 +1839,7 @@ struct FetchPlan {
     type_name: Option<String>,
     order_by: Vec<(String, bool)>, // (column, reverse)
     limit: Option<i64>,
+    offset: i64,
 }
 
 fn read_fetch_plan(descriptor: &SwiftValue) -> Result<FetchPlan, StdError> {
@@ -1826,12 +1880,17 @@ fn read_fetch_plan(descriptor: &SwiftValue) -> Result<FetchPlan, StdError> {
         Some(SwiftValue::Int(i)) => i64::try_from(i.raw).ok(),
         _ => None,
     };
+    let offset = match o.get("fetchOffset") {
+        Some(SwiftValue::Int(i)) => i64::try_from(i.raw).unwrap_or(0).max(0),
+        _ => 0,
+    };
     Ok(FetchPlan {
         where_sql,
         params,
         type_name,
         order_by,
         limit,
+        offset,
     })
 }
 
@@ -1862,8 +1921,13 @@ fn select_sql(schema: &ModelSchema, plan: &FetchPlan) -> String {
         sql.push_str(" ORDER BY ");
         sql.push_str(&terms.join(", "));
     }
-    if let Some(limit) = plan.limit {
-        sql.push_str(&format!(" LIMIT {limit}"));
+    // SQLite requires a LIMIT before OFFSET; use `LIMIT -1` (unbounded) when
+    // only an offset is set so pagination works without an explicit limit.
+    match (plan.limit, plan.offset) {
+        (Some(limit), 0) => sql.push_str(&format!(" LIMIT {limit}")),
+        (Some(limit), offset) => sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}")),
+        (None, offset) if offset > 0 => sql.push_str(&format!(" LIMIT -1 OFFSET {offset}")),
+        (None, _) => {}
     }
     sql
 }
@@ -3110,12 +3174,41 @@ mod tests {
             type_name: Some("Movie".into()),
             order_by: vec![("year".into(), true), ("title".into(), false)],
             limit: Some(5),
+            offset: 0,
         };
         assert_eq!(
             select_sql(&schema, &plan),
             "SELECT rowid, \"title\", \"year\" FROM \"Movie\" WHERE \"year\" > ? \
              ORDER BY \"year\" DESC, \"title\" ASC LIMIT 5"
         );
+    }
+
+    #[test]
+    fn select_sql_paginates_with_limit_and_offset() {
+        let schema = ModelSchema {
+            type_name: "Movie".into(),
+            table: "Movie".into(),
+            columns: vec![Column {
+                name: "title".into(),
+                sql_type: SqlType::Text,
+                not_null: true,
+                is_bool: false,
+            }],
+        };
+        let base = |limit, offset| FetchPlan {
+            where_sql: String::new(),
+            params: vec![],
+            type_name: Some("Movie".into()),
+            order_by: vec![],
+            limit,
+            offset,
+        };
+        // limit + offset together.
+        assert!(select_sql(&schema, &base(Some(5), 10)).ends_with("LIMIT 5 OFFSET 10"));
+        // offset alone needs `LIMIT -1` so SQLite accepts the OFFSET.
+        assert!(select_sql(&schema, &base(None, 3)).ends_with("LIMIT -1 OFFSET 3"));
+        // no pagination clause when neither is set.
+        assert!(!select_sql(&schema, &base(None, 0)).contains("LIMIT"));
     }
 
     /// Build a container and stock a canned query reply of two Movie rows.

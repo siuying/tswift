@@ -1,5 +1,11 @@
+FetchDescriptor.fetchLimit
+FetchDescriptor.fetchOffset
 FetchDescriptor.init
+FetchDescriptor.predicate
+FetchDescriptor.sortBy
 ModelConfiguration.init
+ModelConfiguration.isStoredInMemoryOnly
+ModelConfiguration.name
 ModelContainer.init
 ModelContainer.mainContext
 ModelContext.changedModelsArray

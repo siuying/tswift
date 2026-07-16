@@ -12,3 +12,10 @@ deletedCount after rollback: 0
 fetchCount after rollback: 2
 fetchCount after transaction: 4
 hasChanges after transaction: false
+config inMemory: true
+config name: Library
+descriptor limit: 2
+descriptor offset: 1
+descriptor sortBy count: 1
+descriptor has predicate: false
+paged titles: ["Dune", "Snow Crash"]
