@@ -399,3 +399,24 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: remaining stdlib misses are dominated by unsafe-pointer/span
   APIs, customMirror/hash/encode reflection hooks, and init/subscript that
   need dedicated dispatch — each needs more than a passthrough.
+
+## Coverage iteration — SwiftUI value & nested-view modifiers
+
+- Coverage before → after: SwiftUI implemented 281 → 290 (40.0% → 41.3%),
+  verified 261 → 270 (37.2% → 38.5%). View section +9. Other frameworks
+  unchanged.
+- Broke the colliding-token plateau by targeting modifiers whose args are
+  NOT leading-dot tokens. Value passthroughs via the shared `modifier!`
+  macro: position (x:y: CGFloat), accentColor (Color), safeAreaPadding
+  (CGFloat), listRowInsets (EdgeInsets), navigationBarTitle (String),
+  lineHeight (CGFloat). Nested-view records reusing the overlay/background
+  `compose_modifier` route: mask, contextMenu, listRowBackground.
+- Added an EdgeInsets builtin struct to the SwiftUI prelude (top/leading/
+  bottom/trailing, plus zero init) with tagged UIIR serialization
+  (`{"$":"edgeInsets",…}`) so listRowInsets carries a real value.
+- Updated MODIFIER_FNS, the hardcoded registered-keys assertion, and added
+  a value-and-nested-modifiers golden fixture. presubmit green.
+- Blockers: remaining View modifiers still dominated by leading-dot token
+  args (need contextual enum typing to disambiguate the shared namespace),
+  preference/geometry/anchor APIs, and closure-heavy presentation modifiers
+  (sheet/popover/alert) that need binding + dismissal plumbing.
