@@ -1833,12 +1833,12 @@
         {
           "name": "isDateInToday",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "isDateInTomorrow",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "isDateInWeekend",
@@ -1848,7 +1848,7 @@
         {
           "name": "isDateInYesterday",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "locale",
@@ -1923,17 +1923,17 @@
         {
           "name": "shortStandaloneMonthSymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "shortStandaloneQuarterSymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "shortStandaloneWeekdaySymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "shortWeekdaySymbols",
@@ -1948,12 +1948,12 @@
         {
           "name": "standaloneQuarterSymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "standaloneWeekdaySymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "startOfDay",
@@ -1973,12 +1973,12 @@
         {
           "name": "veryShortStandaloneMonthSymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "veryShortStandaloneWeekdaySymbols",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "veryShortWeekdaySymbols",
@@ -1992,8 +1992,8 @@
         }
       ],
       "counts": {
-        "implemented": 40,
-        "partial": 10,
+        "implemented": 50,
+        "partial": 0,
         "missing": 5,
         "out_of_scope": 0,
         "total": 55
@@ -2257,7 +2257,7 @@
         {
           "name": "/=",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "<",
@@ -2317,7 +2317,7 @@
         {
           "name": "formTruncatingRemainder",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "formatted",
@@ -2397,7 +2397,7 @@
         {
           "name": "isSignaling",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "isSignalingNaN",
@@ -2497,7 +2497,7 @@
         {
           "name": "signalingNaN",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "significand",
@@ -2516,9 +2516,9 @@
         }
       ],
       "counts": {
-        "implemented": 49,
-        "partial": 2,
-        "missing": 8,
+        "implemented": 53,
+        "partial": 0,
+        "missing": 6,
         "out_of_scope": 0,
         "total": 59
       }
@@ -2969,7 +2969,7 @@
         {
           "name": "badServerResponse",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "badURL",
@@ -2994,7 +2994,7 @@
         {
           "name": "cannotConnectToHost",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "cannotCreateFile",
@@ -3004,12 +3004,12 @@
         {
           "name": "cannotDecodeContentData",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "cannotDecodeRawData",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "cannotFindHost",
@@ -3034,7 +3034,7 @@
         {
           "name": "cannotParseResponse",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "cannotRemoveFile",
@@ -3064,12 +3064,12 @@
         {
           "name": "dataNotAllowed",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "dnsLookupFailed",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "downloadDecodingFailedMidStream",
@@ -3094,7 +3094,7 @@
         {
           "name": "failingURL",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "failureURLPeerTrust",
@@ -3124,7 +3124,7 @@
         {
           "name": "httpTooManyRedirects",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -3139,7 +3139,7 @@
         {
           "name": "networkConnectionLost",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "networkUnavailableReason",
@@ -3169,12 +3169,12 @@
         {
           "name": "resourceUnavailable",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "secureConnectionFailed",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "serverCertificateHasBadDate",
@@ -3209,7 +3209,7 @@
         {
           "name": "unsupportedURL",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "uploadTaskResumeData",
@@ -3219,22 +3219,22 @@
         {
           "name": "userAuthenticationRequired",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "userCancelledAuthentication",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "zeroByteResource",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 42,
-        "partial": 16,
+        "implemented": 58,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 58
@@ -3306,9 +3306,9 @@
     }
   ],
   "totals": {
-    "implemented": 413,
-    "partial": 30,
-    "missing": 172,
+    "implemented": 443,
+    "partial": 2,
+    "missing": 170,
     "out_of_scope": 0,
     "total": 615
   }

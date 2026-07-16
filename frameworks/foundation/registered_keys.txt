@@ -177,6 +177,7 @@ Decimal.distance
 Decimal.divide
 Decimal.exponent
 Decimal.floatingPointClass
+Decimal.formTruncatingRemainder
 Decimal.formatted
 Decimal.greatestFiniteMagnitude
 Decimal.hashValue
@@ -210,6 +211,7 @@ Decimal.radix
 Decimal.round
 Decimal.rounded
 Decimal.sign
+Decimal.signalingNaN
 Decimal.significand
 Decimal.subtract
 Decimal.ulp

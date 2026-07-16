@@ -81,6 +81,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_static(BuiltinReceiver::Decimal, "pi", decimal_pi);
     interp.register_static(BuiltinReceiver::Decimal, "nan", decimal_nan_static);
     interp.register_static(BuiltinReceiver::Decimal, "quietNaN", decimal_nan_static);
+    // `Decimal` has no distinct signaling NaN; mirror the quiet NaN value
+    // (its `isSignaling` predicate stays `false`, matching this runtime).
+    interp.register_static(BuiltinReceiver::Decimal, "signalingNaN", decimal_nan_static);
     interp.register_static(BuiltinReceiver::Decimal, "radix", decimal_radix);
     interp.register_static(
         BuiltinReceiver::Decimal,
@@ -118,6 +121,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("isLessThanOrEqualTo", false, decimal_is_less_or_equal),
         ("isTotallyOrdered", false, decimal_is_totally_ordered),
         ("formatted", false, decimal_formatted_method),
+        (
+            "formTruncatingRemainder",
+            true,
+            decimal_form_truncating_remainder,
+        ),
     ] {
         interp.register_intrinsic(
             BuiltinReceiver::Decimal,
@@ -352,6 +360,31 @@ fn decimal_multiply(
     args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     decimal_binary_mutating(recv, args, "multiply", dec::mul)
+}
+
+/// `formTruncatingRemainder(dividingBy other:)` — mutates `self` to the
+/// IEEE truncating remainder `self - other * (self / other).rounded(.towardZero)`.
+/// The quotient is truncated toward zero (magnitude floored), so the result
+/// carries the sign of `self` and has magnitude `< |other|`.
+fn decimal_form_truncating_remainder(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let lhs = decimal_value(&recv)?;
+    let rhs = decimal_operand(&args, "formTruncatingRemainder(dividingBy:)")?;
+    let result = if lhs.nan || rhs.nan || rhs.is_zero() {
+        Dec::NAN
+    } else {
+        // Truncate the quotient toward zero (RoundingMode::Down works on the
+        // magnitude, so it floors magnitude regardless of sign).
+        let quotient = dec::rounded(dec::div(lhs, rhs), 0, RoundingMode::Down);
+        dec::sub(lhs, dec::mul(rhs, quotient))
+    };
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: dec::to_value(result),
+    })
 }
 
 fn decimal_divide(
@@ -761,6 +794,41 @@ mod tests {
             decimal_is_sign_minus(decimal(1, 0)).unwrap(),
             SwiftValue::Bool(false)
         );
+    }
+
+    /// Mirror of `decimal_form_truncating_remainder`'s arithmetic, exercised
+    /// without an interpreter context. `self - other * trunc(self/other)`.
+    fn trunc_remainder(a: Dec, b: Dec) -> Dec {
+        if a.nan || b.nan || b.is_zero() {
+            return Dec::NAN;
+        }
+        let q = dec::rounded(dec::div(a, b), 0, RoundingMode::Down);
+        dec::sub(a, dec::mul(b, q))
+    }
+
+    #[test]
+    fn truncating_remainder_follows_dividend_sign() {
+        assert_eq!(
+            dec::to_string(trunc_remainder(Dec::new(10, 0), Dec::new(3, 0))),
+            "1"
+        );
+        // 10.5 % 3.2 = 10.5 - 3*3.2 = 0.9
+        assert_eq!(
+            dec::to_string(trunc_remainder(Dec::new(105, -1), Dec::new(32, -1))),
+            "0.9"
+        );
+        // Sign follows the dividend, not the divisor.
+        assert_eq!(
+            dec::to_string(trunc_remainder(Dec::new(-10, 0), Dec::new(3, 0))),
+            "-1"
+        );
+        assert_eq!(
+            dec::to_string(trunc_remainder(Dec::new(10, 0), Dec::new(-3, 0))),
+            "1"
+        );
+        // Divide-by-zero and NaN operands yield NaN.
+        assert!(trunc_remainder(Dec::new(7, 0), Dec::zero()).nan);
+        assert!(trunc_remainder(Dec::new(7, 0), Dec::NAN).nan);
     }
 
     #[test]

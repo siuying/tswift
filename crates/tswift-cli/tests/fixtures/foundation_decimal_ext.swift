@@ -44,3 +44,29 @@ print(Decimal(string: "1234.56")!.formatted())  // 1,234.56
 print(Decimal(-1234).formatted())               // -1,234
 print(Decimal(0).formatted())                   // 0
 print(Decimal(999).formatted())                 // 999
+
+// ── formTruncatingRemainder(dividingBy:) ─────────────────────────────────────
+// self - other * (self / other).rounded(.towardZero)
+var r0 = Decimal(10)
+r0.formTruncatingRemainder(dividingBy: Decimal(3))
+print(r0.description)                            // 1
+var r1 = Decimal(string: "10.5")!
+r1.formTruncatingRemainder(dividingBy: Decimal(string: "3.2")!)
+print(r1.description)                            // 0.9
+var r2 = Decimal(-10)
+r2.formTruncatingRemainder(dividingBy: Decimal(3))
+print(r2.description)                            // -1 (sign follows dividend)
+var r3 = Decimal(7)
+r3.formTruncatingRemainder(dividingBy: Decimal.nan)
+print(r3.isNaN)                                  // true
+
+// ── signalingNaN / isSignaling ───────────────────────────────────────────────
+// Decimal has no distinct signaling NaN: value is NaN, predicate is false.
+print(Decimal.signalingNaN.isNaN)               // true
+print(Decimal.signalingNaN.isSignaling)         // false
+print(Decimal(5).isSignaling)                   // false
+
+// ── /= operator ──────────────────────────────────────────────────────────────
+var q = Decimal(10)
+q /= Decimal(4)
+print(q.description)                            // 2.5
