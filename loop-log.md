@@ -534,3 +534,20 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   unsafe-pointer / withUnsafeBytes / FormatStyle-token APIs that a headless
   interpreter can't implement with real behavior — SwiftUI modifier surface
   remains the highest-yield target.
+
+## Coverage iteration — SwiftUI window/scene/container token modifiers
+
+- Coverage before → after: SwiftUI implemented 341 → 349 (48.6% → 49.7%),
+  verified 321 → 329 (45.7% → 46.9%). View +8.
+- Eight View modifiers. Reusing existing token namespaces (typed seam):
+  scenePadding + defersSystemGestures (Edge.Set), containerRelativeFrame
+  (Axis.Set), pointerVisibility (Visibility). New WindowInteractionBehavior
+  namespace (.automatic/.enabled/.disabled) wires four window modifiers:
+  windowResizeBehavior, windowMinimizeBehavior, windowDismissBehavior,
+  windowFullScreenBehavior — one new namespace, four modifiers.
+- New-namespace recipe touchpoints confirmed: PRELUDE struct (lib.rs),
+  token_of guard (values.rs), UIIR tag map (uiir.rs), typed registration
+  (lib.rs), registered_keys test list. Verified by window-and-scene golden.
+- Crossed the SwiftUI 49% impl mark; still on the modifier surface as the
+  highest-yield target (stdlib/Foundation remainders are unsafe-pointer /
+  format-token APIs infeasible for a headless interpreter).
