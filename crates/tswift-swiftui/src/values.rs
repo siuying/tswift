@@ -59,6 +59,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "ScrollInputBehavior"
             | "DialogSeverity"
             | "UITextContentType"
+            | "WindowInteractionBehavior"
     ) {
         return None;
     }

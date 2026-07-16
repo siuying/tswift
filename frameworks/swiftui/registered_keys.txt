@@ -80,6 +80,7 @@ View.colorInvert
 View.colorMultiply
 View.colorScheme
 View.compositingGroup
+View.containerRelativeFrame
 View.contentCaptureProtected
 View.contentTransition
 View.contextMenu
@@ -91,6 +92,7 @@ View.cornerRadius
 View.datePickerStyle
 View.defaultHoverEffect
 View.defaultWheelPickerItemHeight
+View.defersSystemGestures
 View.deleteDisabled
 View.dialogPreventsAppTermination
 View.dialogSeverity
@@ -208,6 +210,7 @@ View.overlay
 View.padding
 View.persistentSystemOverlays
 View.pickerStyle
+View.pointerVisibility
 View.position
 View.preferredColorScheme
 View.presentationCornerRadius
@@ -225,6 +228,7 @@ View.saturation
 View.scaleEffect
 View.scaledToFill
 View.scaledToFit
+View.scenePadding
 View.scrollBounceBehavior
 View.scrollClipDisabled
 View.scrollContentBackground
@@ -267,6 +271,10 @@ View.truncationMode
 View.typeSelectEquivalent
 View.underline
 View.unredacted
+View.windowDismissBehavior
+View.windowFullScreenBehavior
+View.windowMinimizeBehavior
+View.windowResizeBehavior
 View.writingToolsBehavior
 View.zIndex
 ZStack.init

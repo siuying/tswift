@@ -630,6 +630,12 @@ struct DialogSeverity {
     static let standard = DialogSeverity(token: "standard")
     static let critical = DialogSeverity(token: "critical")
 }
+struct WindowInteractionBehavior {
+    let token: String
+    static let automatic = WindowInteractionBehavior(token: "automatic")
+    static let enabled = WindowInteractionBehavior(token: "enabled")
+    static let disabled = WindowInteractionBehavior(token: "disabled")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1386,6 +1392,49 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_slider_thumb_visibility,
         vec![BuiltinParam::positional("Visibility")],
     );
+    // Edge.Set / Axis.Set / Visibility token modifiers reusing existing
+    // namespaces, plus the four window-interaction behaviors typed against the
+    // new WindowInteractionBehavior namespace.
+    interp.register_struct_method_typed(
+        "scenePadding",
+        modifiers::modifier_scene_padding,
+        vec![BuiltinParam::positional("Edge.Set")],
+    );
+    interp.register_struct_method_typed(
+        "containerRelativeFrame",
+        modifiers::modifier_container_relative_frame,
+        vec![BuiltinParam::positional("Axis.Set")],
+    );
+    interp.register_struct_method_typed(
+        "defersSystemGestures",
+        modifiers::modifier_defers_system_gestures,
+        vec![BuiltinParam::labeled("edges", "Edge.Set")],
+    );
+    interp.register_struct_method_typed(
+        "pointerVisibility",
+        modifiers::modifier_pointer_visibility,
+        vec![BuiltinParam::positional("Visibility")],
+    );
+    interp.register_struct_method_typed(
+        "windowResizeBehavior",
+        modifiers::modifier_window_resize_behavior,
+        vec![BuiltinParam::positional("WindowInteractionBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "windowMinimizeBehavior",
+        modifiers::modifier_window_minimize_behavior,
+        vec![BuiltinParam::positional("WindowInteractionBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "windowDismissBehavior",
+        modifiers::modifier_window_dismiss_behavior,
+        vec![BuiltinParam::positional("WindowInteractionBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "windowFullScreenBehavior",
+        modifiers::modifier_window_full_screen_behavior,
+        vec![BuiltinParam::positional("WindowInteractionBehavior")],
+    );
     interp.register_struct_method_typed(
         "textInputAutocapitalization",
         modifiers::modifier_text_input_autocapitalization,
@@ -1773,6 +1822,7 @@ mod tests {
                 "View.colorMultiply",
                 "View.colorScheme",
                 "View.compositingGroup",
+                "View.containerRelativeFrame",
                 "View.contentCaptureProtected",
                 "View.contentTransition",
                 "View.contextMenu",
@@ -1784,6 +1834,7 @@ mod tests {
                 "View.datePickerStyle",
                 "View.defaultHoverEffect",
                 "View.defaultWheelPickerItemHeight",
+                "View.defersSystemGestures",
                 "View.deleteDisabled",
                 "View.dialogPreventsAppTermination",
                 "View.dialogSeverity",
@@ -1901,6 +1952,7 @@ mod tests {
                 "View.padding",
                 "View.persistentSystemOverlays",
                 "View.pickerStyle",
+                "View.pointerVisibility",
                 "View.position",
                 "View.preferredColorScheme",
                 "View.presentationCornerRadius",
@@ -1918,6 +1970,7 @@ mod tests {
                 "View.scaleEffect",
                 "View.scaledToFill",
                 "View.scaledToFit",
+                "View.scenePadding",
                 "View.scrollBounceBehavior",
                 "View.scrollClipDisabled",
                 "View.scrollContentBackground",
@@ -1960,6 +2013,10 @@ mod tests {
                 "View.typeSelectEquivalent",
                 "View.underline",
                 "View.unredacted",
+                "View.windowDismissBehavior",
+                "View.windowFullScreenBehavior",
+                "View.windowMinimizeBehavior",
+                "View.windowResizeBehavior",
                 "View.writingToolsBehavior",
                 "View.zIndex",
                 "ZStack.init",

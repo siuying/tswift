@@ -313,6 +313,20 @@ modifier!(modifier_handles_external_events, "handlesExternalEvents");
 modifier!(modifier_navigation_document, "navigationDocument");
 modifier!(modifier_list_row_hover_effect, "listRowHoverEffect");
 modifier!(modifier_slider_thumb_visibility, "sliderThumbVisibility");
+// Edge.Set / Axis.Set / Visibility token modifiers reusing existing namespaces,
+// and the window-interaction behaviors (WindowInteractionBehavior token). All
+// re-registered typed in `install` so their leading-dot args resolve.
+modifier!(modifier_scene_padding, "scenePadding");
+modifier!(modifier_container_relative_frame, "containerRelativeFrame");
+modifier!(modifier_defers_system_gestures, "defersSystemGestures");
+modifier!(modifier_pointer_visibility, "pointerVisibility");
+modifier!(modifier_window_resize_behavior, "windowResizeBehavior");
+modifier!(modifier_window_minimize_behavior, "windowMinimizeBehavior");
+modifier!(modifier_window_dismiss_behavior, "windowDismissBehavior");
+modifier!(
+    modifier_window_full_screen_behavior,
+    "windowFullScreenBehavior"
+);
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -821,6 +835,17 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("navigationDocument", modifier_navigation_document),
     ("listRowHoverEffect", modifier_list_row_hover_effect),
     ("sliderThumbVisibility", modifier_slider_thumb_visibility),
+    ("scenePadding", modifier_scene_padding),
+    ("containerRelativeFrame", modifier_container_relative_frame),
+    ("defersSystemGestures", modifier_defers_system_gestures),
+    ("pointerVisibility", modifier_pointer_visibility),
+    ("windowResizeBehavior", modifier_window_resize_behavior),
+    ("windowMinimizeBehavior", modifier_window_minimize_behavior),
+    ("windowDismissBehavior", modifier_window_dismiss_behavior),
+    (
+        "windowFullScreenBehavior",
+        modifier_window_full_screen_behavior,
+    ),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),

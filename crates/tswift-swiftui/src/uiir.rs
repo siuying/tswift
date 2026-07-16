@@ -217,6 +217,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "ScrollInputBehavior" => "scrollInputBehavior",
             "DialogSeverity" => "dialogSeverity",
             "UITextContentType" => "textContentType",
+            "WindowInteractionBehavior" => "windowInteractionBehavior",
             _ => "token",
         };
         out.push_str("{\"$\":");
