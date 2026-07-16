@@ -636,6 +636,14 @@ struct WindowInteractionBehavior {
     static let enabled = WindowInteractionBehavior(token: "enabled")
     static let disabled = WindowInteractionBehavior(token: "disabled")
 }
+struct ToolbarPlacement {
+    let token: String
+    static let automatic = ToolbarPlacement(token: "automatic")
+    static let navigationBar = ToolbarPlacement(token: "navigationBar")
+    static let tabBar = ToolbarPlacement(token: "tabBar")
+    static let bottomBar = ToolbarPlacement(token: "bottomBar")
+    static let windowToolbar = ToolbarPlacement(token: "windowToolbar")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1435,6 +1443,41 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_window_full_screen_behavior,
         vec![BuiltinParam::positional("WindowInteractionBehavior")],
     );
+    // Toolbar bar-targeted modifiers: a leading token (Visibility / ColorScheme)
+    // plus a `for:` ToolbarPlacement bar selector, both typed so their
+    // leading-dot args resolve contextually.
+    interp.register_struct_method_typed(
+        "toolbarBackground",
+        modifiers::modifier_toolbar_background,
+        vec![
+            BuiltinParam::positional("Visibility"),
+            BuiltinParam::labeled("for", "ToolbarPlacement"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "toolbarBackgroundVisibility",
+        modifiers::modifier_toolbar_background_visibility,
+        vec![
+            BuiltinParam::positional("Visibility"),
+            BuiltinParam::labeled("for", "ToolbarPlacement"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "toolbarColorScheme",
+        modifiers::modifier_toolbar_color_scheme,
+        vec![
+            BuiltinParam::positional("ColorScheme"),
+            BuiltinParam::labeled("for", "ToolbarPlacement"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "toolbarVisibility",
+        modifiers::modifier_toolbar_visibility,
+        vec![
+            BuiltinParam::positional("Visibility"),
+            BuiltinParam::labeled("for", "ToolbarPlacement"),
+        ],
+    );
     interp.register_struct_method_typed(
         "textInputAutocapitalization",
         modifiers::modifier_text_input_autocapitalization,
@@ -1824,6 +1867,7 @@ mod tests {
                 "View.compositingGroup",
                 "View.containerRelativeFrame",
                 "View.contentCaptureProtected",
+                "View.contentMargins",
                 "View.contentTransition",
                 "View.contextMenu",
                 "View.contrast",
@@ -1957,6 +2001,7 @@ mod tests {
                 "View.preferredColorScheme",
                 "View.presentationCornerRadius",
                 "View.presentationDragIndicator",
+                "View.previewDevice",
                 "View.previewDisplayName",
                 "View.privacySensitive",
                 "View.progressViewStyle",
@@ -2007,6 +2052,10 @@ mod tests {
                 "View.textSelectionAffinity",
                 "View.tint",
                 "View.toggleStyle",
+                "View.toolbarBackground",
+                "View.toolbarBackgroundVisibility",
+                "View.toolbarColorScheme",
+                "View.toolbarVisibility",
                 "View.tracking",
                 "View.transition",
                 "View.truncationMode",

@@ -327,6 +327,18 @@ modifier!(
     modifier_window_full_screen_behavior,
     "windowFullScreenBehavior"
 );
+// Toolbar bar-targeted modifiers: a Visibility / ColorScheme token plus a
+// `for:` ToolbarPlacement bar selector. Value passthroughs: contentMargins
+// (CGFloat), previewDevice (String). Typed in `install`.
+modifier!(modifier_toolbar_background, "toolbarBackground");
+modifier!(
+    modifier_toolbar_background_visibility,
+    "toolbarBackgroundVisibility"
+);
+modifier!(modifier_toolbar_color_scheme, "toolbarColorScheme");
+modifier!(modifier_toolbar_visibility, "toolbarVisibility");
+modifier!(modifier_content_margins, "contentMargins");
+modifier!(modifier_preview_device, "previewDevice");
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -846,6 +858,15 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "windowFullScreenBehavior",
         modifier_window_full_screen_behavior,
     ),
+    ("toolbarBackground", modifier_toolbar_background),
+    (
+        "toolbarBackgroundVisibility",
+        modifier_toolbar_background_visibility,
+    ),
+    ("toolbarColorScheme", modifier_toolbar_color_scheme),
+    ("toolbarVisibility", modifier_toolbar_visibility),
+    ("contentMargins", modifier_content_margins),
+    ("previewDevice", modifier_preview_device),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),

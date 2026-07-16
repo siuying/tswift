@@ -82,6 +82,7 @@ View.colorScheme
 View.compositingGroup
 View.containerRelativeFrame
 View.contentCaptureProtected
+View.contentMargins
 View.contentTransition
 View.contextMenu
 View.contrast
@@ -215,6 +216,7 @@ View.position
 View.preferredColorScheme
 View.presentationCornerRadius
 View.presentationDragIndicator
+View.previewDevice
 View.previewDisplayName
 View.privacySensitive
 View.progressViewStyle
@@ -265,6 +267,10 @@ View.textScale
 View.textSelectionAffinity
 View.tint
 View.toggleStyle
+View.toolbarBackground
+View.toolbarBackgroundVisibility
+View.toolbarColorScheme
+View.toolbarVisibility
 View.tracking
 View.transition
 View.truncationMode

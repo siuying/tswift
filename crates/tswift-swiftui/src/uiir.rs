@@ -218,6 +218,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "DialogSeverity" => "dialogSeverity",
             "UITextContentType" => "textContentType",
             "WindowInteractionBehavior" => "windowInteractionBehavior",
+            "ToolbarPlacement" => "toolbarPlacement",
             _ => "token",
         };
         out.push_str("{\"$\":");
