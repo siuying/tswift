@@ -219,6 +219,16 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "UITextContentType" => "textContentType",
             "WindowInteractionBehavior" => "windowInteractionBehavior",
             "ToolbarPlacement" => "toolbarPlacement",
+            "NavigationBarItemTitleDisplayMode" => "navigationBarTitleDisplayMode",
+            "ToolbarTitleDisplayMode" => "toolbarTitleDisplayMode",
+            "ToolbarRole" => "toolbarRole",
+            "SpringLoadingBehavior" => "springLoadingBehavior",
+            "LayoutDirectionBehavior" => "layoutDirectionBehavior",
+            "TextSelectability" => "textSelection",
+            "PreviewLayout" => "previewLayout",
+            "InterfaceOrientation" => "interfaceOrientation",
+            "SymbolColorRenderingMode" => "symbolColorRenderingMode",
+            "SymbolVariableValueMode" => "symbolVariableValueMode",
             _ => "token",
         };
         out.push_str("{\"$\":");

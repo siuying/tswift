@@ -61,6 +61,16 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "UITextContentType"
             | "WindowInteractionBehavior"
             | "ToolbarPlacement"
+            | "NavigationBarItemTitleDisplayMode"
+            | "ToolbarTitleDisplayMode"
+            | "ToolbarRole"
+            | "SpringLoadingBehavior"
+            | "LayoutDirectionBehavior"
+            | "TextSelectability"
+            | "PreviewLayout"
+            | "InterfaceOrientation"
+            | "SymbolColorRenderingMode"
+            | "SymbolVariableValueMode"
     ) {
         return None;
     }

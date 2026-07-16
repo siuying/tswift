@@ -644,6 +644,65 @@ struct ToolbarPlacement {
     static let bottomBar = ToolbarPlacement(token: "bottomBar")
     static let windowToolbar = ToolbarPlacement(token: "windowToolbar")
 }
+struct NavigationBarItemTitleDisplayMode {
+    let token: String
+    static let automatic = NavigationBarItemTitleDisplayMode(token: "automatic")
+    static let inline = NavigationBarItemTitleDisplayMode(token: "inline")
+    static let large = NavigationBarItemTitleDisplayMode(token: "large")
+}
+struct ToolbarTitleDisplayMode {
+    let token: String
+    static let automatic = ToolbarTitleDisplayMode(token: "automatic")
+    static let inline = ToolbarTitleDisplayMode(token: "inline")
+    static let inlineLarge = ToolbarTitleDisplayMode(token: "inlineLarge")
+    static let large = ToolbarTitleDisplayMode(token: "large")
+}
+struct ToolbarRole {
+    let token: String
+    static let automatic = ToolbarRole(token: "automatic")
+    static let navigationStack = ToolbarRole(token: "navigationStack")
+    static let browser = ToolbarRole(token: "browser")
+    static let editor = ToolbarRole(token: "editor")
+}
+struct SpringLoadingBehavior {
+    let token: String
+    static let automatic = SpringLoadingBehavior(token: "automatic")
+    static let enabled = SpringLoadingBehavior(token: "enabled")
+    static let disabled = SpringLoadingBehavior(token: "disabled")
+}
+struct LayoutDirectionBehavior {
+    let token: String
+    static let fixed = LayoutDirectionBehavior(token: "fixed")
+    static let mirrors = LayoutDirectionBehavior(token: "mirrors")
+}
+struct TextSelectability {
+    let token: String
+    static let enabled = TextSelectability(token: "enabled")
+    static let disabled = TextSelectability(token: "disabled")
+}
+struct PreviewLayout {
+    let token: String
+    static let device = PreviewLayout(token: "device")
+    static let sizeThatFits = PreviewLayout(token: "sizeThatFits")
+}
+struct InterfaceOrientation {
+    let token: String
+    static let portrait = InterfaceOrientation(token: "portrait")
+    static let portraitUpsideDown = InterfaceOrientation(token: "portraitUpsideDown")
+    static let landscapeLeft = InterfaceOrientation(token: "landscapeLeft")
+    static let landscapeRight = InterfaceOrientation(token: "landscapeRight")
+}
+struct SymbolColorRenderingMode {
+    let token: String
+    static let flat = SymbolColorRenderingMode(token: "flat")
+    static let gradient = SymbolColorRenderingMode(token: "gradient")
+}
+struct SymbolVariableValueMode {
+    let token: String
+    static let color = SymbolVariableValueMode(token: "color")
+    static let draw = SymbolVariableValueMode(token: "draw")
+    static let reveal = SymbolVariableValueMode(token: "reveal")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1483,6 +1542,65 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_text_input_autocapitalization,
         vec![BuiltinParam::positional("TextInputAutocapitalization")],
     );
+    // Token modifiers introducing dedicated namespaces (typed so their
+    // leading-dot member arg resolves against the declared parameter type).
+    interp.register_struct_method_typed(
+        "navigationBarTitleDisplayMode",
+        modifiers::modifier_navigation_bar_title_display_mode,
+        vec![BuiltinParam::positional(
+            "NavigationBarItemTitleDisplayMode",
+        )],
+    );
+    interp.register_struct_method_typed(
+        "toolbarTitleDisplayMode",
+        modifiers::modifier_toolbar_title_display_mode,
+        vec![BuiltinParam::positional("ToolbarTitleDisplayMode")],
+    );
+    interp.register_struct_method_typed(
+        "toolbarRole",
+        modifiers::modifier_toolbar_role,
+        vec![BuiltinParam::positional("ToolbarRole")],
+    );
+    interp.register_struct_method_typed(
+        "springLoadingBehavior",
+        modifiers::modifier_spring_loading_behavior,
+        vec![BuiltinParam::positional("SpringLoadingBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "layoutDirectionBehavior",
+        modifiers::modifier_layout_direction_behavior,
+        vec![BuiltinParam::positional("LayoutDirectionBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "textSelection",
+        modifiers::modifier_text_selection,
+        vec![BuiltinParam::positional("TextSelectability")],
+    );
+    interp.register_struct_method_typed(
+        "previewLayout",
+        modifiers::modifier_preview_layout,
+        vec![BuiltinParam::positional("PreviewLayout")],
+    );
+    interp.register_struct_method_typed(
+        "previewInterfaceOrientation",
+        modifiers::modifier_preview_interface_orientation,
+        vec![BuiltinParam::positional("InterfaceOrientation")],
+    );
+    interp.register_struct_method_typed(
+        "symbolColorRenderingMode",
+        modifiers::modifier_symbol_color_rendering_mode,
+        vec![BuiltinParam::positional("SymbolColorRenderingMode")],
+    );
+    interp.register_struct_method_typed(
+        "symbolVariableValueMode",
+        modifiers::modifier_symbol_variable_value_mode,
+        vec![BuiltinParam::positional("SymbolVariableValueMode")],
+    );
+    interp.register_struct_method_typed(
+        "edgesIgnoringSafeArea",
+        modifiers::modifier_edges_ignoring_safe_area,
+        vec![BuiltinParam::positional("Edge.Set")],
+    );
     interp.register_struct_method_typed(
         "headerProminence",
         modifiers::modifier_header_prominence,
@@ -1848,6 +1966,7 @@ mod tests {
                 "View.autocapitalization",
                 "View.autocorrectionDisabled",
                 "View.background",
+                "View.backgroundStyle",
                 "View.badge",
                 "View.badgeProminence",
                 "View.baselineOffset",
@@ -1888,6 +2007,7 @@ mod tests {
                 "View.draggable",
                 "View.drawingGroup",
                 "View.dynamicTypeSize",
+                "View.edgesIgnoringSafeArea",
                 "View.environmentObject",
                 "View.equatable",
                 "View.fill",
@@ -1935,6 +2055,7 @@ mod tests {
                 "View.labeledContentStyle",
                 "View.labelsHidden",
                 "View.labelsVisibility",
+                "View.layoutDirectionBehavior",
                 "View.layoutPriority",
                 "View.lineHeight",
                 "View.lineLimit",
@@ -1964,6 +2085,7 @@ mod tests {
                 "View.navigationBarBackButtonHidden",
                 "View.navigationBarHidden",
                 "View.navigationBarTitle",
+                "View.navigationBarTitleDisplayMode",
                 "View.navigationDestination",
                 "View.navigationDocument",
                 "View.navigationLinkIndicatorVisibility",
@@ -2003,6 +2125,8 @@ mod tests {
                 "View.presentationDragIndicator",
                 "View.previewDevice",
                 "View.previewDisplayName",
+                "View.previewInterfaceOrientation",
+                "View.previewLayout",
                 "View.privacySensitive",
                 "View.progressViewStyle",
                 "View.redacted",
@@ -2032,11 +2156,14 @@ mod tests {
                 "View.speechAlwaysIncludesPunctuation",
                 "View.speechAnnouncementsQueued",
                 "View.speechSpellsOutCharacters",
+                "View.springLoadingBehavior",
                 "View.statusBarHidden",
                 "View.strikethrough",
                 "View.submitLabel",
+                "View.symbolColorRenderingMode",
                 "View.symbolEffectsRemoved",
                 "View.symbolRenderingMode",
+                "View.symbolVariableValueMode",
                 "View.symbolVariant",
                 "View.tabItem",
                 "View.tabViewStyle",
@@ -2049,12 +2176,15 @@ mod tests {
                 "View.textFieldStyle",
                 "View.textInputAutocapitalization",
                 "View.textScale",
+                "View.textSelection",
                 "View.textSelectionAffinity",
                 "View.tint",
                 "View.toggleStyle",
                 "View.toolbarBackground",
                 "View.toolbarBackgroundVisibility",
                 "View.toolbarColorScheme",
+                "View.toolbarRole",
+                "View.toolbarTitleDisplayMode",
                 "View.toolbarVisibility",
                 "View.tracking",
                 "View.transition",

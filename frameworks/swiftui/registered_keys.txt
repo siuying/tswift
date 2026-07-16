@@ -63,6 +63,7 @@ View.aspectRatio
 View.autocapitalization
 View.autocorrectionDisabled
 View.background
+View.backgroundStyle
 View.badge
 View.badgeProminence
 View.baselineOffset
@@ -103,6 +104,7 @@ View.disclosureGroupStyle
 View.draggable
 View.drawingGroup
 View.dynamicTypeSize
+View.edgesIgnoringSafeArea
 View.environmentObject
 View.equatable
 View.fill
@@ -150,6 +152,7 @@ View.labelStyle
 View.labeledContentStyle
 View.labelsHidden
 View.labelsVisibility
+View.layoutDirectionBehavior
 View.layoutPriority
 View.lineHeight
 View.lineLimit
@@ -179,6 +182,7 @@ View.multilineTextAlignment
 View.navigationBarBackButtonHidden
 View.navigationBarHidden
 View.navigationBarTitle
+View.navigationBarTitleDisplayMode
 View.navigationDestination
 View.navigationDocument
 View.navigationLinkIndicatorVisibility
@@ -218,6 +222,8 @@ View.presentationCornerRadius
 View.presentationDragIndicator
 View.previewDevice
 View.previewDisplayName
+View.previewInterfaceOrientation
+View.previewLayout
 View.privacySensitive
 View.progressViewStyle
 View.redacted
@@ -247,11 +253,14 @@ View.speechAdjustedPitch
 View.speechAlwaysIncludesPunctuation
 View.speechAnnouncementsQueued
 View.speechSpellsOutCharacters
+View.springLoadingBehavior
 View.statusBarHidden
 View.strikethrough
 View.submitLabel
+View.symbolColorRenderingMode
 View.symbolEffectsRemoved
 View.symbolRenderingMode
+View.symbolVariableValueMode
 View.symbolVariant
 View.tabItem
 View.tabViewStyle
@@ -264,12 +273,15 @@ View.textEditorStyle
 View.textFieldStyle
 View.textInputAutocapitalization
 View.textScale
+View.textSelection
 View.textSelectionAffinity
 View.tint
 View.toggleStyle
 View.toolbarBackground
 View.toolbarBackgroundVisibility
 View.toolbarColorScheme
+View.toolbarRole
+View.toolbarTitleDisplayMode
 View.toolbarVisibility
 View.tracking
 View.transition

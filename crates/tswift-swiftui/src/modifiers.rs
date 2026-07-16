@@ -339,6 +339,45 @@ modifier!(modifier_toolbar_color_scheme, "toolbarColorScheme");
 modifier!(modifier_toolbar_visibility, "toolbarVisibility");
 modifier!(modifier_content_margins, "contentMargins");
 modifier!(modifier_preview_device, "previewDevice");
+// Token modifiers each introducing a dedicated namespace (typed in `install`):
+// navigationBarTitleDisplayMode (NavigationBarItemTitleDisplayMode),
+// toolbarTitleDisplayMode (ToolbarTitleDisplayMode), toolbarRole (ToolbarRole),
+// springLoadingBehavior (SpringLoadingBehavior), layoutDirectionBehavior
+// (LayoutDirectionBehavior), textSelection (TextSelectability), previewLayout
+// (PreviewLayout), previewInterfaceOrientation (InterfaceOrientation),
+// symbolColorRenderingMode (SymbolColorRenderingMode), symbolVariableValueMode
+// (SymbolVariableValueMode). `edgesIgnoringSafeArea` reuses the Edge namespace.
+// `backgroundStyle` is a value passthrough (Color/ShapeStyle, no token).
+modifier!(
+    modifier_navigation_bar_title_display_mode,
+    "navigationBarTitleDisplayMode"
+);
+modifier!(
+    modifier_toolbar_title_display_mode,
+    "toolbarTitleDisplayMode"
+);
+modifier!(modifier_toolbar_role, "toolbarRole");
+modifier!(modifier_spring_loading_behavior, "springLoadingBehavior");
+modifier!(
+    modifier_layout_direction_behavior,
+    "layoutDirectionBehavior"
+);
+modifier!(modifier_text_selection, "textSelection");
+modifier!(modifier_preview_layout, "previewLayout");
+modifier!(
+    modifier_preview_interface_orientation,
+    "previewInterfaceOrientation"
+);
+modifier!(
+    modifier_symbol_color_rendering_mode,
+    "symbolColorRenderingMode"
+);
+modifier!(
+    modifier_symbol_variable_value_mode,
+    "symbolVariableValueMode"
+);
+modifier!(modifier_edges_ignoring_safe_area, "edgesIgnoringSafeArea");
+modifier!(modifier_background_style, "backgroundStyle");
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -867,6 +906,36 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("toolbarVisibility", modifier_toolbar_visibility),
     ("contentMargins", modifier_content_margins),
     ("previewDevice", modifier_preview_device),
+    (
+        "navigationBarTitleDisplayMode",
+        modifier_navigation_bar_title_display_mode,
+    ),
+    (
+        "toolbarTitleDisplayMode",
+        modifier_toolbar_title_display_mode,
+    ),
+    ("toolbarRole", modifier_toolbar_role),
+    ("springLoadingBehavior", modifier_spring_loading_behavior),
+    (
+        "layoutDirectionBehavior",
+        modifier_layout_direction_behavior,
+    ),
+    ("textSelection", modifier_text_selection),
+    ("previewLayout", modifier_preview_layout),
+    (
+        "previewInterfaceOrientation",
+        modifier_preview_interface_orientation,
+    ),
+    (
+        "symbolColorRenderingMode",
+        modifier_symbol_color_rendering_mode,
+    ),
+    (
+        "symbolVariableValueMode",
+        modifier_symbol_variable_value_mode,
+    ),
+    ("edgesIgnoringSafeArea", modifier_edges_ignoring_safe_area),
+    ("backgroundStyle", modifier_background_style),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),
