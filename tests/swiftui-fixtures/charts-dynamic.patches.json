@@ -1,0 +1,1 @@
+[[{"op":"setArgs","id":"0.0.0","args":{"x":{"$":"plottable","label":"Fruit","value":"Apple"},"y":{"$":"plottable","label":"Sales","value":55}}}],[{"op":"setArgs","id":"0.0.0","args":{"x":{"$":"plottable","label":"Fruit","value":"Apple"},"y":{"$":"plottable","label":"Sales","value":70}}}]]

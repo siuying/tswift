@@ -5,7 +5,7 @@
 //! construct that handles it — without panicking. Real interpreter failures ride
 //! the same channel as [`Signal::Error`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::rc::Rc;
 
@@ -41,6 +41,129 @@ use self::concurrency::Scheduler;
 /// unbounded recursion into a catchable error instead of a native stack
 /// overflow.
 const MAX_CALL_DEPTH: usize = 5000;
+
+/// Identity of a framework / language module that owns registered symbols
+/// (`"Swift"`, `"Foundation"`, `"SwiftUI"`, `"Charts"`, …).
+///
+/// Module system (ADR-0020): every registration is stamped with a [`ModuleId`].
+/// Phase B resolves the name-only struct-method seam by the receiver's owning
+/// module via [`Interpreter::type_module`] + per-module candidates. Phase C
+/// records program `import`s. Phase D2 enables **strict import-gating** (default
+/// on): a framework-module symbol is resolvable only when that module is in the
+/// program's import set. Base `"Swift"` (stdlib) is always implicit.
+///
+/// Module names are static literals installed by frameworks, so the id is a
+/// cheap `Copy` handle over `&'static str` rather than cloning a `String` into
+/// every registry entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleId(&'static str);
+
+impl ModuleId {
+    /// The always-present base module (stdlib). Also the default stamp when no
+    /// [`Interpreter::module`] scope is active.
+    pub const SWIFT: ModuleId = ModuleId("Swift");
+    /// Foundation framework module.
+    pub const FOUNDATION: ModuleId = ModuleId("Foundation");
+    /// SwiftData framework module.
+    pub const SWIFT_DATA: ModuleId = ModuleId("SwiftData");
+    /// SwiftUI framework module.
+    pub const SWIFTUI: ModuleId = ModuleId("SwiftUI");
+    /// Charts framework module.
+    pub const CHARTS: ModuleId = ModuleId("Charts");
+
+    /// Create a module id from a static display name
+    /// (`"Swift"` / `"Foundation"` / `"SwiftData"` / `"SwiftUI"` / `"Charts"`).
+    pub fn new(name: &'static str) -> Self {
+        Self(name)
+    }
+
+    /// The base / default module.
+    pub fn swift() -> Self {
+        Self::SWIFT
+    }
+
+    /// Borrow the module name.
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl Default for ModuleId {
+    fn default() -> Self {
+        Self::swift()
+    }
+}
+
+impl std::fmt::Display for ModuleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for ModuleId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Map an import path's leading component (or a host-seeded name) to a
+/// [`ModuleId`]. Known framework names reuse the constants; any other name is
+/// interned once via `Box::leak` so it can live as a `Copy` id (import sets
+/// are tiny — one entry per imported module per program).
+fn module_id_for_import_name(name: &str) -> ModuleId {
+    match name {
+        "Swift" => ModuleId::SWIFT,
+        "Foundation" => ModuleId::FOUNDATION,
+        "SwiftData" => ModuleId::SWIFT_DATA,
+        "SwiftUI" => ModuleId::SWIFTUI,
+        "Charts" => ModuleId::CHARTS,
+        other => ModuleId::new(Box::leak(other.to_string().into_boxed_str())),
+    }
+}
+
+/// Leading component of an import path (`SwiftUI` from `SwiftUI` or
+/// `SwiftUI.Foo`). Submodule / `.` tails are ignored (Phase C).
+fn import_path_leading_component(path: &str) -> &str {
+    path.split('.').next().unwrap_or(path)
+}
+
+/// A value stamped with the module that registered it. Lookups check
+/// [`Interpreter::module_symbol_visible`] under strict import-gating (Phase D2).
+#[derive(Clone, Copy)]
+struct ModuleTagged<T> {
+    value: T,
+    /// Owning module at registration time.
+    module: ModuleId,
+}
+
+impl<T> ModuleTagged<T> {
+    fn new(value: T, module: ModuleId) -> Self {
+        Self { value, module }
+    }
+}
+
+/// Restores [`Interpreter::current_module`] when dropped (normal return or
+/// unwind). Used by [`Interpreter::module`] so a panic inside an install cannot
+/// leak the module scope into subsequent installs.
+struct ModuleScopeGuard {
+    /// Points at the interpreter's `current_module` field for the duration of
+    /// the scoped install. Valid because the guard lives only while the
+    /// exclusive `&mut Interpreter` borrow of `module()` is active (including
+    /// on unwind).
+    slot: *mut ModuleId,
+    previous: ModuleId,
+}
+
+impl Drop for ModuleScopeGuard {
+    fn drop(&mut self) {
+        // SAFETY: `slot` is the address of `Interpreter::current_module` taken
+        // under an exclusive borrow in `module()`; the interpreter outlives
+        // this guard; only this Drop writes through the pointer.
+        unsafe {
+            *self.slot = self.previous;
+        }
+    }
+}
 
 /// Maximum number of elements a custom sequence algorithm may eagerly
 /// materialize before trapping. `for-in` remains lazy and can still terminate an
@@ -546,87 +669,123 @@ impl TypeTable {
 /// receiver-keyed maps behind one module keeps builtin-member storage in a
 /// single place; the `add_*` methods are the install seam and the singular
 /// query methods are the read surface the dispatcher uses.
+///
+/// Each entry is module-tagged (Phase A); lookups still return the bare value
+/// so dispatch behavior is unchanged.
 #[derive(Default)]
 struct BuiltinMembers {
-    intrinsics: HashMap<(BuiltinReceiver, String), MethodEntry>,
-    labeled_intrinsics: HashMap<(BuiltinReceiver, String), LabeledMethodEntry>,
-    properties: HashMap<(BuiltinReceiver, String), PropertyFn>,
-    typed_properties: HashMap<(BuiltinReceiver, String), TypedPropertyFn>,
-    contextual_properties: HashMap<(BuiltinReceiver, String), ContextualPropertyFn>,
-    static_methods: HashMap<(BuiltinReceiver, String), StaticFn>,
+    intrinsics: HashMap<(BuiltinReceiver, String), ModuleTagged<MethodEntry>>,
+    labeled_intrinsics: HashMap<(BuiltinReceiver, String), ModuleTagged<LabeledMethodEntry>>,
+    properties: HashMap<(BuiltinReceiver, String), ModuleTagged<PropertyFn>>,
+    typed_properties: HashMap<(BuiltinReceiver, String), ModuleTagged<TypedPropertyFn>>,
+    contextual_properties: HashMap<(BuiltinReceiver, String), ModuleTagged<ContextualPropertyFn>>,
+    static_methods: HashMap<(BuiltinReceiver, String), ModuleTagged<StaticFn>>,
     /// Built-in computed-property setters (validate + mutate the receiver).
-    setters: HashMap<(BuiltinReceiver, String), PropertySetterFn>,
+    setters: HashMap<(BuiltinReceiver, String), ModuleTagged<PropertySetterFn>>,
 }
 
 impl BuiltinMembers {
-    fn add_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
-        self.intrinsics.insert((recv, name.to_string()), entry);
+    fn add_intrinsic(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        entry: MethodEntry,
+        module: ModuleId,
+    ) {
+        self.intrinsics
+            .insert((recv, name.to_string()), ModuleTagged::new(entry, module));
     }
     fn add_labeled_intrinsic(
         &mut self,
         recv: BuiltinReceiver,
         name: &str,
         entry: LabeledMethodEntry,
+        module: ModuleId,
     ) {
         self.labeled_intrinsics
-            .insert((recv, name.to_string()), entry);
+            .insert((recv, name.to_string()), ModuleTagged::new(entry, module));
     }
-    fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
-        self.properties.insert((recv, name.to_string()), f);
+    fn add_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn, module: ModuleId) {
+        self.properties
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_typed_property(&mut self, recv: BuiltinReceiver, name: &str, f: TypedPropertyFn) {
-        self.typed_properties.insert((recv, name.to_string()), f);
+    fn add_typed_property(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: TypedPropertyFn,
+        module: ModuleId,
+    ) {
+        self.typed_properties
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
     fn add_contextual_property(
         &mut self,
         recv: BuiltinReceiver,
         name: &str,
         f: ContextualPropertyFn,
+        module: ModuleId,
     ) {
         self.contextual_properties
-            .insert((recv, name.to_string()), f);
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_static_method(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
-        self.static_methods.insert((recv, name.to_string()), f);
+    fn add_static_method(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: StaticFn,
+        module: ModuleId,
+    ) {
+        self.static_methods
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
-    fn add_setter(&mut self, recv: BuiltinReceiver, name: &str, f: PropertySetterFn) {
-        self.setters.insert((recv, name.to_string()), f);
+    fn add_setter(
+        &mut self,
+        recv: BuiltinReceiver,
+        name: &str,
+        f: PropertySetterFn,
+        module: ModuleId,
+    ) {
+        self.setters
+            .insert((recv, name.to_string()), ModuleTagged::new(f, module));
     }
 
-    fn intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<MethodEntry> {
-        self.intrinsics.get(&(recv, name.to_string())).copied()
+    fn intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<&ModuleTagged<MethodEntry>> {
+        self.intrinsics.get(&(recv, name.to_string()))
     }
-    fn labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> Option<LabeledMethodEntry> {
-        self.labeled_intrinsics
-            .get(&(recv, name.to_string()))
-            .copied()
+    fn labeled_intrinsic(
+        &self,
+        recv: BuiltinReceiver,
+        name: &str,
+    ) -> Option<&ModuleTagged<LabeledMethodEntry>> {
+        self.labeled_intrinsics.get(&(recv, name.to_string()))
     }
     fn has_labeled_intrinsic(&self, recv: BuiltinReceiver, name: &str) -> bool {
         self.labeled_intrinsics
             .contains_key(&(recv, name.to_string()))
     }
-    fn property(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertyFn> {
-        self.properties.get(&(recv, name.to_string())).copied()
+    fn property(&self, recv: BuiltinReceiver, name: &str) -> Option<&ModuleTagged<PropertyFn>> {
+        self.properties.get(&(recv, name.to_string()))
     }
-    fn typed_property(&self, recv: BuiltinReceiver, name: &str) -> Option<TypedPropertyFn> {
-        self.typed_properties
-            .get(&(recv, name.to_string()))
-            .copied()
+    fn typed_property(
+        &self,
+        recv: BuiltinReceiver,
+        name: &str,
+    ) -> Option<&ModuleTagged<TypedPropertyFn>> {
+        self.typed_properties.get(&(recv, name.to_string()))
     }
     fn contextual_property(
         &self,
         recv: BuiltinReceiver,
         name: &str,
-    ) -> Option<ContextualPropertyFn> {
-        self.contextual_properties
-            .get(&(recv, name.to_string()))
-            .copied()
+    ) -> Option<&ModuleTagged<ContextualPropertyFn>> {
+        self.contextual_properties.get(&(recv, name.to_string()))
     }
-    fn static_method(&self, recv: BuiltinReceiver, name: &str) -> Option<StaticFn> {
-        self.static_methods.get(&(recv, name.to_string())).copied()
+    fn static_method(&self, recv: BuiltinReceiver, name: &str) -> Option<&ModuleTagged<StaticFn>> {
+        self.static_methods.get(&(recv, name.to_string()))
     }
-    fn setter(&self, recv: BuiltinReceiver, name: &str) -> Option<PropertySetterFn> {
-        self.setters.get(&(recv, name.to_string())).copied()
+    fn setter(&self, recv: BuiltinReceiver, name: &str) -> Option<&ModuleTagged<PropertySetterFn>> {
+        self.setters.get(&(recv, name.to_string()))
     }
 
     /// Every registered member as a `"Receiver.name"` string, for the
@@ -648,42 +807,74 @@ impl BuiltinMembers {
 /// seam). Owning the four maps behind one module concentrates global-member
 /// storage; the `add_*` methods are the install seam and the singular query
 /// methods are the read surface `eval_call`/`eval_method_call` use.
+///
+/// Free-fn / struct-method entries carry a [`ModuleId`]; natives and
+/// algorithms are module-tagged wrappers. Struct methods hold per-module
+/// candidates (Phase B); free-fn / native lookup stays name-only.
 #[derive(Default)]
 struct GlobalMembers {
-    natives: HashMap<String, NativeFn>,
+    natives: HashMap<String, ModuleTagged<NativeFn>>,
     free_fns: HashMap<String, FreeFnEntry>,
-    algorithms: HashMap<String, AlgoFn>,
-    struct_methods: HashMap<String, StructMethodEntry>,
+    algorithms: HashMap<String, ModuleTagged<AlgoFn>>,
+    /// Name → per-module candidates (same module re-install replaces in place).
+    struct_methods: HashMap<String, Vec<StructMethodEntry>>,
 }
 
 impl GlobalMembers {
-    fn add_native(&mut self, name: &str, f: NativeFn) {
-        self.natives.insert(name.to_string(), f);
+    fn add_native(&mut self, name: &str, f: NativeFn, module: ModuleId) {
+        self.natives
+            .insert(name.to_string(), ModuleTagged::new(f, module));
     }
     fn add_free_fn(&mut self, name: &str, entry: FreeFnEntry) {
         self.free_fns.insert(name.to_string(), entry);
     }
-    fn add_algorithm(&mut self, name: &str, f: AlgoFn) {
-        self.algorithms.insert(name.to_string(), f);
+    fn add_algorithm(&mut self, name: &str, f: AlgoFn, module: ModuleId) {
+        self.algorithms
+            .insert(name.to_string(), ModuleTagged::new(f, module));
     }
+    /// Append a candidate for `entry.module`, or replace an existing same-
+    /// (name, module) entry so re-install is idempotent.
     fn add_struct_method(&mut self, name: &str, entry: StructMethodEntry) {
-        self.struct_methods.insert(name.to_string(), entry);
+        let list = self.struct_methods.entry(name.to_string()).or_default();
+        if let Some(slot) = list.iter_mut().find(|e| e.module == entry.module) {
+            *slot = entry;
+        } else {
+            list.push(entry);
+        }
     }
 
-    fn native(&self, name: &str) -> Option<NativeFn> {
-        self.natives.get(name).copied()
+    fn native(&self, name: &str) -> Option<&ModuleTagged<NativeFn>> {
+        self.natives.get(name)
     }
     fn free_fn(&self, name: &str) -> Option<&FreeFnEntry> {
         self.free_fns.get(name)
     }
-    fn algorithm(&self, name: &str) -> Option<AlgoFn> {
-        self.algorithms.get(name).copied()
+    fn algorithm(&self, name: &str) -> Option<&ModuleTagged<AlgoFn>> {
+        self.algorithms.get(name)
     }
-    fn has_algorithm(&self, name: &str) -> bool {
-        self.algorithms.contains_key(name)
+    fn struct_method_candidates(&self, name: &str) -> &[StructMethodEntry] {
+        self.struct_methods
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
-    fn struct_method(&self, name: &str) -> Option<&StructMethodEntry> {
-        self.struct_methods.get(name)
+    /// Resolve a struct-method candidate for `receiver_module` (see
+    /// [`resolve_struct_method_candidate`]). Under strict import-gating only
+    /// candidates from imported modules are considered; otherwise `imported`
+    /// is a same-tier fallback preference (Phase C lenient).
+    fn struct_method(
+        &self,
+        name: &str,
+        receiver_module: Option<ModuleId>,
+        imported: &HashSet<ModuleId>,
+        strict: bool,
+    ) -> Option<&StructMethodEntry> {
+        resolve_struct_method_candidate(
+            self.struct_method_candidates(name),
+            receiver_module,
+            imported,
+            strict,
+        )
     }
     fn free_fn_names(&self) -> impl Iterator<Item = &String> {
         self.free_fns.keys()
@@ -858,6 +1049,9 @@ impl From<&CallArg> for Arg {
 struct FreeFnEntry {
     f: FreeFn,
     params: Option<Vec<Param>>,
+    /// Module that registered this free function (also mirrored into
+    /// `type_modules` for constructor names). Used by strict import-gating.
+    module: ModuleId,
 }
 
 /// A registered generic struct-method intrinsic (SwiftUI modifier seam) and its
@@ -865,6 +1059,133 @@ struct FreeFnEntry {
 struct StructMethodEntry {
     f: StructMethodFn,
     params: Option<Vec<Param>>,
+    /// Module that registered this candidate (Phase B: pick by receiver module).
+    module: ModuleId,
+}
+
+/// Simple static depends-on / re-export edges used when the receiver's own
+/// module has no candidate for a shared name (ADR-0020 Phase B).
+///
+/// `Charts` → `SwiftUI` (ChartContent falls back to View modifiers);
+/// every other framework → `Swift` base. Expand only when a real re-export
+/// graph is needed (see ADR tripwires).
+fn module_depends_on(module: ModuleId) -> &'static [ModuleId] {
+    const CHARTS_DEPS: &[ModuleId] = &[ModuleId::SWIFTUI, ModuleId::SWIFT];
+    const BASE_DEPS: &[ModuleId] = &[ModuleId::SWIFT];
+    match module.as_str() {
+        "Charts" => CHARTS_DEPS,
+        "SwiftUI" | "SwiftData" | "Foundation" => BASE_DEPS,
+        _ => BASE_DEPS,
+    }
+}
+
+/// Pick a struct-method candidate for a receiver owned by `receiver_module`.
+///
+/// Under strict import-gating (Phase D2 default):
+/// - If the receiver module owns an exact candidate and that module is
+///   imported → use it.
+/// - If the receiver module owns an exact candidate but the module is **not**
+///   imported → return `None` (caller emits the import-hint diagnostic). Do
+///   **not** fall through to a different module's handler for the same name
+///   (e.g. `BarMark.foregroundStyle` must not steal SwiftUI's when Charts is
+///   not imported).
+/// - Fall through to depends-on / base / same-tier only when the receiver has
+///   **no** own candidate at all, and only among imported modules.
+///
+/// Priority among remaining candidates (deterministic; never registration order):
+/// 1. Exact match on the receiver's own module
+/// 2. A module in the receiver module's depends-on / re-export chain
+/// 3. Base language module [`ModuleId::SWIFT`]
+/// 4. Same-tier preference: a candidate whose module is in `imported` (lenient
+///    reorder when `strict` is false; `Swift` is always treated as imported)
+/// 5. Stable tiebreak: alphabetical by module id among remaining candidates
+///
+/// Unknown / untagged receivers skip (1)–(2) and use (3)–(5).
+fn resolve_struct_method_candidate<'a>(
+    candidates: &'a [StructMethodEntry],
+    receiver_module: Option<ModuleId>,
+    imported: &HashSet<ModuleId>,
+    strict: bool,
+) -> Option<&'a StructMethodEntry> {
+    if candidates.is_empty() {
+        return None;
+    }
+    // Strict: receiver owns a candidate whose module is not imported → hard
+    // miss (no cross-module steal). Only fall through when there is no own
+    // candidate at all.
+    if strict {
+        if let Some(m) = receiver_module {
+            if let Some(exact) = candidates.iter().find(|e| e.module == m) {
+                if candidate_module_is_imported(m, imported) {
+                    return Some(exact);
+                }
+                return None;
+            }
+        }
+    }
+    // Eligible pool: imported-only under strict; all candidates when lenient.
+    let eligible: Vec<&StructMethodEntry> = if strict {
+        candidates
+            .iter()
+            .filter(|e| candidate_module_is_imported(e.module, imported))
+            .collect()
+    } else {
+        candidates.iter().collect()
+    };
+    if eligible.is_empty() {
+        return None;
+    }
+    if let Some(m) = receiver_module {
+        // Lenient path still prefers exact match first (strict already returned).
+        if !strict {
+            if let Some(e) = eligible.iter().copied().find(|e| e.module == m) {
+                return Some(e);
+            }
+        }
+        for dep in module_depends_on(m) {
+            if let Some(e) = eligible.iter().copied().find(|e| e.module == *dep) {
+                return Some(e);
+            }
+        }
+    }
+    // Base language module, if present among candidates.
+    if let Some(e) = eligible
+        .iter()
+        .copied()
+        .find(|e| e.module == ModuleId::SWIFT)
+    {
+        return Some(e);
+    }
+    // Same-tier: prefer an imported module's candidate, then alphabetical
+    // (never insertion order). Under strict mode every remaining candidate is
+    // already imported, so this only reorders.
+    eligible.into_iter().min_by_key(|e| {
+        let not_imported = !candidate_module_is_imported(e.module, imported);
+        (not_imported, e.module.as_str())
+    })
+}
+
+/// Whether `module` counts as imported. [`ModuleId::SWIFT`] is always imported
+/// (stdlib implicit).
+fn candidate_module_is_imported(module: ModuleId, imported: &HashSet<ModuleId>) -> bool {
+    module == ModuleId::SWIFT || imported.contains(&module)
+}
+
+/// Diagnostic for a registered framework symbol gated out by strict imports.
+fn not_in_scope_error(name: &str, module: ModuleId) -> EvalError {
+    EvalError::Type(format!(
+        "cannot find '{name}' in scope (did you forget to import {}?)",
+        module.as_str()
+    ))
+}
+
+/// Module owning a core-internal framework builtin constructor (`JSONEncoder`,
+/// …). Stdlib conversion/collection ctors are untagged (always visible).
+fn builtin_ctor_module(name: &str) -> Option<ModuleId> {
+    match name {
+        "JSONEncoder" | "JSONDecoder" | "PropertyListEncoder" => Some(ModuleId::FOUNDATION),
+        _ => None,
+    }
 }
 
 /// A resolved `Type.member` type reference: the concrete type name (after
@@ -891,6 +1212,32 @@ pub struct Interpreter<'w> {
     /// `Sequence` algorithms, and generic struct-method intrinsics — behind one
     /// registry seam.
     globals: GlobalMembers,
+    /// Module currently receiving registrations (see [`Interpreter::module`]).
+    /// Defaults to [`ModuleId::swift`]; framework `install()` scopes set this
+    /// while registering their symbols.
+    current_module: ModuleId,
+    /// Modules the current program has imported (ADR-0020 Phase C/D2). Seeded
+    /// with base [`ModuleId::SWIFT`] (stdlib always implicitly imported).
+    /// Populated from top-level `ImportDecl` during hoist; hosts may also
+    /// [`mark_module_imported`][Interpreter::mark_module_imported]. Under
+    /// strict import-gating (default), only these modules' framework symbols
+    /// resolve; when strict is off, the set only affects same-tier preference.
+    imported_modules: HashSet<ModuleId>,
+    /// When true (default, Phase D2), framework-module symbols resolve only if
+    /// their module is imported. Base `"Swift"` is never gated. Toggle off via
+    /// [`Interpreter::set_strict_imports`] for a specific lenient test.
+    strict_imports: bool,
+    /// Type / constructor name → owning module. Populated by free-fn, enum,
+    /// and static-value registration. Phase B uses this to resolve the
+    /// receiver's module for struct-method dispatch.
+    type_modules: HashMap<String, ModuleId>,
+    /// Module stamp for each `Type.member` key written by
+    /// [`Interpreter::register_static_value`].
+    static_modules: HashMap<String, ModuleId>,
+    /// Module stamp for each host-native function registered via
+    /// [`Interpreter::register_host_fn`]. Dispatch still goes through
+    /// [`Self::host_bridge`] by name alone; module is used for gating.
+    host_fn_modules: HashMap<String, ModuleId>,
     env: Env,
     funcs: Vec<FuncDef>,
     /// User-declared nominal types (`struct`/`enum`/`class`), behind one seam.
@@ -979,19 +1326,22 @@ pub struct Interpreter<'w> {
     /// (e.g. an open database handle in a thread-local registry) can release it
     /// deterministically. Drained by [`Interpreter::teardown`], which the
     /// `Drop` impl also calls, so each finalizer runs exactly once.
-    finalizers: Vec<crate::stdlib::Finalizer>,
+    /// Module-tagged for registry uniformity (always-active; not import-gated).
+    finalizers: Vec<ModuleTagged<crate::stdlib::Finalizer>>,
     /// Render-scope hook pairs registered by frameworks via
     /// [`Interpreter::register_view_scope`]. The SwiftUI renderer brackets each
     /// custom `View`'s `body` evaluation with `view_scope_enter`/`_exit`, which
     /// invoke every pair's enter (registration order) / exit (reverse order) so
     /// a framework can push and restore subtree-scoped state a modifier carries.
     /// Core assigns the view value no meaning.
-    view_scopes: Vec<(crate::stdlib::ViewScopeFn, crate::stdlib::ViewScopeFn)>,
+    /// Module-tagged for registry uniformity (always-active; not import-gated).
+    view_scopes: Vec<ModuleTagged<(crate::stdlib::ViewScopeFn, crate::stdlib::ViewScopeFn)>>,
     /// Freestanding-macro handlers registered by frameworks via
     /// [`Interpreter::register_macro`], keyed by the macro name (`"Predicate"`
     /// for `#Predicate`). Consulted by [`Interpreter::eval_macro`] before the
-    /// builtin macros. Core assigns the name no meaning.
-    macros: HashMap<String, crate::stdlib::MacroFn>,
+    /// builtin macros. Core assigns the name no meaning. Module-tagged (Phase A);
+    /// lookup still returns the bare handler.
+    macros: HashMap<String, ModuleTagged<crate::stdlib::MacroFn>>,
     /// A process-unique, monotonically-assigned identity for this interpreter,
     /// handed out at construction from [`NEXT_INTERPRETER_ID`]. Exposed
     /// generically via [`StdContext::interpreter_id`] so a framework holding
@@ -1057,6 +1407,12 @@ impl<'w> Interpreter<'w> {
             builtin_ctors: Self::builtin_ctor_table(),
             builtins: BuiltinMembers::default(),
             globals: GlobalMembers::default(),
+            current_module: ModuleId::swift(),
+            imported_modules: HashSet::from([ModuleId::SWIFT]),
+            strict_imports: true,
+            type_modules: HashMap::new(),
+            static_modules: HashMap::new(),
+            host_fn_modules: HashMap::new(),
             env: Env::new(),
             type_bindings: Vec::new(),
             funcs: Vec::new(),
@@ -1090,6 +1446,212 @@ impl<'w> Interpreter<'w> {
         }
     }
 
+    /// Run `f` with `name` as the active registration module. Every
+    /// `register_*` call inside stamps its entry with that module. The previous
+    /// module is restored when the scope ends, including if `f` panics (RAII
+    /// [`ModuleScopeGuard`]), so a caught unwind cannot leak the module scope
+    /// into subsequent installs. Nesting is supported.
+    pub fn module<R>(&mut self, name: &'static str, f: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = std::mem::replace(&mut self.current_module, ModuleId::new(name));
+        // SAFETY: exclusive `&mut self` borrow is held for this whole call
+        // (including unwind). The guard only writes `previous` back on Drop.
+        let _guard = ModuleScopeGuard {
+            slot: std::ptr::addr_of_mut!(self.current_module),
+            previous,
+        };
+        f(self)
+    }
+
+    /// Set the active registration module without a scope (pair with
+    /// [`end_module`][Interpreter::end_module]). Prefer [`module`] when possible.
+    pub fn begin_module(&mut self, name: &'static str) -> ModuleId {
+        std::mem::replace(&mut self.current_module, ModuleId::new(name))
+    }
+
+    /// Restore a module previously returned by [`begin_module`].
+    pub fn end_module(&mut self, previous: ModuleId) {
+        self.current_module = previous;
+    }
+
+    /// The module currently receiving registrations.
+    pub fn current_module(&self) -> ModuleId {
+        self.current_module
+    }
+
+    /// Owning module of a registered type / constructor name, if any.
+    pub fn type_module(&self, name: &str) -> Option<&str> {
+        self.type_modules.get(name).map(|m| m.as_str())
+    }
+
+    /// Modules that registered a struct-method candidate named `name`
+    /// (registration order). Empty when none.
+    pub fn struct_method_modules(&self, name: &str) -> Vec<&'static str> {
+        self.globals
+            .struct_method_candidates(name)
+            .iter()
+            .map(|e| e.module.as_str())
+            .collect()
+    }
+
+    /// Module of the candidate that would be selected for a receiver owned by
+    /// `receiver_type` (via [`Self::type_module`]), or the deterministic
+    /// fallback when the type is unknown / untagged. Honors strict import-gating.
+    pub fn struct_method_module_for(&self, name: &str, receiver_type: &str) -> Option<&str> {
+        let recv_mod = self.type_modules.get(receiver_type).copied();
+        self.globals
+            .struct_method(name, recv_mod, &self.imported_modules, self.strict_imports)
+            .map(|e| e.module.as_str())
+    }
+
+    /// Module of the fallback-resolved candidate for `name` (no receiver type).
+    /// Prefer [`Self::struct_method_module_for`] when the receiver is known.
+    pub fn struct_method_module(&self, name: &str) -> Option<&str> {
+        self.globals
+            .struct_method(name, None, &self.imported_modules, self.strict_imports)
+            .map(|e| e.module.as_str())
+    }
+
+    /// Modules the current program has imported (includes base `"Swift"`).
+    pub fn imported_modules(&self) -> &HashSet<ModuleId> {
+        &self.imported_modules
+    }
+
+    /// Whether strict import-gating is enabled (default `true`).
+    pub fn strict_imports(&self) -> bool {
+        self.strict_imports
+    }
+
+    /// Enable or disable strict import-gating. Default is `true` (Phase D2).
+    /// Tests that need the Phase C lenient behaviour can pass `false`.
+    pub fn set_strict_imports(&mut self, strict: bool) {
+        self.strict_imports = strict;
+    }
+
+    /// Whether module `name` is imported. Base `"Swift"` (stdlib) is always
+    /// true. Leading component only — `name` may be a bare module id.
+    pub fn is_module_imported(&self, name: &str) -> bool {
+        if name == ModuleId::SWIFT.as_str() {
+            return true;
+        }
+        self.imported_modules.iter().any(|m| m.as_str() == name)
+    }
+
+    /// Whether a symbol owned by `module` is resolvable under the current
+    /// import set and strict-gating flag. Base `"Swift"` is always visible.
+    /// When strict imports is off, every installed module is visible.
+    pub(crate) fn module_symbol_visible(&self, module: ModuleId) -> bool {
+        if !self.strict_imports {
+            return true;
+        }
+        candidate_module_is_imported(module, &self.imported_modules)
+    }
+
+    /// Central import gate: `Ok(())` when `module`'s symbols are visible, else
+    /// the standard "cannot find '{name}' in scope (did you forget to import
+    /// M?)" diagnostic. All framework resolution seams should call this so the
+    /// diagnostic is uniform.
+    pub(crate) fn gate_module_symbol(&self, name: &str, module: ModuleId) -> Result<(), EvalError> {
+        if self.module_symbol_visible(module) {
+            Ok(())
+        } else {
+            Err(not_in_scope_error(name, module))
+        }
+    }
+
+    /// Gate a type / constructor name via [`Self::type_modules`]. Untagged
+    /// (user) names always pass.
+    fn gate_type_name(&self, name: &str) -> Result<(), EvalError> {
+        match self.type_modules.get(name).copied() {
+            Some(module) => self.gate_module_symbol(name, module),
+            None => Ok(()),
+        }
+    }
+
+    /// Gate a registered static key (`Type.member`). `display_name` is the
+    /// name shown in the diagnostic (member or full key). Untagged user
+    /// statics always pass.
+    fn gate_static_key(&self, key: &str, display_name: &str) -> Result<(), EvalError> {
+        match self.static_modules.get(key).copied() {
+            Some(module) => self.gate_module_symbol(display_name, module),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether a registered static key (`Type.member`) is visible under import
+    /// gating. User-declared statics (no module stamp) are always visible.
+    fn static_key_visible(&self, key: &str) -> bool {
+        match self.static_modules.get(key) {
+            Some(module) => self.module_symbol_visible(*module),
+            None => true,
+        }
+    }
+
+    /// Whether a type / constructor name's owning module is visible. Names with
+    /// no module stamp (user types) are always visible.
+    fn type_name_visible(&self, name: &str) -> bool {
+        match self.type_modules.get(name) {
+            Some(module) => self.module_symbol_visible(*module),
+            None => true,
+        }
+    }
+
+    /// If the receiver module owns a struct-method candidate for `method` but
+    /// that module is not imported under strict gating, return the standard
+    /// import-hint error. Used when candidate selection returns `None` so the
+    /// miss is not a generic "unsupported method".
+    fn gated_struct_method_error(
+        &self,
+        method: &str,
+        receiver_module: Option<ModuleId>,
+    ) -> Option<EvalError> {
+        if !self.strict_imports {
+            return None;
+        }
+        let m = receiver_module?;
+        let owns = self
+            .globals
+            .struct_method_candidates(method)
+            .iter()
+            .any(|e| e.module == m);
+        if owns && !self.module_symbol_visible(m) {
+            Some(not_in_scope_error(method, m))
+        } else {
+            None
+        }
+    }
+
+    /// Record that `name` is imported (host/test pre-seed, or hoist of
+    /// `ImportDecl`). Accepts a full import path; only the leading component
+    /// is stored (`SwiftUI.Foo` → `SwiftUI`). Idempotent.
+    pub fn mark_module_imported(&mut self, name: &str) {
+        let leading = import_path_leading_component(name);
+        if leading.is_empty() {
+            return;
+        }
+        // Avoid re-leaking unknown names on repeated marks.
+        if self.imported_modules.iter().any(|m| m.as_str() == leading) {
+            return;
+        }
+        self.imported_modules
+            .insert(module_id_for_import_name(leading));
+    }
+
+    /// Module that registered the host-native function named `name`, if any.
+    pub fn host_fn_module(&self, name: &str) -> Option<&str> {
+        self.host_fn_modules.get(name).map(|m| m.as_str())
+    }
+
+    /// Module that registered the freestanding macro named `name`, if any.
+    pub fn macro_module(&self, name: &str) -> Option<&str> {
+        self.macros.get(name).map(|t| t.module.as_str())
+    }
+
+    /// Record that `name` is a type/constructor owned by the current module.
+    fn record_type_module(&mut self, name: &str) {
+        self.type_modules
+            .insert(name.to_string(), self.current_module);
+    }
+
     /// Run all registered finalizers (in registration order) and clear them, so
     /// a subsequent call — including the one the `Drop` impl makes — is a no-op.
     /// Frameworks register finalizers via [`StdContext::register_finalizer`] to
@@ -1098,8 +1660,8 @@ impl<'w> Interpreter<'w> {
     /// drop.
     pub fn teardown(&mut self) {
         let finalizers = std::mem::take(&mut self.finalizers);
-        for finalizer in finalizers {
-            finalizer(self);
+        for tagged in finalizers {
+            (tagged.value)(self);
         }
     }
 
@@ -1135,7 +1697,10 @@ impl<'w> Interpreter<'w> {
         signature_json: &str,
         handler: Option<std::sync::Arc<dyn crate::host_bridge::HostCallHandler>>,
     ) -> Result<String, String> {
-        self.host_bridge.register(signature_json, handler)
+        let name = self.host_bridge.register(signature_json, handler)?;
+        self.host_fn_modules
+            .insert(name.clone(), self.current_module);
+        Ok(name)
     }
 
     /// Run the shared host-call trampoline for a registered host function.
@@ -1164,13 +1729,20 @@ impl<'w> Interpreter<'w> {
 
     /// Register a native function callable from Swift source by `name`.
     pub fn register_native(&mut self, name: &str, f: NativeFn) {
-        self.globals.add_native(name, f);
+        self.globals.add_native(name, f, self.current_module);
     }
 
     /// Register a free-function intrinsic served through the [`StdContext`] seam.
     pub fn register_free_fn(&mut self, name: &str, f: FreeFn) {
-        self.globals
-            .add_free_fn(name, FreeFnEntry { f, params: None });
+        self.globals.add_free_fn(
+            name,
+            FreeFnEntry {
+                f,
+                params: None,
+                module: self.current_module,
+            },
+        );
+        self.record_type_module(name);
     }
 
     /// Register a freestanding-macro handler served through the [`StdContext`]
@@ -1178,9 +1750,10 @@ impl<'w> Interpreter<'w> {
     /// handles `#Predicate`). Consulted by the macro evaluator before the
     /// builtin macros, so a framework can give `#Name<T> { … }` custom
     /// semantics (e.g. compiling a predicate closure to SQL). Core assigns the
-    /// name and node shape no meaning.
+    /// name and node shape no meaning. Stamped with the current module (Phase A).
     pub fn register_macro(&mut self, name: &str, f: crate::stdlib::MacroFn) {
-        self.macros.insert(name.to_string(), f);
+        self.macros
+            .insert(name.to_string(), ModuleTagged::new(f, self.current_module));
     }
 
     /// Register a free-function intrinsic together with a declared parameter
@@ -1194,8 +1767,10 @@ impl<'w> Interpreter<'w> {
             FreeFnEntry {
                 f,
                 params: Some(params),
+                module: self.current_module,
             },
         );
+        self.record_type_module(name);
     }
 
     /// Register a simple builtin enum so shorthand `.case` members resolve to it
@@ -1222,6 +1797,7 @@ impl<'w> Interpreter<'w> {
             },
         );
         self.types.mark_builtin_enum(name);
+        self.record_type_module(name);
     }
 
     /// Register a builtin enum whose cases may carry positional associated
@@ -1251,6 +1827,7 @@ impl<'w> Interpreter<'w> {
             },
         );
         self.types.mark_builtin_enum(name);
+        self.record_type_module(name);
     }
 
     /// The keys of every registered standard-library entry, for coverage
@@ -1271,7 +1848,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a computed-property intrinsic on a builtin receiver type.
     pub fn register_property(&mut self, recv: BuiltinReceiver, name: &str, f: PropertyFn) {
-        self.builtins.add_property(recv, name, f);
+        self.builtins
+            .add_property(recv, name, f, self.current_module);
     }
 
     /// Register a computed-property intrinsic that also receives the receiver's
@@ -1282,7 +1860,8 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: TypedPropertyFn,
     ) {
-        self.builtins.add_typed_property(recv, name, f);
+        self.builtins
+            .add_typed_property(recv, name, f, self.current_module);
     }
 
     /// Register a computed-property **setter** on a builtin receiver type.
@@ -1296,7 +1875,7 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: PropertySetterFn,
     ) {
-        self.builtins.add_setter(recv, name, f);
+        self.builtins.add_setter(recv, name, f, self.current_module);
     }
 
     /// Register a context-aware computed-property intrinsic on a builtin type.
@@ -1306,23 +1885,29 @@ impl<'w> Interpreter<'w> {
         name: &str,
         f: ContextualPropertyFn,
     ) {
-        self.builtins.add_contextual_property(recv, name, f);
+        self.builtins
+            .add_contextual_property(recv, name, f, self.current_module);
     }
 
     /// Register a static *property value* on a (possibly non-builtin) type, so
     /// `Type.name` and implicit `.name` resolve to it (e.g. `UnitLength.meters`).
     pub fn register_static_value(&mut self, type_name: &str, name: &str, value: SwiftValue) {
-        self.statics.insert(format!("{type_name}.{name}"), value);
+        let key = format!("{type_name}.{name}");
+        self.statics.insert(key.clone(), value);
+        self.static_modules.insert(key, self.current_module);
+        self.record_type_module(type_name);
     }
 
     /// Register a static (type-level) method intrinsic on a builtin type.
     pub fn register_static(&mut self, recv: BuiltinReceiver, name: &str, f: StaticFn) {
-        self.builtins.add_static_method(recv, name, f);
+        self.builtins
+            .add_static_method(recv, name, f, self.current_module);
+        self.record_type_module(recv.type_name());
     }
 
     /// Register a `Sequence`/`Collection` algorithm by method name.
     pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
-        self.globals.add_algorithm(name, f);
+        self.globals.add_algorithm(name, f, self.current_module);
     }
 
     /// Register a generic method intrinsic dispatched on any struct receiver by
@@ -1330,8 +1915,14 @@ impl<'w> Interpreter<'w> {
     /// methods and builtin-receiver intrinsics fail to match, so a user method
     /// of the same name always wins.
     pub fn register_struct_method(&mut self, name: &str, f: StructMethodFn) {
-        self.globals
-            .add_struct_method(name, StructMethodEntry { f, params: None });
+        self.globals.add_struct_method(
+            name,
+            StructMethodEntry {
+                f,
+                params: None,
+                module: self.current_module,
+            },
+        );
     }
 
     /// Register a generic struct-method intrinsic together with a declared
@@ -1351,6 +1942,7 @@ impl<'w> Interpreter<'w> {
             StructMethodEntry {
                 f,
                 params: Some(params),
+                module: self.current_module,
             },
         );
     }
@@ -1363,12 +1955,15 @@ impl<'w> Interpreter<'w> {
     /// wins, no leakage across siblings). Core assigns the view value no
     /// meaning — SwiftData uses it to publish/withdraw the environment's
     /// `ModelContext` for `@Query`.
+    /// Always-active hook (not import-gated); tagged with the current module
+    /// for registry uniformity / future per-module hook management.
     pub fn register_view_scope(
         &mut self,
         enter: crate::stdlib::ViewScopeFn,
         exit: crate::stdlib::ViewScopeFn,
     ) {
-        self.view_scopes.push((enter, exit));
+        self.view_scopes
+            .push(ModuleTagged::new((enter, exit), self.current_module));
     }
 
     /// Instantiate a user struct `type_name` with `args` (label, value) pairs,
@@ -1419,7 +2014,8 @@ impl<'w> Interpreter<'w> {
 
     /// Register a method intrinsic on a builtin receiver type.
     pub fn register_intrinsic(&mut self, recv: BuiltinReceiver, name: &str, entry: MethodEntry) {
-        self.builtins.add_intrinsic(recv, name, entry);
+        self.builtins
+            .add_intrinsic(recv, name, entry, self.current_module);
     }
 
     /// Register a label-aware method intrinsic on a builtin receiver type.
@@ -1429,7 +2025,8 @@ impl<'w> Interpreter<'w> {
         name: &str,
         entry: LabeledMethodEntry,
     ) {
-        self.builtins.add_labeled_intrinsic(recv, name, entry);
+        self.builtins
+            .add_labeled_intrinsic(recv, name, entry, self.current_module);
     }
 
     /// Map a [`Signal`] escaping a closure call into a [`StdError`] for the seam.
@@ -1566,7 +2163,7 @@ impl<'w> Interpreter<'w> {
             | NodeKind::PrecedenceGroupDecl
             | NodeKind::TypeAliasDecl
             | NodeKind::MacroDecl
-            | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted/ignored
+            | NodeKind::ImportDecl => Ok(SwiftValue::Void), // hoisted (import set); no runtime effect
             NodeKind::ClosureExpr => self.eval_closure(node),
             NodeKind::CastExpr => self.eval_cast(node),
             NodeKind::AwaitExpr => self.eval_await(node),
@@ -2245,7 +2842,11 @@ impl<'w> Interpreter<'w> {
     /// of the enclosing type (`Type.name`), if such a static exists.
     fn implicit_static_member(&self, name: &str) -> Option<SwiftValue> {
         let ty = self.static_ctx.last()?;
-        self.statics.get(&format!("{ty}.{name}")).cloned()
+        let key = format!("{ty}.{name}");
+        if !self.static_key_visible(&key) {
+            return None;
+        }
+        self.statics.get(&key).cloned()
     }
 
     /// The `statics` key for an unqualified `name` referencing a static property
@@ -2253,7 +2854,7 @@ impl<'w> Interpreter<'w> {
     fn implicit_static_key(&self, name: &str) -> Option<String> {
         let ty = self.static_ctx.last()?;
         let key = format!("{ty}.{name}");
-        self.statics.contains_key(&key).then_some(key)
+        (self.statics.contains_key(&key) && self.static_key_visible(&key)).then_some(key)
     }
 
     /// If `name` is a property of the current `self`, read it. Covers struct
@@ -2297,13 +2898,25 @@ impl<'w> Interpreter<'w> {
             // then any user extension computed property on that type.
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&this) {
-                    if let Some(func) = self.builtins.contextual_property(kind, name) {
-                        return func(self, this)
-                            .map(Some)
-                            .map_err(Self::std_error_to_signal);
+                    if let Some((func, module)) = self
+                        .builtins
+                        .contextual_property(kind, name)
+                        .map(|t| (t.value, t.module))
+                    {
+                        if self.module_symbol_visible(module) {
+                            return func(self, this)
+                                .map(Some)
+                                .map_err(Self::std_error_to_signal);
+                        }
                     }
-                    if let Some(func) = self.builtins.property(kind, name) {
-                        return func(this).map(Some).map_err(Self::std_error_to_signal);
+                    if let Some((func, module)) = self
+                        .builtins
+                        .property(kind, name)
+                        .map(|t| (t.value, t.module))
+                    {
+                        if self.module_symbol_visible(module) {
+                            return func(this).map(Some).map_err(Self::std_error_to_signal);
+                        }
                     }
                 }
                 let tn = this.type_name();
@@ -2593,7 +3206,8 @@ impl<'w> Interpreter<'w> {
 
     /// Resolve the enum type for a shorthand `.case` member from the resolved
     /// type or call-site contextual type, falling back to the unique enum
-    /// declaring that case.
+    /// declaring that case. Framework builtin enums honor strict import-gating
+    /// (`type_name_visible`).
     fn resolve_member_enum(&self, member: &Node<'static>, case: &str) -> Option<String> {
         // The member's resolved type (the enum or a function returning it), then
         // the call-site contextual type; match a registered enum name within.
@@ -2612,6 +3226,7 @@ impl<'w> Interpreter<'w> {
                         .split(|c: char| !c.is_alphanumeric() && c != '_')
                         .any(|t| t == name))
                     && self.enum_has_case(name, case)
+                    && self.type_name_visible(name)
                 {
                     return Some(name.clone());
                 }
@@ -2635,6 +3250,36 @@ impl<'w> Interpreter<'w> {
         found
     }
 
+    /// If a contextual type names a framework enum that owns `case` but is
+    /// gated out by strict imports, return the standard import-hint diagnostic
+    /// (instead of a generic "unresolved type" error).
+    fn gated_contextual_enum_error(&self, member: &Node<'static>, case: &str) -> Option<EvalError> {
+        if !self.strict_imports {
+            return None;
+        }
+        for ty in member
+            .type_name()
+            .into_iter()
+            .chain(self.contextual_type().map(String::from))
+        {
+            for name in self.types.enum_names() {
+                // Plain token match or whole dotted builtin-enum spelling.
+                let matches = ty == name.as_str()
+                    || ty
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .any(|t| t == name);
+                if matches && self.enum_has_case(name, case) {
+                    if let Some(module) = self.type_modules.get(name.as_str()).copied() {
+                        if !self.module_symbol_visible(module) {
+                            return Some(not_in_scope_error(case, module));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Last-resort shorthand resolution over builtin enums only (`.year`,
     /// `.gregorian`, `.plain` for `Decimal.RoundingMode`). Runs after implicit
     /// statics so SwiftUI styles keep priority.
@@ -2647,7 +3292,7 @@ impl<'w> Interpreter<'w> {
     fn resolve_builtin_member_enum(&self, case: &str) -> Option<String> {
         self.types
             .builtin_enum_names()
-            .filter(|name| self.enum_has_case(name, case))
+            .filter(|name| self.enum_has_case(name, case) && self.type_name_visible(name))
             .min()
             .cloned()
     }
@@ -2655,7 +3300,15 @@ impl<'w> Interpreter<'w> {
     /// Resolve an implicit-member `.name` to a static property. Prefers the
     /// member node's inferred contextual type; otherwise accepts a unique
     /// registered static whose member name matches.
-    fn resolve_implicit_static(&self, node: &Node<'static>, name: &str) -> Option<SwiftValue> {
+    ///
+    /// When the contextual type owns a registered static that is gated out by
+    /// strict imports, returns the standard import-hint diagnostic — does
+    /// **not** fall through to another module's same-named static.
+    fn resolve_implicit_static(
+        &self,
+        node: &Node<'static>,
+        name: &str,
+    ) -> Result<Option<SwiftValue>, EvalError> {
         // The node's inferred type, then the call-site contextual type.
         for ty in node
             .type_name()
@@ -2663,8 +3316,14 @@ impl<'w> Interpreter<'w> {
             .chain(self.contextual_type().map(String::from))
         {
             for type_name in ty.split(|c: char| !c.is_alphanumeric() && c != '_') {
-                if let Some(v) = self.statics.get(&format!("{type_name}.{name}")) {
-                    return Some(v.clone());
+                let key = format!("{type_name}.{name}");
+                if self.statics.contains_key(&key) {
+                    // Contextual type owns this static: gate it (do not steal
+                    // a visible same-named static from another module).
+                    self.gate_static_key(&key, name)?;
+                    if let Some(v) = self.statics.get(&key) {
+                        return Ok(Some(v.clone()));
+                    }
                 }
             }
         }
@@ -2672,14 +3331,14 @@ impl<'w> Interpreter<'w> {
         let suffix = format!(".{name}");
         let mut found: Option<&SwiftValue> = None;
         for (key, value) in &self.statics {
-            if key.ends_with(&suffix) {
+            if key.ends_with(&suffix) && self.static_key_visible(key) {
                 if found.is_some() {
-                    return None; // ambiguous
+                    return Ok(None); // ambiguous
                 }
                 found = Some(value);
             }
         }
-        found.cloned()
+        Ok(found.cloned())
     }
 
     /// Resolve an implicit-member call `.m(...)` to the contextual type that
@@ -3304,7 +3963,8 @@ impl<'w> Interpreter<'w> {
         // up. The handler inspects the node's children (generic type args +
         // trailing-closure body) itself.
         let macro_name = which.strip_prefix('#').unwrap_or(&which);
-        if let Some(handler) = self.macros.get(macro_name).copied() {
+        if let Some((handler, module)) = self.macros.get(macro_name).map(|t| (t.value, t.module)) {
+            self.gate_module_symbol(macro_name, module)?;
             return handler(self, node).map_err(Self::std_error_to_signal);
         }
         match which.as_str() {
@@ -5194,14 +5854,17 @@ impl StdContext for Interpreter<'_> {
     }
 
     fn register_finalizer(&mut self, finalizer: crate::stdlib::Finalizer) {
-        self.finalizers.push(finalizer);
+        // Always-active teardown hook (not import-gated); tagged with the
+        // current module for registry uniformity / future per-module hooks.
+        self.finalizers
+            .push(ModuleTagged::new(finalizer, self.current_module));
     }
 
     fn view_scope_enter(&mut self, view: &SwiftValue) {
         // Snapshot the fn pointers first (they are `Copy`) so we don't hold a
         // borrow of `self` across the callback, which takes `self` as context.
         let enters: Vec<crate::stdlib::ViewScopeFn> =
-            self.view_scopes.iter().map(|(enter, _)| *enter).collect();
+            self.view_scopes.iter().map(|t| t.value.0).collect();
         for enter in enters {
             enter(self, view);
         }
@@ -5209,12 +5872,8 @@ impl StdContext for Interpreter<'_> {
 
     fn view_scope_exit(&mut self, view: &SwiftValue) {
         // Reverse registration order so exits unwind the matched enters.
-        let exits: Vec<crate::stdlib::ViewScopeFn> = self
-            .view_scopes
-            .iter()
-            .rev()
-            .map(|(_, exit)| *exit)
-            .collect();
+        let exits: Vec<crate::stdlib::ViewScopeFn> =
+            self.view_scopes.iter().rev().map(|t| t.value.1).collect();
         for exit in exits {
             exit(self, view);
         }
@@ -5942,6 +6601,1123 @@ mod tests {
     }
 
     #[test]
+    fn module_scope_stamps_registrations_and_type_module() {
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+        fn method(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn macro_handler(
+            _ctx: &mut dyn StdContext,
+            _node: &tswift_frontend::Node<'static>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        // Untagged (default base module).
+        interp.register_free_fn("BaseType", free);
+        assert_eq!(interp.type_module("BaseType"), Some("Swift"));
+        assert_eq!(interp.current_module().as_str(), "Swift");
+
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("padding", method);
+        });
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            // Per-module candidate coexists with SwiftUI's (Phase B).
+            i.register_struct_method("padding", method);
+        });
+        interp.module("SwiftData", |i| {
+            i.register_macro("Predicate", macro_handler);
+            let handler = std::sync::Arc::new(MockHostHandler::new(|_n, _a| Ok("null".into())));
+            i.set_host_call_handler(handler);
+            i.register_host_fn(r#"{"name":"deviceName","returns":"Void"}"#, None)
+                .expect("register host fn");
+        });
+
+        assert_eq!(interp.type_module("Text"), Some("SwiftUI"));
+        assert_eq!(interp.type_module("BarMark"), Some("Charts"));
+        // Both modules keep a `padding` candidate; receiver routes selection.
+        let padding_mods = interp.struct_method_modules("padding");
+        assert!(padding_mods.contains(&"SwiftUI"));
+        assert!(padding_mods.contains(&"Charts"));
+        // Import both so strict gating does not hide candidates under query.
+        interp.mark_module_imported("SwiftUI");
+        interp.mark_module_imported("Charts");
+        assert_eq!(
+            interp.struct_method_module_for("padding", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("padding", "BarMark"),
+            Some("Charts")
+        );
+        assert_eq!(interp.macro_module("Predicate"), Some("SwiftData"));
+        assert_eq!(interp.host_fn_module("deviceName"), Some("SwiftData"));
+        // Scope restored after nested modules.
+        assert_eq!(interp.current_module().as_str(), "Swift");
+    }
+
+    #[test]
+    fn module_scope_restores_current_module_on_panic() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert_eq!(interp.current_module().as_str(), "Swift");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            interp.module("Charts", |_i| {
+                panic!("install blew up");
+            });
+        }));
+        assert!(result.is_err());
+        // RAII guard must restore even when the install panics (caught unwind).
+        assert_eq!(interp.current_module().as_str(), "Swift");
+    }
+
+    #[test]
+    fn struct_method_candidates_resolve_by_receiver_module() {
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str(format!(
+                "swiftui:{}",
+                match &recv {
+                    SwiftValue::Struct(o) => o.type_name.as_str(),
+                    _ => "?",
+                }
+            )))
+        }
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str(format!(
+                "charts:{}",
+                match &recv {
+                    SwiftValue::Struct(o) => o.type_name.as_str(),
+                    _ => "?",
+                }
+            )))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        // Register Charts first, then SwiftUI — old last-wins would leave SwiftUI only.
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("foregroundStyle", swiftui_fg);
+        });
+        interp.mark_module_imported("Charts");
+        interp.mark_module_imported("SwiftUI");
+
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "BarMark"),
+            Some("Charts")
+        );
+        // Unknown receiver → base Swift miss → alphabetical (Charts < SwiftUI).
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+
+        // Same-module re-install is idempotent (still one Charts candidate).
+        interp.module("Charts", |i| {
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        assert_eq!(
+            interp.struct_method_modules("foregroundStyle").len(),
+            2,
+            "re-install must replace, not duplicate"
+        );
+    }
+
+    /// Fallback branch (no exact match, no depends-on hit) is install-order
+    /// independent: alphabetical by module id, never `candidates.first()`.
+    #[test]
+    fn struct_method_fallback_is_install_order_independent() {
+        fn alpha_handler(
+            _ctx: &mut dyn StdContext,
+            _recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str("alpha".into()))
+        }
+        fn zebra_handler(
+            _ctx: &mut dyn StdContext,
+            _recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Str("zebra".into()))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        // Install Zebra first, then Alpha — insertion order would pick Zebra.
+        let mut sink = std::io::sink();
+        let mut zebra_first = Interpreter::new(&mut sink);
+        zebra_first.module("Zebra", |i| {
+            i.register_free_fn("ZebraType", free);
+            i.register_struct_method("twist", zebra_handler);
+        });
+        zebra_first.module("Alpha", |i| {
+            i.register_free_fn("AlphaType", free);
+            i.register_struct_method("twist", alpha_handler);
+        });
+        // Foundation receiver: depends-on is only Swift (no Alpha/Zebra) → fallback.
+        zebra_first.module("Foundation", |i| {
+            i.register_free_fn("Date", free);
+        });
+        zebra_first.mark_module_imported("Alpha");
+        zebra_first.mark_module_imported("Zebra");
+        zebra_first.mark_module_imported("Foundation");
+
+        // Opposite install order.
+        let mut sink2 = std::io::sink();
+        let mut alpha_first = Interpreter::new(&mut sink2);
+        alpha_first.module("Alpha", |i| {
+            i.register_free_fn("AlphaType", free);
+            i.register_struct_method("twist", alpha_handler);
+        });
+        alpha_first.module("Zebra", |i| {
+            i.register_free_fn("ZebraType", free);
+            i.register_struct_method("twist", zebra_handler);
+        });
+        alpha_first.module("Foundation", |i| {
+            i.register_free_fn("Date", free);
+        });
+        alpha_first.mark_module_imported("Alpha");
+        alpha_first.mark_module_imported("Zebra");
+        alpha_first.mark_module_imported("Foundation");
+
+        // Exact match still wins when the receiver owns a candidate.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "ZebraType"),
+            Some("Zebra")
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "AlphaType"),
+            Some("Alpha")
+        );
+
+        // Fallback: Foundation has no `twist` and depends only on Swift →
+        // alphabetical Alpha < Zebra, regardless of install order.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "Date"),
+            Some("Alpha"),
+            "zebra-first install must still fall back alphabetically to Alpha"
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "Date"),
+            Some("Alpha"),
+            "alpha-first install must still fall back alphabetically to Alpha"
+        );
+        // Unknown receiver uses the same fallback branch.
+        assert_eq!(
+            zebra_first.struct_method_module_for("twist", "UserWidget"),
+            Some("Alpha")
+        );
+        assert_eq!(
+            alpha_first.struct_method_module_for("twist", "UserWidget"),
+            Some("Alpha")
+        );
+    }
+
+    /// Phase C: `import` decls seed `imported_modules`; base Swift is always on.
+    #[test]
+    fn import_decl_collects_modules_lenient() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert!(interp.is_module_imported("Swift"));
+        assert!(!interp.is_module_imported("SwiftUI"));
+        assert!(!interp.is_module_imported("Charts"));
+        // Set always contains base Swift at construction.
+        assert!(interp
+            .imported_modules()
+            .iter()
+            .any(|m| *m == ModuleId::SWIFT));
+
+        let src = "import SwiftUI\nlet x = 1\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        interp.run(analysis).expect("run");
+
+        assert!(interp.is_module_imported("SwiftUI"));
+        assert!(interp.is_module_imported("Swift"));
+        assert!(!interp.is_module_imported("Charts"));
+        // Submodule path records only the leading component.
+        let mut sink2 = std::io::sink();
+        let mut interp2 = Interpreter::new(&mut sink2);
+        let src2 = "import Foundation.Data\n";
+        let a2 = Analysis::analyze(src2, "test.swift").expect("analyze");
+        let a2: &'static Analysis = Box::leak(Box::new(a2));
+        interp2.run(a2).expect("run");
+        assert!(interp2.is_module_imported("Foundation"));
+        assert!(!interp2.is_module_imported("Foundation.Data"));
+    }
+
+    /// Host-prepended PRELUDE has no imports; only user `import`s are recorded.
+    #[test]
+    fn import_collection_ignores_prelude_picks_user_imports() {
+        // Stand-in for host PRELUDE (no import lines).
+        let prelude = "struct Visibility { static let hidden = 0 }\n";
+        let with_import = format!("{prelude}import Charts\nlet y = 1\n");
+        let without_import = format!("{prelude}let y = 1\n");
+
+        let mut sink = std::io::sink();
+        let mut with = Interpreter::new(&mut sink);
+        let a = Analysis::analyze(&with_import, "test.swift").expect("analyze");
+        let a: &'static Analysis = Box::leak(Box::new(a));
+        with.run(a).expect("run");
+        assert!(with.is_module_imported("Charts"));
+        assert!(with.is_module_imported("Swift"));
+        assert!(!with.is_module_imported("SwiftUI"));
+
+        let mut sink2 = std::io::sink();
+        let mut without = Interpreter::new(&mut sink2);
+        let a2 = Analysis::analyze(&without_import, "test.swift").expect("analyze");
+        let a2: &'static Analysis = Box::leak(Box::new(a2));
+        without.run(a2).expect("run");
+        assert!(!without.is_module_imported("Charts"));
+        assert!(without.is_module_imported("Swift"));
+    }
+
+    /// Host/test pre-seed API for framework injection without a source import.
+    #[test]
+    fn mark_module_imported_preseeds_set() {
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert!(!interp.is_module_imported("SwiftUI"));
+        interp.mark_module_imported("SwiftUI");
+        assert!(interp.is_module_imported("SwiftUI"));
+        // Idempotent; dotted path also works.
+        interp.mark_module_imported("SwiftUI.View");
+        assert!(interp.is_module_imported("SwiftUI"));
+        assert_eq!(
+            interp
+                .imported_modules()
+                .iter()
+                .filter(|m| m.as_str() == "SwiftUI")
+                .count(),
+            1
+        );
+    }
+
+    /// Under strict import-gating (default), import-less programs cannot resolve
+    /// framework struct-method candidates. Opt into lenient for the Phase C
+    /// alphabetical fallback.
+    #[test]
+    fn import_less_program_strict_gates_framework_modifiers() {
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        assert!(interp.strict_imports());
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_free_fn("Text", free);
+            i.register_struct_method("foregroundStyle", swiftui_fg);
+        });
+
+        let src = "let n = 1\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        interp.run(analysis).expect("run");
+        assert!(!interp.is_module_imported("SwiftUI"));
+        assert!(!interp.is_module_imported("Charts"));
+
+        // Strict: no framework candidates without import.
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "Text"),
+            None
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "BarMark"),
+            None
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            None
+        );
+
+        // Lenient opt-out restores Phase C behaviour.
+        interp.set_strict_imports(false);
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "Text"),
+            Some("SwiftUI")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "BarMark"),
+            Some("Charts")
+        );
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+    }
+
+    /// Same-tier fallback prefers an imported module before alphabetical
+    /// (lenient path; under strict only imported candidates remain).
+    #[test]
+    fn same_tier_fallback_prefers_imported_module() {
+        fn handler(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        interp.module("Charts", |i| {
+            i.register_struct_method("foregroundStyle", handler);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_struct_method("foregroundStyle", handler);
+        });
+        // Strict without import: gated out.
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            None
+        );
+        // Lenient without import: alphabetical → Charts.
+        interp.set_strict_imports(false);
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("Charts")
+        );
+        // With SwiftUI imported: prefer imported over alphabetical.
+        interp.mark_module_imported("SwiftUI");
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("SwiftUI")
+        );
+        // Strict + only SwiftUI imported → SwiftUI only.
+        interp.set_strict_imports(true);
+        assert_eq!(
+            interp.struct_method_module_for("foregroundStyle", "UserWidget"),
+            Some("SwiftUI")
+        );
+    }
+
+    /// Phase D2: framework free-fn constructors require their module import.
+    #[test]
+    fn strict_import_gates_framework_free_fns_with_clear_diagnostic() {
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Void)
+        }
+
+        // Text without import SwiftUI.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("SwiftUI", |i| i.register_free_fn("Text", free));
+            let src = "let t = Text(\"hi\")\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp.run(analysis).expect_err("must fail without import");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'Text' in scope") && msg.contains("import SwiftUI"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // Text with import SwiftUI.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("SwiftUI", |i| i.register_free_fn("Text", free));
+            let src = "import SwiftUI\nlet t = Text(\"hi\")\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp.run(analysis).expect("import makes Text resolvable");
+        }
+        // BarMark without / with Charts.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Charts", |i| i.register_free_fn("BarMark", free));
+            let src = "let m = BarMark()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp.run(analysis).expect_err("must fail without import");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'BarMark' in scope") && msg.contains("import Charts"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Charts", |i| i.register_free_fn("BarMark", free));
+            let src = "import Charts\nlet m = BarMark()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import makes BarMark resolvable");
+        }
+        // URL without / with Foundation.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| i.register_free_fn("URL", free));
+            let src = "let u = URL()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp.run(analysis).expect_err("must fail without import");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'URL' in scope") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| i.register_free_fn("URL", free));
+            let src = "import Foundation\nlet u = URL()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp.run(analysis).expect("import makes URL resolvable");
+        }
+        // Stdlib free-fn never gated.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Swift", |i| i.register_free_fn("print", free));
+            let src = "print()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("Swift stdlib is always imported");
+        }
+    }
+
+    /// Phase D2 hole fix: when the receiver module owns a struct-method
+    /// candidate that is gated out, resolution must NOT fall through to an
+    /// imported different-module handler — it must error with the import hint
+    /// for the *receiver's* module.
+    #[test]
+    fn strict_import_gates_receiver_owned_struct_method_no_cross_module_steal() {
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        // Stdlib-owned factory that mints a Charts-typed receiver so we can
+        // exercise the *method* gate without also tripping the free_fn gate
+        // on `BarMark()` itself.
+        fn make_bar(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "BarMark".into(),
+                fields: vec![],
+            })))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "BarMark".into(),
+                fields: vec![],
+            })))
+        }
+
+        // Charts owns BarMark + foregroundStyle; SwiftUI also has foregroundStyle.
+        // Only SwiftUI imported → must not steal SwiftUI's handler.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Charts", |i| {
+                i.register_free_fn("BarMark", free);
+                i.register_struct_method("foregroundStyle", charts_fg);
+            });
+            interp.module("SwiftUI", |i| {
+                i.register_struct_method("foregroundStyle", swiftui_fg);
+            });
+            interp.module("Swift", |i| {
+                i.register_free_fn("makeBar", make_bar);
+            });
+            // Query API: receiver-owned candidate is gated → None (no steal).
+            interp.mark_module_imported("SwiftUI");
+            assert_eq!(
+                interp.struct_method_module_for("foregroundStyle", "BarMark"),
+                None,
+                "must not fall through to SwiftUI when Charts owns the candidate"
+            );
+            let src = "import SwiftUI\nlet m = makeBar()\n_ = m.foregroundStyle()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp.run(analysis).expect_err("must fail without Charts");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'foregroundStyle' in scope")
+                    && msg.contains("import Charts"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // With Charts imported: resolves to Charts' handler.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Charts", |i| {
+                i.register_free_fn("BarMark", free);
+                i.register_struct_method("foregroundStyle", charts_fg);
+            });
+            interp.module("SwiftUI", |i| {
+                i.register_struct_method("foregroundStyle", swiftui_fg);
+            });
+            assert_eq!(
+                {
+                    interp.mark_module_imported("Charts");
+                    interp.struct_method_module_for("foregroundStyle", "BarMark")
+                },
+                Some("Charts")
+            );
+            let src = "import Charts\nlet m = BarMark()\n_ = m.foregroundStyle()\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Charts makes BarMark.foregroundStyle resolvable");
+        }
+        // Receiver has NO own candidate → legitimate fall-through to imported
+        // SwiftUI modifier (UserWidget.padding with only SwiftUI imported).
+        {
+            fn pad(
+                _ctx: &mut dyn StdContext,
+                recv: SwiftValue,
+                _args: Vec<Arg>,
+            ) -> crate::stdlib::StdResult {
+                Ok(recv)
+            }
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("SwiftUI", |i| {
+                i.register_struct_method("padding", pad);
+            });
+            interp.mark_module_imported("SwiftUI");
+            assert_eq!(
+                interp.struct_method_module_for("padding", "UserWidget"),
+                Some("SwiftUI")
+            );
+        }
+    }
+
+    /// Phase D2 hole fix: JSONEncoder/JSONDecoder/PropertyListEncoder require
+    /// `import Foundation` (core-internal framework ctors).
+    #[test]
+    fn strict_import_gates_json_coder_builtin_ctors() {
+        for name in ["JSONEncoder", "JSONDecoder", "PropertyListEncoder"] {
+            // Without import.
+            {
+                let mut sink = std::io::sink();
+                let mut interp = Interpreter::new(&mut sink);
+                let src = format!("let _ = {name}()\n");
+                let analysis = Analysis::analyze(&src, "test.swift").expect("analyze");
+                let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+                let err = interp
+                    .run(analysis)
+                    .expect_err("must fail without Foundation");
+                let msg = err.to_string();
+                assert!(
+                    msg.contains(&format!("cannot find '{name}' in scope"))
+                        && msg.contains("import Foundation"),
+                    "unexpected diagnostic for {name}: {msg}"
+                );
+            }
+            // With import.
+            {
+                let mut sink = std::io::sink();
+                let mut interp = Interpreter::new(&mut sink);
+                let src = format!("import Foundation\nlet _ = {name}()\n");
+                let analysis = Analysis::analyze(&src, "test.swift").expect("analyze");
+                let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+                interp
+                    .run(analysis)
+                    .unwrap_or_else(|e| panic!("import Foundation makes {name} resolvable: {e}"));
+            }
+        }
+    }
+
+    /// Phase D2 hole fix: framework builtin-enum cases require their module.
+    #[test]
+    fn strict_import_gates_framework_builtin_enum_cases() {
+        // Without Foundation: qualified `Type.case` fails with import hint.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            let src = "let _ = RoundingMode.plain\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // With Foundation: resolves.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            let src = "import Foundation\nlet _ = RoundingMode.plain\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes enum case resolvable");
+        }
+        // Leading-dot under a typed contextual parameter. Free-fn is Swift-
+        // owned so only the enum case is gated — proves contextual enum
+        // resolution honors import visibility with the clear diagnostic.
+        {
+            fn take(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> crate::stdlib::StdResult {
+                Ok(args
+                    .into_iter()
+                    .next()
+                    .map(|a| a.value)
+                    .unwrap_or(SwiftValue::Void))
+            }
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            interp.module("Swift", |i| {
+                i.register_free_fn_typed(
+                    "useMode",
+                    take,
+                    vec![BuiltinParam::positional("RoundingMode")],
+                );
+            });
+            let src = "let _ = useMode(.plain)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        {
+            fn take(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> crate::stdlib::StdResult {
+                Ok(args
+                    .into_iter()
+                    .next()
+                    .map(|a| a.value)
+                    .unwrap_or(SwiftValue::Void))
+            }
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            interp.module("Swift", |i| {
+                i.register_free_fn_typed(
+                    "useMode",
+                    take,
+                    vec![BuiltinParam::positional("RoundingMode")],
+                );
+            });
+            let src = "import Foundation\nlet _ = useMode(.plain)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import + leading-dot enum case resolves");
+        }
+    }
+
+    /// Phase D2 hole fix: framework static reads/writes require their module.
+    #[test]
+    fn strict_import_gates_framework_statics() {
+        // Static read without import.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("URLSession", "shared", SwiftValue::int(1));
+            });
+            let src = "let _ = URLSession.shared\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // Static read with import.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("URLSession", "shared", SwiftValue::int(1));
+            });
+            let src = "import Foundation\nlet _ = URLSession.shared\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes static readable");
+        }
+        // Static write without / with import.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("Widget", "count", SwiftValue::int(0));
+            });
+            let src = "Widget.count = 2\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("Widget", "count", SwiftValue::int(0));
+            });
+            let src = "import Foundation\nWidget.count = 2\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes static writable");
+        }
+    }
+
+    /// Phase D2 hole fix: framework enum `rawValue:` init requires the module.
+    #[test]
+    fn strict_import_gates_framework_enum_rawvalue_init() {
+        // Without import: `FrameworkEnum(rawValue:)` is gated (not silent Nil).
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            let src = "let _ = RoundingMode(rawValue: 0)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'RoundingMode' in scope")
+                    && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // With import: rawValue init is allowed (no matching raw → Nil is fine).
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down", "up", "bankers"]);
+            });
+            let src = "import Foundation\nlet _ = RoundingMode(rawValue: 0)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes enum rawValue: init resolvable");
+        }
+    }
+
+    /// Phase D2 hole fix: framework type `.self` metatype requires its module.
+    #[test]
+    fn strict_import_gates_framework_type_self_metatype() {
+        // Builtin framework enum is a real `is_type_name` type stamped with a
+        // module — `.self` must honor the import gate (not emit a metatype
+        // without the owning module).
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down"]);
+            });
+            let src = "let _ = RoundingMode.self\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find 'RoundingMode' in scope")
+                    && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_builtin_enum("RoundingMode", &["plain", "down"]);
+            });
+            let src = "import Foundation\nlet _ = RoundingMode.self\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes Type.self resolvable");
+        }
+        // Framework BuiltinReceivers (`Data`/`UUID`) are not nominal but still
+        // carry type_modules stamps — `.self` must gate with the import hint.
+        for type_name in ["Data", "UUID"] {
+            {
+                let mut sink = std::io::sink();
+                let mut interp = Interpreter::new(&mut sink);
+                interp.module("Foundation", |i| {
+                    i.register_free_fn(type_name, |_, _| Ok(SwiftValue::Void));
+                });
+                let src = format!("let _ = {type_name}.self\n");
+                let analysis = Analysis::analyze(&src, "test.swift").expect("analyze");
+                let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+                let err = interp
+                    .run(analysis)
+                    .expect_err("must fail without Foundation");
+                let msg = err.to_string();
+                assert!(
+                    msg.contains(&format!("cannot find '{type_name}' in scope"))
+                        && msg.contains("import Foundation"),
+                    "unexpected diagnostic for {type_name}.self: {msg}"
+                );
+            }
+            {
+                let mut sink = std::io::sink();
+                let mut interp = Interpreter::new(&mut sink);
+                interp.module("Foundation", |i| {
+                    i.register_free_fn(type_name, |_, _| Ok(SwiftValue::Void));
+                });
+                let src = format!("import Foundation\nlet _ = {type_name}.self\n");
+                let analysis = Analysis::analyze(&src, "test.swift").expect("analyze");
+                let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+                interp.run(analysis).unwrap_or_else(|e| {
+                    panic!("import Foundation makes {type_name}.self resolvable: {e}")
+                });
+            }
+        }
+        // Core Swift builtins stay ungated even when a Foundation free_fn
+        // collides on the same type name (`String(data:encoding:)`).
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_free_fn("String", |_, _| Ok(SwiftValue::Void));
+            });
+            let src = "let _ = String.self\nlet _ = Int.self\nlet _ = Array.self\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("core Swift Type.self must not require Foundation");
+        }
+    }
+
+    /// Phase D2 hole fix: gated struct-method (modifier) must not evaluate
+    /// arguments before the import gate — no side effects, import-hint only.
+    #[test]
+    fn strict_import_gates_struct_method_before_arg_evaluation() {
+        fn charts_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn swiftui_fg(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            _args: Vec<Arg>,
+        ) -> crate::stdlib::StdResult {
+            Ok(recv)
+        }
+        fn make_bar(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "BarMark".into(),
+                fields: vec![],
+            })))
+        }
+        fn free(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(SwiftValue::Struct(Rc::new(StructObj {
+                type_name: "BarMark".into(),
+                fields: vec![],
+            })))
+        }
+        fn boom(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> crate::stdlib::StdResult {
+            // Would mutate state if evaluated; register_static_value counter is
+            // written only when this free_fn runs.
+            Err(crate::stdlib::StdError::Error(EvalError::Type(
+                "boom side effect ran".into(),
+            )))
+        }
+
+        let mut sink = std::io::sink();
+        let mut interp = Interpreter::new(&mut sink);
+        interp.module("Charts", |i| {
+            i.register_free_fn("BarMark", free);
+            i.register_struct_method("foregroundStyle", charts_fg);
+        });
+        interp.module("SwiftUI", |i| {
+            i.register_struct_method("foregroundStyle", swiftui_fg);
+        });
+        interp.module("Swift", |i| {
+            i.register_free_fn("makeBar", make_bar);
+            i.register_free_fn("boom", boom);
+        });
+        // Only SwiftUI imported: Charts-owned candidate is gated. `boom()` must
+        // not run (would yield "boom side effect ran" instead of import hint).
+        let src = "import SwiftUI\nlet m = makeBar()\n_ = m.foregroundStyle(boom())\n";
+        let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+        let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+        let err = interp.run(analysis).expect_err("must fail without Charts");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cannot find 'foregroundStyle' in scope") && msg.contains("import Charts"),
+            "unexpected diagnostic (args must not run): {msg}"
+        );
+        assert!(
+            !msg.contains("boom side effect"),
+            "arguments were evaluated before the import gate: {msg}"
+        );
+    }
+
+    /// Phase D2 hole fix: gated contextual static must not fall through to
+    /// another module's same-named static.
+    #[test]
+    fn strict_import_gates_contextual_static_no_cross_module_steal() {
+        fn take(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> crate::stdlib::StdResult {
+            Ok(args
+                .into_iter()
+                .next()
+                .map(|a| a.value)
+                .unwrap_or(SwiftValue::Void))
+        }
+        // Foundation owns Style.plain; SwiftUI owns Color.plain. Contextual
+        // parameter is Style — without Foundation, must not steal Color.plain.
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("Style", "plain", SwiftValue::int(1));
+            });
+            interp.module("SwiftUI", |i| {
+                i.register_static_value("Color", "plain", SwiftValue::int(99));
+            });
+            interp.module("Swift", |i| {
+                i.register_free_fn_typed("useStyle", take, vec![BuiltinParam::positional("Style")]);
+            });
+            let src = "import SwiftUI\nlet _ = useStyle(.plain)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            let err = interp
+                .run(analysis)
+                .expect_err("must fail without Foundation");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot find") && msg.contains("import Foundation"),
+                "unexpected diagnostic: {msg}"
+            );
+        }
+        // With Foundation imported: resolves to Style.plain (value 1).
+        {
+            let mut sink = std::io::sink();
+            let mut interp = Interpreter::new(&mut sink);
+            interp.module("Foundation", |i| {
+                i.register_static_value("Style", "plain", SwiftValue::int(1));
+            });
+            interp.module("SwiftUI", |i| {
+                i.register_static_value("Color", "plain", SwiftValue::int(99));
+            });
+            interp.module("Swift", |i| {
+                i.register_free_fn_typed("useStyle", take, vec![BuiltinParam::positional("Style")]);
+            });
+            let src = "import Foundation\nimport SwiftUI\nlet _ = useStyle(.plain)\n";
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis: &'static Analysis = Box::leak(Box::new(analysis));
+            interp
+                .run(analysis)
+                .expect("import Foundation makes contextual Style.plain resolvable");
+        }
+    }
+
+    #[test]
     fn global_members_registry_stores_free_fns_and_algorithms() {
         fn id(_: &mut dyn StdContext, _: Vec<Arg>) -> crate::stdlib::StdResult {
             Ok(SwiftValue::Void)
@@ -5953,10 +7729,11 @@ mod tests {
             FreeFnEntry {
                 f: id,
                 params: None,
+                module: ModuleId::swift(),
             },
         );
         assert!(g.free_fn("abs").is_some());
-        assert!(!g.has_algorithm("map"));
+        assert!(g.algorithm("map").is_none());
         let names: Vec<String> = g.free_fn_names().cloned().collect();
         assert_eq!(names, vec!["abs".to_string()]);
     }
@@ -5968,7 +7745,7 @@ mod tests {
         }
         let mut b = BuiltinMembers::default();
         assert!(b.property(BuiltinReceiver::Array, "count").is_none());
-        b.add_property(BuiltinReceiver::Array, "count", count);
+        b.add_property(BuiltinReceiver::Array, "count", count, ModuleId::swift());
         assert!(b.property(BuiltinReceiver::Array, "count").is_some());
         // Distinct receivers do not collide on the same member name.
         assert!(b.property(BuiltinReceiver::String, "count").is_none());
@@ -7473,7 +9250,7 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
     fn codable_json_round_trip() {
         // encode returns Data; round-trip through decode to verify end-to-end.
         let out = run(
-            "struct User: Codable { let name: String; let age: Int }\n@main struct App {\n  static func main() throws {\n    let u = User(name: \"Sam\", age: 30)\n    let data = try JSONEncoder().encode(u)\n    let back = try JSONDecoder().decode(User.self, from: data)\n    print(back.name, back.age)\n  }\n}\n",
+            "import Foundation\nstruct User: Codable { let name: String; let age: Int }\n@main struct App {\n  static func main() throws {\n    let u = User(name: \"Sam\", age: 30)\n    let data = try JSONEncoder().encode(u)\n    let back = try JSONDecoder().decode(User.self, from: data)\n    print(back.name, back.age)\n  }\n}\n",
         )
         .unwrap();
         assert_eq!(out, "Sam 30\n");

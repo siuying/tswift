@@ -55,6 +55,7 @@ enum Catalog {
                 subtitle: "Networked end-to-end app",
                 source: """
                 import Foundation
+                import SwiftUI
 
                 struct HNStory: Decodable {
                     let id: Int
@@ -478,6 +479,8 @@ enum Catalog {
                 title: "Counter",
                 subtitle: "State, button tap",
                 source: """
+                import SwiftUI
+
                 struct CounterView: View {
                     @State private var count = 0
                     var body: some View {
@@ -501,6 +504,8 @@ enum Catalog {
                 title: "Toggle",
                 subtitle: "Toggle, conditional view",
                 source: """
+                import SwiftUI
+
                 struct GreetingView: View {
                     @State private var isOn = true
                     var body: some View {
@@ -524,6 +529,8 @@ enum Catalog {
                 title: "List",
                 subtitle: "ForEach, HStack",
                 source: """
+                import SwiftUI
+
                 struct FruitList: View {
                     let fruits = ["Apple", "Banana", "Cherry", "Date"]
                     var body: some View {
@@ -546,6 +553,8 @@ enum Catalog {
                 title: "Profile",
                 subtitle: "VStack layout card",
                 source: """
+                import SwiftUI
+
                 struct ProfileCard: View {
                     var body: some View {
                         VStack(spacing: 12) {

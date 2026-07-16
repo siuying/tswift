@@ -1,5 +1,7 @@
 // C6 — lazy stacks, Grid/GridRow, Form (issue #193).
 // LazyVGrid/LazyHGrid deferred (need GridItem + array-valued arg serialization).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         Form {

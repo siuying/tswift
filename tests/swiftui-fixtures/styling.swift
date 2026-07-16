@@ -1,4 +1,6 @@
 // C7 — control styling + accessibility no-ops (issue #194).
+import SwiftUI
+
 struct V: View {
     @State private var name = ""
     var body: some View {

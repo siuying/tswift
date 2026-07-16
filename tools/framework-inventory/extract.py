@@ -26,7 +26,11 @@ MANIFEST = Path(__file__).with_name("frameworks.toml")
 TYPE_RE = re.compile(
     r"\b(?:struct|enum|class|protocol|actor)\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
-EXT_RE = re.compile(r"\bextension\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)")
+# Module-qualified extensions: SwiftUI uses `SwiftUI.View` (dot); newer Charts
+# interfaces use `Charts::PlottableValue` (double-colon). Capture the final type.
+EXT_RE = re.compile(
+    r"\bextension\s+(?:[A-Za-z_][A-Za-z0-9_]*(?:::|\.))*([A-Za-z_][A-Za-z0-9_]*)"
+)
 MEMBER_RE = re.compile(
     r"\b(?:public|open)\b.*?\b(func|var|let|subscript|init)\b"
 )

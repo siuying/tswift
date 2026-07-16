@@ -166,6 +166,32 @@ def out_of_scope_types(scope: dict) -> dict[str, str]:
     return excluded
 
 
+def out_of_scope_members(scope: dict) -> dict[str, dict[str, str]]:
+    """Per-type member exclusions: scope.toml `[out_of_scope_members]`.
+
+    Shape (bucket → list of `"Type.member"` keys, same style as registered_keys):
+
+        [out_of_scope_members]
+        chart3d = ["View.chart3DPose", "View.chartZScale"]
+        chart_a11y = ["ChartContent.accessibilityHidden"]
+
+    Returns `{type: {member: bucket}}` so individual members of an in-scope
+    type can leave the coverage denominator without dropping the whole type.
+    """
+    excluded: dict[str, dict[str, str]] = {}
+    for bucket, keys in scope.get("out_of_scope_members", {}).items():
+        if not isinstance(keys, list):
+            continue
+        for key in keys:
+            if not isinstance(key, str) or "." not in key:
+                continue
+            typ, member = key.split(".", 1)
+            if not typ or not member:
+                continue
+            excluded.setdefault(typ, {})[member] = bucket
+    return excluded
+
+
 def table_string_list(scope: dict, table: str, key: str) -> set[str]:
     raw = scope.get(table, {}).get(key, [])
     return set(raw) if isinstance(raw, list) else set()
@@ -250,9 +276,12 @@ class Coverage:
         self.used = fixture_tokens(framework, self.desc.get("fixture_prefix"))
         self._scoped = scoped_types(self.scope)
         self._excluded = out_of_scope_types(self.scope)
+        self._excluded_members = out_of_scope_members(self.scope)
 
     def member_state(self, section: str, member: str) -> str:
         if section != FREE_SECTION and section in self._excluded:
+            return "out_of_scope"
+        if section != FREE_SECTION and member in self._excluded_members.get(section, {}):
             return "out_of_scope"
         if section == FREE_SECTION:
             registered = member in self.free_reg
@@ -319,6 +348,7 @@ class Coverage:
         groups = self.classify(section)
         kinds = self.free_kinds if section == FREE_SECTION else self.type_kinds.get(section, {})
         out_of_scope_bucket = self._excluded.get(section)
+        member_buckets = self._excluded_members.get(section, {})
         members: list[dict] = []
         counts = {"implemented": 0, "partial": 0, "missing": 0, "out_of_scope": 0}
         for state, names in groups.items():
@@ -326,8 +356,10 @@ class Coverage:
             counts[status] += len(names)
             for name in names:
                 entry = {"name": name, "kind": kinds.get(name, "unknown"), "status": status}
-                if status == "out_of_scope" and out_of_scope_bucket:
-                    entry["notes"] = f"out of scope: {out_of_scope_bucket}"
+                if status == "out_of_scope":
+                    bucket = out_of_scope_bucket or member_buckets.get(name)
+                    if bucket:
+                        entry["notes"] = f"out of scope: {bucket}"
                 members.append(entry)
         members.sort(key=lambda m: m["name"])
         counts["total"] = counts["implemented"] + counts["partial"] + counts["missing"] + counts["out_of_scope"]

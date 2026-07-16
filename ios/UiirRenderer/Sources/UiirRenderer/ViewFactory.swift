@@ -296,6 +296,10 @@ public enum ViewFactory {
             let r = num(node, "cornerRadius", 0)
             return AnyView(fillShape(node, RoundedRectangle(cornerRadius: r)))
 
+        // Charts — native `import Charts` marks (slice 6).
+        case "Chart":
+            return AnyView(ChartRender.chart(node))
+
         default:
             // Unknown kind: render its children transparently.
             return AnyView(renderChildren(node, sink))

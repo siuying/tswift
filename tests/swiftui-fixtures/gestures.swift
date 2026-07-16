@@ -4,6 +4,8 @@
 // onTapGesture / onLongPressGesture marker + handler key route used by the
 // direct modifiers.  Session events exercise the handler dispatch path.
 
+import SwiftUI
+
 struct GesturesView: View {
     @State private var taps = 0
     @State private var held = false

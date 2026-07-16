@@ -1,4 +1,6 @@
 // C3 — structural containers: Group, Divider, ScrollView (issue #190).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         ScrollView {

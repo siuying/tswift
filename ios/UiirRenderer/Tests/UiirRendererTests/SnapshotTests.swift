@@ -93,4 +93,10 @@ final class SnapshotTests: XCTestCase {
     func testContent() throws { try runFixture("content") }
     func testGrids() throws { try runFixture("grids") }
     func testStyling() throws { try runFixture("styling") }
+    // Charts (native import Charts host — slice 6).
+    func testChartsBar() throws { try runFixture("charts-bar") }
+    func testChartsLinePoint() throws { try runFixture("charts-line-point") }
+    func testChartsDynamic() throws { try runFixture("charts-dynamic") }
+    func testChartsRectSector() throws { try runFixture("charts-rect-sector") }
+    func testChartsHiddenSeries() throws { try runFixture("charts-hidden-series") }
 }

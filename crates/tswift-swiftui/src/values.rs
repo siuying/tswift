@@ -39,7 +39,10 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
 
 /// Build a view value: a struct carrying `type_name` plus any constructor
 /// fields, an empty ordered `_modifiers` list, and (for containers) `_children`.
-pub(crate) fn view_value(type_name: &str, mut fields: Vec<(String, SwiftValue)>) -> SwiftValue {
+///
+/// Public so sibling render-host frameworks (e.g. Charts) can reuse the same
+/// view-value shape without duplicating the `_modifiers` contract.
+pub fn view_value(type_name: &str, mut fields: Vec<(String, SwiftValue)>) -> SwiftValue {
     fields.push((
         MODIFIERS_FIELD.into(),
         SwiftValue::Array(Rc::new(Vec::new())),
@@ -51,7 +54,10 @@ pub(crate) fn view_value(type_name: &str, mut fields: Vec<(String, SwiftValue)>)
 }
 
 /// Build a container view value with an ordered `_children` list.
-pub(crate) fn container_value(type_name: &str, children: Vec<SwiftValue>) -> SwiftValue {
+///
+/// Public so sibling render-host frameworks can build container nodes that
+/// serialize through the shared UIIR path.
+pub fn container_value(type_name: &str, children: Vec<SwiftValue>) -> SwiftValue {
     view_value(
         type_name,
         vec![(CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children)))],

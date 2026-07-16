@@ -716,7 +716,7 @@ mod tests {
 
     fn counter_interp() -> Interpreter<'static> {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct CounterView: View {
     @State var count = 0
@@ -766,7 +766,7 @@ struct CounterView: View {
 
     fn greeting_interp() -> Interpreter<'static> {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct GreetingView: View {
     @State private var formal = true
@@ -815,7 +815,7 @@ struct GreetingView: View {
 
     fn textfield_interp() -> Interpreter<'static> {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct FormView: View {
     @State private var name = "World"
@@ -864,7 +864,7 @@ struct FormView: View {
         // instance is reused and the model is a reference, the next render
         // reflects it — no Combine publisher needed.
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 class CounterModel: ObservableObject {
     @Published var count = 0
@@ -913,7 +913,7 @@ struct CounterView: View {
         // child reads it through `@EnvironmentObject` and a mutation through it
         // (no owner reference in scope) is reflected on the next render.
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 class Settings: ObservableObject {
     @Published var theme = "dark"
@@ -967,7 +967,7 @@ struct RootView: View {
         // A parent's `@StateObject` passed to a child's `@ObservedObject` is one
         // shared reference: a mutation from the child updates both views.
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 class Model: ObservableObject {
     @Published var count = 0
@@ -1020,7 +1020,7 @@ struct ParentView: View {
     #[test]
     fn slider_set_writes_double_through_binding() {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct DimmerView: View {
     @State private var level = 0.25
@@ -1058,7 +1058,7 @@ struct DimmerView: View {
         // A control nested inside a keyed `ForEach` row must be reachable by its
         // keyed id (`0.0.row.0`), exercising the child_id walker fix.
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct RowsView: View {
     @State private var name = "World"
@@ -1155,7 +1155,7 @@ struct RowsView: View {
     /// Build a session over `body` inside a `View` named `V` with the given
     /// stored `@State` declarations prepended.
     fn events_interp(program: &str) -> Interpreter<'static> {
-        let src = format!("{PRELUDE}\n{program}");
+        let src = format!("import SwiftUI\n{PRELUDE}\n{program}");
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
@@ -1786,7 +1786,8 @@ struct RootView: View {
     }
 
     fn events_interp_with_foundation(program: &str) -> Interpreter<'static> {
-        let src = format!("{PRELUDE}\n{program}");
+        // Strict import-gating: AsyncImage snippets use Foundation's URL.
+        let src = format!("import SwiftUI\nimport Foundation\n{PRELUDE}\n{program}");
         let analysis = tswift_frontend::Analysis::analyze(&src, "t.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
@@ -2066,7 +2067,7 @@ struct AView: View {
 
     fn with_animation_interp() -> Interpreter<'static> {
         let src = format!(
-            "{PRELUDE}\n{}",
+            "import SwiftUI\n{PRELUDE}\n{}",
             r#"
 struct FlagView: View {
     @State var flag = false

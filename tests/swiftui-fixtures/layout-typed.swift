@@ -3,6 +3,8 @@
 // .infinity)`, and directional `.padding(.horizontal, _)`. These collide across
 // the alignment/edge/axis namespaces and were unresolvable before the typed
 // prelude shims.
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack {

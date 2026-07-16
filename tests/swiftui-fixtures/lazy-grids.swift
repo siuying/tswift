@@ -1,6 +1,8 @@
 // C6 lazy grids (issue #205): LazyVGrid/LazyHGrid driven by a `[GridItem]`
 // track array. `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)` resolve against
 // the typed `columns:`/`rows:` signatures (#203) and serialize as a JSON array.
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(spacing: 16) {

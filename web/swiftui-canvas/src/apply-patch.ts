@@ -4,29 +4,33 @@
 // did the diffing.
 
 import { applyModifiers, FRAME_ALIGN } from "./modifier-css.js";
-import type { Modifier, UiirValue } from "./modifier-css.js";
+import type { Modifier, UiirValue } from "./uiir-types.js";
+import type { Patch, UiirNode } from "./uiir-types.js";
 import { playTransitionEnter, playTransitionLeave } from "./animation-css.js";
 import { sfGlyph } from "./sf-symbols.js";
+import { refreshAffectedProjection } from "./node-projection.js";
+import { UiirTree, UnknownNodeError } from "./uiir-tree.js";
 
-/** A UIIR node from `tswift swiftui render` / patch payloads. */
-export interface UiirNode {
-  id: string;
-  kind: string;
-  args: Record<string, unknown>;
-  modifiers: Modifier[];
-  children: UiirNode[];
-}
+export type { Patch, UiirNode, Modifier, UiirValue } from "./uiir-types.js";
 
-/** A patch op from `tswift swiftui dispatch`. */
-export type Patch =
-  | { op: "mount"; node: UiirNode }
-  | { op: "insert"; parentId: string; index: number; node: UiirNode }
-  | { op: "remove"; id: string }
-  | { op: "replace"; id: string; node: UiirNode }
-  | { op: "setText"; id: string; text: string }
-  | { op: "setModifiers"; id: string; modifiers: Modifier[] }
-  | { op: "setArgs"; id: string; args: Record<string, unknown> }
-  | { op: "move"; parentId: string; id: string; index: number };
+/**
+ * Chart mark / axis leaves: addressable by the diff engine, but never layout
+ * chrome. The Chart projection paints their data into a single SVG from the
+ * canonical tree — these DOM nodes are hidden tracking spans only.
+ */
+const CHART_DATA_KINDS = new Set([
+  "BarMark",
+  "LineMark",
+  "PointMark",
+  "AreaMark",
+  "RuleMark",
+  "RectangleMark",
+  "SectorMark",
+  "AxisMarks",
+  "AxisGridLine",
+  "AxisTick",
+  "AxisValueLabel",
+]);
 
 /** How a host node reports an event back to the runtime. */
 export type EventSink = (id: string, event: string, value: unknown) => void;
@@ -34,6 +38,9 @@ export type EventSink = (id: string, event: string, value: unknown) => void;
 /**
  * Applies a patch stream into a root element, keeping an id→element map. One
  * instance per mounted `<swiftui-canvas>`.
+ *
+ * Every patch mutates the framework-neutral {@link UiirTree} once; DOM updates
+ * and host projections (e.g. Chart SVG) read from that single source of truth.
  */
 export class PatchApplier {
   private nodes = new Map<string, HTMLElement>();
@@ -49,6 +56,8 @@ export class PatchApplier {
    * new marker set (a conditional `.onTapGesture`/`.onSubmit` toggled across a
    * re-render must not leave stale listeners). */
   private handlerAborts = new Map<string, AbortController>();
+  /** Canonical UIIR tree: every kind, every patch, updated once. */
+  private readonly tree = new UiirTree();
 
   constructor(
     private readonly root: HTMLElement,
@@ -60,9 +69,50 @@ export class PatchApplier {
     for (const patch of patches) this.applyOne(patch);
   }
 
+  /**
+   * After a canonical-tree mutation, refresh any host projection affected by
+   * `nodeId`. Chart ownership / ancestor walks live in the projection seam
+   * (`node-projection.ts`); this is only the generic post-mutation hook.
+   */
+  private refreshOwningProjection(nodeId: string): void {
+    refreshAffectedProjection(this.tree, nodeId, (id) => this.nodes.get(id));
+  }
+
+  /**
+   * AsyncImage v1.5 phase-slot dual-miss (ADR-0013 §4 / session render quirk).
+   *
+   * When a content+placeholder (or phase) AsyncImage first serializes with
+   * `phase: "empty"` and empty `_children`, the runtime can still emit a
+   * later `replace` for the would-be content id (e.g. `0.1.0` → Image on
+   * `imagePhase` success) even though that id was never mounted. Parent is
+   * the indexed AsyncImage with a `phase` arg; child is absent from both
+   * tree and DOM.
+   *
+   * Policy: skip (no orphan index, no DOM touch). Do not “fix” by applying
+   * the Image — that changes snapshots. Long-term fix: session always
+   * realizes placeholder children + golden/snapshot re-record.
+   *
+   * Returns false for every other kind / miss shape → caller raises
+   * {@link UnknownNodeError}.
+   */
+  private isAsyncImagePhaseSlotDualMiss(id: string): boolean {
+    const lastDot = id.lastIndexOf(".");
+    if (lastDot <= 0) return false;
+    const parentId = id.slice(0, lastDot);
+    const parent = this.tree.get(parentId);
+    // Typed gate: parent must be v1.5 AsyncImage (`phase` arg present).
+    return (
+      parent !== undefined &&
+      parent.kind === "AsyncImage" &&
+      parent.args.phase !== undefined
+    );
+  }
+
   private applyOne(patch: Patch): void {
     switch (patch.op) {
       case "mount": {
+        // Canonical tree first — sole source of truth; DOM/maps derive after.
+        this.tree.mount(patch.node);
         this.root.replaceChildren();
         this.nodes.clear();
         this.mods.clear();
@@ -70,11 +120,21 @@ export class PatchApplier {
         for (const ac of this.handlerAborts.values()) ac.abort();
         this.handlerAborts.clear();
         this.root.appendChild(this.build(patch.node));
+        // Project hosts (e.g. Chart SVG) from the canonical store only.
+        this.refreshOwningProjection(patch.node.id);
         break;
       }
       case "insert": {
+        // Canonical tree first — parent must be indexed or UnknownNodeError.
+        this.tree.insert(patch.parentId, patch.index, patch.node);
         const parent = this.nodes.get(patch.parentId);
-        if (!parent) return;
+        if (!parent) {
+          // Tree is authoritative; DOM host missing for an indexed parent is
+          // still a hard failure (cannot project structure without a host).
+          throw new Error(
+            `UIIR invariant violation: missing DOM host for node '${patch.parentId}'`,
+          );
+        }
         // A child inserted under a Picker is an <option>, not a nested view.
         const el =
           parent instanceof HTMLSelectElement
@@ -83,6 +143,7 @@ export class PatchApplier {
         // A child inserted under a ZStack must overlap like the others.
         if (parent.dataset.zstack === "1") el.style.gridArea = "1 / 1";
         parent.insertBefore(el, patchRef(parent, patch.index));
+        this.refreshOwningProjection(patch.node.id);
         // If the node declares a `.transition`, tween it in (no-op otherwise).
         playTransitionEnter(el);
         // A screen pushed onto a faux NavigationStack: re-sync bar + visibility.
@@ -90,6 +151,9 @@ export class PatchApplier {
         break;
       }
       case "remove": {
+        // Canonical tree first — unknown id is UnknownNodeError (no DOM-only drop).
+        const parentId = this.tree.parentOf(patch.id);
+        this.tree.remove(patch.id);
         const el = this.nodes.get(patch.id);
         const parent = el?.parentElement ?? null;
         // Forget the id mapping now (the node is logically gone), but defer the
@@ -100,26 +164,51 @@ export class PatchApplier {
           el?.remove();
           // A screen popped off a faux NavigationStack: re-sync bar + visibility.
           if (parent?.dataset.kind === "NavigationStack") this.syncNavStack(parent);
+          // Generic projection hook: seam decides if parent sits under a Chart.
+          if (parentId !== null && this.tree.has(parentId)) {
+            this.refreshOwningProjection(parentId);
+          }
         };
         if (el) playTransitionLeave(el, finalize);
         else finalize();
         break;
       }
       case "move": {
+        // Canonical tree first — parent and id must be indexed.
+        this.tree.move(patch.parentId, patch.id, patch.index);
         // Keyed reorder: relocate the existing element (preserving its DOM
         // node and any host state) to index `index`. The target is computed
         // among the *other* children so it is correct whether the element
         // moves left or right (insertBefore implicitly removes it first).
         const parent = this.nodes.get(patch.parentId);
         const el = this.nodes.get(patch.id);
-        if (!parent || !el) return;
+        if (!parent || !el) {
+          throw new Error(
+            `UIIR invariant violation: missing DOM host for move of '${patch.id}'`,
+          );
+        }
         const ref = patchRef(parent, patch.index, el);
         if (ref !== el) parent.insertBefore(el, ref);
+        this.refreshOwningProjection(patch.id);
         break;
       }
       case "replace": {
+        // Canonical tree first. Never orphan-index a miss (that weakened SSOT).
+        // Split-brain (DOM without tree) is always a hard invariant violation.
+        // Dual-miss is ONLY tolerated for the AsyncImage phase-slot quirk below;
+        // any other dual-miss is UnknownNodeError like every other patch.
+        if (!this.tree.has(patch.id)) {
+          if (this.nodes.has(patch.id)) throw new UnknownNodeError(patch.id);
+          if (this.isAsyncImagePhaseSlotDualMiss(patch.id)) break;
+          throw new UnknownNodeError(patch.id);
+        }
+        this.tree.replace(patch.id, patch.node);
         const old = this.nodes.get(patch.id);
-        if (!old) return;
+        if (!old) {
+          throw new Error(
+            `UIIR invariant violation: missing DOM host for replace of '${patch.id}'`,
+          );
+        }
         // Forget the old subtree's ids *before* building the replacement, which
         // re-registers the same ids — otherwise `forget` would delete the new
         // entries and later patches/events for the subtree become no-ops.
@@ -133,9 +222,13 @@ export class PatchApplier {
         // Restore the ZStack overlay placement the parent applies at build time
         // (a freshly built replacement has not been through that child loop).
         if (el.parentElement?.dataset.zstack === "1") el.style.gridArea = "1 / 1";
+        // Projection only — build does not paint Chart SVG (single path).
+        this.refreshOwningProjection(patch.node.id);
         break;
       }
       case "setText": {
+        // Canonical tree first — miss throws; DOM derives from tree only.
+        this.tree.setText(patch.id, patch.text);
         const el = this.nodes.get(patch.id);
         if (el) {
           el.textContent = patch.text;
@@ -143,33 +236,40 @@ export class PatchApplier {
           // them from the remembered modifiers (#204).
           this.applyComposites(el, this.mods.get(patch.id) ?? []);
         }
+        this.refreshOwningProjection(patch.id);
         break;
       }
       case "setModifiers": {
+        // Canonical tree first — miss throws even when DOM is absent.
+        this.tree.setModifiers(patch.id, patch.modifiers);
         const el = this.nodes.get(patch.id);
-        if (!el) break;
-        // A Picker option's identity is its `tag` value, not CSS styling.
-        if (el instanceof HTMLOptionElement) {
-          const tag = patch.modifiers.find((m) => m.name === "tag");
-          if (tag && (typeof tag.value === "string" || typeof tag.value === "number")) {
-            el.value = String(tag.value);
-          }
-        } else {
-          applyModifiers(el, patch.modifiers);
-          this.mods.set(patch.id, patch.modifiers);
-          this.applyComposites(el, patch.modifiers);
-          // Reconcile event listeners against the new marker set: attach markers
-          // that appeared, detach ones that were removed, and re-sync disappear
-          // tracking. Not a fresh mount, so `onAppear` does not re-fire.
-          this.attachHandlers(el, patch.id, patch.modifiers, false);
-          // A screen root's navigationTitle may have changed: refresh the bar.
-          if (el.parentElement?.dataset.kind === "NavigationStack") {
-            this.syncNavStack(el.parentElement);
+        if (el) {
+          // A Picker option's identity is its `tag` value, not CSS styling.
+          if (el instanceof HTMLOptionElement) {
+            const tag = patch.modifiers.find((m) => m.name === "tag");
+            if (tag && (typeof tag.value === "string" || typeof tag.value === "number")) {
+              el.value = String(tag.value);
+            }
+          } else {
+            applyModifiers(el, patch.modifiers);
+            this.mods.set(patch.id, patch.modifiers);
+            this.applyComposites(el, patch.modifiers);
+            // Reconcile event listeners against the new marker set: attach markers
+            // that appeared, detach ones that were removed, and re-sync disappear
+            // tracking. Not a fresh mount, so `onAppear` does not re-fire.
+            this.attachHandlers(el, patch.id, patch.modifiers, false);
+            // A screen root's navigationTitle may have changed: refresh the bar.
+            if (el.parentElement?.dataset.kind === "NavigationStack") {
+              this.syncNavStack(el.parentElement);
+            }
           }
         }
+        this.refreshOwningProjection(patch.id);
         break;
       }
       case "setArgs": {
+        // Canonical tree first — miss throws; DOM is a pure projection.
+        this.tree.setArgs(patch.id, patch.args);
         const existing = this.nodes.get(patch.id);
         if (existing) {
           // A few kinds pick their DOM shape from their args (ProgressView's
@@ -194,6 +294,7 @@ export class PatchApplier {
           // rebuild the layers from the remembered modifiers (#204).
           this.applyComposites(el, mods);
         }
+        this.refreshOwningProjection(patch.id);
         break;
       }
     }
@@ -284,8 +385,9 @@ export class PatchApplier {
     return fresh;
   }
 
-  /** Drop `id` and any descendant ids from the node map, firing `disappear`
-   * for any unmounted node that registered `.onDisappear` (ADR-0013 §3). */
+  /** Drop `id` and any descendant ids from the DOM node map, firing `disappear`
+   * for any unmounted node that registered `.onDisappear` (ADR-0013 §3).
+   * Canonical tree membership is managed by the patch ops themselves. */
   private forget(id: string): void {
     const prefix = `${id}.`;
     for (const key of [...this.nodes.keys()]) {
@@ -418,6 +520,13 @@ export class PatchApplier {
       this.buildTabView(el, node);
     } else if (node.kind === "NavigationStack") {
       this.buildNavStack(el, node);
+    } else if (node.kind === "Chart") {
+      // Marks/axis leaves register as hidden tracking spans so the diff engine
+      // can address them by id. Chart SVG is painted solely by the post-mutation
+      // projection refresh (never here) so insert/replace cannot double-render.
+      for (const child of node.children) {
+        el.appendChild(this.build(child));
+      }
     } else if (node.kind === "AsyncImage" && node.args.phase !== undefined) {
       // v1.5: render children (runtime-owned phase content), start image preload
       // when the node arrives in the "empty" phase (initial mount).
@@ -853,8 +962,42 @@ export class PatchApplier {
         el.style.cssText = "display:flex;flex-direction:column;position:relative;";
         return el;
       }
+      case "Chart": {
+        // Plot host: projection seam paints a fixed-viewBox SVG into this div
+        // after the canonical tree is updated (single refresh path).
+        const el = document.createElement("div");
+        el.style.cssText =
+          "display:flex;flex-direction:column;align-items:stretch;" +
+          "min-width:320px;min-height:220px;width:100%;box-sizing:border-box;";
+        return el;
+      }
+      case "BarMark":
+      case "LineMark":
+      case "PointMark":
+      case "AreaMark":
+      case "RuleMark":
+      case "RectangleMark":
+      case "SectorMark":
+      case "AxisMarks":
+      case "AxisGridLine":
+      case "AxisTick":
+      case "AxisValueLabel": {
+        // Chart data leaves: addressable by id for patches, never layout chrome.
+        // Canonical tree holds the data; projection seam reads it for SVG.
+        const el = document.createElement("span");
+        el.style.cssText = "display:none !important;";
+        el.dataset.chartData = "1";
+        return el;
+      }
       case "Text":
       default:
+        // Defensive: chart data kinds stay hidden even if the switch misses one.
+        if (CHART_DATA_KINDS.has(node.kind)) {
+          const el = document.createElement("span");
+          el.style.cssText = "display:none !important;";
+          el.dataset.chartData = "1";
+          return el;
+        }
         return document.createElement("span");
     }
   }
@@ -1185,7 +1328,10 @@ function patchRef(
       // A TabView's synthetic bottom tab bar is not a patch-addressed child.
       !c.classList.contains("tab-bar") &&
       // Composite background/overlay layers are not patch-addressed children.
-      !c.classList.contains("composite-layer"),
+      !c.classList.contains("composite-layer") &&
+      // Chart SVG/legend chrome is host-owned, not a mark child.
+      !c.classList.contains("chart-svg") &&
+      !c.classList.contains("chart-legend"),
   );
   return addressable[index] ?? null;
 }

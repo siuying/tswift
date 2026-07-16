@@ -25,17 +25,19 @@ pub mod uiir;
 pub(crate) mod values;
 pub(crate) mod views;
 
+pub use views::collect_children;
 pub(crate) use views::{
-    button_init, capsule_init, circle_init, collect_children, divider_init, ellipse_init,
-    foreach_init, form_init, grid_init, grid_row_init, group_init, hstack_init, image_init,
-    label_init, lazy_hgrid_init, lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init,
-    picker_init, progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init,
-    section_init, secure_field_init, slider_init, spacer_init, stepper_init, tabview_init,
-    text_field_init, text_init, toggle_init, vstack_init, zstack_init,
+    button_init, capsule_init, circle_init, divider_init, ellipse_init, foreach_init, form_init,
+    grid_init, grid_row_init, group_init, hstack_init, image_init, label_init, lazy_hgrid_init,
+    lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init, picker_init,
+    progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init, section_init,
+    secure_field_init, slider_init, spacer_init, stepper_init, tabview_init, text_field_init,
+    text_init, toggle_init, vstack_init, zstack_init,
 };
 
 pub(crate) use async_image::async_image_init;
 pub use async_image::{async_image_url_image, has_async_image_closures, realize_async_image_child};
+pub use modifiers::{append_modifier, make_modifier};
 pub(crate) use modifiers::{
     gesture_on_ended, handlers_map, long_press_gesture_init, modifier_animation,
     modifier_aspect_ratio, modifier_background, modifier_frame, modifier_multiline_text_alignment,
@@ -46,8 +48,8 @@ pub use navigation::{
     path_append, path_remove_last, pushed_value, read_path_items, realize_pushed_screen,
     NAV_PATH_ITEMS_FIELD,
 };
-pub use values::{child_id, key_of, token_of, view_type_name};
-pub(crate) use values::{container_value, type_error, view_value};
+pub(crate) use values::type_error;
+pub use values::{child_id, container_value, key_of, token_of, view_type_name, view_value};
 
 use tswift_core::{BuiltinParam, EvalError, Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, Node, NodeKind};
@@ -536,6 +538,12 @@ struct AnyTransition {
 /// Register every currently-supported SwiftUI view constructor and modifier
 /// into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
+    interp.module("SwiftUI", |interp| {
+        install_inner(interp);
+    });
+}
+
+fn install_inner(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("Text", text_init);
     // Stacks carry a typed `alignment:` so its leading-dot token resolves
     // against the right 1-D/2-D namespace (`VStack` → `HorizontalAlignment`,
@@ -1337,7 +1345,7 @@ struct Loop: View {
     var body: some View { Loop() }
 }
 "#;
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
@@ -1728,7 +1736,7 @@ struct V: View {
     /// Render `root_type`'s `body` from `src` for assertions, with the token
     /// prelude prepended (as the render CLI will do).
     fn render_to_string(src: &str, root_type: &str) -> SwiftValue {
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();
@@ -1740,7 +1748,7 @@ struct V: View {
 
     /// Render `root_type` expecting a failure, returning the error message.
     fn render_err(src: &str, root_type: &str) -> String {
-        let program = format!("{PRELUDE}\n{src}");
+        let program = format!("import SwiftUI\n{PRELUDE}\n{src}");
         let analysis = tswift_frontend::Analysis::analyze(&program, "test.swift").expect("analyze");
         let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
         let mut sink = std::io::sink();

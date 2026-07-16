@@ -1,6 +1,8 @@
 // C4 arbitrary-view compositing (issue #204): background(_ view) and
 // overlay(_ view, alignment:) where the value is a nested view subtree with its
 // own 0-rooted id space. `alignment:` resolves via the typed-token shims (#203).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(spacing: 20) {

@@ -357,7 +357,9 @@ for pwd in inputs {
 let safe = try? validate("abc123")
 print("try? 'abc123' → \\(safe ?? "nil")")` },
 
-    { group: 'SwiftUI',      label: 'Counter',          code: `struct CounterView: View {
+    { group: 'SwiftUI',      label: 'Counter',          code: `import SwiftUI
+
+struct CounterView: View {
     @State private var count = 0
     var body: some View {
         VStack {
@@ -373,7 +375,9 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'SwiftUI',      label: 'Toggle',           code: `struct GreetingView: View {
+    { group: 'SwiftUI',      label: 'Toggle',           code: `import SwiftUI
+
+struct GreetingView: View {
     @State private var isOn = true
     var body: some View {
         VStack(spacing: 16) {
@@ -389,7 +393,9 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'SwiftUI',      label: 'List',             code: `struct FruitList: View {
+    { group: 'SwiftUI',      label: 'List',             code: `import SwiftUI
+
+struct FruitList: View {
     let fruits = ["Apple", "Banana", "Cherry", "Date"]
     var body: some View {
         List {
@@ -404,7 +410,9 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'SwiftUI',      label: 'Profile',          code: `struct ProfileCard: View {
+    { group: 'SwiftUI',      label: 'Profile',          code: `import SwiftUI
+
+struct ProfileCard: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("🦜")
@@ -424,7 +432,9 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'Animation',    label: 'Spring Card',      code: `struct AnimatedCard: View {
+    { group: 'Animation',    label: 'Spring Card',      code: `import SwiftUI
+
+struct AnimatedCard: View {
     @State private var expanded = false
 
     var body: some View {
@@ -458,7 +468,9 @@ print("try? 'abc123' → \\(safe ?? "nil")")` },
     }
 }` },
 
-    { group: 'Animation',    label: 'Pulse',            code: `// Repeating animations play the moment you hit Run —
+    { group: 'Animation',    label: 'Pulse',            code: `import SwiftUI
+
+// Repeating animations play the moment you hit Run —
 // no interaction needed. A repeatForever() animation
 // pulses continuously.
 struct PulseView: View {
@@ -480,7 +492,9 @@ struct PulseView: View {
     }
 }` },
 
-    { group: 'Animation',    label: 'Spinner',          code: `// Three dots pulsing on a staggered delay — the classic
+    { group: 'Animation',    label: 'Spinner',          code: `import SwiftUI
+
+// Three dots pulsing on a staggered delay — the classic
 // loading indicator. Each dot repeats forever with an
 // increasing .delay().
 struct LoadingView: View {
@@ -507,7 +521,9 @@ struct LoadingView: View {
     }
 }` },
 
-    { group: 'Animation',    label: 'Transition',       code: `// .transition(_:) animates a view in and out as it is
+    { group: 'Animation',    label: 'Transition',       code: `import SwiftUI
+
+// .transition(_:) animates a view in and out as it is
 // inserted or removed. Tap Reveal and watch it slide up
 // while fading in.
 struct RevealView: View {

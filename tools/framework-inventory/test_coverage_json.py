@@ -105,9 +105,13 @@ class EmitJsonSchemaTests(unittest.TestCase):
                 self.assertEqual(errors, [], f"{name}: {errors}")
 
     def test_totals_match_text_report_counts(self) -> None:
-        """`--emit-json`'s implemented+partial and grand total must match the
-        text report's `implemented`/`total` (the JSON vocabulary renames
-        verified->implemented and implemented->partial; see JSON_STATUS)."""
+        """Text-report `total` is the in-scope denominator only (implemented +
+        partial + missing after JSON rename). JSON `totals.total` is wider:
+        it also includes per-member `out_of_scope` from scope.toml
+        `[out_of_scope_members]` (and type-level OOS when those types are
+        still listed). Compare the in-scope slice, not JSON grand total,
+        against the text total. See JSON_STATUS for verified→implemented /
+        implemented→partial renaming."""
         for name in self.frameworks:
             with self.subTest(framework=name):
                 cov = coverage_mod.Coverage(name)
@@ -125,8 +129,112 @@ class EmitJsonSchemaTests(unittest.TestCase):
                     text_impl += impl
                     text_total += total
 
+                # Text total = in-scope impl+missing; JSON total also includes
+                # per-member out_of_scope on in-scope types.
                 self.assertEqual(totals["implemented"] + totals["partial"], text_impl)
-                self.assertEqual(totals["total"], text_total)
+                self.assertEqual(
+                    totals["implemented"] + totals["partial"] + totals["missing"],
+                    text_total,
+                )
+                # JSON grand total may exceed text total by the OOS count.
+                self.assertGreaterEqual(
+                    totals["total"],
+                    text_total,
+                )
+                self.assertEqual(
+                    totals["total"],
+                    totals["implemented"]
+                    + totals["partial"]
+                    + totals["missing"]
+                    + totals["out_of_scope"],
+                )
+
+    def test_out_of_scope_members_only_named_keys(self) -> None:
+        """`[out_of_scope_members]` marks only explicitly listed Type.member
+        keys. Adjacent members of the same in-scope type stay counted
+        (implemented/partial/missing). Frameworks without the table are
+        unchanged."""
+        # (a)+(b) Charts has `[out_of_scope_members]` with View.chart3D*/chartZ*.
+        charts = coverage_mod.Coverage("charts")
+        self.assertTrue(
+            charts.scope.get("out_of_scope_members"),
+            "charts must declare [out_of_scope_members] for this test",
+        )
+        oos_keys: set[str] = set()
+        for keys in charts.scope["out_of_scope_members"].values():
+            oos_keys.update(keys)
+
+        # Named 3D members are out_of_scope with the chart3d bucket note.
+        self.assertIn("View.chart3DPose", oos_keys)
+        self.assertEqual(charts.member_state("View", "chart3DPose"), "out_of_scope")
+        view_section = charts.section_json("View")
+        pose = next(m for m in view_section["members"] if m["name"] == "chart3DPose")
+        self.assertEqual(pose["status"], "out_of_scope")
+        self.assertEqual(pose.get("notes"), "out of scope: chart3d")
+
+        # (b) Adjacent in-scope View members remain implemented/partial/missing.
+        for name in ("chartXAxis", "chartLegend", "chartYScale"):
+            state = charts.member_state("View", name)
+            self.assertIn(
+                state,
+                {"verified", "implemented", "missing"},
+                f"View.{name} must stay in-scope, got {state}",
+            )
+            entry = next(m for m in view_section["members"] if m["name"] == name)
+            self.assertNotEqual(entry["status"], "out_of_scope")
+            self.assertNotIn("notes", entry)
+
+        # ChartContent has no OOS members now — a11y keys are in-scope.
+        self.assertNotIn("ChartContent", charts._excluded_members)
+        self.assertNotEqual(
+            charts.member_state("ChartContent", "accessibilityHidden"),
+            "out_of_scope",
+        )
+        self.assertNotEqual(
+            charts.member_state("ChartContent", "opacity"),
+            "out_of_scope",
+        )
+
+        # Only members listed in the table are OOS for View (no blanket type drop).
+        listed_view = {
+            key.split(".", 1)[1]
+            for key in oos_keys
+            if key.startswith("View.")
+        }
+        for member in view_section["members"]:
+            if member["status"] == "out_of_scope":
+                self.assertIn(
+                    member["name"],
+                    listed_view,
+                    f"unexpected OOS View.{member['name']} not in scope table",
+                )
+
+        # (c) Foundation has no [out_of_scope_members] — entirely unaffected.
+        foundation = coverage_mod.Coverage("foundation")
+        self.assertFalse(
+            foundation.scope.get("out_of_scope_members"),
+            "foundation must not declare [out_of_scope_members]",
+        )
+        self.assertEqual(foundation._excluded_members, {})
+        foundation_payload = foundation.to_dict(include_all=False)
+        # No per-member OOS from the members table (type-level OOS may still
+        # exist via [out_of_scope] types that appear in targeted sections only
+        # when scoped — foundation excludes whole types from tiers).
+        for section in foundation_payload["sections"]:
+            for member in section["members"]:
+                if member["status"] == "out_of_scope":
+                    # Type-level exclusion only — notes come from type buckets.
+                    self.assertTrue(
+                        member.get("notes", "").startswith("out of scope:"),
+                        member,
+                    )
+        # Spot-check a known in-scope type is classified without member OOS.
+        if "Data" in foundation.types_inv and "Data" in foundation.targeted_sections(False):
+            data = foundation.section_json("Data")
+            self.assertTrue(data["members"])
+            self.assertEqual(data["counts"]["out_of_scope"], 0)
+            for member in data["members"]:
+                self.assertIn(member["status"], ("implemented", "partial", "missing"))
 
     def test_cli_emit_json_matches_in_process_payload(self) -> None:
         name = "foundation"

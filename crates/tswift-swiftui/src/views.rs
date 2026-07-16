@@ -789,7 +789,11 @@ pub(crate) fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResul
 /// Each argument is either the content closure (evaluated as a result-builder
 /// block) or an already-built view; non-view statement values are dropped and
 /// composed custom `View`s are expanded into their `body`.
-pub(crate) fn collect_children(
+///
+/// Public so sibling render-host frameworks (e.g. Charts' `Chart { … }` content
+/// builder) can reuse the same trailing-closure → children expansion without
+/// reimplementing result-builder evaluation.
+pub fn collect_children(
     ctx: &mut dyn StdContext,
     args: Vec<Arg>,
 ) -> Result<Vec<SwiftValue>, StdError> {

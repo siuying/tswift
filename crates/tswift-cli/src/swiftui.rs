@@ -42,10 +42,14 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
         eprintln!("error: cannot read `{path}`: {e}");
         ExitCode::FAILURE
     })?;
-    // Prepend the SwiftUI token prelude and the SwiftData `@Query` prelude
-    // (ADR-0016 Slice 10b) so a rendered view can list `@Query` results against
-    // the environment's model container.
-    let program = format!("{PRELUDE}\n{}\n{user}", tswift_swiftdata::QUERY_PRELUDE);
+    // Prepend the SwiftUI token prelude, the SwiftData `@Query` prelude
+    // (ADR-0016 Slice 10b), and the Charts prelude (PlottableValue.value for
+    // leading-dot `.value(...)` on mark args).
+    let program = format!(
+        "{PRELUDE}\n{}\n{}\n{user}",
+        tswift_swiftdata::QUERY_PRELUDE,
+        tswift_charts::PRELUDE,
+    );
     let analysis = analyze(&program).map_err(|e| {
         eprintln!("error: {e}");
         ExitCode::FAILURE
@@ -72,6 +76,7 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
         caps.contains(tswift_core::HostService::Database),
     );
     tswift_swiftui::install(&mut interp);
+    tswift_charts::install(&mut interp);
     if let Err(e) = interp.run(analysis) {
         eprintln!("error: {e}");
         return Err(ExitCode::FAILURE);

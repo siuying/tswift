@@ -1,5 +1,7 @@
 // C4 — visual decoration modifiers: border, shadow, clipShape, clipped
 // (issue #191). background(_ view)/overlay deferred (arbitrary-view compositing).
+import SwiftUI
+
 struct V: View {
     var body: some View {
         VStack(spacing: 16) {

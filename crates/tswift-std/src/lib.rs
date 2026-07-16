@@ -29,21 +29,23 @@ use tswift_core::Interpreter;
 
 /// Register every standard-library native into `interp`.
 pub fn install(interp: &mut Interpreter<'_>) {
-    free::install(interp);
-    array::install(interp);
-    arrayslice::install(interp);
-    contiguousarray::install(interp);
-    bool::install(interp);
-    dictionary::install(interp);
-    scalar::install(interp);
-    range::install(interp);
-    optional::install(interp);
-    reversedcollection::install(interp);
-    sequence::install(interp);
-    set::install(interp);
-    smallcollections::install(interp);
-    string::install(interp);
-    substring::install(interp);
+    interp.module("Swift", |interp| {
+        free::install(interp);
+        array::install(interp);
+        arrayslice::install(interp);
+        contiguousarray::install(interp);
+        bool::install(interp);
+        dictionary::install(interp);
+        scalar::install(interp);
+        range::install(interp);
+        optional::install(interp);
+        reversedcollection::install(interp);
+        sequence::install(interp);
+        set::install(interp);
+        smallcollections::install(interp);
+        string::install(interp);
+        substring::install(interp);
+    });
 }
 
 /// Every standard-library entry registered by [`install`], as coverage keys

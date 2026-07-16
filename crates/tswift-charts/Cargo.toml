@@ -1,0 +1,18 @@
+[package]
+name = "tswift-charts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tswift Swift Charts render host: Chart/mark primitives evaluated into the shared SwiftUI UIIR."
+
+[dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true
+tswift-swiftui.workspace = true
+
+[dev-dependencies]
+# Render tests need stdlib install alongside the Charts host (mirrors swiftui).
+tswift-std.workspace = true
+# Host-style prelude composition mirrors cli/wasm (SwiftUI + Query + Charts).
+tswift-swiftdata.workspace = true

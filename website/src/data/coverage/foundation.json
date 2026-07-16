@@ -239,7 +239,7 @@
         {
           "name": "uuid",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "uuidString",
@@ -248,9 +248,9 @@
         }
       ],
       "counts": {
-        "implemented": 7,
+        "implemented": 8,
         "partial": 0,
-        "missing": 4,
+        "missing": 3,
         "out_of_scope": 0,
         "total": 11
       }
@@ -261,12 +261,12 @@
         {
           "name": "+",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "+=",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "<",
@@ -376,13 +376,13 @@
         {
           "name": "subscript",
           "kind": "subscript",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 18,
+        "implemented": 21,
         "partial": 0,
-        "missing": 6,
+        "missing": 3,
         "out_of_scope": 0,
         "total": 24
       }
@@ -1728,7 +1728,7 @@
         {
           "name": "autoupdatingCurrent",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "compare",
@@ -1768,7 +1768,7 @@
         {
           "name": "dateIntervalOfWeekend",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dates",
@@ -1888,7 +1888,7 @@
         {
           "name": "nextWeekend",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "ordinality",
@@ -1992,9 +1992,9 @@
         }
       ],
       "counts": {
-        "implemented": 37,
+        "implemented": 40,
         "partial": 10,
-        "missing": 8,
+        "missing": 5,
         "out_of_scope": 0,
         "total": 55
       }
@@ -2105,7 +2105,7 @@
         {
           "name": "isRepeatedDay",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "isValidDate",
@@ -2209,9 +2209,9 @@
         }
       ],
       "counts": {
-        "implemented": 27,
+        "implemented": 28,
         "partial": 0,
-        "missing": 14,
+        "missing": 13,
         "out_of_scope": 0,
         "total": 41
       }
@@ -2666,7 +2666,7 @@
         {
           "name": "nonConformingFloatEncodingStrategy",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "outputFormatting",
@@ -2676,13 +2676,13 @@
         {
           "name": "userInfo",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 6,
+        "implemented": 8,
         "partial": 0,
-        "missing": 2,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 8
       }
@@ -2698,7 +2698,7 @@
         {
           "name": "assumesTopLevelDictionary",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dataDecodingStrategy",
@@ -2728,18 +2728,18 @@
         {
           "name": "nonConformingFloatDecodingStrategy",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "userInfo",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 5,
+        "implemented": 8,
         "partial": 0,
-        "missing": 4,
+        "missing": 1,
         "out_of_scope": 0,
         "total": 9
       }
@@ -2765,13 +2765,13 @@
         {
           "name": "userInfo",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 3,
+        "implemented": 4,
         "partial": 0,
-        "missing": 1,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 4
       }
@@ -2782,7 +2782,7 @@
         {
           "name": "==",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "addValue",
@@ -2797,47 +2797,47 @@
         {
           "name": "allowsCellularAccess",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsConstrainedNetworkAccess",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsExpensiveNetworkAccess",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsPersistentDNS",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsUltraConstrainedNetworkAccess",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "assumesHTTP3Capable",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "attribution",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cachePolicy",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cookiePartitionIdentifier",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "customMirror",
@@ -2882,12 +2882,12 @@
         {
           "name": "httpShouldHandleCookies",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "httpShouldUsePipelining",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -2897,17 +2897,17 @@
         {
           "name": "mainDocumentURL",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "networkServiceType",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "requiresDNSSECValidation",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "setValue",
@@ -2931,9 +2931,9 @@
         }
       ],
       "counts": {
-        "implemented": 12,
+        "implemented": 27,
         "partial": 0,
-        "missing": 18,
+        "missing": 3,
         "out_of_scope": 0,
         "total": 30
       }
@@ -2944,27 +2944,27 @@
         {
           "name": "appTransportSecurityRequiresSecureConnection",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "backgroundSessionInUseByAnotherProcess",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "backgroundSessionRequiresSharedContainer",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "backgroundSessionWasDisconnected",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "backgroundTaskCancelledReason",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "badServerResponse",
@@ -2979,7 +2979,7 @@
         {
           "name": "callIsActive",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cancelled",
@@ -2989,7 +2989,7 @@
         {
           "name": "cannotCloseFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotConnectToHost",
@@ -2999,7 +2999,7 @@
         {
           "name": "cannotCreateFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotDecodeContentData",
@@ -3019,17 +3019,17 @@
         {
           "name": "cannotLoadFromNetwork",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotMoveFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotOpenFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotParseResponse",
@@ -3039,27 +3039,27 @@
         {
           "name": "cannotRemoveFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cannotWriteToFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "clientCertificateRejected",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "clientCertificateRequired",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dataLengthExceedsMaximum",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dataNotAllowed",
@@ -3074,22 +3074,22 @@
         {
           "name": "downloadDecodingFailedMidStream",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "downloadDecodingFailedToComplete",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "downloadTaskResumeData",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "errorDomain",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "failingURL",
@@ -3099,22 +3099,22 @@
         {
           "name": "failureURLPeerTrust",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "failureURLString",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDoesNotExist",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileIsDirectory",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hashValue",
@@ -3134,7 +3134,7 @@
         {
           "name": "internationalRoamingOff",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "networkConnectionLost",
@@ -3144,12 +3144,12 @@
         {
           "name": "networkUnavailableReason",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "noPermissionsToReadFile",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "notConnectedToInternet",
@@ -3159,12 +3159,12 @@
         {
           "name": "redirectToNonExistentLocation",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "requestBodyStreamExhausted",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "resourceUnavailable",
@@ -3179,22 +3179,22 @@
         {
           "name": "serverCertificateHasBadDate",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "serverCertificateHasUnknownRoot",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "serverCertificateNotYetValid",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "serverCertificateUntrusted",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "timedOut",
@@ -3204,7 +3204,7 @@
         {
           "name": "unknown",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "unsupportedURL",
@@ -3214,7 +3214,7 @@
         {
           "name": "uploadTaskResumeData",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "userAuthenticationRequired",
@@ -3233,9 +3233,9 @@
         }
       ],
       "counts": {
-        "implemented": 7,
+        "implemented": 42,
         "partial": 16,
-        "missing": 35,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 58
       }
@@ -3306,9 +3306,9 @@
     }
   ],
   "totals": {
-    "implemented": 335,
+    "implemented": 399,
     "partial": 32,
-    "missing": 248,
+    "missing": 184,
     "out_of_scope": 0,
     "total": 615
   }

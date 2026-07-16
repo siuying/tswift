@@ -861,9 +861,10 @@ mod tests {
         unsafe {
             tswift_register_host_fn(ctx, sig.as_ptr(), Some(device_name), std::ptr::null_mut());
         }
-        let source =
-            CString::new("struct V: View { var body: some View { Text(hostDeviceName()) } }")
-                .unwrap();
+        let source = CString::new(
+            "import SwiftUI\nstruct V: View { var body: some View { Text(hostDeviceName()) } }",
+        )
+        .unwrap();
         let compiled = unsafe { tswift_swiftui_compile(ctx, source.as_ptr()) };
         let json = unsafe { CStr::from_ptr(compiled) }
             .to_str()
@@ -1050,7 +1051,9 @@ mod tests {
         let ctx = tswift_context_new();
         unsafe { tswift_set_http_handler(ctx, Some(handler), std::ptr::null_mut()) };
         let source = CString::new(
-            "struct V: View {\n\
+            "import SwiftUI\n\
+             import Foundation\n\
+             struct V: View {\n\
             \x20   @State private var label = \"loading\"\n\
             \x20   func load() async {\n\
             \x20       if let (data, _) = try? await URLSession.shared.data(from: URL(string: \"https://x.example/\")!),\n\
@@ -1289,7 +1292,7 @@ mod tests {
     #[test]
     fn swiftui_compile_module_works() {
         let ctx = tswift_context_new();
-        let module_json = r#"{"files":[{"path":"main.swift","contents":"struct V: View {\n  var body: some View { Text(\"hi\") }\n}"}]}"#;
+        let module_json = r#"{"files":[{"path":"main.swift","contents":"import SwiftUI\nstruct V: View {\n  var body: some View { Text(\"hi\") }\n}"}]}"#;
         let cjson = CString::new(module_json).unwrap();
         let ptr = unsafe { tswift_swiftui_compile_module(ctx, cjson.as_ptr()) };
         let json = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();

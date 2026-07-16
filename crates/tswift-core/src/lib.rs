@@ -35,7 +35,7 @@ pub use http::{
     HttpTaskHandle, HttpTransport, MockChunkedRoute, MockHttpTransport, MockRoute,
     SingleShotEvents,
 };
-pub use interp::{BuiltinParam, EvalError, Interpreter, NativeFn};
+pub use interp::{BuiltinParam, EvalError, Interpreter, ModuleId, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
     collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,

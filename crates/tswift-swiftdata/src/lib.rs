@@ -132,14 +132,16 @@ use tswift_core::StdContext;
 /// `StdContext::is_host_fn` check degrades gracefully instead of panicking
 /// an otherwise behaviour-preserving install.
 pub fn install(interp: &mut Interpreter<'_>, available: bool) {
-    if available {
-        for signature_json in db::HOST_FN_SIGNATURES {
-            let _ = interp.register_host_fn(signature_json, None);
+    interp.module("SwiftData", |interp| {
+        if available {
+            for signature_json in db::HOST_FN_SIGNATURES {
+                let _ = interp.register_host_fn(signature_json, None);
+            }
         }
-    }
-    // Always register the Swift-facing surface; `ModelContainer(for:)` raises a
-    // catchable diagnostic at call time when the database service is absent.
-    model::install(interp);
+        // Always register the Swift-facing surface; `ModelContainer(for:)` raises a
+        // catchable diagnostic at call time when the database service is absent.
+        model::install(interp);
+    });
 }
 
 #[cfg(test)]

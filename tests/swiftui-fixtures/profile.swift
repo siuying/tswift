@@ -1,5 +1,7 @@
 // Profile tab — view composition: custom sub-views with parameters threaded
 // down, composed inside a container, each collapsing to its own `body`.
+import SwiftUI
+
 struct InfoRow: View {
     let label: String
     let value: String

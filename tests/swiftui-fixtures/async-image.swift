@@ -4,6 +4,9 @@
 // v1.5 content+placeholder: labeled-closure form; phase state drives children.
 // Note: multi-trailing-closure syntax (`} placeholder: {`) is not yet supported
 // by the frontend; use labeled `content:` / `placeholder:` args instead.
+import Foundation
+import SwiftUI
+
 struct AsyncImageView: View {
     var body: some View {
         VStack {

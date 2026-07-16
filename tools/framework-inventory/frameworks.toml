@@ -73,3 +73,20 @@ inventory = "frameworks/swiftui/inventory.md"
 registry = "frameworks/swiftui/registered_keys.txt"
 scope = "frameworks/swiftui/scope.toml"
 fixture_prefix = "swiftui_"
+
+[charts]
+display_name = "Charts"
+module = "Charts"
+kind = "sdk-framework"
+# iOS is the target: resolve the Charts surface from the iOS Simulator SDK,
+# not macOS. iOS framework bundles are not versioned (no Versions/Current).
+sdk = "iphonesimulator"
+framework_path = "System/Library/Frameworks/Charts.framework/Modules/Charts.swiftmodule"
+interface_candidates = [
+  "arm64-apple-ios-simulator.swiftinterface",
+  "x86_64-apple-ios-simulator.swiftinterface",
+]
+inventory = "frameworks/charts/inventory.md"
+registry = "frameworks/charts/registered_keys.txt"
+scope = "frameworks/charts/scope.toml"
+fixture_prefix = "charts_"

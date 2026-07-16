@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct TabsView: View {
     @State private var selection = "home"
     var body: some View {

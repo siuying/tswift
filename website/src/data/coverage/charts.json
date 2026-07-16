@@ -1,0 +1,534 @@
+{
+  "framework": "Charts",
+  "sections": [
+    {
+      "name": "Chart",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
+    },
+    {
+      "name": "BarMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "PlottableValue",
+      "members": [
+        {
+          "name": "value",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "LineMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "PointMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "AreaMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "RuleMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "RectangleMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "SectorMark",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "ChartContent",
+      "members": [
+        {
+          "name": "accessibilityHidden",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityIdentifier",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityLabel",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "accessibilityValue",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "alignsMarkStylesWithPlotArea",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "annotation",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "blur",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "clipShape",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "compositingLayer",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "cornerRadius",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "foregroundStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "interpolationMethod",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "lineStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "mask",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "offset",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "opacity",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "position",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "shadow",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "symbol",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "symbolSize",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "zIndex",
+          "kind": "func",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 21,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 21
+      }
+    },
+    {
+      "name": "View",
+      "members": [
+        {
+          "name": "chart3DCameraProjection",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chart3DPose",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chart3DRenderingStyle",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chartAngleSelection",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartBackground",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartForegroundStyleScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartGesture",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "chartLegend",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartLineStyleScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartOverlay",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartPlotStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartScrollPosition",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartScrollTargetBehavior",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartScrollableAxes",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartSymbolScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartSymbolSizeScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXAxis",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXAxisLabel",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXAxisStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXSelection",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartXVisibleDomain",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYAxis",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYAxisLabel",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYAxisStyle",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYScale",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYSelection",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartYVisibleDomain",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "chartZAxis",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chartZAxisLabel",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chartZScale",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        },
+        {
+          "name": "chartZSelection",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: chart3d"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 24,
+        "missing": 1,
+        "out_of_scope": 7,
+        "total": 32
+      }
+    },
+    {
+      "name": "AxisMarks",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "AxisGridLine",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "AxisTick",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "AxisValueLabel",
+      "members": [
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "partial"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 1,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 0,
+    "partial": 58,
+    "missing": 2,
+    "out_of_scope": 7,
+    "total": 67
+  }
+}

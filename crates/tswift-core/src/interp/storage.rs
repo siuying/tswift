@@ -81,11 +81,23 @@ impl<'w> Interpreter<'w> {
         // reachable only once a builtin mints an Object (behavior-preserving).
         if self.types.class_def(&class_name).is_none() {
             if let Some(kind) = BuiltinReceiver::of(value) {
-                if let Some(func) = self.builtins.contextual_property(kind, name) {
-                    return func(self, value.clone()).map_err(Self::std_error_to_signal);
+                if let Some((func, module)) = self
+                    .builtins
+                    .contextual_property(kind, name)
+                    .map(|t| (t.value, t.module))
+                {
+                    if self.module_symbol_visible(module) {
+                        return func(self, value.clone()).map_err(Self::std_error_to_signal);
+                    }
                 }
-                if let Some(func) = self.builtins.property(kind, name) {
-                    return func(value.clone()).map_err(Self::std_error_to_signal);
+                if let Some((func, module)) = self
+                    .builtins
+                    .property(kind, name)
+                    .map(|t| (t.value, t.module))
+                {
+                    if self.module_symbol_visible(module) {
+                        return func(value.clone()).map_err(Self::std_error_to_signal);
+                    }
                 }
             }
         }
@@ -1080,8 +1092,14 @@ impl<'w> Interpreter<'w> {
         // Dispatch to a registered built-in property setter (e.g. URLComponents
         // percentEncoded* accessors that validate and transform the value).
         if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
-            if let Some(setter_fn) = self.builtins.setter(recv, name) {
-                return setter_fn(value, new_value).map_err(Self::std_error_to_signal);
+            if let Some((setter_fn, module)) = self
+                .builtins
+                .setter(recv, name)
+                .map(|t| (t.value, t.module))
+            {
+                if self.module_symbol_visible(module) {
+                    return setter_fn(value, new_value).map_err(Self::std_error_to_signal);
+                }
             }
         }
 
@@ -1240,10 +1258,13 @@ impl<'w> Interpreter<'w> {
                 .next()
                 .ok_or_else(|| EvalError::Unsupported("member assignment without a base".into()))?;
             // `Type.prop = value` — assign a type-level (static) stored property.
+            // Framework statics honor strict import-gating (same diagnostic as
+            // reads).
             if base.kind() == NodeKind::IdentExpr {
                 if let Some(tn) = base.text() {
                     let key = format!("{tn}.{field}");
                     if self.env.get(&tn).is_none() && self.statics.contains_key(&key) {
+                        self.gate_static_key(&key, &field)?;
                         let new_value = if op == "=" {
                             self.eval(&rhs)?
                         } else {
@@ -1507,13 +1528,17 @@ impl<'w> Interpreter<'w> {
             if let Some(v) = self.resolve_implicit_float_constant(node, &member) {
                 return Ok(v);
             }
-            if let Some(v) = self.resolve_implicit_static(node, &member) {
+            if let Some(v) = self.resolve_implicit_static(node, &member)? {
                 return Ok(v);
             }
             // Builtin-enum shorthand (`.year`, `.gregorian`) resolves last so it
             // never shadows a SwiftUI implicit static like `.plain`.
             if let Some(tn) = self.resolve_builtin_member_enum(&member) {
                 return Ok(self.make_enum_case(&tn, &member, Vec::new())?.unwrap());
+            }
+            // Contextual framework enum is gated out → clear import-hint.
+            if let Some(err) = self.gated_contextual_enum_error(node, &member) {
+                return Err(err.into());
             }
             return Err(EvalError::Unsupported(format!(".{member} (unresolved type)")).into());
         };
@@ -1567,12 +1592,50 @@ impl<'w> Interpreter<'w> {
                     if type_name == "Task" && member == "isCancelled" {
                         return Ok(SwiftValue::Bool(self.current_task_cancelled()));
                     }
-                    // `Type.self` — a metatype value naming the type.
+                    // `Type.self` — a metatype value naming the type. Framework
+                    // nominals/protocols and framework BuiltinReceivers
+                    // (`Data`/`UUID`/…) require their module via the central
+                    // gate. Core stdlib spellings (`String`/`Int`/Array/…)
+                    // always yield a metatype even when a framework free_fn
+                    // stamped the same name into `type_modules` (e.g.
+                    // Foundation's `String(data:encoding:)`).
                     if member == "self" && self.is_type_name(&type_name) {
+                        let requires_gate = self.types.is_nominal(&type_name)
+                            || self.types.is_protocol(&type_name)
+                            || BuiltinReceiver::from_type_name(&type_name).is_some_and(|r| {
+                                !matches!(
+                                    r,
+                                    BuiltinReceiver::Array
+                                        | BuiltinReceiver::Dictionary
+                                        | BuiltinReceiver::Set
+                                        | BuiltinReceiver::String
+                                        | BuiltinReceiver::Character
+                                        | BuiltinReceiver::Int
+                                        | BuiltinReceiver::Double
+                                        | BuiltinReceiver::Bool
+                                        | BuiltinReceiver::Optional
+                                        | BuiltinReceiver::Range
+                                        | BuiltinReceiver::Substring
+                                        | BuiltinReceiver::ArraySlice
+                                        | BuiltinReceiver::ContiguousArray
+                                        | BuiltinReceiver::ClosedRange
+                                        | BuiltinReceiver::ReversedCollection
+                                        | BuiltinReceiver::CollectionOfOne
+                                        | BuiltinReceiver::EmptyCollection
+                                )
+                            });
+                        if requires_gate {
+                            self.gate_type_name(&type_name)?;
+                        }
                         return Ok(SwiftValue::Metatype(type_name));
                     }
                     if let Some(recv) = BuiltinReceiver::from_type_name(&type_name) {
-                        if let Some(func) = self.builtins.static_method(recv, &member) {
+                        if let Some((func, module)) = self
+                            .builtins
+                            .static_method(recv, &member)
+                            .map(|t| (t.value, t.module))
+                        {
+                            self.gate_module_symbol(&member, module)?;
                             return func(self, Vec::new()).map_err(Self::std_error_to_signal);
                         }
                     }
@@ -1607,21 +1670,33 @@ impl<'w> Interpreter<'w> {
                     }
                     // Static property of a struct or class type, or a
                     // natively-registered static value (`UnitLength.meters`):
-                    // `Type.prop`.
-                    if let Some(v) = self.statics.get(&format!("{type_name}.{member}")) {
-                        return Ok(v.clone());
+                    // `Type.prop`. Framework statics honor strict import-gating
+                    // with the standard import-hint diagnostic (not a silent
+                    // fall-through).
+                    let static_key = format!("{type_name}.{member}");
+                    if self.statics.contains_key(&static_key) {
+                        self.gate_static_key(&static_key, &member)?;
+                        if let Some(v) = self.statics.get(&static_key).cloned() {
+                            return Ok(v);
+                        }
                     }
                     // Static computed property: `static var prop { … }`.
                     if let Some(v) = self.read_static_computed(&type_name, &member)? {
                         return Ok(v);
                     }
                     // Enum case (no associated values) or `allCases`.
+                    // Framework builtin enums require their module import.
                     if self.types.is_enum(&type_name) {
-                        if member == "allCases" {
-                            return self.enum_all_cases(&type_name);
+                        if self.enum_has_case(&type_name, &member) || member == "allCases" {
+                            self.gate_type_name(&type_name)?;
                         }
-                        if let Some(v) = self.make_enum_case(&type_name, &member, Vec::new())? {
-                            return Ok(v);
+                        if self.type_name_visible(&type_name) {
+                            if member == "allCases" {
+                                return self.enum_all_cases(&type_name);
+                            }
+                            if let Some(v) = self.make_enum_case(&type_name, &member, Vec::new())? {
+                                return Ok(v);
+                            }
                         }
                     }
                 }
@@ -1641,11 +1716,15 @@ impl<'w> Interpreter<'w> {
                 .as_deref()
                 .is_some_and(|ty| TypeRepr::parse(ty).is_optional())
             {
-                if let Some(func) = self
+                if let Some((func, module)) = self
                     .builtins
                     .typed_property(BuiltinReceiver::Optional, "debugDescription")
+                    .map(|t| (t.value, t.module))
                 {
-                    return func(value, static_ty.as_deref()).map_err(Self::std_error_to_signal);
+                    if self.module_symbol_visible(module) {
+                        return func(value, static_ty.as_deref())
+                            .map_err(Self::std_error_to_signal);
+                    }
                 }
             }
         }
@@ -1693,11 +1772,23 @@ impl<'w> Interpreter<'w> {
                 return self.read_struct_member(&value, &member);
             }
             if let Some(kind) = BuiltinReceiver::of(&value) {
-                if let Some(func) = self.builtins.contextual_property(kind, &member) {
-                    return func(self, value).map_err(Self::std_error_to_signal);
+                if let Some((func, module)) = self
+                    .builtins
+                    .contextual_property(kind, &member)
+                    .map(|t| (t.value, t.module))
+                {
+                    if self.module_symbol_visible(module) {
+                        return func(self, value).map_err(Self::std_error_to_signal);
+                    }
                 }
-                if let Some(func) = self.builtins.property(kind, &member) {
-                    return func(value).map_err(Self::std_error_to_signal);
+                if let Some((func, module)) = self
+                    .builtins
+                    .property(kind, &member)
+                    .map(|t| (t.value, t.module))
+                {
+                    if self.module_symbol_visible(module) {
+                        return func(value).map_err(Self::std_error_to_signal);
+                    }
                 }
             }
             return self.read_struct_member(&value, &member);
@@ -1705,11 +1796,23 @@ impl<'w> Interpreter<'w> {
         // Standard-library computed-property intrinsics (`Double.isNaN`,
         // `Int.magnitude`, …) on builtin receivers.
         if let Some(kind) = BuiltinReceiver::of(&value) {
-            if let Some(func) = self.builtins.contextual_property(kind, &member) {
-                return func(self, value).map_err(Self::std_error_to_signal);
+            if let Some((func, module)) = self
+                .builtins
+                .contextual_property(kind, &member)
+                .map(|t| (t.value, t.module))
+            {
+                if self.module_symbol_visible(module) {
+                    return func(self, value).map_err(Self::std_error_to_signal);
+                }
             }
-            if let Some(func) = self.builtins.property(kind, &member) {
-                return func(value).map_err(Self::std_error_to_signal);
+            if let Some((func, module)) = self
+                .builtins
+                .property(kind, &member)
+                .map(|t| (t.value, t.module))
+            {
+                if self.module_symbol_visible(module) {
+                    return func(value).map_err(Self::std_error_to_signal);
+                }
             }
         }
         match (&value, member.as_str()) {
@@ -1821,8 +1924,14 @@ impl<'w> Interpreter<'w> {
             }
             _ => {
                 if let Some(kind) = BuiltinReceiver::of(&value) {
-                    if let Some(func) = self.builtins.property(kind, name) {
-                        return func(value).map_err(Self::std_error_to_signal);
+                    if let Some((func, module)) = self
+                        .builtins
+                        .property(kind, name)
+                        .map(|t| (t.value, t.module))
+                    {
+                        if self.module_symbol_visible(module) {
+                            return func(value).map_err(Self::std_error_to_signal);
+                        }
                     }
                 }
                 match (&value, name) {
@@ -2043,6 +2152,7 @@ impl<'w> Interpreter<'w> {
         if place.path.is_empty() {
             // A static-property place is rooted at its `Type.name` key.
             if self.env.get(&place.root).is_none() && self.statics.contains_key(&place.root) {
+                self.gate_static_key(&place.root, &place.root)?;
                 self.statics.insert(place.root.clone(), value);
                 return Ok(());
             }
@@ -2066,6 +2176,7 @@ impl<'w> Interpreter<'w> {
             .or_else(|| self.statics.get(&place.root).cloned())
             .ok_or_else(|| EvalError::UnknownVariable(place.root.clone()))?;
         if self.env.get(&place.root).is_none() && self.statics.contains_key(&place.root) {
+            self.gate_static_key(&place.root, &place.root)?;
             let updated = self.set_in(root_val, &place.path, value)?;
             self.statics.insert(place.root.clone(), updated);
             return Ok(());

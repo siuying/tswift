@@ -1,0 +1,67 @@
+[meta]
+framework = "Charts"
+reference = "swiftc 6.3.2 / iPhoneSimulator SDK (iOS is the target platform)"
+stance = """
+Render-host semantics, not value semantics: Chart/mark types are evaluated into
+the shared SwiftUI UIIR (same view-value tree as tswift-swiftui). Marks are
+content-builder children of Chart; plottable helpers (PlottableValue.value)
+produce struct values stored on mark constructor args. Hosts (web/iOS) map
+kind Chart/BarMark in later slices; this scope tracks the runtime surface only.
+"""
+
+# ── C1 — vertical slice: Chart container + BarMark + PlottableValue ───────────
+[[tier]]
+id = "C1"
+title = "Chart container, BarMark, PlottableValue.value"
+types = ["Chart", "BarMark", "PlottableValue"]
+
+# ── C2 — remaining core mark leaves (UIIR view values) ───────────────────────
+[[tier]]
+id = "C2"
+title = "Core marks: Line/Point/Area/Rule/Rectangle/Sector"
+types = ["LineMark", "PointMark", "AreaMark", "RuleMark", "RectangleMark", "SectorMark"]
+
+# ── C3 — ChartContent mark modifiers (shared `_modifiers` list) ───────────────
+[[tier]]
+id = "C3"
+title = "Mark modifiers: style, symbol, line, annotation, layout"
+types = ["ChartContent"]
+
+# ── C4 — Chart-level View modifiers + axis-content leaves ─────────────────────
+[[tier]]
+id = "C4"
+title = "Chart axes/scales/legend/selection + AxisMarks content"
+types = ["View", "AxisMarks", "AxisGridLine", "AxisTick", "AxisValueLabel"]
+
+# ── Explicitly excluded types (type names only — members are not listed here) ─
+# 3D chart *types* stay out of the scoped tiers entirely (never entered C1–C4).
+[out_of_scope]
+# RealityKit / visionOS 3D chart surface — not a 2D render-host concern.
+chart3d = [
+  "Chart3D",
+  "Chart3DContent",
+  "Chart3DContentBuilder",
+  "Chart3DPose",
+  "Chart3DCameraProjection",
+  "Chart3DRenderingStyle",
+  "Chart3DSurfaceStyle",
+  "BasicChart3DSurfaceStyle",
+  "Chart3DSymbolShape",
+]
+
+# Per-member exclusions for in-scope types (Type.member keys). Keeps the
+# coverage denominator honest without dropping View / ChartContent entirely.
+# See tools/framework-inventory/coverage.py `out_of_scope_members`.
+[out_of_scope_members]
+# View.chart3D* / chartZ* — RealityKit/3D charts, not a 2D render-host concern.
+# Public 2D ChartContent modifiers (accessibility*, compositingLayer,
+# alignsMarkStylesWithPlotArea) are implemented as mark `_Modifier` records.
+chart3d = [
+  "View.chart3DCameraProjection",
+  "View.chart3DPose",
+  "View.chart3DRenderingStyle",
+  "View.chartZAxis",
+  "View.chartZAxisLabel",
+  "View.chartZScale",
+  "View.chartZSelection",
+]
