@@ -80,6 +80,7 @@ View.contextMenu
 View.contrast
 View.controlGroupStyle
 View.controlSize
+View.coordinateSpace
 View.cornerRadius
 View.datePickerStyle
 View.defaultWheelPickerItemHeight
@@ -87,13 +88,16 @@ View.deleteDisabled
 View.disableAutocorrection
 View.disabled
 View.disclosureGroupStyle
+View.draggable
 View.drawingGroup
 View.environmentObject
+View.equatable
 View.fill
 View.findDisabled
 View.fixedSize
 View.flipsForRightToLeftLayoutDirection
 View.focusEffectDisabled
+View.focusSection
 View.focusable
 View.font
 View.fontDesign
@@ -115,6 +119,7 @@ View.hidden
 View.hoverEffectDisabled
 View.hueRotation
 View.id
+View.ignoresSafeArea
 View.indexViewStyle
 View.inspectorColumnWidth
 View.interactionActivityTrackingTag

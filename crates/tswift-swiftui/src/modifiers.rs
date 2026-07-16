@@ -174,6 +174,13 @@ modifier!(modifier_safe_area_padding, "safeAreaPadding");
 modifier!(modifier_list_row_insets, "listRowInsets");
 modifier!(modifier_navigation_bar_title, "navigationBarTitle");
 modifier!(modifier_line_height, "lineHeight");
+// No-arg marker modifiers (SwiftUI overloads whose arguments are all defaulted,
+// so a bare call carries no token) and single-value passthroughs.
+modifier!(modifier_equatable, "equatable");
+modifier!(modifier_focus_section, "focusSection");
+modifier!(modifier_ignores_safe_area, "ignoresSafeArea");
+modifier!(modifier_coordinate_space, "coordinateSpace");
+modifier!(modifier_draggable, "draggable");
 // Text-input modifiers. `submitLabel` carries a `SubmitLabel` token;
 // `textInputAutocapitalization` a `TextInputAutocapitalization`.
 // `autocorrectionDisabled`/`focusable`/`disableAutocorrection` are Bool toggles
@@ -538,6 +545,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("listRowInsets", modifier_list_row_insets),
     ("navigationBarTitle", modifier_navigation_bar_title),
     ("lineHeight", modifier_line_height),
+    ("equatable", modifier_equatable),
+    ("focusSection", modifier_focus_section),
+    ("ignoresSafeArea", modifier_ignores_safe_area),
+    ("coordinateSpace", modifier_coordinate_space),
+    ("draggable", modifier_draggable),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
     ("tabItem", modifier_tab_item),
