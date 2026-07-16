@@ -586,3 +586,22 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - SwiftUI modifier surface remains highest-yield; stdlib (73.2%) and Foundation
   (75.3%) remainders dominated by unsafe-pointer / FormatStyle-token APIs a
   headless interpreter can't implement with real behavior.
+
+## Coverage iteration — SwiftUI grid/presentation/material token modifiers
+
+- Coverage before → after: SwiftUI implemented 367 → 379 (52.3% → 54.0%),
+  verified 347 → 359 (49.4% → 51.1%). View +12. **Crossed 51% verified.**
+- Twelve View modifiers via the typed seam. Reused namespaces: UnitPoint
+  (defaultScrollAnchor, gridCellAnchor), HorizontalAlignment
+  (gridColumnAlignment), Axis.Set (gridCellUnsizedAxes), Visibility
+  (writingToolsAffordanceVisibility). Five new namespaces:
+  presentationBackgroundInteraction, presentationCompactAdaptation
+  (PresentationAdaptation .automatic/.none/.popover/.sheet/.fullScreenCover),
+  scrollTargetBehavior (.viewAligned/.paging), materialActiveAppearance
+  (.automatic/.active/.inactive), paletteSelectionEffect
+  (.automatic/.symbolVariant/.custom). Plus Color value passthroughs
+  listItemTint, listRowPlatterColor (no token). UnitPoint added as a first-class
+  token namespace (10 anchors) reusable by future anchor-valued modifiers.
+- Verified by grid-and-presentation-modifiers golden; presubmit green.
+- Session arc: SwiftUI 50.6% → 54.0% implemented (+24 modifiers) over two
+  iterations this session, all golden-verified with green presubmit.
