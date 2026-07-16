@@ -93,6 +93,7 @@ View.coordinateSpace
 View.cornerRadius
 View.datePickerStyle
 View.defaultHoverEffect
+View.defaultScrollAnchor
 View.defaultWheelPickerItemHeight
 View.defersSystemGestures
 View.deleteDisabled
@@ -126,7 +127,10 @@ View.gaugeStyle
 View.geometryGroup
 View.gesture
 View.grayscale
+View.gridCellAnchor
 View.gridCellColumns
+View.gridCellUnsizedAxes
+View.gridColumnAlignment
 View.groupBoxStyle
 View.handlesExternalEvents
 View.headerProminence
@@ -157,10 +161,12 @@ View.layoutPriority
 View.lineHeight
 View.lineLimit
 View.lineSpacing
+View.listItemTint
 View.listRowBackground
 View.listRowHoverEffect
 View.listRowHoverEffectDisabled
 View.listRowInsets
+View.listRowPlatterColor
 View.listRowSeparator
 View.listRowSeparatorTint
 View.listRowSpacing
@@ -170,6 +176,7 @@ View.listSectionSeparatorTint
 View.listSectionSpacing
 View.listStyle
 View.mask
+View.materialActiveAppearance
 View.menuActionDismissBehavior
 View.menuIndicator
 View.menuOrder
@@ -213,11 +220,14 @@ View.onTapGesture
 View.opacity
 View.overlay
 View.padding
+View.paletteSelectionEffect
 View.persistentSystemOverlays
 View.pickerStyle
 View.pointerVisibility
 View.position
 View.preferredColorScheme
+View.presentationBackgroundInteraction
+View.presentationCompactAdaptation
 View.presentationCornerRadius
 View.presentationDragIndicator
 View.previewDevice
@@ -245,6 +255,7 @@ View.scrollDismissesKeyboard
 View.scrollIndicators
 View.scrollIndicatorsFlash
 View.scrollInputBehavior
+View.scrollTargetBehavior
 View.scrollTargetLayout
 View.selectionDisabled
 View.shadow
@@ -293,6 +304,7 @@ View.windowDismissBehavior
 View.windowFullScreenBehavior
 View.windowMinimizeBehavior
 View.windowResizeBehavior
+View.writingToolsAffordanceVisibility
 View.writingToolsBehavior
 View.zIndex
 ZStack.init

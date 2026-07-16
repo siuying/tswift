@@ -229,6 +229,12 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "InterfaceOrientation" => "interfaceOrientation",
             "SymbolColorRenderingMode" => "symbolColorRenderingMode",
             "SymbolVariableValueMode" => "symbolVariableValueMode",
+            "UnitPoint" => "unitPoint",
+            "PresentationBackgroundInteraction" => "presentationBackgroundInteraction",
+            "PresentationAdaptation" => "presentationAdaptation",
+            "ScrollTargetBehavior" => "scrollTargetBehavior",
+            "MaterialActiveAppearance" => "materialActiveAppearance",
+            "PaletteSelectionEffect" => "paletteSelectionEffect",
             _ => "token",
         };
         out.push_str("{\"$\":");

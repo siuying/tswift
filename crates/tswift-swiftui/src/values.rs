@@ -71,6 +71,12 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "InterfaceOrientation"
             | "SymbolColorRenderingMode"
             | "SymbolVariableValueMode"
+            | "UnitPoint"
+            | "PresentationBackgroundInteraction"
+            | "PresentationAdaptation"
+            | "ScrollTargetBehavior"
+            | "MaterialActiveAppearance"
+            | "PaletteSelectionEffect"
     ) {
         return None;
     }

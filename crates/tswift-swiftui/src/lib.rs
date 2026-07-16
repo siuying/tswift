@@ -703,6 +703,50 @@ struct SymbolVariableValueMode {
     static let draw = SymbolVariableValueMode(token: "draw")
     static let reveal = SymbolVariableValueMode(token: "reveal")
 }
+struct UnitPoint {
+    let token: String
+    static let zero = UnitPoint(token: "zero")
+    static let center = UnitPoint(token: "center")
+    static let leading = UnitPoint(token: "leading")
+    static let trailing = UnitPoint(token: "trailing")
+    static let top = UnitPoint(token: "top")
+    static let bottom = UnitPoint(token: "bottom")
+    static let topLeading = UnitPoint(token: "topLeading")
+    static let topTrailing = UnitPoint(token: "topTrailing")
+    static let bottomLeading = UnitPoint(token: "bottomLeading")
+    static let bottomTrailing = UnitPoint(token: "bottomTrailing")
+}
+struct PresentationBackgroundInteraction {
+    let token: String
+    static let automatic = PresentationBackgroundInteraction(token: "automatic")
+    static let enabled = PresentationBackgroundInteraction(token: "enabled")
+    static let disabled = PresentationBackgroundInteraction(token: "disabled")
+}
+struct PresentationAdaptation {
+    let token: String
+    static let automatic = PresentationAdaptation(token: "automatic")
+    static let none = PresentationAdaptation(token: "none")
+    static let popover = PresentationAdaptation(token: "popover")
+    static let sheet = PresentationAdaptation(token: "sheet")
+    static let fullScreenCover = PresentationAdaptation(token: "fullScreenCover")
+}
+struct ScrollTargetBehavior {
+    let token: String
+    static let viewAligned = ScrollTargetBehavior(token: "viewAligned")
+    static let paging = ScrollTargetBehavior(token: "paging")
+}
+struct MaterialActiveAppearance {
+    let token: String
+    static let automatic = MaterialActiveAppearance(token: "automatic")
+    static let active = MaterialActiveAppearance(token: "active")
+    static let inactive = MaterialActiveAppearance(token: "inactive")
+}
+struct PaletteSelectionEffect {
+    let token: String
+    static let automatic = PaletteSelectionEffect(token: "automatic")
+    static let symbolVariant = PaletteSelectionEffect(token: "symbolVariant")
+    static let custom = PaletteSelectionEffect(token: "custom")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1601,6 +1645,62 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_edges_ignoring_safe_area,
         vec![BuiltinParam::positional("Edge.Set")],
     );
+    // Grid/scroll/presentation/material/palette token modifiers. Grid layout
+    // reuses UnitPoint / HorizontalAlignment / Axis.Set;
+    // writingToolsAffordanceVisibility reuses Visibility; the rest introduce
+    // dedicated namespaces.
+    interp.register_struct_method_typed(
+        "defaultScrollAnchor",
+        modifiers::modifier_default_scroll_anchor,
+        vec![BuiltinParam::positional("UnitPoint")],
+    );
+    interp.register_struct_method_typed(
+        "gridCellAnchor",
+        modifiers::modifier_grid_cell_anchor,
+        vec![BuiltinParam::positional("UnitPoint")],
+    );
+    interp.register_struct_method_typed(
+        "gridColumnAlignment",
+        modifiers::modifier_grid_column_alignment,
+        vec![BuiltinParam::positional("HorizontalAlignment")],
+    );
+    interp.register_struct_method_typed(
+        "gridCellUnsizedAxes",
+        modifiers::modifier_grid_cell_unsized_axes,
+        vec![BuiltinParam::positional("Axis.Set")],
+    );
+    interp.register_struct_method_typed(
+        "writingToolsAffordanceVisibility",
+        modifiers::modifier_writing_tools_affordance_visibility,
+        vec![BuiltinParam::positional("Visibility")],
+    );
+    interp.register_struct_method_typed(
+        "presentationBackgroundInteraction",
+        modifiers::modifier_presentation_background_interaction,
+        vec![BuiltinParam::positional(
+            "PresentationBackgroundInteraction",
+        )],
+    );
+    interp.register_struct_method_typed(
+        "presentationCompactAdaptation",
+        modifiers::modifier_presentation_compact_adaptation,
+        vec![BuiltinParam::positional("PresentationAdaptation")],
+    );
+    interp.register_struct_method_typed(
+        "scrollTargetBehavior",
+        modifiers::modifier_scroll_target_behavior,
+        vec![BuiltinParam::positional("ScrollTargetBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "materialActiveAppearance",
+        modifiers::modifier_material_active_appearance,
+        vec![BuiltinParam::positional("MaterialActiveAppearance")],
+    );
+    interp.register_struct_method_typed(
+        "paletteSelectionEffect",
+        modifiers::modifier_palette_selection_effect,
+        vec![BuiltinParam::positional("PaletteSelectionEffect")],
+    );
     interp.register_struct_method_typed(
         "headerProminence",
         modifiers::modifier_header_prominence,
@@ -1996,6 +2096,7 @@ mod tests {
                 "View.cornerRadius",
                 "View.datePickerStyle",
                 "View.defaultHoverEffect",
+                "View.defaultScrollAnchor",
                 "View.defaultWheelPickerItemHeight",
                 "View.defersSystemGestures",
                 "View.deleteDisabled",
@@ -2029,7 +2130,10 @@ mod tests {
                 "View.geometryGroup",
                 "View.gesture",
                 "View.grayscale",
+                "View.gridCellAnchor",
                 "View.gridCellColumns",
+                "View.gridCellUnsizedAxes",
+                "View.gridColumnAlignment",
                 "View.groupBoxStyle",
                 "View.handlesExternalEvents",
                 "View.headerProminence",
@@ -2060,10 +2164,12 @@ mod tests {
                 "View.lineHeight",
                 "View.lineLimit",
                 "View.lineSpacing",
+                "View.listItemTint",
                 "View.listRowBackground",
                 "View.listRowHoverEffect",
                 "View.listRowHoverEffectDisabled",
                 "View.listRowInsets",
+                "View.listRowPlatterColor",
                 "View.listRowSeparator",
                 "View.listRowSeparatorTint",
                 "View.listRowSpacing",
@@ -2073,6 +2179,7 @@ mod tests {
                 "View.listSectionSpacing",
                 "View.listStyle",
                 "View.mask",
+                "View.materialActiveAppearance",
                 "View.menuActionDismissBehavior",
                 "View.menuIndicator",
                 "View.menuOrder",
@@ -2116,11 +2223,14 @@ mod tests {
                 "View.opacity",
                 "View.overlay",
                 "View.padding",
+                "View.paletteSelectionEffect",
                 "View.persistentSystemOverlays",
                 "View.pickerStyle",
                 "View.pointerVisibility",
                 "View.position",
                 "View.preferredColorScheme",
+                "View.presentationBackgroundInteraction",
+                "View.presentationCompactAdaptation",
                 "View.presentationCornerRadius",
                 "View.presentationDragIndicator",
                 "View.previewDevice",
@@ -2148,6 +2258,7 @@ mod tests {
                 "View.scrollIndicators",
                 "View.scrollIndicatorsFlash",
                 "View.scrollInputBehavior",
+                "View.scrollTargetBehavior",
                 "View.scrollTargetLayout",
                 "View.selectionDisabled",
                 "View.shadow",
@@ -2196,6 +2307,7 @@ mod tests {
                 "View.windowFullScreenBehavior",
                 "View.windowMinimizeBehavior",
                 "View.windowResizeBehavior",
+                "View.writingToolsAffordanceVisibility",
                 "View.writingToolsBehavior",
                 "View.zIndex",
                 "ZStack.init",

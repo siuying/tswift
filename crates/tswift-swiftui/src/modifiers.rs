@@ -378,6 +378,34 @@ modifier!(
 );
 modifier!(modifier_edges_ignoring_safe_area, "edgesIgnoringSafeArea");
 modifier!(modifier_background_style, "backgroundStyle");
+// Grid cell/column layout (reuse existing UnitPoint/HorizontalAlignment/Axis.Set
+// namespaces) + scroll/presentation/material/palette token modifiers (dedicated
+// namespaces) and Color value passthroughs (listItemTint, listRowPlatterColor).
+// All token modifiers typed in `install`.
+modifier!(modifier_default_scroll_anchor, "defaultScrollAnchor");
+modifier!(modifier_grid_cell_anchor, "gridCellAnchor");
+modifier!(modifier_grid_column_alignment, "gridColumnAlignment");
+modifier!(modifier_grid_cell_unsized_axes, "gridCellUnsizedAxes");
+modifier!(
+    modifier_writing_tools_affordance_visibility,
+    "writingToolsAffordanceVisibility"
+);
+modifier!(
+    modifier_presentation_background_interaction,
+    "presentationBackgroundInteraction"
+);
+modifier!(
+    modifier_presentation_compact_adaptation,
+    "presentationCompactAdaptation"
+);
+modifier!(modifier_scroll_target_behavior, "scrollTargetBehavior");
+modifier!(
+    modifier_material_active_appearance,
+    "materialActiveAppearance"
+);
+modifier!(modifier_palette_selection_effect, "paletteSelectionEffect");
+modifier!(modifier_list_item_tint, "listItemTint");
+modifier!(modifier_list_row_platter_color, "listRowPlatterColor");
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -936,6 +964,30 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ),
     ("edgesIgnoringSafeArea", modifier_edges_ignoring_safe_area),
     ("backgroundStyle", modifier_background_style),
+    ("defaultScrollAnchor", modifier_default_scroll_anchor),
+    ("gridCellAnchor", modifier_grid_cell_anchor),
+    ("gridColumnAlignment", modifier_grid_column_alignment),
+    ("gridCellUnsizedAxes", modifier_grid_cell_unsized_axes),
+    (
+        "writingToolsAffordanceVisibility",
+        modifier_writing_tools_affordance_visibility,
+    ),
+    (
+        "presentationBackgroundInteraction",
+        modifier_presentation_background_interaction,
+    ),
+    (
+        "presentationCompactAdaptation",
+        modifier_presentation_compact_adaptation,
+    ),
+    ("scrollTargetBehavior", modifier_scroll_target_behavior),
+    (
+        "materialActiveAppearance",
+        modifier_material_active_appearance,
+    ),
+    ("paletteSelectionEffect", modifier_palette_selection_effect),
+    ("listItemTint", modifier_list_item_tint),
+    ("listRowPlatterColor", modifier_list_row_platter_color),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),
