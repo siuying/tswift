@@ -119,3 +119,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - presubmit green. Blockers: remaining Animation members (`animate`, `hash`,
   `timingCurve` Equatable, system-overlay statics) are internal/opaque or
   need protocol conformance plumbing — deferred.
+
+## Coverage iteration — AnyTransition family + .animation(_:)
+
+- Coverage before → after: SwiftUI verified 109 → 118 (15.5% → 16.8%),
+  implemented 130 → 131. AnyTransition section 9/2 → 10/10 verified.
+- Implemented real `AnyTransition.animation(_:)` (attaches an Animation curve
+  to a transition; serializes as a nested `animation` object; nil clears).
+- Added `transition` golden fixture verifying the full factory + combinator
+  family; new serialization unit test for the curve attachment.
+- presubmit green. Blockers: `AnyTransition.modifier(active:identity:)` needs
+  arbitrary ViewModifier plumbing — deferred.
