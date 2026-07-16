@@ -674,3 +674,25 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   plumbing (registeredModel, model(for:)), history/undo (deleteHistory,
   fetchHistory, undoManager), and notification hooks (willSave/didSave). Schema
   and PersistentModel sections (0%) need @Model macro introspection surface.
+
+## Coverage iteration — SwiftData config & fetch-descriptor properties
+
+- Coverage before → after: SwiftData implemented 19 → 25 (16.7% → 21.9%),
+  verified 17 → 23 (14.9% → 20.2%). ModelConfiguration 1 → 3 (18.8%),
+  FetchDescriptor 1 → 5 (11.1% → 55.6%).
+- Six value-type property reads via contextual properties, each faithfully
+  returning init/mutation state: ModelConfiguration.isStoredInMemoryOnly,
+  ModelConfiguration.name; FetchDescriptor.fetchLimit, .fetchOffset, .sortBy,
+  .predicate (predicate value now retained on the descriptor object).
+- Real behavior added: fetchOffset now paginates the SELECT — select_sql emits
+  `LIMIT n OFFSET m`, or `LIMIT -1 OFFSET m` when only an offset is set (SQLite
+  needs a LIMIT before OFFSET). Verified end-to-end: offset+limit page over a
+  pages-sorted table returns the correct middle slice.
+- Verified by the extended swiftdata_change_tracking golden + a new select_sql
+  pagination unit test. presubmit green (exit 0).
+- Session arc: SwiftData 10.5% → 21.9% implemented (+13 members) over two
+  iterations, all golden-verified.
+- Next: ModelConfiguration.allowsSave/url/schema (need save enforcement / store
+  URL plumbing), ModelContainer.configurations/schema/deleteAllData, and the
+  0%-coverage Schema/PersistentModel/PersistentIdentifier sections (need @Model
+  macro introspection surface).
