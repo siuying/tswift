@@ -1373,6 +1373,19 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_presentation_drag_indicator,
         vec![BuiltinParam::positional("Visibility")],
     );
+    // `listRowHoverEffect(_:)` / `sliderThumbVisibility(_:)` reuse the existing
+    // HoverEffect / Visibility token namespaces so their leading-dot args
+    // resolve contextually.
+    interp.register_struct_method_typed(
+        "listRowHoverEffect",
+        modifiers::modifier_list_row_hover_effect,
+        vec![BuiltinParam::positional("HoverEffect")],
+    );
+    interp.register_struct_method_typed(
+        "sliderThumbVisibility",
+        modifiers::modifier_slider_thumb_visibility,
+        vec![BuiltinParam::positional("Visibility")],
+    );
     interp.register_struct_method_typed(
         "textInputAutocapitalization",
         modifiers::modifier_text_input_autocapitalization,
@@ -1760,6 +1773,7 @@ mod tests {
                 "View.colorMultiply",
                 "View.colorScheme",
                 "View.compositingGroup",
+                "View.contentCaptureProtected",
                 "View.contentTransition",
                 "View.contextMenu",
                 "View.contrast",
@@ -1771,6 +1785,7 @@ mod tests {
                 "View.defaultHoverEffect",
                 "View.defaultWheelPickerItemHeight",
                 "View.deleteDisabled",
+                "View.dialogPreventsAppTermination",
                 "View.dialogSeverity",
                 "View.disableAutocorrection",
                 "View.disabled",
@@ -1801,6 +1816,7 @@ mod tests {
                 "View.grayscale",
                 "View.gridCellColumns",
                 "View.groupBoxStyle",
+                "View.handlesExternalEvents",
                 "View.headerProminence",
                 "View.help",
                 "View.hidden",
@@ -1829,6 +1845,8 @@ mod tests {
                 "View.lineLimit",
                 "View.lineSpacing",
                 "View.listRowBackground",
+                "View.listRowHoverEffect",
+                "View.listRowHoverEffectDisabled",
                 "View.listRowInsets",
                 "View.listRowSeparator",
                 "View.listRowSeparatorTint",
@@ -1852,6 +1870,7 @@ mod tests {
                 "View.navigationBarHidden",
                 "View.navigationBarTitle",
                 "View.navigationDestination",
+                "View.navigationDocument",
                 "View.navigationLinkIndicatorVisibility",
                 "View.navigationSplitViewColumnWidth",
                 "View.navigationSplitViewStyle",
@@ -1884,6 +1903,7 @@ mod tests {
                 "View.pickerStyle",
                 "View.position",
                 "View.preferredColorScheme",
+                "View.presentationCornerRadius",
                 "View.presentationDragIndicator",
                 "View.previewDisplayName",
                 "View.privacySensitive",
@@ -1909,6 +1929,7 @@ mod tests {
                 "View.scrollTargetLayout",
                 "View.selectionDisabled",
                 "View.shadow",
+                "View.sliderThumbVisibility",
                 "View.speechAdjustedPitch",
                 "View.speechAlwaysIncludesPunctuation",
                 "View.speechAnnouncementsQueued",
@@ -1936,6 +1957,7 @@ mod tests {
                 "View.tracking",
                 "View.transition",
                 "View.truncationMode",
+                "View.typeSelectEquivalent",
                 "View.underline",
                 "View.unredacted",
                 "View.writingToolsBehavior",

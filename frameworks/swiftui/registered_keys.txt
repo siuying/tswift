@@ -80,6 +80,7 @@ View.colorInvert
 View.colorMultiply
 View.colorScheme
 View.compositingGroup
+View.contentCaptureProtected
 View.contentTransition
 View.contextMenu
 View.contrast
@@ -91,6 +92,7 @@ View.datePickerStyle
 View.defaultHoverEffect
 View.defaultWheelPickerItemHeight
 View.deleteDisabled
+View.dialogPreventsAppTermination
 View.dialogSeverity
 View.disableAutocorrection
 View.disabled
@@ -121,6 +123,7 @@ View.gesture
 View.grayscale
 View.gridCellColumns
 View.groupBoxStyle
+View.handlesExternalEvents
 View.headerProminence
 View.help
 View.hidden
@@ -149,6 +152,8 @@ View.lineHeight
 View.lineLimit
 View.lineSpacing
 View.listRowBackground
+View.listRowHoverEffect
+View.listRowHoverEffectDisabled
 View.listRowInsets
 View.listRowSeparator
 View.listRowSeparatorTint
@@ -172,6 +177,7 @@ View.navigationBarBackButtonHidden
 View.navigationBarHidden
 View.navigationBarTitle
 View.navigationDestination
+View.navigationDocument
 View.navigationLinkIndicatorVisibility
 View.navigationSplitViewColumnWidth
 View.navigationSplitViewStyle
@@ -204,6 +210,7 @@ View.persistentSystemOverlays
 View.pickerStyle
 View.position
 View.preferredColorScheme
+View.presentationCornerRadius
 View.presentationDragIndicator
 View.previewDisplayName
 View.privacySensitive
@@ -229,6 +236,7 @@ View.scrollInputBehavior
 View.scrollTargetLayout
 View.selectionDisabled
 View.shadow
+View.sliderThumbVisibility
 View.speechAdjustedPitch
 View.speechAlwaysIncludesPunctuation
 View.speechAnnouncementsQueued
@@ -256,6 +264,7 @@ View.toggleStyle
 View.tracking
 View.transition
 View.truncationMode
+View.typeSelectEquivalent
 View.underline
 View.unredacted
 View.writingToolsBehavior

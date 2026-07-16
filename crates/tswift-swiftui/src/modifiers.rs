@@ -287,6 +287,32 @@ modifier!(
     modifier_interaction_activity_tracking_tag,
     "interactionActivityTrackingTag"
 );
+// Presentation / window / list metadata passthroughs. Each records a scalar,
+// Bool, String, `[String]` set, or URL onto the view node (no leading-dot
+// token) — the host honors or ignores the recorded metadata. `listRowHover-
+// Effect` and `sliderThumbVisibility` carry `HoverEffect` / `Visibility`
+// tokens and are re-registered typed in `install`.
+modifier!(
+    modifier_presentation_corner_radius,
+    "presentationCornerRadius"
+);
+modifier!(
+    modifier_content_capture_protected,
+    "contentCaptureProtected"
+);
+modifier!(
+    modifier_dialog_prevents_app_termination,
+    "dialogPreventsAppTermination"
+);
+modifier!(
+    modifier_list_row_hover_effect_disabled,
+    "listRowHoverEffectDisabled"
+);
+modifier!(modifier_type_select_equivalent, "typeSelectEquivalent");
+modifier!(modifier_handles_external_events, "handlesExternalEvents");
+modifier!(modifier_navigation_document, "navigationDocument");
+modifier!(modifier_list_row_hover_effect, "listRowHoverEffect");
+modifier!(modifier_slider_thumb_visibility, "sliderThumbVisibility");
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -774,6 +800,27 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "interactionActivityTrackingTag",
         modifier_interaction_activity_tracking_tag,
     ),
+    (
+        "presentationCornerRadius",
+        modifier_presentation_corner_radius,
+    ),
+    (
+        "contentCaptureProtected",
+        modifier_content_capture_protected,
+    ),
+    (
+        "dialogPreventsAppTermination",
+        modifier_dialog_prevents_app_termination,
+    ),
+    (
+        "listRowHoverEffectDisabled",
+        modifier_list_row_hover_effect_disabled,
+    ),
+    ("typeSelectEquivalent", modifier_type_select_equivalent),
+    ("handlesExternalEvents", modifier_handles_external_events),
+    ("navigationDocument", modifier_navigation_document),
+    ("listRowHoverEffect", modifier_list_row_hover_effect),
+    ("sliderThumbVisibility", modifier_slider_thumb_visibility),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),
