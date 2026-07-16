@@ -435,3 +435,15 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: remaining are token-arg modifiers (contextual enum typing),
   binding-driven presentation (sheet/popover/alert/fullScreenCover need
   isPresented binding + dismissal), and preference/anchor/geometry APIs.
+
+## Coverage iteration — SwiftUI edit/pencil/hover command handlers
+
+- Coverage before → after: SwiftUI implemented 297 → 303 (42.3% → 43.2%),
+  verified 277 → 283 (39.5% → 40.3%, crossing 40% verified). View +6.
+- Reused the event_handler! macro for six more non-colliding single-closure
+  modifiers: onCutCommand, onCopyCommand, onMoveCommand, onPencilDoubleTap,
+  onPencilSqueeze, onContinuousHover. Updated MODIFIER_FNS, the registered-
+  keys assertion, and added a command-handler-modifiers golden fixture.
+  presubmit green.
+- Blockers: unchanged — token-arg modifiers, binding-driven presentation,
+  and preference/anchor/geometry APIs remain the hard remainder.
