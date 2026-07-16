@@ -194,6 +194,9 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "SymbolRenderingMode" => "symbolRenderingMode",
             "RedactionReasons" => "redaction",
             "TruncationMode" => "truncationMode",
+            "AccessibilityTraits" => "accessibilityTrait",
+            "AccessibilityHeadingLevel" => "headingLevel",
+            "AccessibilityChildBehavior" => "childBehavior",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -795,6 +798,24 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"blendMode","value":{"$":"blendMode","name":"multiply"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn accessibility_add_traits_serializes_trait_token() {
+        let json = render_json(r#"Text("x").accessibilityAddTraits(.isButton)"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"accessibilityAddTraits","value":{"$":"accessibilityTrait","name":"isButton"}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn accessibility_heading_serializes_level_token() {
+        let json = render_json(r#"Text("x").accessibilityHeading(.h2)"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"accessibilityHeading","value":{"$":"headingLevel","name":"h2"}}],"children":[]}"#
         );
     }
 

@@ -332,6 +332,47 @@ struct TruncationMode {
     static let tail = TruncationMode(token: "tail")
     static let middle = TruncationMode(token: "middle")
 }
+// `AccessibilityTraits` — the trait set for `.accessibilityAddTraits(_:)` /
+// `.accessibilityRemoveTraits(_:)`. Modelled as leading-dot tokens (Swift's
+// real type is an OptionSet; a `[.isButton, .isHeader]` array is accepted too).
+struct AccessibilityTraits {
+    let token: String
+    static let isButton = AccessibilityTraits(token: "isButton")
+    static let isHeader = AccessibilityTraits(token: "isHeader")
+    static let isSelected = AccessibilityTraits(token: "isSelected")
+    static let isLink = AccessibilityTraits(token: "isLink")
+    static let isSearchField = AccessibilityTraits(token: "isSearchField")
+    static let isImage = AccessibilityTraits(token: "isImage")
+    static let playsSound = AccessibilityTraits(token: "playsSound")
+    static let isKeyboardKey = AccessibilityTraits(token: "isKeyboardKey")
+    static let isStaticText = AccessibilityTraits(token: "isStaticText")
+    static let isSummaryElement = AccessibilityTraits(token: "isSummaryElement")
+    static let updatesFrequently = AccessibilityTraits(token: "updatesFrequently")
+    static let startsMediaSession = AccessibilityTraits(token: "startsMediaSession")
+    static let allowsDirectInteraction = AccessibilityTraits(token: "allowsDirectInteraction")
+    static let causesPageTurn = AccessibilityTraits(token: "causesPageTurn")
+    static let isModal = AccessibilityTraits(token: "isModal")
+    static let isToggle = AccessibilityTraits(token: "isToggle")
+}
+// `AccessibilityHeadingLevel` — the heading rank for `.accessibilityHeading(_:)`.
+struct AccessibilityHeadingLevel {
+    let token: String
+    static let unspecified = AccessibilityHeadingLevel(token: "unspecified")
+    static let h1 = AccessibilityHeadingLevel(token: "h1")
+    static let h2 = AccessibilityHeadingLevel(token: "h2")
+    static let h3 = AccessibilityHeadingLevel(token: "h3")
+    static let h4 = AccessibilityHeadingLevel(token: "h4")
+    static let h5 = AccessibilityHeadingLevel(token: "h5")
+    static let h6 = AccessibilityHeadingLevel(token: "h6")
+}
+// `AccessibilityChildBehavior` — how `.accessibilityElement(children:)` folds
+// descendant accessibility elements.
+struct AccessibilityChildBehavior {
+    let token: String
+    static let ignore = AccessibilityChildBehavior(token: "ignore")
+    static let combine = AccessibilityChildBehavior(token: "combine")
+    static let contain = AccessibilityChildBehavior(token: "contain")
+}
 // `Angle` — a rotation quantity for `.rotationEffect`/`.hueRotation`. Stored in
 // degrees (the canonical UIIR unit); `.radians(_:)` converts on the way in.
 // Serialized as `{"$":"angle","degrees":…}`.
@@ -901,6 +942,31 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifier_transition,
         vec![BuiltinParam::positional("AnyTransition")],
     );
+    // Accessibility trait/heading/element tokens: typed so their leading-dot
+    // members resolve against the token namespace even when a name is shared.
+    interp.register_struct_method_typed(
+        "accessibilityAddTraits",
+        modifiers::modifier_accessibility_add_traits,
+        vec![BuiltinParam::positional("AccessibilityTraits")],
+    );
+    interp.register_struct_method_typed(
+        "accessibilityRemoveTraits",
+        modifiers::modifier_accessibility_remove_traits,
+        vec![BuiltinParam::positional("AccessibilityTraits")],
+    );
+    interp.register_struct_method_typed(
+        "accessibilityHeading",
+        modifiers::modifier_accessibility_heading,
+        vec![BuiltinParam::positional("AccessibilityHeadingLevel")],
+    );
+    interp.register_struct_method_typed(
+        "accessibilityElement",
+        modifiers::modifier_accessibility_element,
+        vec![BuiltinParam::labeled(
+            "children",
+            "AccessibilityChildBehavior",
+        )],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -1231,10 +1297,20 @@ mod tests {
                 "TextField.init",
                 "Toggle.init",
                 "VStack.init",
+                "View.accessibilityAddTraits",
+                "View.accessibilityDirectTouch",
+                "View.accessibilityElement",
+                "View.accessibilityHeading",
                 "View.accessibilityHidden",
                 "View.accessibilityHint",
                 "View.accessibilityIdentifier",
+                "View.accessibilityIgnoresInvertColors",
+                "View.accessibilityInputLabels",
                 "View.accessibilityLabel",
+                "View.accessibilityRemoveTraits",
+                "View.accessibilityRespondsToUserInteraction",
+                "View.accessibilityShowsLargeContentViewer",
+                "View.accessibilitySortPriority",
                 "View.accessibilityValue",
                 "View.allowsHitTesting",
                 "View.allowsTightening",

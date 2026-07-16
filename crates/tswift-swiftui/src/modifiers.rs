@@ -137,6 +137,42 @@ modifier!(modifier_accessibility_label, "accessibilityLabel");
 modifier!(modifier_accessibility_hint, "accessibilityHint");
 modifier!(modifier_accessibility_value, "accessibilityValue");
 modifier!(modifier_accessibility_identifier, "accessibilityIdentifier");
+// Accessibility metadata modifiers: recorded on the view node so the serialized
+// UIIR carries the semantic data (there is no on-device assistive tech in a
+// headless runtime). Token-valued ones carry an `AccessibilityTraits` /
+// `AccessibilityHeadingLevel` / `AccessibilityChildBehavior` leading-dot token;
+// the rest carry a scalar, `[String]`, or `Bool`.
+modifier!(modifier_accessibility_add_traits, "accessibilityAddTraits");
+modifier!(
+    modifier_accessibility_remove_traits,
+    "accessibilityRemoveTraits"
+);
+modifier!(
+    modifier_accessibility_sort_priority,
+    "accessibilitySortPriority"
+);
+modifier!(modifier_accessibility_heading, "accessibilityHeading");
+modifier!(
+    modifier_accessibility_input_labels,
+    "accessibilityInputLabels"
+);
+modifier!(modifier_accessibility_element, "accessibilityElement");
+modifier!(
+    modifier_accessibility_ignores_invert_colors,
+    "accessibilityIgnoresInvertColors"
+);
+modifier!(
+    modifier_accessibility_responds_to_user_interaction,
+    "accessibilityRespondsToUserInteraction"
+);
+modifier!(
+    modifier_accessibility_direct_touch,
+    "accessibilityDirectTouch"
+);
+modifier!(
+    modifier_accessibility_shows_large_content_viewer,
+    "accessibilityShowsLargeContentViewer"
+);
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -397,6 +433,37 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("accessibilityHint", modifier_accessibility_hint),
     ("accessibilityValue", modifier_accessibility_value),
     ("accessibilityIdentifier", modifier_accessibility_identifier),
+    ("accessibilityAddTraits", modifier_accessibility_add_traits),
+    (
+        "accessibilityRemoveTraits",
+        modifier_accessibility_remove_traits,
+    ),
+    (
+        "accessibilitySortPriority",
+        modifier_accessibility_sort_priority,
+    ),
+    ("accessibilityHeading", modifier_accessibility_heading),
+    (
+        "accessibilityInputLabels",
+        modifier_accessibility_input_labels,
+    ),
+    ("accessibilityElement", modifier_accessibility_element),
+    (
+        "accessibilityIgnoresInvertColors",
+        modifier_accessibility_ignores_invert_colors,
+    ),
+    (
+        "accessibilityRespondsToUserInteraction",
+        modifier_accessibility_responds_to_user_interaction,
+    ),
+    (
+        "accessibilityDirectTouch",
+        modifier_accessibility_direct_touch,
+    ),
+    (
+        "accessibilityShowsLargeContentViewer",
+        modifier_accessibility_shows_large_content_viewer,
+    ),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),

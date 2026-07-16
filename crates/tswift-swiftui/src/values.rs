@@ -34,6 +34,9 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "SymbolRenderingMode"
             | "RedactionReasons"
             | "TruncationMode"
+            | "AccessibilityTraits"
+            | "AccessibilityHeadingLevel"
+            | "AccessibilityChildBehavior"
     ) {
         return None;
     }
