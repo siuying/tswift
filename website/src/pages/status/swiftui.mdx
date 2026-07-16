@@ -30,7 +30,15 @@ The latest breadth pass widened it further: the full `Animation` curve family
 Text typography (kerning/tracking/baseline/monospacing), graphic effects
 (blur/brightness/contrast/saturation/grayscale/rotationEffect via `Angle`),
 and list/scroll styling plus token-enum modifiers (blendMode, controlSize,
-symbolRenderingMode, redacted, truncationMode). Async (Tier 6),
+symbolRenderingMode, redacted, truncationMode). A further pass widened the
+modifier surface again: value/nested-view modifiers (`position`, `mask`,
+`contextMenu`, `listRowBackground`, `EdgeInsets`-backed `listRowInsets`), a
+family of single-closure event handlers (`onHover`, `onOpenURL`, `refreshable`,
+the edit/pencil/hover commands), and — via a **contextual typed-token seam** —
+dozens of token modifiers whose leading-dot argument resolves against a
+dedicated parameter type instead of by global uniqueness (`colorScheme`,
+`symbolVariant`, `imageScale`, `keyboardType`, `dynamicTypeSize`,
+`textContentType`, `scrollBounceBehavior`, and more). Async (Tier 6),
 `GeometryReader` (Tier 7), and navigation (Tier 8) are not started.
 
 **Legend:** ✅ Implemented · 🟡 Partial · ⬜ Missing · 🚫 Out of scope.

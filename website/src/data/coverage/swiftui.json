@@ -7,7 +7,7 @@
         {
           "name": "accentColor",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibility",
@@ -212,7 +212,7 @@
         {
           "name": "allowedDynamicRange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsHitTesting",
@@ -262,7 +262,7 @@
         {
           "name": "autocapitalization",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "autocorrectionDisabled",
@@ -337,7 +337,7 @@
         {
           "name": "buttonRepeatBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "buttonSizing",
@@ -377,7 +377,7 @@
         {
           "name": "colorScheme",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "compositingGroup",
@@ -437,12 +437,12 @@
         {
           "name": "contentTransition",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contextMenu",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contrast",
@@ -462,7 +462,7 @@
         {
           "name": "coordinateSpace",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "copyable",
@@ -502,7 +502,7 @@
         {
           "name": "defaultHoverEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "defaultScrollAnchor",
@@ -537,7 +537,7 @@
         {
           "name": "dialogSeverity",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dialogSuppressionToggle",
@@ -607,7 +607,7 @@
         {
           "name": "draggable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "drawingGroup",
@@ -632,7 +632,7 @@
         {
           "name": "dynamicTypeSize",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "edgesIgnoringSafeArea",
@@ -652,7 +652,7 @@
         {
           "name": "equatable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "exportableToServices",
@@ -752,7 +752,7 @@
         {
           "name": "focusSection",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focusable",
@@ -932,7 +932,7 @@
         {
           "name": "hoverEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hoverEffectDisabled",
@@ -957,12 +957,12 @@
         {
           "name": "ignoresSafeArea",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "imageScale",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "immersiveEnvironmentPicker",
@@ -1032,7 +1032,7 @@
         {
           "name": "keyboardType",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "keyframeAnimator",
@@ -1067,7 +1067,7 @@
         {
           "name": "labelsVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "layerEffect",
@@ -1092,7 +1092,7 @@
         {
           "name": "lineHeight",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "lineLimit",
@@ -1112,7 +1112,7 @@
         {
           "name": "listRowBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowHoverEffect",
@@ -1127,7 +1127,7 @@
         {
           "name": "listRowInsets",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowPlatterColor",
@@ -1187,7 +1187,7 @@
         {
           "name": "mask",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "matchedGeometryEffect",
@@ -1207,7 +1207,7 @@
         {
           "name": "menuActionDismissBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "menuButtonStyle",
@@ -1222,7 +1222,7 @@
         {
           "name": "menuOrder",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "menuStyle",
@@ -1282,7 +1282,7 @@
         {
           "name": "navigationBarTitle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationBarTitleDisplayMode",
@@ -1362,22 +1362,22 @@
         {
           "name": "onContinuousHover",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onCopyCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onCutCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onDeleteCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onDisappear",
@@ -1387,7 +1387,7 @@
         {
           "name": "onDrag",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onDragSessionUpdated",
@@ -1407,7 +1407,7 @@
         {
           "name": "onExitCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onGeometryChange",
@@ -1417,7 +1417,7 @@
         {
           "name": "onHover",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onInteractiveResizeChange",
@@ -1447,12 +1447,12 @@
         {
           "name": "onMoveCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onOpenURL",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onPasteCommand",
@@ -1462,17 +1462,17 @@
         {
           "name": "onPencilDoubleTap",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onPencilSqueeze",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onPlayPauseCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onPreferenceChange",
@@ -1592,7 +1592,7 @@
         {
           "name": "position",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "preference",
@@ -1602,7 +1602,7 @@
         {
           "name": "preferredColorScheme",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "prefersDefaultFocus",
@@ -1642,7 +1642,7 @@
         {
           "name": "presentationDragIndicator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentationPreventsAppTermination",
@@ -1712,7 +1712,7 @@
         {
           "name": "refreshable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "renameAction",
@@ -1747,7 +1747,7 @@
         {
           "name": "safeAreaPadding",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "saturation",
@@ -1777,7 +1777,7 @@
         {
           "name": "scrollBounceBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollClipDisabled",
@@ -1797,7 +1797,7 @@
         {
           "name": "scrollDismissesKeyboard",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollEdgeEffectHidden",
@@ -1822,7 +1822,7 @@
         {
           "name": "scrollInputBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollPosition",
@@ -2017,7 +2017,7 @@
         {
           "name": "symbolVariant",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabBarMinimizeBehavior",
@@ -2092,7 +2092,7 @@
         {
           "name": "textContentType",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textEditorStyle",
@@ -2132,7 +2132,7 @@
         {
           "name": "textScale",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textSelection",
@@ -2142,7 +2142,7 @@
         {
           "name": "textSelectionAffinity",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tint",
@@ -2337,7 +2337,7 @@
         {
           "name": "writingToolsBehavior",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "zIndex",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 158,
+        "implemented": 209,
         "partial": 11,
-        "missing": 299,
+        "missing": 248,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 261,
+    "implemented": 312,
     "partial": 20,
-    "missing": 421,
+    "missing": 370,
     "out_of_scope": 0,
     "total": 702
   }
