@@ -623,3 +623,26 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Verified by tab-search-toolbar-modifiers golden; presubmit green.
 - Session arc: SwiftUI 50.6% → 55.6% implemented (+35 modifiers) over three
   iterations this session, all golden-verified with green presubmit.
+
+## Coverage iteration — SwiftUI presentation/search/window token modifiers
+
+- Coverage before → after: SwiftUI implemented 390 → 398 (55.6% → 56.7%),
+  verified 370 → 378 (52.7% → 53.8%). View +8. stdlib/Foundation/SwiftData
+  unchanged.
+- Eight View modifiers via the typed seam. Four new namespaces:
+  presentationContentInteraction (.automatic/.resizes/.scrolls),
+  presentationSizing (.automatic/.fitted/.form/.page), searchDictationBehavior
+  (TextInputDictationBehavior .automatic/.inactive),
+  windowToolbarFullScreenVisibility (.automatic/.onHover). Reused namespace:
+  windowResizeAnchor (UnitPoint). Multi-arg: scrollEdgeEffectHidden (leading
+  Bool + `for:` Edge.Set). Value passthroughs: presentationBackground (Color),
+  submitScope (Bool).
+- Cascade fix: PresentationSizing.page collides with _ControlStyle.page, so the
+  previously uniqueness-resolved tabViewStyle/indexViewStyle were converted to
+  the typed seam (_ControlStyle) to keep `.page` resolving. All existing goldens
+  re-render byte-identical.
+- Verified by new presentation-window-modifiers golden fixture + a uiir
+  serialization unit test. presubmit green.
+- Blockers: remaining View modifiers are dominated by closure/binding-driven
+  presentation (sheet/popover/alert/fullScreenCover), preference/anchor/geometry
+  APIs, and effect/gesture modifiers that need more than a metadata record.
