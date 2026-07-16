@@ -173,6 +173,22 @@ modifier!(
     modifier_accessibility_shows_large_content_viewer,
     "accessibilityShowsLargeContentViewer"
 );
+// List-editing & row-layout + misc identity modifiers. All carry a scalar,
+// Bool, String, or passthrough value — no leading-dot token — so they record
+// straight onto the view node.
+modifier!(modifier_delete_disabled, "deleteDisabled");
+modifier!(modifier_move_disabled, "moveDisabled");
+modifier!(modifier_selection_disabled, "selectionDisabled");
+modifier!(modifier_list_row_spacing, "listRowSpacing");
+modifier!(modifier_list_section_spacing, "listSectionSpacing");
+modifier!(modifier_badge, "badge");
+modifier!(modifier_id, "id");
+modifier!(modifier_geometry_group, "geometryGroup");
+modifier!(modifier_invalidatable_content, "invalidatableContent");
+modifier!(
+    modifier_interaction_activity_tracking_tag,
+    "interactionActivityTrackingTag"
+);
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -463,6 +479,19 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     (
         "accessibilityShowsLargeContentViewer",
         modifier_accessibility_shows_large_content_viewer,
+    ),
+    ("deleteDisabled", modifier_delete_disabled),
+    ("moveDisabled", modifier_move_disabled),
+    ("selectionDisabled", modifier_selection_disabled),
+    ("listRowSpacing", modifier_list_row_spacing),
+    ("listSectionSpacing", modifier_list_section_spacing),
+    ("badge", modifier_badge),
+    ("id", modifier_id),
+    ("geometryGroup", modifier_geometry_group),
+    ("invalidatableContent", modifier_invalidatable_content),
+    (
+        "interactionActivityTrackingTag",
+        modifier_interaction_activity_tracking_tag,
     ),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.

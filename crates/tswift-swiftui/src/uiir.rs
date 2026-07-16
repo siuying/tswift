@@ -811,6 +811,15 @@ mod tests {
     }
 
     #[test]
+    fn list_editing_records_scalar_and_bool_values() {
+        let json = render_json(r#"Text("x").badge(3).deleteDisabled(true).id("k")"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"badge","value":3},{"name":"deleteDisabled","value":true},{"name":"id","value":"k"}],"children":[]}"#
+        );
+    }
+
+    #[test]
     fn accessibility_heading_serializes_level_token() {
         let json = render_json(r#"Text("x").accessibilityHeading(.h2)"#);
         assert_eq!(

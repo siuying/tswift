@@ -58,6 +58,7 @@ View.allowsTightening
 View.animation
 View.aspectRatio
 View.background
+View.badge
 View.baselineOffset
 View.blendMode
 View.blur
@@ -73,6 +74,7 @@ View.compositingGroup
 View.contrast
 View.controlSize
 View.cornerRadius
+View.deleteDisabled
 View.disabled
 View.drawingGroup
 View.environmentObject
@@ -86,12 +88,16 @@ View.fontWidth
 View.foregroundColor
 View.foregroundStyle
 View.frame
+View.geometryGroup
 View.gesture
 View.grayscale
 View.help
 View.hidden
 View.hueRotation
+View.id
+View.interactionActivityTrackingTag
 View.interactiveDismissDisabled
+View.invalidatableContent
 View.italic
 View.kerning
 View.labelsHidden
@@ -100,12 +106,15 @@ View.lineLimit
 View.lineSpacing
 View.listRowSeparator
 View.listRowSeparatorTint
+View.listRowSpacing
 View.listSectionSeparator
 View.listSectionSeparatorTint
+View.listSectionSpacing
 View.listStyle
 View.minimumScaleFactor
 View.monospaced
 View.monospacedDigit
+View.moveDisabled
 View.multilineTextAlignment
 View.navigationDestination
 View.navigationTitle
@@ -131,6 +140,7 @@ View.scrollClipDisabled
 View.scrollContentBackground
 View.scrollDisabled
 View.scrollIndicators
+View.selectionDisabled
 View.shadow
 View.strikethrough
 View.symbolRenderingMode
