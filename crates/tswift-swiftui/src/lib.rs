@@ -504,6 +504,71 @@ struct ContentMode {
     static let fit = ContentMode(token: "fit")
     static let fill = ContentMode(token: "fill")
 }
+// Typed token namespaces for token-valued View modifiers. Each is resolved
+// contextually via `register_struct_method_typed`, so shared leading-dot names
+// (`.automatic`, `.fill`, `.circle`) resolve against the declared parameter
+// type instead of colliding in the global uniqueness namespace.
+struct ColorScheme {
+    let token: String
+    static let light = ColorScheme(token: "light")
+    static let dark = ColorScheme(token: "dark")
+}
+struct SymbolVariants {
+    let token: String
+    static let none = SymbolVariants(token: "none")
+    static let circle = SymbolVariants(token: "circle")
+    static let square = SymbolVariants(token: "square")
+    static let rectangle = SymbolVariants(token: "rectangle")
+    static let fill = SymbolVariants(token: "fill")
+    static let slash = SymbolVariants(token: "slash")
+}
+struct HoverEffect {
+    let token: String
+    static let automatic = HoverEffect(token: "automatic")
+    static let highlight = HoverEffect(token: "highlight")
+    static let lift = HoverEffect(token: "lift")
+}
+struct MenuOrder {
+    let token: String
+    static let automatic = MenuOrder(token: "automatic")
+    static let priority = MenuOrder(token: "priority")
+    static let fixed = MenuOrder(token: "fixed")
+}
+struct ContentTransition {
+    let token: String
+    static let identity = ContentTransition(token: "identity")
+    static let opacity = ContentTransition(token: "opacity")
+    static let interpolate = ContentTransition(token: "interpolate")
+    static let numericText = ContentTransition(token: "numericText")
+}
+struct ScrollBounceBehavior {
+    let token: String
+    static let automatic = ScrollBounceBehavior(token: "automatic")
+    static let always = ScrollBounceBehavior(token: "always")
+    static let basedOnSize = ScrollBounceBehavior(token: "basedOnSize")
+}
+struct ScrollDismissesKeyboardMode {
+    let token: String
+    static let automatic = ScrollDismissesKeyboardMode(token: "automatic")
+    static let immediately = ScrollDismissesKeyboardMode(token: "immediately")
+    static let interactively = ScrollDismissesKeyboardMode(token: "interactively")
+    static let never = ScrollDismissesKeyboardMode(token: "never")
+}
+struct DynamicTypeSize {
+    let token: String
+    static let xSmall = DynamicTypeSize(token: "xSmall")
+    static let small = DynamicTypeSize(token: "small")
+    static let medium = DynamicTypeSize(token: "medium")
+    static let large = DynamicTypeSize(token: "large")
+    static let xLarge = DynamicTypeSize(token: "xLarge")
+    static let xxLarge = DynamicTypeSize(token: "xxLarge")
+    static let xxxLarge = DynamicTypeSize(token: "xxxLarge")
+    static let accessibility1 = DynamicTypeSize(token: "accessibility1")
+    static let accessibility2 = DynamicTypeSize(token: "accessibility2")
+    static let accessibility3 = DynamicTypeSize(token: "accessibility3")
+    static let accessibility4 = DynamicTypeSize(token: "accessibility4")
+    static let accessibility5 = DynamicTypeSize(token: "accessibility5")
+}
 // `LazyVGrid(columns: [.flexible(), .fixed(80)])` — a grid track sizer. Declared
 // as a Swift type so `.flexible()`/`.fixed(_)`/`.adaptive(minimum:)` resolve and
 // carry their parameters; serialized as `{kind,value,spacing?}` (issue #205).
@@ -1046,6 +1111,72 @@ fn install_inner(interp: &mut Interpreter<'_>) {
             "AccessibilityChildBehavior",
         )],
     );
+    // Token-valued modifiers whose leading-dot arg resolves against a dedicated
+    // parameter type. Contextual typing is what lets shared tokens like
+    // `.automatic`/`.fill`/`.circle`/`.small`/`.light`/`.medium` resolve per
+    // modifier instead of by global uniqueness. Any modifier whose token names
+    // overlap another type's must be typed, so `controlSize`/`fontWeight`/
+    // `buttonBorderShape` join the newer namespaces below.
+    interp.register_struct_method_typed(
+        "controlSize",
+        modifiers::modifier_control_size,
+        vec![BuiltinParam::positional("ControlSize")],
+    );
+    interp.register_struct_method_typed(
+        "fontWeight",
+        modifiers::modifier_font_weight,
+        vec![BuiltinParam::positional("FontWeight")],
+    );
+    interp.register_struct_method_typed(
+        "buttonBorderShape",
+        modifiers::modifier_button_border_shape,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "colorScheme",
+        modifiers::modifier_color_scheme,
+        vec![BuiltinParam::positional("ColorScheme")],
+    );
+    interp.register_struct_method_typed(
+        "preferredColorScheme",
+        modifiers::modifier_preferred_color_scheme,
+        vec![BuiltinParam::positional("ColorScheme")],
+    );
+    interp.register_struct_method_typed(
+        "symbolVariant",
+        modifiers::modifier_symbol_variant,
+        vec![BuiltinParam::positional("SymbolVariants")],
+    );
+    interp.register_struct_method_typed(
+        "hoverEffect",
+        modifiers::modifier_hover_effect,
+        vec![BuiltinParam::positional("HoverEffect")],
+    );
+    interp.register_struct_method_typed(
+        "menuOrder",
+        modifiers::modifier_menu_order,
+        vec![BuiltinParam::positional("MenuOrder")],
+    );
+    interp.register_struct_method_typed(
+        "contentTransition",
+        modifiers::modifier_content_transition,
+        vec![BuiltinParam::positional("ContentTransition")],
+    );
+    interp.register_struct_method_typed(
+        "scrollBounceBehavior",
+        modifiers::modifier_scroll_bounce_behavior,
+        vec![BuiltinParam::positional("ScrollBounceBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "scrollDismissesKeyboard",
+        modifiers::modifier_scroll_dismisses_keyboard,
+        vec![BuiltinParam::positional("ScrollDismissesKeyboardMode")],
+    );
+    interp.register_struct_method_typed(
+        "dynamicTypeSize",
+        modifiers::modifier_dynamic_type_size,
+        vec![BuiltinParam::positional("DynamicTypeSize")],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -1413,7 +1544,9 @@ mod tests {
                 "View.clipped",
                 "View.colorInvert",
                 "View.colorMultiply",
+                "View.colorScheme",
                 "View.compositingGroup",
+                "View.contentTransition",
                 "View.contextMenu",
                 "View.contrast",
                 "View.controlGroupStyle",
@@ -1428,6 +1561,7 @@ mod tests {
                 "View.disclosureGroupStyle",
                 "View.draggable",
                 "View.drawingGroup",
+                "View.dynamicTypeSize",
                 "View.environmentObject",
                 "View.equatable",
                 "View.fill",
@@ -1454,6 +1588,7 @@ mod tests {
                 "View.headerProminence",
                 "View.help",
                 "View.hidden",
+                "View.hoverEffect",
                 "View.hoverEffectDisabled",
                 "View.hueRotation",
                 "View.id",
@@ -1486,6 +1621,7 @@ mod tests {
                 "View.listStyle",
                 "View.mask",
                 "View.menuIndicator",
+                "View.menuOrder",
                 "View.menuStyle",
                 "View.minimumScaleFactor",
                 "View.monospaced",
@@ -1527,6 +1663,7 @@ mod tests {
                 "View.persistentSystemOverlays",
                 "View.pickerStyle",
                 "View.position",
+                "View.preferredColorScheme",
                 "View.previewDisplayName",
                 "View.privacySensitive",
                 "View.progressViewStyle",
@@ -1540,9 +1677,11 @@ mod tests {
                 "View.scaleEffect",
                 "View.scaledToFill",
                 "View.scaledToFit",
+                "View.scrollBounceBehavior",
                 "View.scrollClipDisabled",
                 "View.scrollContentBackground",
                 "View.scrollDisabled",
+                "View.scrollDismissesKeyboard",
                 "View.scrollIndicators",
                 "View.scrollIndicatorsFlash",
                 "View.scrollTargetLayout",
@@ -1557,6 +1696,7 @@ mod tests {
                 "View.submitLabel",
                 "View.symbolEffectsRemoved",
                 "View.symbolRenderingMode",
+                "View.symbolVariant",
                 "View.tabItem",
                 "View.tabViewStyle",
                 "View.tableStyle",

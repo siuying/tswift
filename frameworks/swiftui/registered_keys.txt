@@ -75,7 +75,9 @@ View.clipShape
 View.clipped
 View.colorInvert
 View.colorMultiply
+View.colorScheme
 View.compositingGroup
+View.contentTransition
 View.contextMenu
 View.contrast
 View.controlGroupStyle
@@ -90,6 +92,7 @@ View.disabled
 View.disclosureGroupStyle
 View.draggable
 View.drawingGroup
+View.dynamicTypeSize
 View.environmentObject
 View.equatable
 View.fill
@@ -116,6 +119,7 @@ View.groupBoxStyle
 View.headerProminence
 View.help
 View.hidden
+View.hoverEffect
 View.hoverEffectDisabled
 View.hueRotation
 View.id
@@ -148,6 +152,7 @@ View.listSectionSpacing
 View.listStyle
 View.mask
 View.menuIndicator
+View.menuOrder
 View.menuStyle
 View.minimumScaleFactor
 View.monospaced
@@ -189,6 +194,7 @@ View.padding
 View.persistentSystemOverlays
 View.pickerStyle
 View.position
+View.preferredColorScheme
 View.previewDisplayName
 View.privacySensitive
 View.progressViewStyle
@@ -202,9 +208,11 @@ View.saturation
 View.scaleEffect
 View.scaledToFill
 View.scaledToFit
+View.scrollBounceBehavior
 View.scrollClipDisabled
 View.scrollContentBackground
 View.scrollDisabled
+View.scrollDismissesKeyboard
 View.scrollIndicators
 View.scrollIndicatorsFlash
 View.scrollTargetLayout
@@ -219,6 +227,7 @@ View.strikethrough
 View.submitLabel
 View.symbolEffectsRemoved
 View.symbolRenderingMode
+View.symbolVariant
 View.tabItem
 View.tabViewStyle
 View.tableStyle

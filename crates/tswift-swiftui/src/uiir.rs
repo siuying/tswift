@@ -197,6 +197,14 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "AccessibilityTraits" => "accessibilityTrait",
             "AccessibilityHeadingLevel" => "headingLevel",
             "AccessibilityChildBehavior" => "childBehavior",
+            "ColorScheme" => "colorScheme",
+            "SymbolVariants" => "symbolVariant",
+            "HoverEffect" => "hoverEffect",
+            "MenuOrder" => "menuOrder",
+            "ContentTransition" => "contentTransition",
+            "ScrollBounceBehavior" => "scrollBounceBehavior",
+            "ScrollDismissesKeyboardMode" => "scrollDismissesKeyboard",
+            "DynamicTypeSize" => "dynamicTypeSize",
             _ => "token",
         };
         out.push_str("{\"$\":");

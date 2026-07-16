@@ -39,6 +39,14 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "AccessibilityChildBehavior"
             | "SubmitLabel"
             | "TextInputAutocapitalization"
+            | "ColorScheme"
+            | "SymbolVariants"
+            | "HoverEffect"
+            | "MenuOrder"
+            | "ContentTransition"
+            | "ScrollBounceBehavior"
+            | "ScrollDismissesKeyboardMode"
+            | "DynamicTypeSize"
     ) {
         return None;
     }

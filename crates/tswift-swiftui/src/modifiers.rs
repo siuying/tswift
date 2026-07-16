@@ -176,6 +176,20 @@ modifier!(modifier_navigation_bar_title, "navigationBarTitle");
 modifier!(modifier_line_height, "lineHeight");
 // No-arg marker modifiers (SwiftUI overloads whose arguments are all defaulted,
 // so a bare call carries no token) and single-value passthroughs.
+// Token-valued modifiers (registered via the typed seam so their leading-dot
+// arg resolves against a declared parameter type; see `install`).
+modifier!(modifier_color_scheme, "colorScheme");
+modifier!(modifier_preferred_color_scheme, "preferredColorScheme");
+modifier!(modifier_symbol_variant, "symbolVariant");
+modifier!(modifier_hover_effect, "hoverEffect");
+modifier!(modifier_menu_order, "menuOrder");
+modifier!(modifier_content_transition, "contentTransition");
+modifier!(modifier_scroll_bounce_behavior, "scrollBounceBehavior");
+modifier!(
+    modifier_scroll_dismisses_keyboard,
+    "scrollDismissesKeyboard"
+);
+modifier!(modifier_dynamic_type_size, "dynamicTypeSize");
 modifier!(modifier_equatable, "equatable");
 modifier!(modifier_focus_section, "focusSection");
 modifier!(modifier_ignores_safe_area, "ignoresSafeArea");
@@ -545,6 +559,20 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("listRowInsets", modifier_list_row_insets),
     ("navigationBarTitle", modifier_navigation_bar_title),
     ("lineHeight", modifier_line_height),
+    // Token-valued modifiers (also re-registered typed in `install` so their
+    // leading-dot arg resolves against a dedicated parameter type).
+    ("colorScheme", modifier_color_scheme),
+    ("preferredColorScheme", modifier_preferred_color_scheme),
+    ("symbolVariant", modifier_symbol_variant),
+    ("hoverEffect", modifier_hover_effect),
+    ("menuOrder", modifier_menu_order),
+    ("contentTransition", modifier_content_transition),
+    ("scrollBounceBehavior", modifier_scroll_bounce_behavior),
+    (
+        "scrollDismissesKeyboard",
+        modifier_scroll_dismisses_keyboard,
+    ),
+    ("dynamicTypeSize", modifier_dynamic_type_size),
     ("equatable", modifier_equatable),
     ("focusSection", modifier_focus_section),
     ("ignoresSafeArea", modifier_ignores_safe_area),
