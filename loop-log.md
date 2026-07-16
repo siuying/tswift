@@ -605,3 +605,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Verified by grid-and-presentation-modifiers golden; presubmit green.
 - Session arc: SwiftUI 50.6% → 54.0% implemented (+24 modifiers) over two
   iterations this session, all golden-verified with green presubmit.
+
+## Coverage iteration — SwiftUI tab/search/toolbar token modifiers
+
+- Coverage before → after: SwiftUI implemented 379 → 390 (54.0% → 55.6%),
+  verified 359 → 370 (51.1% → 52.7%). View +11.
+- Eleven View modifiers via the typed seam. Seven new namespaces:
+  alternatingRowBackgrounds (.automatic/.enabled/.disabled), buttonSizing
+  (.automatic/.fitted/.flexible), defaultAdaptableTabBarPlacement
+  (AdaptableTabBarPlacement), tabBarMinimizeBehavior
+  (.automatic/.onScrollDown/.onScrollUp/.never), searchPresentationToolbarBehavior
+  (.automatic/.avoidHidingContent), searchToolbarBehavior (.automatic/.minimize),
+  handGestureShortcut (.primaryAction). Multi-token: scrollEdgeEffectStyle
+  (ScrollEdgeEffectStyle + for: Edge.Set), toolbarForegroundStyle (Color +
+  for: ToolbarPlacement). Two no-arg markers: horizontalRadioGroupLayout,
+  backgroundExtensionEffect.
+- Verified by tab-search-toolbar-modifiers golden; presubmit green.
+- Session arc: SwiftUI 50.6% → 55.6% implemented (+35 modifiers) over three
+  iterations this session, all golden-verified with green presubmit.
