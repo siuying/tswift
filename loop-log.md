@@ -351,3 +351,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Added chrome-and-layout SwiftUI golden fixture. presubmit green.
 - Blockers: `.automatic`-token modifiers need contextual enum-typing;
   remaining View modifiers are closure/binding/preference/geometry APIs.
+
+## Coverage iteration — SwiftUI label/progress/table/navigation style setters
+
+- Coverage before → after: SwiftUI implemented 272 → 278 (38.7% → 39.6%),
+  verified 252 → 258 (35.9% → 36.8%). View section +6. Other frameworks
+  unchanged.
+- Implemented 6 style-setter View modifiers reusing the shared `_ControlStyle`
+  token namespace: labelStyle (.iconOnly/.titleOnly/.titleAndIcon),
+  progressViewStyle (.circular), textEditorStyle (.plain), tableStyle (.inset),
+  navigationViewStyle (.stack/.columns), navigationSplitViewStyle
+  (.balanced/.prominentDetail). Added 7 unique tokens to `_ControlStyle`
+  (iconOnly, titleOnly, titleAndIcon, circular, stack, balanced,
+  prominentDetail). `.linear` deliberately not added for progressViewStyle —
+  collides with Animation.linear in the single leading-dot namespace.
+- Added more-styles SwiftUI golden fixture. presubmit green.
+- Blockers: `.automatic`/`.linear` and other cross-enum-colliding tokens still
+  need contextual enum typing; remaining View modifiers are
+  closure/binding/preference/geometry APIs.
