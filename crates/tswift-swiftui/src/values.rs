@@ -55,6 +55,10 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "TextScale"
             | "WritingToolsBehavior"
             | "ImageDynamicRange"
+            | "TextSelectionAffinity"
+            | "ScrollInputBehavior"
+            | "DialogSeverity"
+            | "UITextContentType"
     ) {
         return None;
     }

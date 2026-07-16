@@ -202,6 +202,15 @@ modifier!(modifier_text_scale, "textScale");
 modifier!(modifier_writing_tools_behavior, "writingToolsBehavior");
 modifier!(modifier_allowed_dynamic_range, "allowedDynamicRange");
 modifier!(modifier_labels_visibility, "labelsVisibility");
+modifier!(modifier_text_content_type, "textContentType");
+modifier!(modifier_text_selection_affinity, "textSelectionAffinity");
+modifier!(modifier_scroll_input_behavior, "scrollInputBehavior");
+modifier!(modifier_dialog_severity, "dialogSeverity");
+modifier!(modifier_default_hover_effect, "defaultHoverEffect");
+modifier!(
+    modifier_presentation_drag_indicator,
+    "presentationDragIndicator"
+);
 modifier!(modifier_equatable, "equatable");
 modifier!(modifier_focus_section, "focusSection");
 modifier!(modifier_ignores_safe_area, "ignoresSafeArea");
@@ -597,6 +606,15 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("writingToolsBehavior", modifier_writing_tools_behavior),
     ("allowedDynamicRange", modifier_allowed_dynamic_range),
     ("labelsVisibility", modifier_labels_visibility),
+    ("textContentType", modifier_text_content_type),
+    ("textSelectionAffinity", modifier_text_selection_affinity),
+    ("scrollInputBehavior", modifier_scroll_input_behavior),
+    ("dialogSeverity", modifier_dialog_severity),
+    ("defaultHoverEffect", modifier_default_hover_effect),
+    (
+        "presentationDragIndicator",
+        modifier_presentation_drag_indicator,
+    ),
     ("equatable", modifier_equatable),
     ("focusSection", modifier_focus_section),
     ("ignoresSafeArea", modifier_ignores_safe_area),

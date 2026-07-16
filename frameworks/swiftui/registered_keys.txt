@@ -88,8 +88,10 @@ View.controlSize
 View.coordinateSpace
 View.cornerRadius
 View.datePickerStyle
+View.defaultHoverEffect
 View.defaultWheelPickerItemHeight
 View.deleteDisabled
+View.dialogSeverity
 View.disableAutocorrection
 View.disabled
 View.disclosureGroupStyle
@@ -202,6 +204,7 @@ View.persistentSystemOverlays
 View.pickerStyle
 View.position
 View.preferredColorScheme
+View.presentationDragIndicator
 View.previewDisplayName
 View.privacySensitive
 View.progressViewStyle
@@ -222,6 +225,7 @@ View.scrollDisabled
 View.scrollDismissesKeyboard
 View.scrollIndicators
 View.scrollIndicatorsFlash
+View.scrollInputBehavior
 View.scrollTargetLayout
 View.selectionDisabled
 View.shadow
@@ -241,10 +245,12 @@ View.tableStyle
 View.tag
 View.task
 View.textCase
+View.textContentType
 View.textEditorStyle
 View.textFieldStyle
 View.textInputAutocapitalization
 View.textScale
+View.textSelectionAffinity
 View.tint
 View.toggleStyle
 View.tracking

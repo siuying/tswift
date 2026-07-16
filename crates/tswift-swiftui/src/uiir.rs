@@ -213,6 +213,10 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "TextScale" => "textScale",
             "WritingToolsBehavior" => "writingToolsBehavior",
             "ImageDynamicRange" => "allowedDynamicRange",
+            "TextSelectionAffinity" => "textSelectionAffinity",
+            "ScrollInputBehavior" => "scrollInputBehavior",
+            "DialogSeverity" => "dialogSeverity",
+            "UITextContentType" => "textContentType",
             _ => "token",
         };
         out.push_str("{\"$\":");

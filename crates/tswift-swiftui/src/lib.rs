@@ -612,6 +612,45 @@ struct ImageDynamicRange {
     static let constrainedHigh = ImageDynamicRange(token: "constrainedHigh")
     static let high = ImageDynamicRange(token: "high")
 }
+struct TextSelectionAffinity {
+    let token: String
+    static let automatic = TextSelectionAffinity(token: "automatic")
+    static let downstream = TextSelectionAffinity(token: "downstream")
+    static let upstream = TextSelectionAffinity(token: "upstream")
+}
+struct ScrollInputBehavior {
+    let token: String
+    static let automatic = ScrollInputBehavior(token: "automatic")
+    static let enabled = ScrollInputBehavior(token: "enabled")
+    static let disabled = ScrollInputBehavior(token: "disabled")
+}
+struct DialogSeverity {
+    let token: String
+    static let automatic = DialogSeverity(token: "automatic")
+    static let standard = DialogSeverity(token: "standard")
+    static let critical = DialogSeverity(token: "critical")
+}
+struct UITextContentType {
+    let token: String
+    static let name = UITextContentType(token: "name")
+    static let givenName = UITextContentType(token: "givenName")
+    static let familyName = UITextContentType(token: "familyName")
+    static let nickname = UITextContentType(token: "nickname")
+    static let jobTitle = UITextContentType(token: "jobTitle")
+    static let organizationName = UITextContentType(token: "organizationName")
+    static let location = UITextContentType(token: "location")
+    static let fullStreetAddress = UITextContentType(token: "fullStreetAddress")
+    static let addressCity = UITextContentType(token: "addressCity")
+    static let postalCode = UITextContentType(token: "postalCode")
+    static let telephoneNumber = UITextContentType(token: "telephoneNumber")
+    static let emailAddress = UITextContentType(token: "emailAddress")
+    static let URL = UITextContentType(token: "URL")
+    static let creditCardNumber = UITextContentType(token: "creditCardNumber")
+    static let username = UITextContentType(token: "username")
+    static let password = UITextContentType(token: "password")
+    static let newPassword = UITextContentType(token: "newPassword")
+    static let oneTimeCode = UITextContentType(token: "oneTimeCode")
+}
 struct DynamicTypeSize {
     let token: String
     static let xSmall = DynamicTypeSize(token: "xSmall")
@@ -1305,6 +1344,36 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         vec![BuiltinParam::positional("Color")],
     );
     interp.register_struct_method_typed(
+        "textContentType",
+        modifiers::modifier_text_content_type,
+        vec![BuiltinParam::positional("UITextContentType")],
+    );
+    interp.register_struct_method_typed(
+        "textSelectionAffinity",
+        modifiers::modifier_text_selection_affinity,
+        vec![BuiltinParam::positional("TextSelectionAffinity")],
+    );
+    interp.register_struct_method_typed(
+        "scrollInputBehavior",
+        modifiers::modifier_scroll_input_behavior,
+        vec![BuiltinParam::positional("ScrollInputBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "dialogSeverity",
+        modifiers::modifier_dialog_severity,
+        vec![BuiltinParam::positional("DialogSeverity")],
+    );
+    interp.register_struct_method_typed(
+        "defaultHoverEffect",
+        modifiers::modifier_default_hover_effect,
+        vec![BuiltinParam::positional("HoverEffect")],
+    );
+    interp.register_struct_method_typed(
+        "presentationDragIndicator",
+        modifiers::modifier_presentation_drag_indicator,
+        vec![BuiltinParam::positional("Visibility")],
+    );
+    interp.register_struct_method_typed(
         "textInputAutocapitalization",
         modifiers::modifier_text_input_autocapitalization,
         vec![BuiltinParam::positional("TextInputAutocapitalization")],
@@ -1699,8 +1768,10 @@ mod tests {
                 "View.coordinateSpace",
                 "View.cornerRadius",
                 "View.datePickerStyle",
+                "View.defaultHoverEffect",
                 "View.defaultWheelPickerItemHeight",
                 "View.deleteDisabled",
+                "View.dialogSeverity",
                 "View.disableAutocorrection",
                 "View.disabled",
                 "View.disclosureGroupStyle",
@@ -1813,6 +1884,7 @@ mod tests {
                 "View.pickerStyle",
                 "View.position",
                 "View.preferredColorScheme",
+                "View.presentationDragIndicator",
                 "View.previewDisplayName",
                 "View.privacySensitive",
                 "View.progressViewStyle",
@@ -1833,6 +1905,7 @@ mod tests {
                 "View.scrollDismissesKeyboard",
                 "View.scrollIndicators",
                 "View.scrollIndicatorsFlash",
+                "View.scrollInputBehavior",
                 "View.scrollTargetLayout",
                 "View.selectionDisabled",
                 "View.shadow",
@@ -1852,10 +1925,12 @@ mod tests {
                 "View.tag",
                 "View.task",
                 "View.textCase",
+                "View.textContentType",
                 "View.textEditorStyle",
                 "View.textFieldStyle",
                 "View.textInputAutocapitalization",
                 "View.textScale",
+                "View.textSelectionAffinity",
                 "View.tint",
                 "View.toggleStyle",
                 "View.tracking",
