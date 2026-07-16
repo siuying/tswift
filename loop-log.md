@@ -551,3 +551,16 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Crossed the SwiftUI 49% impl mark; still on the modifier surface as the
   highest-yield target (stdlib/Foundation remainders are unsafe-pointer /
   format-token APIs infeasible for a headless interpreter).
+
+## Coverage iteration — SwiftUI toolbar/margin modifiers (cross 50%)
+
+- Coverage before → after: SwiftUI implemented 349 → 355 (49.7% → 50.6%),
+  verified 329 → 335 (46.9% → 47.7%). View +6. **Crossed 50% implemented.**
+- New ToolbarPlacement namespace (.automatic/.navigationBar/.tabBar/.bottomBar/
+  .windowToolbar) unlocks four bar-targeted modifiers, each a leading token
+  (Visibility or ColorScheme) plus a `for:` ToolbarPlacement selector — first
+  multi-token modifiers where BOTH the positional and labeled args are typed
+  token params. Plus value passthroughs contentMargins (CGFloat) and
+  previewDevice (String).
+- Cumulative session arc: SwiftUI 47.3% → 50.6% implemented (+23 modifiers)
+  across three iterations, all green presubmit + golden-verified.
