@@ -239,3 +239,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   Decimal cannot represent infinity; `parse`/`parseStrategy`/`consuming` need
   string-index parsing plumbing; `encode`/`hash(into:)` need Codable/Hasher
   seams) deferred.
+
+## Coverage iteration — SwiftUI container-style & text-input modifiers
+
+- Coverage before → after: SwiftUI verified 211 → 224 (30.1% → 31.9%),
+  implemented 228 → 244 (32.5% → 34.8%). View section 116 → 132 implemented.
+  stdlib 71.2%, Foundation 72.0%, SwiftData 8.8% unchanged.
+- Implemented 16 View modifiers. Container/control style setters
+  (toggleStyle, menuStyle, gaugeStyle, formStyle, groupBoxStyle,
+  labeledContentStyle, indexViewStyle, tabViewStyle, datePickerStyle,
+  disclosureGroupStyle, controlGroupStyle) reuse the shared `_ControlStyle`
+  token namespace (unique names, host disambiguates by modifier name) —
+  extended it with button/borderlessButton/checkbox/columns/page/card/
+  navigationLink/accessory*/graphical/compact/field/stepper tokens.
+  Text-input modifiers: submitLabel (new SubmitLabel token), textInput-
+  Autocapitalization (new TextInputAutocapitalization token), and
+  autocorrectionDisabled/disableAutocorrection/focusable Bool toggles.
+  New token types wired into `token_of` so they serialize as `{"$":"token"}`.
+- Added `style-and-input` golden fixture + 2 serialization unit tests;
+  regenerated the hardcoded registered-keys assertion from the registry.
+- presubmit green. Blockers: `colorScheme`/`preferredColorScheme` deferred —
+  `.light` collides with `FontWeight.light` and needs contextual arg typing;
+  same reason `.automatic`-only styles (groupBox/labeledContent/disclosure
+  Group) are registered but exercised only via qualified tokens (implemented,
+  not verified). imageScale/keyboardType deferred (nested-type / UIKit token).
