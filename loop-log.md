@@ -646,3 +646,31 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: remaining View modifiers are dominated by closure/binding-driven
   presentation (sheet/popover/alert/fullScreenCover), preference/anchor/geometry
   APIs, and effect/gesture modifiers that need more than a metadata record.
+
+## Coverage iteration — SwiftData ModelContext change tracking + transactions
+
+- Coverage before → after: SwiftData implemented 12 → 19 (10.5% → 16.7%),
+  verified 10 → 17 (8.8% → 14.9%). ModelContext 5 → 12 (17.9% → 42.9%).
+  stdlib/Foundation/SwiftUI unchanged.
+- Seven ModelContext members, real behavior against the in-context change
+  sets (inserted/tracked/deleted already maintained by insert/delete/save):
+  hasChanges (bool), insertedModelsArray / changedModelsArray /
+  deletedModelsArray (arrays of model objects), fetchCount(_:) (mirrors
+  fetch's in-context semantics — pending-deleted excluded — by counting the
+  same plan), rollback() (reverts dirty tracked objects to their last-flushed
+  snapshot, un-marks pending deletes back into tracked, drops pending
+  inserts), transaction(_:) (runs the closure then save()s atomically; on
+  throw discards partial changes via rollback and re-propagates). Dirty
+  detection compares current row_values to the Tracked snapshot; encoding
+  errors treated as "not dirty" so a tracking query never spuriously throws.
+- Registered hasChanges/*ModelsArray as contextual properties, fetchCount/
+  rollback/transaction as method intrinsics. Verified end-to-end by new
+  swiftdata_change_tracking golden (in-memory SQLite via the CLI's libsqlite3
+  backing). presubmit green (exit 0).
+- Shift from SwiftUI token modifiers (diminishing — remaining need
+  closures/bindings) to SwiftData, the lowest-coverage framework (was 10.5%),
+  where the existing change-tracking state made real-behavior wins cheap.
+- Blockers/next: remaining ModelContext members split into PersistentIdentifier
+  plumbing (registeredModel, model(for:)), history/undo (deleteHistory,
+  fetchHistory, undoManager), and notification hooks (willSave/didSave). Schema
+  and PersistentModel sections (0%) need @Model macro introspection surface.
