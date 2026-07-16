@@ -177,3 +177,13 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Added `Visibility` token type + `list-scroll-styling` fixture + unit test.
 - presubmit green. Blockers: badge/redacted/blendMode/controlSize/imageScale
   need dedicated token enums or nested types — deferred.
+
+## Coverage iteration — token-enum view modifiers
+
+- Coverage before → after: SwiftUI verified 186 → 191 (26.5% → 27.2%),
+  implemented 203 → 208.
+- Implemented blendMode/controlSize/symbolRenderingMode/redacted/truncationMode
+  with dedicated token types (BlendMode/ControlSize/SymbolRenderingMode/
+  RedactionReasons/TruncationMode), each serialized as a tagged token.
+- Added `token-modifiers` fixture + blendMode unit test.
+- presubmit green.
