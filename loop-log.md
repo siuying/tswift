@@ -516,3 +516,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Cumulative SwiftUI arc this session: 40.0% → 47.3% implemented (+51
   modifiers), after breaking the token-collision plateau with the typed
   register_struct_method_typed seam.
+
+## Coverage iteration — SwiftUI presentation/window metadata modifiers
+
+- Coverage before → after: SwiftUI implemented 332 → 341 (47.3% → 48.6%),
+  verified 312 → 321 (44.4% → 45.7%). View +9. stdlib/Foundation unchanged.
+- Nine View modifiers, all recording real metadata onto the UIIR node
+  (render-host semantics; hosts honor/ignore). Value passthroughs (no token):
+  presentationCornerRadius (CGFloat), contentCaptureProtected (Bool),
+  dialogPreventsAppTermination (Bool), listRowHoverEffectDisabled (Bool),
+  typeSelectEquivalent (String), handlesExternalEvents (preferring:/allowing:
+  [String] sets), navigationDocument (URL). Two token modifiers via the typed
+  seam reusing existing namespaces: listRowHoverEffect (HoverEffect),
+  sliderThumbVisibility (Visibility) — no new namespaces, no cascade.
+- Verified by new presentation-metadata golden fixture; presubmit green.
+- Note: stdlib (73.2%) and Foundation (75.3%) remaining gaps are dominated by
+  unsafe-pointer / withUnsafeBytes / FormatStyle-token APIs that a headless
+  interpreter can't implement with real behavior — SwiftUI modifier surface
+  remains the highest-yield target.
