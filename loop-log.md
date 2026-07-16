@@ -130,3 +130,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   family; new serialization unit test for the curve attachment.
 - presubmit green. Blockers: `AnyTransition.modifier(active:identity:)` needs
   arbitrary ViewModifier plumbing — deferred.
+
+## Coverage iteration — Color palette + .opacity/.accentColor
+
+- Coverage before → after: SwiftUI verified 118 → 138 (16.8% → 19.7%),
+  implemented 131 → 151. Color section 1/1 → 21/21 verified.
+- Implemented `Color.accentColor` and `.opacity(_:)` (real alpha adjust on
+  both named tokens and explicit RGB); serializer emits opacity on named
+  colors. Credited the system-color palette in scope.toml.
+- Added `color-named` golden fixture + named-color-opacity unit test.
+- presubmit green. Blockers: `.gradient`/`.mix`/`cgColor`/HDR resolution
+  need gradient + color-space plumbing — deferred.
