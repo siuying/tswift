@@ -6,8 +6,10 @@ FetchDescriptor.sortBy
 ModelConfiguration.init
 ModelConfiguration.isStoredInMemoryOnly
 ModelConfiguration.name
+ModelContainer.deleteAllData
 ModelContainer.init
 ModelContainer.mainContext
+ModelContainer.schema
 ModelContext.changedModelsArray
 ModelContext.delete
 ModelContext.deletedModelsArray

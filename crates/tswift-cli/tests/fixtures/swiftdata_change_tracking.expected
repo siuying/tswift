@@ -19,3 +19,5 @@ descriptor offset: 1
 descriptor sortBy count: 1
 descriptor has predicate: false
 paged titles: ["Dune", "Snow Crash"]
+schema entities: ["Book"]
+fetchCount after deleteAllData: 0

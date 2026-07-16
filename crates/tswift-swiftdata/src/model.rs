@@ -311,6 +311,15 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
 
     let container = BuiltinReceiver::register_extension("ModelContainer");
     interp.register_contextual_property(container, "mainContext", container_main_context);
+    interp.register_contextual_property(container, "schema", container_schema);
+    interp.register_intrinsic(
+        container,
+        "deleteAllData",
+        MethodEntry {
+            mutating: false,
+            func: container_delete_all_data,
+        },
+    );
 
     let context = BuiltinReceiver::register_extension("ModelContext");
     for (name, func) in [
@@ -901,6 +910,76 @@ fn container_main_context(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResu
             .get(&cid)
             .map(|c| c.main_context.clone())
             .ok_or_else(|| type_error("ModelContainer.mainContext: unknown container"))
+    })
+}
+
+/// `ModelContainer.schema` — a lightweight `Schema` value carrying the entity
+/// (model) type names the container was created with, in registration order.
+fn container_schema(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    let Some(cid) = object_int_field(&recv, "__cid") else {
+        return Err(type_error("ModelContainer.schema: not a ModelContainer"));
+    };
+    let entities = with_state(ctx.interpreter_id(), |s| {
+        s.containers.get(&cid).map(|c| {
+            c.schemas
+                .iter()
+                .map(|sc| SwiftValue::Str(sc.type_name.clone()))
+                .collect::<Vec<_>>()
+        })
+    })
+    .ok_or_else(|| type_error("ModelContainer.schema: unknown container"))?;
+    Ok(make_object(
+        "Schema",
+        vec![("entityNames".into(), SwiftValue::Array(Rc::new(entities)))],
+    ))
+}
+
+/// `ModelContainer.deleteAllData()` — clear every row from every table the
+/// container manages, then discard the in-context tracking of every context on
+/// that connection (their cached rows are now gone). Real behavior against the
+/// store: one `DELETE FROM <table>` per model type.
+fn container_delete_all_data(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let cid = object_int_field(&recv, "__cid")
+        .ok_or_else(|| type_error("ModelContainer.deleteAllData(): not a ModelContainer"))?;
+    let iid = ctx.interpreter_id();
+    let resolved = with_state(iid, |s| {
+        let container = s.containers.get(&cid)?;
+        let main_ctx_id = object_int_field(&container.main_context, "__ctxid")?;
+        let handle = s.contexts.get(&main_ctx_id)?.handle;
+        Some((handle, Rc::clone(&container.schemas)))
+    });
+    let Some((handle, schemas)) = resolved else {
+        return Err(type_error(
+            "ModelContainer.deleteAllData(): unknown container",
+        ));
+    };
+    for schema in schemas.iter() {
+        execute(
+            ctx,
+            handle,
+            &format!("DELETE FROM {}", quote_ident(&schema.table)),
+            &[],
+        )?;
+    }
+    // Every context on this connection has now-stale caches; reset their
+    // tracking so subsequent fetches see the emptied store.
+    with_state(iid, |s| {
+        for state in s.contexts.values_mut() {
+            if state.handle == handle {
+                state.inserted.clear();
+                state.tracked.clear();
+                state.deleted.clear();
+                state.by_identity.clear();
+            }
+        }
+    });
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
     })
 }
 

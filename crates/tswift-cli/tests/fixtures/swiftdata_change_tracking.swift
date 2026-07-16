@@ -78,6 +78,13 @@ do {
     print("descriptor has predicate: \(descriptor.predicate != nil)")
     let page = try ctx.fetch(descriptor)
     print("paged titles: \(page.map { $0.title })")
+
+    // Container schema exposes its entity names.
+    print("schema entities: \(container.schema.entityNames)")
+
+    // deleteAllData clears every table.
+    container.deleteAllData()
+    print("fetchCount after deleteAllData: \(try ctx.fetchCount(FetchDescriptor<Book>()))")
 } catch {
     print("unexpected: \(error)")
 }
