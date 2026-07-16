@@ -227,7 +227,7 @@
         {
           "name": "allowsWindowActivationEvents",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "alternatingRowBackgrounds",
@@ -297,7 +297,7 @@
         {
           "name": "badgeProminence",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "baselineOffset",
@@ -332,7 +332,7 @@
         {
           "name": "buttonBorderShape",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "buttonRepeatBehavior",
@@ -512,7 +512,7 @@
         {
           "name": "defaultWheelPickerItemHeight",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "defersSystemGestures",
@@ -722,7 +722,7 @@
         {
           "name": "findDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "findNavigator",
@@ -742,7 +742,7 @@
         {
           "name": "focusEffectDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focusScope",
@@ -877,7 +877,7 @@
         {
           "name": "gridCellColumns",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "gridCellUnsizedAxes",
@@ -907,7 +907,7 @@
         {
           "name": "headerProminence",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "help",
@@ -937,7 +937,7 @@
         {
           "name": "hoverEffectDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hoverEffectGroup",
@@ -992,7 +992,7 @@
         {
           "name": "inspectorColumnWidth",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "interactionActivityTrackingTag",
@@ -1042,17 +1042,17 @@
         {
           "name": "labelIconToTitleSpacing",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "labelReservedIconWidth",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "labelStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "labeledContentStyle",
@@ -1152,7 +1152,7 @@
         {
           "name": "listSectionIndexVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listSectionMargins",
@@ -1217,7 +1217,7 @@
         {
           "name": "menuIndicator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "menuOrder",
@@ -1267,12 +1267,12 @@
         {
           "name": "navigationBarBackButtonHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationBarHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationBarItems",
@@ -1302,22 +1302,22 @@
         {
           "name": "navigationLinkIndicatorVisibility",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationSplitViewColumnWidth",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationSplitViewStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationSubtitle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationTitle",
@@ -1332,7 +1332,7 @@
         {
           "name": "navigationViewStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "offset",
@@ -1567,7 +1567,7 @@
         {
           "name": "persistentSystemOverlays",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "phaseAnimator",
@@ -1677,7 +1677,7 @@
         {
           "name": "previewDisplayName",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "previewInterfaceOrientation",
@@ -1692,12 +1692,12 @@
         {
           "name": "privacySensitive",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "progressViewStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectionEffect",
@@ -1722,7 +1722,7 @@
         {
           "name": "replaceDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "rotation3DEffect",
@@ -1817,7 +1817,7 @@
         {
           "name": "scrollIndicatorsFlash",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollInputBehavior",
@@ -1837,7 +1837,7 @@
         {
           "name": "scrollTargetLayout",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollTransition",
@@ -1932,22 +1932,22 @@
         {
           "name": "speechAdjustedPitch",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "speechAlwaysIncludesPunctuation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "speechAnnouncementsQueued",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "speechSpellsOutCharacters",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "springLoadingBehavior",
@@ -1962,7 +1962,7 @@
         {
           "name": "statusBarHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "strikethrough",
@@ -2002,7 +2002,7 @@
         {
           "name": "symbolEffectsRemoved",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "symbolRenderingMode",
@@ -2072,7 +2072,7 @@
         {
           "name": "tableStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tag",
@@ -2097,7 +2097,7 @@
         {
           "name": "textEditorStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textFieldStyle",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 121,
+        "implemented": 158,
         "partial": 11,
-        "missing": 336,
+        "missing": 299,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 224,
+    "implemented": 261,
     "partial": 20,
-    "missing": 458,
+    "missing": 421,
     "out_of_scope": 0,
     "total": 702
   }

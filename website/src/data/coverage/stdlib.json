@@ -67,7 +67,7 @@
         {
           "name": "formIndex",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hash",
@@ -166,9 +166,9 @@
         }
       ],
       "counts": {
-        "implemented": 21,
+        "implemented": 22,
         "partial": 0,
-        "missing": 11,
+        "missing": 10,
         "out_of_scope": 0,
         "total": 32
       }
@@ -224,7 +224,7 @@
         {
           "name": "formIndex",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hash",
@@ -323,9 +323,9 @@
         }
       ],
       "counts": {
-        "implemented": 17,
+        "implemented": 18,
         "partial": 0,
-        "missing": 12,
+        "missing": 11,
         "out_of_scope": 0,
         "total": 29
       }
@@ -652,7 +652,7 @@
         {
           "name": "formIndex",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hash",
@@ -751,9 +751,9 @@
         }
       ],
       "counts": {
-        "implemented": 19,
+        "implemented": 20,
         "partial": 0,
-        "missing": 11,
+        "missing": 10,
         "out_of_scope": 0,
         "total": 30
       }
@@ -2392,7 +2392,7 @@
         {
           "name": "formIndex",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hashValue",
@@ -2506,9 +2506,9 @@
         }
       ],
       "counts": {
-        "implemented": 19,
+        "implemented": 20,
         "partial": 0,
-        "missing": 14,
+        "missing": 13,
         "out_of_scope": 0,
         "total": 33
       }
@@ -2762,9 +2762,9 @@
     }
   ],
   "totals": {
-    "implemented": 364,
+    "implemented": 368,
     "partial": 0,
-    "missing": 147,
+    "missing": 143,
     "out_of_scope": 0,
     "total": 511
   }

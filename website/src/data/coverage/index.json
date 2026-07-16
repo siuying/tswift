@@ -4,9 +4,9 @@
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {
-        "implemented": 443,
+        "implemented": 461,
         "partial": 2,
-        "missing": 170,
+        "missing": 152,
         "out_of_scope": 0,
         "total": 615
       }
@@ -15,9 +15,9 @@
       "framework": "stdlib",
       "display_name": "Swift stdlib",
       "totals": {
-        "implemented": 364,
+        "implemented": 368,
         "partial": 0,
-        "missing": 147,
+        "missing": 143,
         "out_of_scope": 0,
         "total": 511
       }
@@ -37,9 +37,9 @@
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {
-        "implemented": 224,
+        "implemented": 261,
         "partial": 20,
-        "missing": 458,
+        "missing": 421,
         "out_of_scope": 0,
         "total": 702
       }
