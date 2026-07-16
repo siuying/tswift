@@ -162,8 +162,14 @@ View.navigationViewStyle
 View.offset
 View.onAppear
 View.onChange
+View.onDeleteCommand
 View.onDisappear
+View.onDrag
+View.onExitCommand
+View.onHover
 View.onLongPressGesture
+View.onOpenURL
+View.onPlayPauseCommand
 View.onSubmit
 View.onTapGesture
 View.opacity
@@ -176,6 +182,7 @@ View.previewDisplayName
 View.privacySensitive
 View.progressViewStyle
 View.redacted
+View.refreshable
 View.replaceDisabled
 View.resizable
 View.rotationEffect

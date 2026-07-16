@@ -708,6 +708,13 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("onLongPressGesture", modifier_on_long_press_gesture),
     ("onSubmit", modifier_on_submit),
     ("onAppear", modifier_on_appear),
+    ("onHover", modifier_on_hover),
+    ("onOpenURL", modifier_on_open_url),
+    ("refreshable", modifier_refreshable),
+    ("onDeleteCommand", modifier_on_delete_command),
+    ("onExitCommand", modifier_on_exit_command),
+    ("onPlayPauseCommand", modifier_on_play_pause_command),
+    ("onDrag", modifier_on_drag),
     ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
@@ -985,6 +992,40 @@ fn modifier_on_long_press_gesture(
     }
     attach_event(recv, "onLongPressGesture", "longPress", marker_args, action)
 }
+
+/// Define a single-closure event-handler modifier: record a `$marker` marker
+/// and bind the (optional) trailing closure under the `$event` handler key
+/// (ADR-0013 §3). The closure never serializes — only the marker reaches the
+/// UIIR — so the host wires the corresponding listener and fires the action.
+macro_rules! event_handler {
+    ($fn_name:ident, $marker:literal, $event:literal) => {
+        fn $fn_name(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+            let action = args
+                .into_iter()
+                .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+            attach_event(recv, $marker, $event, Vec::new(), action)
+        }
+    };
+}
+
+// Single-closure event handlers. Each records a marker and binds its action
+// under a distinct event key; the closure argument (hover state, opened URL,
+// etc.) is supplied by the host at event time.
+event_handler!(modifier_on_hover, "onHover", "hover");
+event_handler!(modifier_on_open_url, "onOpenURL", "openURL");
+event_handler!(modifier_refreshable, "refreshable", "refresh");
+event_handler!(
+    modifier_on_delete_command,
+    "onDeleteCommand",
+    "deleteCommand"
+);
+event_handler!(modifier_on_exit_command, "onExitCommand", "exitCommand");
+event_handler!(
+    modifier_on_play_pause_command,
+    "onPlayPauseCommand",
+    "playPauseCommand"
+);
+event_handler!(modifier_on_drag, "onDrag", "drag");
 
 /// `.onSubmit(of:_:)` — fire `action` when the user submits a text field. The
 /// `of:` `SubmitTriggers` token is out of scope (all submits route the same);
