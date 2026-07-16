@@ -381,3 +381,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: same as prior SwiftUI iterations — remaining modifiers are
   cross-enum-colliding tokens (need contextual typing) or closure/binding/
   preference/geometry APIs.
+
+## Coverage iteration — Double sign/width & masking-shift assignments
+
+- Coverage before → after: stdlib implemented 368 → 374 (72.0% → 73.2%),
+  verified 368 → 374 (fully verified). Foundation/SwiftUI/SwiftData unchanged.
+- Pivoted off the diminishing-returns SwiftUI colliding-token modifiers to
+  real-behavior stdlib numerics. Implemented Double.sign (returns a
+  FloatingPointSign enum via is_sign_negative), Double.significandWidth
+  (MSB−LSB span of the significand magnitude, −1 for zero/non-finite), and
+  the Double.quietNaN/signalingNaN type constants (double_type_constant).
+  Added &<<= / &>>= masking-shift compound assignments to the parser's
+  is_assignment set so they fold through ops.rs's existing &<< / &>> arms.
+- Registered new keys, updated stdlib scope.toml core_members (Int +
+  &<<=/&>>=, Double + quietNaN/signalingNaN) and the coverage tool's
+  _OP_TOKENS (added &<<=/&>>=). Two new golden fixtures. presubmit green.
+- Blockers: remaining stdlib misses are dominated by unsafe-pointer/span
+  APIs, customMirror/hash/encode reflection hooks, and init/subscript that
+  need dedicated dispatch — each needs more than a passthrough.
