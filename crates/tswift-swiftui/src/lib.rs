@@ -542,6 +542,17 @@ struct _ControlStyle {
     static let compact = _ControlStyle(token: "compact")
     static let field = _ControlStyle(token: "field")
     static let stepper = _ControlStyle(token: "stepper")
+    // Label / progress-view / table / navigation-view / navigation-split-view
+    // styles. Names stay unique across the shared namespace (`.linear` is
+    // intentionally omitted from progressViewStyle — it collides with
+    // `Animation.linear` — so fixtures exercise `.circular` instead).
+    static let iconOnly = _ControlStyle(token: "iconOnly")
+    static let titleOnly = _ControlStyle(token: "titleOnly")
+    static let titleAndIcon = _ControlStyle(token: "titleAndIcon")
+    static let circular = _ControlStyle(token: "circular")
+    static let stack = _ControlStyle(token: "stack")
+    static let balanced = _ControlStyle(token: "balanced")
+    static let prominentDetail = _ControlStyle(token: "prominentDetail")
 }
 // `SubmitLabel` — the keyboard return-key label for `.submitLabel(_:)`.
 struct SubmitLabel {
@@ -1419,6 +1430,7 @@ mod tests {
                 "View.kerning",
                 "View.labelIconToTitleSpacing",
                 "View.labelReservedIconWidth",
+                "View.labelStyle",
                 "View.labeledContentStyle",
                 "View.labelsHidden",
                 "View.layoutPriority",
@@ -1444,8 +1456,10 @@ mod tests {
                 "View.navigationDestination",
                 "View.navigationLinkIndicatorVisibility",
                 "View.navigationSplitViewColumnWidth",
+                "View.navigationSplitViewStyle",
                 "View.navigationSubtitle",
                 "View.navigationTitle",
+                "View.navigationViewStyle",
                 "View.offset",
                 "View.onAppear",
                 "View.onChange",
@@ -1460,6 +1474,7 @@ mod tests {
                 "View.pickerStyle",
                 "View.previewDisplayName",
                 "View.privacySensitive",
+                "View.progressViewStyle",
                 "View.redacted",
                 "View.replaceDisabled",
                 "View.resizable",
@@ -1487,9 +1502,11 @@ mod tests {
                 "View.symbolRenderingMode",
                 "View.tabItem",
                 "View.tabViewStyle",
+                "View.tableStyle",
                 "View.tag",
                 "View.task",
                 "View.textCase",
+                "View.textEditorStyle",
                 "View.textFieldStyle",
                 "View.textInputAutocapitalization",
                 "View.tint",

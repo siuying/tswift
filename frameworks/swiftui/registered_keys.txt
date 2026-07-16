@@ -119,6 +119,7 @@ View.italic
 View.kerning
 View.labelIconToTitleSpacing
 View.labelReservedIconWidth
+View.labelStyle
 View.labeledContentStyle
 View.labelsHidden
 View.layoutPriority
@@ -144,8 +145,10 @@ View.navigationBarHidden
 View.navigationDestination
 View.navigationLinkIndicatorVisibility
 View.navigationSplitViewColumnWidth
+View.navigationSplitViewStyle
 View.navigationSubtitle
 View.navigationTitle
+View.navigationViewStyle
 View.offset
 View.onAppear
 View.onChange
@@ -160,6 +163,7 @@ View.persistentSystemOverlays
 View.pickerStyle
 View.previewDisplayName
 View.privacySensitive
+View.progressViewStyle
 View.redacted
 View.replaceDisabled
 View.resizable
@@ -187,9 +191,11 @@ View.symbolEffectsRemoved
 View.symbolRenderingMode
 View.tabItem
 View.tabViewStyle
+View.tableStyle
 View.tag
 View.task
 View.textCase
+View.textEditorStyle
 View.textFieldStyle
 View.textInputAutocapitalization
 View.tint

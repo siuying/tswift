@@ -146,6 +146,19 @@ modifier!(modifier_tab_view_style, "tabViewStyle");
 modifier!(modifier_date_picker_style, "datePickerStyle");
 modifier!(modifier_disclosure_group_style, "disclosureGroupStyle");
 modifier!(modifier_control_group_style, "controlGroupStyle");
+// Additional style setters sharing the same `_ControlStyle` token namespace
+// (labelStyle → .iconOnly/.titleOnly/.titleAndIcon; progressViewStyle →
+// .circular; textEditorStyle → .plain; tableStyle → .inset; navigationViewStyle
+// → .stack/.columns; navigationSplitViewStyle → .balanced/.prominentDetail).
+modifier!(modifier_label_style, "labelStyle");
+modifier!(modifier_progress_view_style, "progressViewStyle");
+modifier!(modifier_text_editor_style, "textEditorStyle");
+modifier!(modifier_table_style, "tableStyle");
+modifier!(modifier_navigation_view_style, "navigationViewStyle");
+modifier!(
+    modifier_navigation_split_view_style,
+    "navigationSplitViewStyle"
+);
 // Text-input modifiers. `submitLabel` carries a `SubmitLabel` token;
 // `textInputAutocapitalization` a `TextInputAutocapitalization`.
 // `autocorrectionDisabled`/`focusable`/`disableAutocorrection` are Bool toggles
@@ -556,6 +569,15 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("datePickerStyle", modifier_date_picker_style),
     ("disclosureGroupStyle", modifier_disclosure_group_style),
     ("controlGroupStyle", modifier_control_group_style),
+    ("labelStyle", modifier_label_style),
+    ("progressViewStyle", modifier_progress_view_style),
+    ("textEditorStyle", modifier_text_editor_style),
+    ("tableStyle", modifier_table_style),
+    ("navigationViewStyle", modifier_navigation_view_style),
+    (
+        "navigationSplitViewStyle",
+        modifier_navigation_split_view_style,
+    ),
     ("submitLabel", modifier_submit_label),
     (
         "textInputAutocapitalization",
