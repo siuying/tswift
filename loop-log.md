@@ -334,3 +334,20 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: remaining View modifiers are dominated by token-valued (need enum
   case registration), closure/binding-valued (sheet/popover/onReceive/toolbar),
   and preference/geometry APIs — each needs more than a passthrough record.
+
+## Coverage iteration — SwiftUI visibility-token & scalar layout modifiers
+
+- Coverage before → after: SwiftUI implemented 262 → 272 (37.3% → 38.7%),
+  verified 242 → 252 (34.5% → 35.9%). View section +10. stdlib/Foundation/
+  SwiftData unchanged.
+- Implemented 10 passthrough View modifiers: Visibility-token chrome modifiers
+  (persistentSystemOverlays, menuIndicator, listSectionIndexVisibility,
+  navigationLinkIndicatorVisibility — exercised with `.visible`/`.hidden`;
+  `.automatic` still collides across enums) and scalar layout modifiers
+  (gridCellColumns Int span; labelIconToTitleSpacing, labelReservedIconWidth,
+  inspectorColumnWidth, navigationSplitViewColumnWidth,
+  defaultWheelPickerItemHeight CGFloat). All via `modifier!` + MODIFIER_FNS;
+  updated the hardcoded registered-keys assertion.
+- Added chrome-and-layout SwiftUI golden fixture. presubmit green.
+- Blockers: `.automatic`-token modifiers need contextual enum-typing;
+  remaining View modifiers are closure/binding/preference/geometry APIs.
