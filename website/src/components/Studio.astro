@@ -50,8 +50,9 @@
 
     <!-- Center: tabs + editor -->
     <main class="st-center">
-      <div id="st-tabs" class="st-tabs"></div>
+      <div id="st-tabs" class="st-tabs" aria-label="Open files"></div>
       <div id="st-editor" class="st-editor"></div>
+      <p id="st-editor-empty" class="st-editor-empty" hidden>No file open — choose a file in Files, or press ⌘K.</p>
     </main>
 
     <!-- Right: preview / console / problems -->
@@ -190,18 +191,31 @@
   .st-empty { color: var(--st-muted); font-style: italic; padding: .5rem .7rem; }
 
   /* Center */
-  .st-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--st-panel); }
+  .st-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--st-panel); position: relative; }
   .st-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--st-line); flex-shrink: 0; background: var(--st-chrome); }
   .st-tab {
-    display: flex; align-items: center; gap: .4rem; padding: .45rem .8rem; cursor: pointer;
-    font-family: var(--font-mono); font-size: .76rem; color: var(--st-muted);
-    border-right: 1px solid var(--st-line); white-space: nowrap; background: transparent; border-top: none; border-bottom: none; border-left: none;
+    display: flex; align-items: center; font-family: var(--font-mono); font-size: .76rem; color: var(--st-muted);
+    border-right: 1px solid var(--st-line); white-space: nowrap; flex-shrink: 0;
   }
   .st-tab.active { color: var(--st-text); background: var(--st-panel); box-shadow: inset 0 -2px 0 var(--accent); }
+  .st-tab-open {
+    display: flex; align-items: center; gap: .4rem; padding: .45rem .3rem .45rem .8rem; cursor: pointer;
+    font: inherit; color: inherit; background: transparent; border: none;
+  }
   .st-tab .st-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); visibility: hidden; }
   .st-tab.dirty .st-tab-dot { visibility: visible; }
+  .st-tab-close {
+    display: flex; align-items: center; justify-content: center; width: 1.2rem; height: 1.2rem; margin-right: .4rem;
+    padding: 0; cursor: pointer; font-size: .85rem; line-height: 1; color: var(--st-muted); background: transparent;
+    border: none; border-radius: 3px;
+  }
+  .st-tab-close:hover, .st-tab-close:focus-visible { color: var(--st-text); background: rgba(255,255,255,.08); }
   .st-editor { flex: 1; min-height: 0; overflow: hidden; }
   .st-editor .cm-editor { height: 100%; }
+  .st-editor-empty {
+    position: absolute; inset: 2.6rem 0 0 0; margin: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--st-muted); font-size: .82rem; background: var(--st-panel); text-align: center; padding: 1rem;
+  }
 
   /* Right */
   .st-right { border-left: 1px solid var(--st-line); display: flex; flex-direction: column; min-height: 0; background: var(--st-chrome); }
@@ -251,6 +265,16 @@
   import { buildOutline, quickOpenIndex, filterEntries } from '../lib/studio/outline.js';
   import { applySidebarMode, nextSidebarMode } from '../lib/studio/sidebar-mode.js';
   import { SAMPLES, sampleById } from '../lib/studio/samples.js';
+  import {
+    emptyTabs,
+    openTab,
+    closeTab,
+    renameTab,
+    sanitizeTabs,
+    serializeTabs,
+    deserializeTabs,
+    TABS_STORAGE_KEY,
+  } from '../lib/studio/tabs.js';
 
   // ── State ────────────────────────────────────────────────────────
   // localStorage can throw (SecurityError in a private/embedded/blocked-storage
@@ -269,6 +293,27 @@
     || store.createProject(SAMPLES[0].name, SAMPLES[0].files);
   let symbols = [];
   let diagnosticsByFile = new Map(); // path -> [{line,col,severity,message}]
+
+  // Explicit open/close tab state: which files have a tab (a subset of
+  // `project.files`) and which one is active. Restored from its own
+  // localStorage slot and sanitized against the loaded project so a
+  // stale/tampered/renamed id can never point at a missing file.
+  function readStoredTabs(validPaths) {
+    try {
+      return deserializeTabs(localStorage.getItem(TABS_STORAGE_KEY), validPaths);
+    } catch {
+      return null;
+    }
+  }
+  // A persisted strip may be `null` (nothing saved, or corrupt/wrong-version
+  // data — `deserializeTabs` never throws, it just says "don't trust this")
+  // or a *valid* object whose `activePath` is legitimately `null` (the user
+  // closed their last tab and that closed state was saved as-is). Only the
+  // former should fall back to opening the project's active file; the
+  // latter must be preserved verbatim so a reload doesn't resurrect a tab
+  // the user deliberately closed.
+  const projectPaths = project.files.map((f) => f.path);
+  let tabs = readStoredTabs(projectPaths) || openTab(emptyTabs(), project.activePath);
 
   // wasm exports (filled by initWasm)
   let runSwiftModule = null, listSymbols = null, swiftUICompileModule = null,
@@ -291,9 +336,12 @@
   const modeBtns  = document.querySelectorAll('.st-mode-btn');
   const modePanels = { files: $('st-panel-files'), report: $('st-panel-report'), symbols: $('st-panel-symbols') };
 
+  const editorEl = $('st-editor');
+  const editorEmptyEl = $('st-editor-empty');
+
   const editor = createStudioEditor({
-    parent: $('st-editor'),
-    getDiagnostics: () => diagnosticsByFile.get(project.activePath) || [],
+    parent: editorEl,
+    getDiagnostics: () => diagnosticsByFile.get(tabs.activePath) || [],
     onInput: onEditorInput,
     onRun: () => runBtn.click(),
     onSave: save,
@@ -307,6 +355,7 @@
     if (!storageAvailable) return;
     try {
       localStorage.setItem(store.STORAGE_KEY, store.serialize(project));
+      localStorage.setItem(TABS_STORAGE_KEY, serializeTabs(tabs));
     } catch {
       // Blocked/quota-exceeded storage: keep working in-memory, stop retrying.
       storageAvailable = false;
@@ -321,9 +370,9 @@
     fileTree.innerHTML = '';
     for (const f of store.sortFiles(project.files)) {
       const li = document.createElement('li');
-      if (f.path === project.activePath) li.classList.add('active');
+      if (f.path === tabs.activePath) li.classList.add('active');
       const manifest = store.isManifest(f.path);
-      li.innerHTML = `<button type="button" class="st-frow-open" aria-current="${f.path === project.activePath ? 'true' : 'false'}">` +
+      li.innerHTML = `<button type="button" class="st-frow-open" aria-current="${f.path === tabs.activePath ? 'true' : 'false'}">` +
         `<span class="st-ficon" aria-hidden="true">${manifest ? '📦' : 'ƒ'}</span>` +
         `<span class="st-fname">${escapeHtml(f.path)}</span></button>` +
         `<span class="st-frow-actions">` +
@@ -343,13 +392,33 @@
 
   function renderTabs() {
     tabsEl.innerHTML = '';
-    for (const f of store.sortFiles(project.files)) {
-      const btn = document.createElement('button');
-      btn.className = 'st-tab' + (f.path === project.activePath ? ' active' : '');
-      btn.innerHTML = `<span class="st-tab-dot"></span>${escapeHtml(store.basename(f.path))}`;
-      btn.addEventListener('click', () => openFile(f.path));
-      tabsEl.appendChild(btn);
+    for (const path of tabs.openPaths) {
+      const file = project.files.find((f) => f.path === path);
+      if (!file) continue; // defensive: sanitizeTabs already keeps this in sync
+      const wrap = document.createElement('span');
+      wrap.className = 'st-tab' + (path === tabs.activePath ? ' active' : '');
+      wrap.innerHTML = `<button type="button" class="st-tab-open" aria-current="${path === tabs.activePath ? 'true' : 'false'}">` +
+        `<span class="st-tab-dot"></span>${escapeHtml(store.basename(path))}</button>` +
+        `<button type="button" class="st-tab-close" title="Close" aria-label="Close ${escapeHtml(store.basename(path))}">\u00d7</button>`;
+      wrap.querySelector('.st-tab-open').addEventListener('click', () => openFile(path));
+      wrap.querySelector('.st-tab-close').addEventListener('click', (e) => { e.stopPropagation(); closeFile(path); });
+      tabsEl.appendChild(wrap);
     }
+    updateEditorVisibility();
+  }
+
+  // Keep the editor pane's visibility (and its accessible "no file open"
+  // placeholder) in lockstep with `tabs.activePath`. Closing the last tab
+  // must not leave the CodeMirror content editable region mounted and
+  // reachable by Tab/AT while showing stale text underneath the placeholder
+  // — `hidden` fully removes it from the layout, tab order, and a11y tree
+  // (same mechanism `editorEmptyEl` already used), while `editor.js` keeps
+  // each file's `EditorState` cached regardless of DOM visibility, so
+  // reopening a tab later restores its content untouched.
+  function updateEditorVisibility() {
+    const empty = tabs.activePath === null;
+    editorEl.hidden = empty;
+    editorEmptyEl.hidden = !empty;
   }
 
   function renderOutline() {
@@ -403,16 +472,74 @@
   }
 
   // ── File actions ─────────────────────────────────────────────────
+  // Sync the editor pane + project's notion of "current file" to `tabs`
+  // (the single source of truth for what's open/active), including the
+  // honest empty state when the last tab has been closed.
+  //
+  // This is the ONE ownership seam that reconciles the three views of "which
+  // file is active": `tabs` (deterministic neighbor selection on close),
+  // `project.activePath` (whatever `project.js` last picked — e.g. the first
+  // file after a delete), and the editor. After any mutation, callers run
+  // `reconcileTabs()` to settle `tabs`, then this seam makes
+  // `project.activePath` follow `tabs` so persistence and diagnostics (which
+  // key off `project.activePath`) can never disagree with what's on screen.
+  // Mutation handlers must route through here rather than calling
+  // `editor.open()` directly, which would bypass the reconciliation.
+  function syncEditorToTabs() {
+    if (tabs.activePath) {
+      project = { ...project, activePath: tabs.activePath };
+      editor.open(tabs.activePath, store.fileSource(project, tabs.activePath) ?? '');
+    } else {
+      // Closing the last tab must not strand `project.activePath` on the
+      // now-untabbed file it last pointed at — that split-brain (tabs says
+      // "nothing open", project says "X is active") is exactly what this
+      // seam exists to prevent. `''` is project.js's own canonical empty
+      // (see `createProject`), and `deserialize` already treats any
+      // non-matching `activePath` as "pick files[0]", so persisting `''`
+      // round-trips safely through save/reload without special-casing.
+      project = { ...project, activePath: '' };
+    }
+    updateEditorVisibility();
+  }
+
   function openFile(path) {
     if (!project.files.some((f) => f.path === path)) return;
-    project = { ...project, activePath: path };
-    editor.open(path, store.fileSource(project, path) ?? '');
+    tabs = openTab(tabs, path);
+    syncEditorToTabs();
     renderFileTree(); renderTabs();
     scheduleSave();
   }
 
+  function closeFile(path) {
+    tabs = closeTab(tabs, path);
+    syncEditorToTabs();
+    renderFileTree(); renderTabs();
+    scheduleSave();
+  }
+
+  // Reconcile `tabs` against the current project file list (call after any
+  // add/rename/delete/reload) and, by default, guarantee something is
+  // open+editable afterwards — closing the *last* tab is the only path
+  // allowed to reach the honest empty state; structural project edits never
+  // should. Boot-time restore is the one caller that passes
+  // `{ allowEmpty: true }`: sanitizing a persisted strip can validly land on
+  // `activePath: null` because the user closed their last tab before
+  // reloading, and that deliberate choice must survive the reload rather
+  // than being silently overridden.
+  function reconcileTabs({ allowEmpty = false } = {}) {
+    tabs = sanitizeTabs(tabs, project.files.map((f) => f.path));
+    if (!tabs.activePath && !allowEmpty) {
+      // `project.activePath` may itself be the canonical empty `''` (the
+      // last tab was closed before this structural edit ran) — fall back to
+      // the first file rather than opening a bogus `''` tab.
+      const fallback = project.activePath || project.files[0]?.path;
+      if (fallback) tabs = openTab(tabs, fallback);
+    }
+  }
+
   function onEditorInput() {
-    project = store.updateSource(project, project.activePath, editor.value);
+    if (!tabs.activePath) return; // no file backing the editor right now
+    project = store.updateSource(project, tabs.activePath, editor.value);
     scheduleSave();
     scheduleAnalyze();
   }
@@ -423,7 +550,8 @@
     const err = store.validatePath(project, name.trim());
     if (err) { alert(err); return; }
     project = store.addFile(project, name.trim(), '');
-    editor.open(project.activePath, '');
+    tabs = openTab(tabs, project.activePath);
+    syncEditorToTabs();
     renderAll(); save(); scheduleAnalyze();
   }
 
@@ -433,7 +561,9 @@
     try {
       editor.forget(path);
       project = store.renameFile(project, path, next.trim());
-      editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+      tabs = renameTab(tabs, path, next.trim());
+      reconcileTabs();
+      syncEditorToTabs();
       renderAll(); save(); scheduleAnalyze();
     } catch (e) { alert(e.message); }
   }
@@ -443,7 +573,9 @@
     try {
       project = store.deleteFile(project, path);
       editor.forget(path);
-      editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+      tabs = closeTab(tabs, path);
+      reconcileTabs();
+      syncEditorToTabs();
       renderAll(); save(); scheduleAnalyze();
     } catch (e) { alert(e.message); }
   }
@@ -460,13 +592,14 @@
     const sample = SAMPLES[idx] || SAMPLES[0];
     for (const f of project.files) editor.forget(f.path);
     project = store.createProject(sample.name, sample.files);
-    editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+    tabs = openTab(emptyTabs(), project.activePath);
+    syncEditorToTabs();
     renderAll(); save(); scheduleAnalyze();
   });
 
   // ── Jump / goto ──────────────────────────────────────────────────
   function jumpTo(file, line) {
-    if (file !== project.activePath) openFile(file);
+    if (file !== tabs.activePath) openFile(file);
     editor.gotoLine(line);
     showRightTab('console'); // keep code visible; don't steal focus to preview
   }
@@ -648,8 +781,9 @@
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function renderAll() { renderName(); renderFileTree(); renderTabs(); renderOutline(); renderProblems(); }
 
+  reconcileTabs({ allowEmpty: true });
   renderAll();
-  editor.open(project.activePath, store.fileSource(project, project.activePath) ?? '');
+  syncEditorToTabs();
 
   async function initWasm() {
     try {
