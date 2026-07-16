@@ -187,3 +187,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   RedactionReasons/TruncationMode), each serialized as a tagged token.
 - Added `token-modifiers` fixture + blendMode unit test.
 - presubmit green.
+
+## Coverage iteration — accessibility metadata modifiers
+
+- Coverage before → after: SwiftUI verified 191 → 201 (27.2% → 28.6%),
+  implemented 208 → 218. View section 96 → 106 implemented.
+- Implemented accessibilityAddTraits/RemoveTraits (AccessibilityTraits token),
+  accessibilityHeading (AccessibilityHeadingLevel), accessibilityElement
+  (AccessibilityChildBehavior, children:), accessibilitySortPriority (Double),
+  accessibilityInputLabels ([String]), and the Bool toggles
+  accessibilityIgnoresInvertColors/RespondsToUserInteraction/DirectTouch/
+  ShowsLargeContentViewer. Token-valued ones register typed signatures so
+  leading-dot members resolve contextually (no cross-namespace collision).
+- Added 3 prelude token structs + tag mappings + `accessibility` golden
+  fixture + 2 serialization unit tests.
+- presubmit green. Blockers: closure/builder-valued a11y modifiers
+  (accessibilityAction/Rotor/Representation/Children), accessibilityFocused
+  (FocusState), accessibilityTextContentType (`.plain` collides with control
+  styles — needs typing the style modifiers) — deferred.
