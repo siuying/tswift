@@ -268,6 +268,39 @@ modifier!(
     modifier_speech_spells_out_characters,
     "speechSpellsOutCharacters"
 );
+// Visibility-token chrome modifiers. Each carries a `Visibility` leading-dot
+// token (`.visible` / `.hidden`; `.automatic` is avoided as it collides across
+// enums and needs contextual typing), recorded straight onto the node.
+modifier!(
+    modifier_persistent_system_overlays,
+    "persistentSystemOverlays"
+);
+modifier!(modifier_menu_indicator, "menuIndicator");
+modifier!(
+    modifier_list_section_index_visibility,
+    "listSectionIndexVisibility"
+);
+modifier!(
+    modifier_navigation_link_indicator_visibility,
+    "navigationLinkIndicatorVisibility"
+);
+// Scalar layout modifiers. `gridCellColumns` carries an Int span; the rest
+// carry a CGFloat width/spacing/height recorded straight onto the node.
+modifier!(modifier_grid_cell_columns, "gridCellColumns");
+modifier!(
+    modifier_label_icon_to_title_spacing,
+    "labelIconToTitleSpacing"
+);
+modifier!(modifier_label_reserved_icon_width, "labelReservedIconWidth");
+modifier!(modifier_inspector_column_width, "inspectorColumnWidth");
+modifier!(
+    modifier_navigation_split_view_column_width,
+    "navigationSplitViewColumnWidth"
+);
+modifier!(
+    modifier_default_wheel_picker_item_height,
+    "defaultWheelPickerItemHeight"
+);
 
 /// `.environmentObject(_ object)` — provide an `ObservableObject` to this view
 /// and its subtree. The object is appended to the view's `_env` list (not
@@ -640,6 +673,36 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     (
         "speechSpellsOutCharacters",
         modifier_speech_spells_out_characters,
+    ),
+    // Visibility-token chrome modifiers.
+    (
+        "persistentSystemOverlays",
+        modifier_persistent_system_overlays,
+    ),
+    ("menuIndicator", modifier_menu_indicator),
+    (
+        "listSectionIndexVisibility",
+        modifier_list_section_index_visibility,
+    ),
+    (
+        "navigationLinkIndicatorVisibility",
+        modifier_navigation_link_indicator_visibility,
+    ),
+    // Scalar layout modifiers (Int span / CGFloat width/spacing/height).
+    ("gridCellColumns", modifier_grid_cell_columns),
+    (
+        "labelIconToTitleSpacing",
+        modifier_label_icon_to_title_spacing,
+    ),
+    ("labelReservedIconWidth", modifier_label_reserved_icon_width),
+    ("inspectorColumnWidth", modifier_inspector_column_width),
+    (
+        "navigationSplitViewColumnWidth",
+        modifier_navigation_split_view_column_width,
+    ),
+    (
+        "defaultWheelPickerItemHeight",
+        modifier_default_wheel_picker_item_height,
     ),
 ];
 
