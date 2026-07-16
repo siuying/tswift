@@ -747,6 +747,51 @@ struct PaletteSelectionEffect {
     static let symbolVariant = PaletteSelectionEffect(token: "symbolVariant")
     static let custom = PaletteSelectionEffect(token: "custom")
 }
+struct AlternatingRowBackgroundBehavior {
+    let token: String
+    static let automatic = AlternatingRowBackgroundBehavior(token: "automatic")
+    static let enabled = AlternatingRowBackgroundBehavior(token: "enabled")
+    static let disabled = AlternatingRowBackgroundBehavior(token: "disabled")
+}
+struct ButtonSizing {
+    let token: String
+    static let automatic = ButtonSizing(token: "automatic")
+    static let fitted = ButtonSizing(token: "fitted")
+    static let flexible = ButtonSizing(token: "flexible")
+}
+struct AdaptableTabBarPlacement {
+    let token: String
+    static let automatic = AdaptableTabBarPlacement(token: "automatic")
+    static let tabBarOnly = AdaptableTabBarPlacement(token: "tabBarOnly")
+    static let sidebarAdaptable = AdaptableTabBarPlacement(token: "sidebarAdaptable")
+}
+struct TabBarMinimizeBehavior {
+    let token: String
+    static let automatic = TabBarMinimizeBehavior(token: "automatic")
+    static let onScrollDown = TabBarMinimizeBehavior(token: "onScrollDown")
+    static let onScrollUp = TabBarMinimizeBehavior(token: "onScrollUp")
+    static let never = TabBarMinimizeBehavior(token: "never")
+}
+struct SearchPresentationToolbarBehavior {
+    let token: String
+    static let automatic = SearchPresentationToolbarBehavior(token: "automatic")
+    static let avoidHidingContent = SearchPresentationToolbarBehavior(token: "avoidHidingContent")
+}
+struct SearchToolbarBehavior {
+    let token: String
+    static let automatic = SearchToolbarBehavior(token: "automatic")
+    static let minimize = SearchToolbarBehavior(token: "minimize")
+}
+struct HandGestureShortcut {
+    let token: String
+    static let primaryAction = HandGestureShortcut(token: "primaryAction")
+}
+struct ScrollEdgeEffectStyle {
+    let token: String
+    static let automatic = ScrollEdgeEffectStyle(token: "automatic")
+    static let soft = ScrollEdgeEffectStyle(token: "soft")
+    static let hard = ScrollEdgeEffectStyle(token: "hard")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1701,6 +1746,63 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_palette_selection_effect,
         vec![BuiltinParam::positional("PaletteSelectionEffect")],
     );
+    // More dedicated-namespace token modifiers. scrollEdgeEffectStyle carries a
+    // leading style token + a `for:` Edge.Set; toolbarForegroundStyle a Color +
+    // a `for:` ToolbarPlacement. (horizontalRadioGroupLayout /
+    // backgroundExtensionEffect are no-arg markers — no typed registration.)
+    interp.register_struct_method_typed(
+        "alternatingRowBackgrounds",
+        modifiers::modifier_alternating_row_backgrounds,
+        vec![BuiltinParam::positional("AlternatingRowBackgroundBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "buttonSizing",
+        modifiers::modifier_button_sizing,
+        vec![BuiltinParam::positional("ButtonSizing")],
+    );
+    interp.register_struct_method_typed(
+        "defaultAdaptableTabBarPlacement",
+        modifiers::modifier_default_adaptable_tab_bar_placement,
+        vec![BuiltinParam::positional("AdaptableTabBarPlacement")],
+    );
+    interp.register_struct_method_typed(
+        "tabBarMinimizeBehavior",
+        modifiers::modifier_tab_bar_minimize_behavior,
+        vec![BuiltinParam::positional("TabBarMinimizeBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "searchPresentationToolbarBehavior",
+        modifiers::modifier_search_presentation_toolbar_behavior,
+        vec![BuiltinParam::positional(
+            "SearchPresentationToolbarBehavior",
+        )],
+    );
+    interp.register_struct_method_typed(
+        "searchToolbarBehavior",
+        modifiers::modifier_search_toolbar_behavior,
+        vec![BuiltinParam::positional("SearchToolbarBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "handGestureShortcut",
+        modifiers::modifier_hand_gesture_shortcut,
+        vec![BuiltinParam::positional("HandGestureShortcut")],
+    );
+    interp.register_struct_method_typed(
+        "scrollEdgeEffectStyle",
+        modifiers::modifier_scroll_edge_effect_style,
+        vec![
+            BuiltinParam::positional("ScrollEdgeEffectStyle"),
+            BuiltinParam::labeled("for", "Edge.Set"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "toolbarForegroundStyle",
+        modifiers::modifier_toolbar_foreground_style,
+        vec![
+            BuiltinParam::positional("Color"),
+            BuiltinParam::labeled("for", "ToolbarPlacement"),
+        ],
+    );
     interp.register_struct_method_typed(
         "headerProminence",
         modifiers::modifier_header_prominence,
@@ -2061,11 +2163,13 @@ mod tests {
                 "View.allowsHitTesting",
                 "View.allowsTightening",
                 "View.allowsWindowActivationEvents",
+                "View.alternatingRowBackgrounds",
                 "View.animation",
                 "View.aspectRatio",
                 "View.autocapitalization",
                 "View.autocorrectionDisabled",
                 "View.background",
+                "View.backgroundExtensionEffect",
                 "View.backgroundStyle",
                 "View.badge",
                 "View.badgeProminence",
@@ -2077,6 +2181,7 @@ mod tests {
                 "View.brightness",
                 "View.buttonBorderShape",
                 "View.buttonRepeatBehavior",
+                "View.buttonSizing",
                 "View.buttonStyle",
                 "View.clipShape",
                 "View.clipped",
@@ -2095,6 +2200,7 @@ mod tests {
                 "View.coordinateSpace",
                 "View.cornerRadius",
                 "View.datePickerStyle",
+                "View.defaultAdaptableTabBarPlacement",
                 "View.defaultHoverEffect",
                 "View.defaultScrollAnchor",
                 "View.defaultWheelPickerItemHeight",
@@ -2135,10 +2241,12 @@ mod tests {
                 "View.gridCellUnsizedAxes",
                 "View.gridColumnAlignment",
                 "View.groupBoxStyle",
+                "View.handGestureShortcut",
                 "View.handlesExternalEvents",
                 "View.headerProminence",
                 "View.help",
                 "View.hidden",
+                "View.horizontalRadioGroupLayout",
                 "View.hoverEffect",
                 "View.hoverEffectDisabled",
                 "View.hueRotation",
@@ -2255,11 +2363,14 @@ mod tests {
                 "View.scrollContentBackground",
                 "View.scrollDisabled",
                 "View.scrollDismissesKeyboard",
+                "View.scrollEdgeEffectStyle",
                 "View.scrollIndicators",
                 "View.scrollIndicatorsFlash",
                 "View.scrollInputBehavior",
                 "View.scrollTargetBehavior",
                 "View.scrollTargetLayout",
+                "View.searchPresentationToolbarBehavior",
+                "View.searchToolbarBehavior",
                 "View.selectionDisabled",
                 "View.shadow",
                 "View.sliderThumbVisibility",
@@ -2276,6 +2387,7 @@ mod tests {
                 "View.symbolRenderingMode",
                 "View.symbolVariableValueMode",
                 "View.symbolVariant",
+                "View.tabBarMinimizeBehavior",
                 "View.tabItem",
                 "View.tabViewStyle",
                 "View.tableStyle",
@@ -2294,6 +2406,7 @@ mod tests {
                 "View.toolbarBackground",
                 "View.toolbarBackgroundVisibility",
                 "View.toolbarColorScheme",
+                "View.toolbarForegroundStyle",
                 "View.toolbarRole",
                 "View.toolbarTitleDisplayMode",
                 "View.toolbarVisibility",

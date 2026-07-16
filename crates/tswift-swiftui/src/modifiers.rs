@@ -406,6 +406,39 @@ modifier!(
 modifier!(modifier_palette_selection_effect, "paletteSelectionEffect");
 modifier!(modifier_list_item_tint, "listItemTint");
 modifier!(modifier_list_row_platter_color, "listRowPlatterColor");
+// Token modifiers with dedicated namespaces: alternatingRowBackgrounds,
+// buttonSizing, defaultAdaptableTabBarPlacement (AdaptableTabBarPlacement),
+// tabBarMinimizeBehavior, searchPresentationToolbarBehavior,
+// searchToolbarBehavior, handGestureShortcut. scrollEdgeEffectStyle carries a
+// leading token + a `for:` Edge.Set; toolbarForegroundStyle a Color + `for:`
+// ToolbarPlacement. horizontalRadioGroupLayout/backgroundExtensionEffect are
+// no-arg markers.
+modifier!(
+    modifier_alternating_row_backgrounds,
+    "alternatingRowBackgrounds"
+);
+modifier!(modifier_button_sizing, "buttonSizing");
+modifier!(
+    modifier_default_adaptable_tab_bar_placement,
+    "defaultAdaptableTabBarPlacement"
+);
+modifier!(modifier_tab_bar_minimize_behavior, "tabBarMinimizeBehavior");
+modifier!(
+    modifier_search_presentation_toolbar_behavior,
+    "searchPresentationToolbarBehavior"
+);
+modifier!(modifier_search_toolbar_behavior, "searchToolbarBehavior");
+modifier!(modifier_hand_gesture_shortcut, "handGestureShortcut");
+modifier!(modifier_scroll_edge_effect_style, "scrollEdgeEffectStyle");
+modifier!(modifier_toolbar_foreground_style, "toolbarForegroundStyle");
+modifier!(
+    modifier_horizontal_radio_group_layout,
+    "horizontalRadioGroupLayout"
+);
+modifier!(
+    modifier_background_extension_effect,
+    "backgroundExtensionEffect"
+);
 // Tier 2 — scale/aspect/layout modifiers.
 modifier!(modifier_scaled_to_fit, "scaledToFit");
 modifier!(modifier_scaled_to_fill, "scaledToFill");
@@ -988,6 +1021,32 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("paletteSelectionEffect", modifier_palette_selection_effect),
     ("listItemTint", modifier_list_item_tint),
     ("listRowPlatterColor", modifier_list_row_platter_color),
+    (
+        "alternatingRowBackgrounds",
+        modifier_alternating_row_backgrounds,
+    ),
+    ("buttonSizing", modifier_button_sizing),
+    (
+        "defaultAdaptableTabBarPlacement",
+        modifier_default_adaptable_tab_bar_placement,
+    ),
+    ("tabBarMinimizeBehavior", modifier_tab_bar_minimize_behavior),
+    (
+        "searchPresentationToolbarBehavior",
+        modifier_search_presentation_toolbar_behavior,
+    ),
+    ("searchToolbarBehavior", modifier_search_toolbar_behavior),
+    ("handGestureShortcut", modifier_hand_gesture_shortcut),
+    ("scrollEdgeEffectStyle", modifier_scroll_edge_effect_style),
+    ("toolbarForegroundStyle", modifier_toolbar_foreground_style),
+    (
+        "horizontalRadioGroupLayout",
+        modifier_horizontal_radio_group_layout,
+    ),
+    (
+        "backgroundExtensionEffect",
+        modifier_background_extension_effect,
+    ),
     ("environmentObject", modifier_environment_object),
     // Tier 2 — scale / aspect / layout / z-order / navigation modifiers.
     ("scaledToFit", modifier_scaled_to_fit),

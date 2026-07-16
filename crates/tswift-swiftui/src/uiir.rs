@@ -235,6 +235,14 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "ScrollTargetBehavior" => "scrollTargetBehavior",
             "MaterialActiveAppearance" => "materialActiveAppearance",
             "PaletteSelectionEffect" => "paletteSelectionEffect",
+            "AlternatingRowBackgroundBehavior" => "alternatingRowBackgrounds",
+            "ButtonSizing" => "buttonSizing",
+            "AdaptableTabBarPlacement" => "adaptableTabBarPlacement",
+            "TabBarMinimizeBehavior" => "tabBarMinimizeBehavior",
+            "SearchPresentationToolbarBehavior" => "searchPresentationToolbarBehavior",
+            "SearchToolbarBehavior" => "searchToolbarBehavior",
+            "HandGestureShortcut" => "handGestureShortcut",
+            "ScrollEdgeEffectStyle" => "scrollEdgeEffectStyle",
             _ => "token",
         };
         out.push_str("{\"$\":");
