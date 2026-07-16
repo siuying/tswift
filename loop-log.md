@@ -447,3 +447,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   presubmit green.
 - Blockers: unchanged — token-arg modifiers, binding-driven presentation,
   and preference/anchor/geometry APIs remain the hard remainder.
+
+## Coverage iteration — SwiftUI marker & value passthroughs
+
+- Coverage before → after: SwiftUI implemented 303 → 308 (43.2% → 43.9%),
+  verified 283 → 288 (40.3% → 41.0%). View +5. Others unchanged.
+- Added five non-colliding modifiers: no-arg marker overloads whose args
+  are all defaulted (equatable, focusSection, ignoresSafeArea) plus
+  single-value passthroughs (coordinateSpace(name:), draggable). All via
+  `modifier!` + MODIFIER_FNS; updated the registered-keys assertion; added
+  a marker-and-value-modifiers golden fixture. presubmit green.
+- Confirmed the token-modifier blocker is real: leading-dot resolution is
+  by global uniqueness across one namespace, so e.g. imageScale's
+  .small/.medium/.large collide with ControlSize/FontWeight, and
+  colorScheme's .light collides with FontWeight.light. Breaking this needs
+  contextual enum typing (modifier-parameter-driven token resolution).
