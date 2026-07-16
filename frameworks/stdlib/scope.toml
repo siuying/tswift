@@ -36,7 +36,7 @@ ContiguousArray = ["==", "subscript", "init", "encode"]
 Int = [
   "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
   "==", "!=", "<", "<=", ">", ">=",
-  "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>",
+  "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>", "&<<=", "&>>=",
 ]
 String = ["+", "+=", "==", "<"]
 Bool = ["&&", "||", "==", "!", "init", "encode"]
@@ -54,6 +54,8 @@ Double = [
   "pi",
   "infinity",
   "nan",
+  "quietNaN",
+  "signalingNaN",
   "greatestFiniteMagnitude",
   "leastNonzeroMagnitude",
   "leastNormalMagnitude",

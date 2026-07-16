@@ -3478,6 +3478,9 @@ fn is_assignment(op: &str) -> bool {
             | "&+="
             | "&-="
             | "&*="
+            // Masking-shift compound assignments.
+            | "&<<="
+            | "&>>="
     )
 }
 

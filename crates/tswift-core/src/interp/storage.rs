@@ -2235,6 +2235,10 @@ fn double_type_constant(member: &str) -> Option<f64> {
         "pi" => std::f64::consts::PI,
         "infinity" => f64::INFINITY,
         "nan" => f64::NAN,
+        "quietNaN" => f64::NAN,
+        // A signaling NaN: exponent all ones, quiet bit (bit 51) clear, and a
+        // non-zero payload so the value is still NaN rather than infinity.
+        "signalingNaN" => f64::from_bits(0x7ff0_0000_0000_0001),
         "greatestFiniteMagnitude" => f64::MAX,
         "leastNonzeroMagnitude" => f64::from_bits(1),
         "leastNormalMagnitude" => f64::MIN_POSITIVE,

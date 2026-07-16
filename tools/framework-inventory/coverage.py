@@ -204,6 +204,7 @@ def table_string_list(scope: dict, table: str, key: str) -> set[str]:
 # Sorted longest-first so the alternation prefers `&<<`/`<=`/`+=` over `&`/`<`/`+`.
 _OP_TOKENS = sorted(
     [
+        "&<<=", "&>>=",
         "&<<", "&>>", "&&", "||", "===", "!==", "==", "!=", "<=", ">=", "<<", ">>",
         "&+", "&-", "&*", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
         "~=",

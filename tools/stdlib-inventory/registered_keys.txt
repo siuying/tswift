@@ -182,8 +182,10 @@ Double.nextUp
 Double.remainder
 Double.round
 Double.rounded
+Double.sign
 Double.significand
 Double.significandBitPattern
+Double.significandWidth
 Double.squareRoot
 Double.truncatingRemainder
 Double.ulp

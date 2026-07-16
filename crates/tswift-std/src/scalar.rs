@@ -1,8 +1,9 @@
 //! Scalar-value method and property intrinsics for `Int` and `Double`.
 
+use std::rc::Rc;
 use tswift_core::{
-    format_double, BuiltinReceiver, EvalError, IntValue, IntWidth, Interpreter, MethodEntry,
-    Outcome, StdContext, StdError, StdResult, SwiftValue,
+    format_double, BuiltinReceiver, EnumObj, EvalError, IntValue, IntWidth, Interpreter,
+    MethodEntry, Outcome, StdContext, StdError, StdResult, SwiftValue,
 };
 
 /// Register the `Int`/`Double` intrinsics of this slice.
@@ -171,6 +172,12 @@ pub fn install(interp: &mut Interpreter<'_>) {
         BuiltinReceiver::Double,
         "significandBitPattern",
         double_significand_bit_pattern,
+    );
+    interp.register_property(BuiltinReceiver::Double, "sign", double_sign);
+    interp.register_property(
+        BuiltinReceiver::Double,
+        "significandWidth",
+        double_significand_width,
     );
     interp.register_property(BuiltinReceiver::Double, "isCanonical", double_is_canonical);
     interp.register_property(
@@ -724,6 +731,41 @@ fn double_significand_bit_pattern(recv: SwiftValue) -> StdResult {
         i128::from(frac),
         IntWidth::U64,
     )))
+}
+
+/// `Double.sign` — the `FloatingPointSign` of `self`: `.minus` when the sign
+/// bit is set (including `-0.0` and negative NaN), otherwise `.plus`.
+fn double_sign(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    let case = if x.is_sign_negative() {
+        "minus"
+    } else {
+        "plus"
+    };
+    Ok(SwiftValue::Enum(Rc::new(EnumObj {
+        type_name: "FloatingPointSign".into(),
+        case: case.into(),
+        payload: Vec::new(),
+    })))
+}
+
+/// `Double.significandWidth` — the number of fractional bits needed to
+/// represent the significand (`-1` for zero and non-finite values). Equals the
+/// span between the most- and least-significant set bits of the significand
+/// magnitude (implicit leading bit included for normal numbers).
+fn double_significand_width(recv: SwiftValue) -> StdResult {
+    let x = as_double(&recv)?;
+    if !x.is_finite() || x == 0.0 {
+        return Ok(SwiftValue::int(-1));
+    }
+    let bits = x.abs().to_bits();
+    let exp = (bits >> 52) & 0x7ff;
+    let frac = bits & 0x000f_ffff_ffff_ffff;
+    // Significand magnitude as an integer: normal numbers carry the implicit
+    // leading 1 at bit 52; subnormals are just the raw fraction.
+    let m: u64 = if exp == 0 { frac } else { (1u64 << 52) | frac };
+    let width = (63 - m.leading_zeros()) - m.trailing_zeros();
+    Ok(SwiftValue::int(i128::from(width)))
 }
 
 /// `Double.isCanonical` — always true: every `Double` bit pattern is canonical.
