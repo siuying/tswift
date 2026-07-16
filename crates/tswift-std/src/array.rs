@@ -61,7 +61,26 @@ pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
     mutating(interp, "reserveCapacity", reserve_capacity);
     mutating(interp, "replaceSubrange", replace_subrange);
     nonmutating(interp, "distance", distance);
-    nonmutating(interp, "index", index);
+    // `index` is label-aware: index(after:)/index(before:)/index(_:offsetBy:)/
+    // index(_:offsetBy:limitedBy:) over integer indices.
+    interp.register_labeled_intrinsic(
+        recv,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_labeled,
+        },
+    );
+    // `formIndex` is intercepted in the dispatcher (it needs the inout index
+    // place); registering it here records coverage and provides a fallback.
+    interp.register_labeled_intrinsic(
+        recv,
+        "formIndex",
+        LabeledMethodEntry {
+            mutating: true,
+            func: form_index_labeled,
+        },
+    );
 
     interp.register_property(recv, "count", count);
     interp.register_property(recv, "isEmpty", is_empty);
@@ -556,15 +575,78 @@ fn distance(
     }
 }
 
-/// `Array.index` overloads over integer indexes.
-fn index(
+/// `Array.index` overloads over integer indexes. Label-aware so `index(after:)`
+/// and `index(before:)` are distinguishable from the positional `offsetBy`
+/// forms.
+fn index_labeled(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
-    args: Vec<SwiftValue>,
-) -> Result<Outcome, StdError> {
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
     let len = items(recv.clone())?.len() as i128;
-    let indexes = int_args(&args, "index")?;
-    let result = match indexes.as_slice() {
+    let int_of = |v: &SwiftValue| -> Option<i128> {
+        match v {
+            SwiftValue::Int(i) => Some(i.raw),
+            _ => None,
+        }
+    };
+    let done = |result: SwiftValue| {
+        Ok(Some(Outcome {
+            result,
+            receiver: recv.clone(),
+        }))
+    };
+
+    // index(after: i) — result may equal endIndex.
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("after")) {
+        let i =
+            int_of(&arg.value).ok_or_else(|| type_err("index(after:) expects an integer index"))?;
+        ensure_index(i, len, "index(after:)")?;
+        let next = i + 1;
+        ensure_index(next, len, "index(after:)")?;
+        return done(SwiftValue::int(next));
+    }
+    // index(before: i)
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("before")) {
+        let i = int_of(&arg.value)
+            .ok_or_else(|| type_err("index(before:) expects an integer index"))?;
+        ensure_index(i, len, "index(before:)")?;
+        let prev = i - 1;
+        ensure_index(prev, len, "index(before:)")?;
+        return done(SwiftValue::int(prev));
+    }
+    // index(_:offsetBy:) and index(_:offsetBy:limitedBy:)
+    if let Some(off_arg) = args.iter().find(|a| a.label.as_deref() == Some("offsetBy")) {
+        let base = args
+            .iter()
+            .find(|a| a.label.is_none())
+            .and_then(|a| int_of(&a.value))
+            .ok_or_else(|| type_err("index(_:offsetBy:) expects a base index"))?;
+        let distance = int_of(&off_arg.value).ok_or_else(|| type_err("offsetBy must be an Int"))?;
+        ensure_index(base, len, "index(_:offsetBy:)")?;
+        let next = base + distance;
+        if let Some(limit_arg) = args
+            .iter()
+            .find(|a| a.label.as_deref() == Some("limitedBy"))
+        {
+            let limit =
+                int_of(&limit_arg.value).ok_or_else(|| type_err("limitedBy must be an Int"))?;
+            let passed = if distance >= 0 {
+                next > limit
+            } else {
+                next < limit
+            };
+            if passed {
+                return done(SwiftValue::Nil);
+            }
+        }
+        ensure_index(next, len, "index(_:offsetBy:)")?;
+        return done(SwiftValue::int(next));
+    }
+    // Positional-only fallback: index(base, offsetBy_value[, limit]) where the
+    // labels were dropped (e.g. reused via formIndex with bare positionals).
+    let ints: Vec<i128> = args.iter().filter_map(|a| int_of(&a.value)).collect();
+    let result = match ints.as_slice() {
         [i, distance] => {
             ensure_index(*i, len, "index")?;
             let next = i + distance;
@@ -593,10 +675,21 @@ fn index(
             )))
         }
     };
-    Ok(Outcome {
-        result,
-        receiver: recv,
-    })
+    done(result)
+}
+
+/// `Array.formIndex(...)` — intercepted by the dispatcher for inout write-back;
+/// this registered entry delegates to `index` and is used only as a fallback.
+fn form_index_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    index_labeled(c, recv, args)
+}
+
+fn type_err(msg: &str) -> StdError {
+    StdError::Error(EvalError::Type(msg.to_string()))
 }
 
 // ---- properties ------------------------------------------------------------
@@ -837,7 +930,12 @@ mod tests {
         assert_eq!(out.result, SwiftValue::int(2));
         assert_eq!(out.receiver, recv);
 
-        let out = index(
+        let pos = |v: SwiftValue| Arg {
+            label: None,
+            value: v,
+            static_ty: None,
+        };
+        let out = index_labeled(
             &mut ctx,
             SwiftValue::Array(Rc::new(vec![
                 SwiftValue::int(0),
@@ -845,8 +943,9 @@ mod tests {
                 SwiftValue::int(2),
                 SwiftValue::int(3),
             ])),
-            vec![SwiftValue::int(1), SwiftValue::int(3)],
+            vec![pos(SwiftValue::int(1)), pos(SwiftValue::int(3))],
         )
+        .unwrap()
         .unwrap();
         assert_eq!(out.result, SwiftValue::int(4));
     }

@@ -60,6 +60,17 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: sub_distance_labeled,
         },
     );
+    // `formIndex` is intercepted by the dispatcher (inout write-back); the
+    // registration records coverage and serves as a fallback delegating to
+    // `index`.
+    interp.register_labeled_intrinsic(
+        sub,
+        "formIndex",
+        LabeledMethodEntry {
+            mutating: true,
+            func: sub_form_index_labeled,
+        },
+    );
     interp.register_labeled_intrinsic(
         sub,
         "replaceSubrange",
@@ -233,6 +244,14 @@ fn sub_suffix(
 
 /// `Substring.index` — label-aware dispatch.  All offsets are in the base
 /// string's coordinate space; valid range is `[sub.start, sub.end]`.
+fn sub_form_index_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    sub_index_labeled(c, recv, args)
+}
+
 fn sub_index_labeled(
     _c: &mut dyn StdContext,
     recv: SwiftValue,

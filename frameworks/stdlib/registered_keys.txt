@@ -16,6 +16,7 @@ Array.description
 Array.distance
 Array.endIndex
 Array.first
+Array.formIndex
 Array.hashValue
 Array.index
 Array.insert
@@ -42,6 +43,7 @@ ArraySlice.description
 ArraySlice.distance
 ArraySlice.endIndex
 ArraySlice.first
+ArraySlice.formIndex
 ArraySlice.hashValue
 ArraySlice.index
 ArraySlice.insert
@@ -104,6 +106,7 @@ ContiguousArray.description
 ContiguousArray.distance
 ContiguousArray.endIndex
 ContiguousArray.first
+ContiguousArray.formIndex
 ContiguousArray.hashValue
 ContiguousArray.index
 ContiguousArray.insert
@@ -324,6 +327,7 @@ String.endIndex
 String.first
 String.firstMatch
 String.flatMap
+String.formIndex
 String.hasPrefix
 String.hasSuffix
 String.hashValue
@@ -371,6 +375,7 @@ Substring.description
 Substring.distance
 Substring.endIndex
 Substring.first
+Substring.formIndex
 Substring.hasPrefix
 Substring.hasSuffix
 Substring.hashValue

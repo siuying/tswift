@@ -982,25 +982,47 @@ impl<'w> Interpreter<'w> {
     ) -> Result<Option<SwiftValue>, Signal> {
         let mut evaluated_args = None;
 
-        // `formIndex(after: &i)` on Set and Dictionary: the labeled-intrinsic
-        // mechanism strips inout places from arguments, so write-back of the
-        // index variable is impossible through the normal path.  We intercept
-        // this call *before* labeled dispatch, reuse `index(after:)` to compute
-        // the new index, and write it back through the `&i` place ourselves.
-        if method == "formIndex" && matches!(base_value, SwiftValue::Set(_) | SwiftValue::Dict(_)) {
+        // `formIndex(after: &i)` / `formIndex(before: &i)` /
+        // `formIndex(_:offsetBy:)` / `formIndex(_:offsetBy:limitedBy:)` on any
+        // builtin collection with a labeled `index` intrinsic (Set, Dictionary,
+        // Array, ArraySlice, ContiguousArray, String, Substring). The
+        // labeled-intrinsic mechanism strips inout places from arguments, so
+        // write-back of the index variable is impossible through the normal
+        // path. We intercept this call *before* labeled dispatch, reuse the
+        // type's `index(...)` to compute the moved index, and write it back
+        // through the inout place ourselves.
+        if method == "formIndex" {
             if let Some(kind) = BuiltinReceiver::of(base_value) {
-                let raw_args = self.eval_args(arg_nodes)?;
-                if let Some(after_arg) = raw_args
-                    .iter()
-                    .find(|a| a.label.as_deref() == Some("after"))
-                {
-                    if let Some(idx_place) = after_arg.place.clone() {
-                        // Delegate to index(after:) to compute the next index.
-                        let index_args = vec![Arg {
-                            label: Some("after".to_string()),
-                            value: after_arg.value.clone(),
-                            static_ty: None,
-                        }];
+                if self.builtins.labeled_intrinsic(kind, "index").is_some() {
+                    let raw_args = self.eval_args(arg_nodes)?;
+                    let has_after_before = raw_args
+                        .iter()
+                        .any(|a| matches!(a.label.as_deref(), Some("after") | Some("before")));
+                    let has_offset = raw_args
+                        .iter()
+                        .any(|a| a.label.as_deref() == Some("offsetBy"));
+                    // The inout index: the labeled arg for after:/before:, or the
+                    // leading unlabeled positional arg for offsetBy: forms.
+                    let idx_place = if has_after_before {
+                        raw_args
+                            .iter()
+                            .find(|a| matches!(a.label.as_deref(), Some("after") | Some("before")))
+                            .and_then(|a| a.place.clone())
+                    } else if has_offset {
+                        raw_args
+                            .iter()
+                            .find(|a| a.label.is_none())
+                            .and_then(|a| a.place.clone())
+                    } else {
+                        None
+                    };
+                    if let Some(idx_place) = idx_place {
+                        let has_limit = raw_args
+                            .iter()
+                            .any(|a| a.label.as_deref() == Some("limitedBy"));
+                        // Reuse the type's `index(...)` overload; it accepts the
+                        // same labels/values (minus the inout place).
+                        let index_args: Vec<Arg> = raw_args.iter().map(Arg::from).collect();
                         if let Some((entry, module)) = self
                             .builtins
                             .labeled_intrinsic(kind, "index")
@@ -1010,6 +1032,15 @@ impl<'w> Interpreter<'w> {
                                 let outcome = (entry.func)(self, base_value.clone(), index_args);
                                 match outcome {
                                     Ok(Some(o)) => {
+                                        if has_limit {
+                                            // formIndex(_:offsetBy:limitedBy:) returns
+                                            // Bool; write back only when it moved.
+                                            let moved = !matches!(o.result, SwiftValue::Nil);
+                                            if moved {
+                                                self.write_place(&idx_place, o.result)?;
+                                            }
+                                            return Ok(Some(SwiftValue::Bool(moved)));
+                                        }
                                         self.write_place(&idx_place, o.result)?;
                                         return Ok(Some(SwiftValue::Void));
                                     }
@@ -1019,8 +1050,8 @@ impl<'w> Interpreter<'w> {
                             }
                         }
                     }
+                    evaluated_args = Some(raw_args);
                 }
-                evaluated_args = Some(raw_args);
             }
         }
 

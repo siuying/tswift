@@ -73,7 +73,26 @@ pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
 
     // Non-mutating methods.
     pure(interp, "distance", distance);
-    pure(interp, "index", index);
+    // `index` is label-aware: after:/before:/offsetBy:/limitedBy: over
+    // base-relative integer indices.
+    interp.register_labeled_intrinsic(
+        recv,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_labeled,
+        },
+    );
+    // `formIndex` is intercepted by the dispatcher (inout write-back); the
+    // registration records coverage and serves as a fallback.
+    interp.register_labeled_intrinsic(
+        recv,
+        "formIndex",
+        LabeledMethodEntry {
+            mutating: true,
+            func: form_index_labeled,
+        },
+    );
     pure(interp, "contains", contains);
     pure(interp, "removeAll", remove_all_nonmutating);
 
@@ -275,13 +294,57 @@ fn distance(
     }
 }
 
-fn index(
+fn form_index_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    index_labeled(c, recv, args)
+}
+
+fn index_labeled(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
-    args: Vec<SwiftValue>,
-) -> Result<Outcome, StdError> {
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
     let (_, sl_start, sl_end) = slice_fields(&recv)?;
-    let indexes = int_args(&args, "index")?;
+    let int_of = |v: &SwiftValue| -> Option<i128> {
+        match v {
+            SwiftValue::Int(i) => Some(i.raw),
+            _ => None,
+        }
+    };
+    let done = |result: SwiftValue| {
+        Ok(Some(Outcome {
+            result,
+            receiver: recv.clone(),
+        }))
+    };
+    // index(after: i) / index(before: i)
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("after")) {
+        let i = int_of(&arg.value).ok_or_else(|| {
+            StdError::Error(EvalError::Type(
+                "index(after:) expects an integer index".into(),
+            ))
+        })?;
+        ensure_slice_index(i, sl_start, sl_end, "index(after:)")?;
+        let next = i + 1;
+        ensure_slice_index(next, sl_start, sl_end, "index(after:) result")?;
+        return done(SwiftValue::int(next));
+    }
+    if let Some(arg) = args.iter().find(|a| a.label.as_deref() == Some("before")) {
+        let i = int_of(&arg.value).ok_or_else(|| {
+            StdError::Error(EvalError::Type(
+                "index(before:) expects an integer index".into(),
+            ))
+        })?;
+        ensure_slice_index(i, sl_start, sl_end, "index(before:)")?;
+        let prev = i - 1;
+        ensure_slice_index(prev, sl_start, sl_end, "index(before:) result")?;
+        return done(SwiftValue::int(prev));
+    }
+    // index(_:offsetBy:[limitedBy:]) — collect positional + labeled ints.
+    let indexes: Vec<i128> = args.iter().filter_map(|a| int_of(&a.value)).collect();
     let result = match indexes.as_slice() {
         [i, distance] => {
             // Base index `i` must lie in [sl_start, sl_end].
@@ -313,10 +376,7 @@ fn index(
             )))
         }
     };
-    Ok(Outcome {
-        result,
-        receiver: recv,
-    })
+    done(result)
 }
 
 fn contains(
@@ -818,14 +878,21 @@ mod tests {
         // slice [3..6) of base len 7
         let base = vec![iv(0), iv(1), iv(2), iv(3), iv(4), iv(5), iv(6)];
         let s = slice(base, 3, 6);
+        let pos = |v: SwiftValue| Arg {
+            label: None,
+            value: v,
+            static_ty: None,
+        };
         // index(3, offsetBy: 2) = 5 — valid
-        let out = index(&mut ctx, s.clone(), vec![iv(3), iv(2)]).unwrap();
+        let out = index_labeled(&mut ctx, s.clone(), vec![pos(iv(3)), pos(iv(2))])
+            .unwrap()
+            .unwrap();
         assert_eq!(out.result, iv(5));
         // index(0, offsetBy: 1) — base index 0 < sl_start=3 → trap
-        let err = index(&mut ctx, s.clone(), vec![iv(0), iv(1)]).unwrap_err();
+        let err = index_labeled(&mut ctx, s.clone(), vec![pos(iv(0)), pos(iv(1))]).unwrap_err();
         assert!(matches!(err, StdError::Error(EvalError::Trap(_))));
         // index(3, offsetBy: 4) = 7 > sl_end=6 → trap
-        let err = index(&mut ctx, s, vec![iv(3), iv(4)]).unwrap_err();
+        let err = index_labeled(&mut ctx, s, vec![pos(iv(3)), pos(iv(4))]).unwrap_err();
         assert!(matches!(err, StdError::Error(EvalError::Trap(_))));
     }
 

@@ -54,6 +54,16 @@ pub fn install(interp: &mut Interpreter<'_>) {
             func: index_labeled,
         },
     );
+    // `formIndex` is intercepted by the dispatcher (it needs the inout index
+    // place); registering it here records coverage and provides a fallback.
+    interp.register_labeled_intrinsic(
+        s,
+        "formIndex",
+        LabeledMethodEntry {
+            mutating: true,
+            func: form_index_labeled,
+        },
+    );
     // `distance(from:to:)` and `insert`/`remove` family.
     interp.register_labeled_intrinsic(
         s,
@@ -592,6 +602,16 @@ fn end_index(recv: SwiftValue) -> StdResult {
 /// - `index(before:)` — retreat by one grapheme cluster
 /// - `index(_:offsetBy:)` — advance by `n` grapheme clusters (traps OOB)
 /// - `index(_:offsetBy:limitedBy:)` — advance clamped to a limit, or `nil`
+/// `String.formIndex(...)` — intercepted by the dispatcher for inout write-back;
+/// delegates to `index` and serves only as a registered fallback.
+fn form_index_labeled(
+    c: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    index_labeled(c, recv, args)
+}
+
 fn index_labeled(
     _c: &mut dyn StdContext,
     recv: SwiftValue,
