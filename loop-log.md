@@ -420,3 +420,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   args (need contextual enum typing to disambiguate the shared namespace),
   preference/geometry/anchor APIs, and closure-heavy presentation modifiers
   (sheet/popover/alert) that need binding + dismissal plumbing.
+
+## Coverage iteration — SwiftUI single-closure event handlers
+
+- Coverage before → after: SwiftUI implemented 290 → 297 (41.3% → 42.3%),
+  verified 270 → 277 (38.5% → 39.5%). View section +7. Others unchanged.
+- Added an `event_handler!` macro (records a marker + binds the trailing
+  closure under a distinct handler key, ADR-0013 §3) and used it for seven
+  non-colliding event modifiers: onHover, onOpenURL, refreshable,
+  onDeleteCommand, onExitCommand, onPlayPauseCommand, onDrag. Closures never
+  serialize — only the marker reaches the UIIR — so hosts wire the listener.
+- Updated MODIFIER_FNS, the registered-keys assertion, and added an
+  event-handler-modifiers golden fixture. presubmit green.
+- Blockers: remaining are token-arg modifiers (contextual enum typing),
+  binding-driven presentation (sheet/popover/alert/fullScreenCover need
+  isPresented binding + dismissal), and preference/anchor/geometry APIs.
