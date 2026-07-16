@@ -270,6 +270,18 @@ struct Color {
         return Color(red: red ?? 0, green: green ?? 0, blue: blue ?? 0, opacity: opacity)
     }
 }
+// `Angle` — a rotation quantity for `.rotationEffect`/`.hueRotation`. Stored in
+// degrees (the canonical UIIR unit); `.radians(_:)` converts on the way in.
+// Serialized as `{"$":"angle","degrees":…}`.
+struct Angle {
+    var degrees: Double
+    var radians: Double { degrees * 3.141592653589793 / 180.0 }
+    init(degrees: Double) { self.degrees = degrees }
+    init(radians: Double) { self.degrees = radians * 180.0 / 3.141592653589793 }
+    static func degrees(_ degrees: Double) -> Angle { Angle(degrees: degrees) }
+    static func radians(_ radians: Double) -> Angle { Angle(radians: radians) }
+    static let zero = Angle(degrees: 0)
+}
 struct Font {
     let token: String
     static let largeTitle = Font(token: "largeTitle")
@@ -1161,15 +1173,22 @@ mod tests {
                 "View.accessibilityIdentifier",
                 "View.accessibilityLabel",
                 "View.accessibilityValue",
+                "View.allowsHitTesting",
+                "View.allowsTightening",
                 "View.animation",
                 "View.aspectRatio",
                 "View.background",
                 "View.baselineOffset",
+                "View.blur",
                 "View.bold",
                 "View.border",
+                "View.brightness",
                 "View.buttonStyle",
                 "View.clipShape",
                 "View.clipped",
+                "View.colorInvert",
+                "View.colorMultiply",
+                "View.contrast",
                 "View.cornerRadius",
                 "View.disabled",
                 "View.environmentObject",
@@ -1183,11 +1202,18 @@ mod tests {
                 "View.foregroundStyle",
                 "View.frame",
                 "View.gesture",
+                "View.grayscale",
+                "View.help",
+                "View.hidden",
+                "View.hueRotation",
                 "View.italic",
                 "View.kerning",
+                "View.labelsHidden",
                 "View.layoutPriority",
                 "View.lineLimit",
+                "View.lineSpacing",
                 "View.listStyle",
+                "View.minimumScaleFactor",
                 "View.monospaced",
                 "View.monospacedDigit",
                 "View.multilineTextAlignment",
@@ -1205,8 +1231,12 @@ mod tests {
                 "View.padding",
                 "View.pickerStyle",
                 "View.resizable",
+                "View.rotationEffect",
+                "View.saturation",
+                "View.scaleEffect",
                 "View.scaledToFill",
                 "View.scaledToFit",
+                "View.scrollDisabled",
                 "View.shadow",
                 "View.strikethrough",
                 "View.tabItem",

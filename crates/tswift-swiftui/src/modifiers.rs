@@ -58,6 +58,26 @@ modifier!(modifier_monospaced, "monospaced");
 modifier!(modifier_monospaced_digit, "monospacedDigit");
 modifier!(modifier_font_design, "fontDesign");
 modifier!(modifier_font_width, "fontWidth");
+// Graphic/visual-effect modifiers (Core Animation-style filters). Each records
+// a scalar, Bool, token, `Color`, or `Angle` value the host applies.
+modifier!(modifier_blur, "blur");
+modifier!(modifier_brightness, "brightness");
+modifier!(modifier_contrast, "contrast");
+modifier!(modifier_saturation, "saturation");
+modifier!(modifier_grayscale, "grayscale");
+modifier!(modifier_hue_rotation, "hueRotation");
+modifier!(modifier_color_invert, "colorInvert");
+modifier!(modifier_color_multiply, "colorMultiply");
+modifier!(modifier_scale_effect, "scaleEffect");
+modifier!(modifier_rotation_effect, "rotationEffect");
+modifier!(modifier_hidden, "hidden");
+modifier!(modifier_allows_hit_testing, "allowsHitTesting");
+modifier!(modifier_line_spacing, "lineSpacing");
+modifier!(modifier_minimum_scale_factor, "minimumScaleFactor");
+modifier!(modifier_allows_tightening, "allowsTightening");
+modifier!(modifier_labels_hidden, "labelsHidden");
+modifier!(modifier_help, "help");
+modifier!(modifier_scroll_disabled, "scrollDisabled");
 modifier!(modifier_opacity, "opacity");
 modifier!(modifier_foreground_style, "foregroundStyle");
 modifier!(modifier_tint, "tint");
@@ -279,6 +299,24 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("monospacedDigit", modifier_monospaced_digit),
     ("fontDesign", modifier_font_design),
     ("fontWidth", modifier_font_width),
+    ("blur", modifier_blur),
+    ("brightness", modifier_brightness),
+    ("contrast", modifier_contrast),
+    ("saturation", modifier_saturation),
+    ("grayscale", modifier_grayscale),
+    ("hueRotation", modifier_hue_rotation),
+    ("colorInvert", modifier_color_invert),
+    ("colorMultiply", modifier_color_multiply),
+    ("scaleEffect", modifier_scale_effect),
+    ("rotationEffect", modifier_rotation_effect),
+    ("hidden", modifier_hidden),
+    ("allowsHitTesting", modifier_allows_hit_testing),
+    ("lineSpacing", modifier_line_spacing),
+    ("minimumScaleFactor", modifier_minimum_scale_factor),
+    ("allowsTightening", modifier_allows_tightening),
+    ("labelsHidden", modifier_labels_hidden),
+    ("help", modifier_help),
+    ("scrollDisabled", modifier_scroll_disabled),
     ("opacity", modifier_opacity),
     ("foregroundStyle", modifier_foreground_style),
     ("tint", modifier_tint),

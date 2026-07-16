@@ -238,6 +238,17 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         SwiftValue::Struct(obj) if obj.type_name == "PlottableValue" => {
             write_plottable_value(obj, out)
         }
+        // An `Angle` serializes as a tagged `{"$":"angle","degrees":…}`.
+        SwiftValue::Struct(obj) if obj.type_name == "Angle" => {
+            let deg = match obj.get("degrees") {
+                Some(SwiftValue::Double(d)) => *d,
+                Some(SwiftValue::Int(i)) => i.raw as f64,
+                _ => 0.0,
+            };
+            out.push_str(r#"{"$":"angle","degrees":"#);
+            out.push_str(&tswift_core::format_double(deg));
+            out.push('}');
+        }
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),
@@ -769,6 +780,24 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.25,0.5,0.75,0.4]}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn rotation_effect_serializes_angle_in_degrees() {
+        let json = render_json(r#"Text("x").rotationEffect(.degrees(45))"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"rotationEffect","value":{"$":"angle","degrees":45.0}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn hue_rotation_from_radians_converts_to_degrees() {
+        let json = render_json(r#"Text("x").hueRotation(.radians(3.141592653589793))"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"hueRotation","value":{"$":"angle","degrees":180.0}}],"children":[]}"#
         );
     }
 
