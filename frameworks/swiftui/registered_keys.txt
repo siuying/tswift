@@ -49,6 +49,7 @@ View.animation
 View.aspectRatio
 View.background
 View.baselineOffset
+View.blendMode
 View.blur
 View.bold
 View.border
@@ -60,6 +61,7 @@ View.colorInvert
 View.colorMultiply
 View.compositingGroup
 View.contrast
+View.controlSize
 View.cornerRadius
 View.disabled
 View.drawingGroup
@@ -108,6 +110,7 @@ View.opacity
 View.overlay
 View.padding
 View.pickerStyle
+View.redacted
 View.resizable
 View.rotationEffect
 View.saturation
@@ -120,6 +123,7 @@ View.scrollDisabled
 View.scrollIndicators
 View.shadow
 View.strikethrough
+View.symbolRenderingMode
 View.tabItem
 View.tag
 View.task
@@ -128,6 +132,7 @@ View.textFieldStyle
 View.tint
 View.tracking
 View.transition
+View.truncationMode
 View.underline
 View.unredacted
 View.zIndex

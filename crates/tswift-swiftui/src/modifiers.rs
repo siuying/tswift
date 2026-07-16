@@ -105,6 +105,12 @@ modifier!(
     "scrollContentBackground"
 );
 modifier!(modifier_scroll_indicators, "scrollIndicators");
+// Token-enum modifiers: blend/size/rendering/redaction tokens.
+modifier!(modifier_blend_mode, "blendMode");
+modifier!(modifier_control_size, "controlSize");
+modifier!(modifier_symbol_rendering_mode, "symbolRenderingMode");
+modifier!(modifier_redacted, "redacted");
+modifier!(modifier_truncation_mode, "truncationMode");
 modifier!(modifier_opacity, "opacity");
 modifier!(modifier_foreground_style, "foregroundStyle");
 modifier!(modifier_tint, "tint");
@@ -366,6 +372,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_scroll_content_background,
     ),
     ("scrollIndicators", modifier_scroll_indicators),
+    ("blendMode", modifier_blend_mode),
+    ("controlSize", modifier_control_size),
+    ("symbolRenderingMode", modifier_symbol_rendering_mode),
+    ("redacted", modifier_redacted),
+    ("truncationMode", modifier_truncation_mode),
     ("opacity", modifier_opacity),
     ("foregroundStyle", modifier_foreground_style),
     ("tint", modifier_tint),

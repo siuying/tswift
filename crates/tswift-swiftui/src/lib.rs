@@ -279,6 +279,59 @@ struct Visibility {
     static let visible = Visibility(token: "visible")
     static let hidden = Visibility(token: "hidden")
 }
+// `BlendMode` — the compositing blend for `.blendMode(_:)` (Core Graphics blend
+// modes). Leading-dot token like the other SwiftUI token namespaces.
+struct BlendMode {
+    let token: String
+    static let normal = BlendMode(token: "normal")
+    static let multiply = BlendMode(token: "multiply")
+    static let screen = BlendMode(token: "screen")
+    static let overlay = BlendMode(token: "overlay")
+    static let darken = BlendMode(token: "darken")
+    static let lighten = BlendMode(token: "lighten")
+    static let colorDodge = BlendMode(token: "colorDodge")
+    static let colorBurn = BlendMode(token: "colorBurn")
+    static let softLight = BlendMode(token: "softLight")
+    static let hardLight = BlendMode(token: "hardLight")
+    static let difference = BlendMode(token: "difference")
+    static let exclusion = BlendMode(token: "exclusion")
+    static let hue = BlendMode(token: "hue")
+    static let saturation = BlendMode(token: "saturation")
+    static let color = BlendMode(token: "color")
+    static let luminosity = BlendMode(token: "luminosity")
+    static let plusDarker = BlendMode(token: "plusDarker")
+    static let plusLighter = BlendMode(token: "plusLighter")
+}
+// `ControlSize` — the size class for controls via `.controlSize(_:)`.
+struct ControlSize {
+    let token: String
+    static let mini = ControlSize(token: "mini")
+    static let small = ControlSize(token: "small")
+    static let large = ControlSize(token: "large")
+    static let extraLarge = ControlSize(token: "extraLarge")
+}
+// `SymbolRenderingMode` — SF Symbol rendering mode via `.symbolRenderingMode(_:)`.
+struct SymbolRenderingMode {
+    let token: String
+    static let monochrome = SymbolRenderingMode(token: "monochrome")
+    static let hierarchical = SymbolRenderingMode(token: "hierarchical")
+    static let multicolor = SymbolRenderingMode(token: "multicolor")
+    static let palette = SymbolRenderingMode(token: "palette")
+}
+// `RedactionReasons` — the reason set for `.redacted(reason:)`.
+struct RedactionReasons {
+    let token: String
+    static let placeholder = RedactionReasons(token: "placeholder")
+    static let privacy = RedactionReasons(token: "privacy")
+    static let invalidated = RedactionReasons(token: "invalidated")
+}
+// `TruncationMode` — where a line is truncated via `.truncationMode(_:)`.
+struct TruncationMode {
+    let token: String
+    static let head = TruncationMode(token: "head")
+    static let tail = TruncationMode(token: "tail")
+    static let middle = TruncationMode(token: "middle")
+}
 // `Angle` — a rotation quantity for `.rotationEffect`/`.hueRotation`. Stored in
 // degrees (the canonical UIIR unit); `.radians(_:)` converts on the way in.
 // Serialized as `{"$":"angle","degrees":…}`.
@@ -1189,6 +1242,7 @@ mod tests {
                 "View.aspectRatio",
                 "View.background",
                 "View.baselineOffset",
+                "View.blendMode",
                 "View.blur",
                 "View.bold",
                 "View.border",
@@ -1200,6 +1254,7 @@ mod tests {
                 "View.colorMultiply",
                 "View.compositingGroup",
                 "View.contrast",
+                "View.controlSize",
                 "View.cornerRadius",
                 "View.disabled",
                 "View.drawingGroup",
@@ -1248,6 +1303,7 @@ mod tests {
                 "View.overlay",
                 "View.padding",
                 "View.pickerStyle",
+                "View.redacted",
                 "View.resizable",
                 "View.rotationEffect",
                 "View.saturation",
@@ -1260,6 +1316,7 @@ mod tests {
                 "View.scrollIndicators",
                 "View.shadow",
                 "View.strikethrough",
+                "View.symbolRenderingMode",
                 "View.tabItem",
                 "View.tag",
                 "View.task",
@@ -1268,6 +1325,7 @@ mod tests {
                 "View.tint",
                 "View.tracking",
                 "View.transition",
+                "View.truncationMode",
                 "View.underline",
                 "View.unredacted",
                 "View.zIndex",

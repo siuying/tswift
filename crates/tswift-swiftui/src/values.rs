@@ -29,6 +29,11 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "Edge"
             | "ContentMode"
             | "Visibility"
+            | "BlendMode"
+            | "ControlSize"
+            | "SymbolRenderingMode"
+            | "RedactionReasons"
+            | "TruncationMode"
     ) {
         return None;
     }

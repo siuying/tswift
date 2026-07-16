@@ -189,6 +189,11 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "Edge" => "edge",
             "ContentMode" => "contentMode",
             "Visibility" => "visibility",
+            "BlendMode" => "blendMode",
+            "ControlSize" => "controlSize",
+            "SymbolRenderingMode" => "symbolRenderingMode",
+            "RedactionReasons" => "redaction",
+            "TruncationMode" => "truncationMode",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -781,6 +786,15 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.25,0.5,0.75,0.4]}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn blend_mode_serializes_typed_token() {
+        let json = render_json(r#"Text("x").blendMode(.multiply)"#);
+        assert_eq!(
+            json,
+            r#"{"id":"0","kind":"Text","args":{"verbatim":"x"},"modifiers":[{"name":"blendMode","value":{"$":"blendMode","name":"multiply"}}],"children":[]}"#
         );
     }
 
