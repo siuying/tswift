@@ -462,3 +462,24 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   .small/.medium/.large collide with ControlSize/FontWeight, and
   colorScheme's .light collides with FontWeight.light. Breaking this needs
   contextual enum typing (modifier-parameter-driven token resolution).
+
+## Coverage iteration — SwiftUI token modifiers via typed seam
+
+- Coverage before → after: SwiftUI implemented 308 → 317 (43.9% → 45.2%),
+  verified 288 → 297 (41.0% → 42.3%). View +9. Others unchanged.
+- BROKE THE TOKEN PLATEAU. Discovered register_struct_method_typed: it
+  pushes a contextual parameter type so a leading-dot arg resolves against
+  THAT type instead of by global uniqueness (the collision blocker). Added
+  nine token modifiers each with a dedicated namespace: colorScheme +
+  preferredColorScheme (ColorScheme .light/.dark), symbolVariant
+  (SymbolVariants .fill/.circle/…), hoverEffect, menuOrder,
+  contentTransition, scrollBounceBehavior, scrollDismissesKeyboard,
+  dynamicTypeSize. Added the 8 token structs to the PRELUDE, token_of, and
+  the UIIR tag map.
+- Cascade fix: the new types reuse shared names (.small/.medium/.large/
+  .light/.circle), so the previously uniqueness-resolved controlSize,
+  fontWeight, and buttonBorderShape were converted to the typed seam to keep
+  their tokens resolving. presubmit green.
+- Unlocks a path for the remaining token modifiers (imageScale,
+  keyboardType, menuActionDismissBehavior, etc.) — each just needs a typed
+  namespace + typed registration.
