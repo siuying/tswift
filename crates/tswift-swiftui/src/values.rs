@@ -28,6 +28,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "VerticalAlignment"
             | "Edge"
             | "ContentMode"
+            | "Visibility"
     ) {
         return None;
     }

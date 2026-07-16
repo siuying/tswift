@@ -270,6 +270,15 @@ struct Color {
         return Color(red: red ?? 0, green: green ?? 0, blue: blue ?? 0, opacity: opacity)
     }
 }
+// `Visibility` — the show/hide token for list separators, scroll indicators and
+// scroll content background (`.visible`/`.hidden`/`.automatic`). Serialized as a
+// leading-dot token like other SwiftUI token namespaces.
+struct Visibility {
+    let token: String
+    static let automatic = Visibility(token: "automatic")
+    static let visible = Visibility(token: "visible")
+    static let hidden = Visibility(token: "hidden")
+}
 // `Angle` — a rotation quantity for `.rotationEffect`/`.hueRotation`. Stored in
 // degrees (the canonical UIIR unit); `.radians(_:)` converts on the way in.
 // Serialized as `{"$":"angle","degrees":…}`.
@@ -1169,6 +1178,7 @@ mod tests {
                 "TextField.init",
                 "Toggle.init",
                 "VStack.init",
+                "View.accessibilityHidden",
                 "View.accessibilityHint",
                 "View.accessibilityIdentifier",
                 "View.accessibilityLabel",
@@ -1188,12 +1198,15 @@ mod tests {
                 "View.clipped",
                 "View.colorInvert",
                 "View.colorMultiply",
+                "View.compositingGroup",
                 "View.contrast",
                 "View.cornerRadius",
                 "View.disabled",
+                "View.drawingGroup",
                 "View.environmentObject",
                 "View.fill",
                 "View.fixedSize",
+                "View.flipsForRightToLeftLayoutDirection",
                 "View.font",
                 "View.fontDesign",
                 "View.fontWeight",
@@ -1206,12 +1219,17 @@ mod tests {
                 "View.help",
                 "View.hidden",
                 "View.hueRotation",
+                "View.interactiveDismissDisabled",
                 "View.italic",
                 "View.kerning",
                 "View.labelsHidden",
                 "View.layoutPriority",
                 "View.lineLimit",
                 "View.lineSpacing",
+                "View.listRowSeparator",
+                "View.listRowSeparatorTint",
+                "View.listSectionSeparator",
+                "View.listSectionSeparatorTint",
                 "View.listStyle",
                 "View.minimumScaleFactor",
                 "View.monospaced",
@@ -1236,7 +1254,10 @@ mod tests {
                 "View.scaleEffect",
                 "View.scaledToFill",
                 "View.scaledToFit",
+                "View.scrollClipDisabled",
+                "View.scrollContentBackground",
                 "View.scrollDisabled",
+                "View.scrollIndicators",
                 "View.shadow",
                 "View.strikethrough",
                 "View.tabItem",
@@ -1248,6 +1269,7 @@ mod tests {
                 "View.tracking",
                 "View.transition",
                 "View.underline",
+                "View.unredacted",
                 "View.zIndex",
                 "ZStack.init",
                 "withAnimation",

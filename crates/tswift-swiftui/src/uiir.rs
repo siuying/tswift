@@ -188,6 +188,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "VerticalAlignment" => "vAlign",
             "Edge" => "edge",
             "ContentMode" => "contentMode",
+            "Visibility" => "visibility",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -780,6 +781,17 @@ mod tests {
         assert_eq!(
             json,
             r#"{"id":"0","kind":"Text","args":{"verbatim":"hi"},"modifiers":[{"name":"foregroundColor","value":{"$":"color","rgba":[0.25,0.5,0.75,0.4]}}],"children":[]}"#
+        );
+    }
+
+    #[test]
+    fn list_row_separator_serializes_visibility_token() {
+        let json = render_json(r#"List { Text("r").listRowSeparator(.hidden) }"#);
+        assert!(
+            json.contains(
+                r#"{"name":"listRowSeparator","value":{"$":"visibility","name":"hidden"}}"#
+            ),
+            "unexpected: {json}"
         );
     }
 

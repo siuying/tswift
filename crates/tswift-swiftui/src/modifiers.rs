@@ -78,6 +78,33 @@ modifier!(modifier_allows_tightening, "allowsTightening");
 modifier!(modifier_labels_hidden, "labelsHidden");
 modifier!(modifier_help, "help");
 modifier!(modifier_scroll_disabled, "scrollDisabled");
+// List & scroll styling. No-arg render hints (compositingGroup/drawingGroup/
+// unredacted), Bool toggles (scrollClipDisabled/interactiveDismissDisabled/
+// accessibilityHidden/flipsForRightToLeftLayoutDirection), Visibility tokens
+// (listRowSeparator/listSectionSeparator/scrollContentBackground/
+// scrollIndicators), and `Color` tints for separator lines.
+modifier!(modifier_compositing_group, "compositingGroup");
+modifier!(modifier_drawing_group, "drawingGroup");
+modifier!(modifier_unredacted, "unredacted");
+modifier!(modifier_scroll_clip_disabled, "scrollClipDisabled");
+modifier!(
+    modifier_interactive_dismiss_disabled,
+    "interactiveDismissDisabled"
+);
+modifier!(modifier_accessibility_hidden, "accessibilityHidden");
+modifier!(modifier_flips_for_rtl, "flipsForRightToLeftLayoutDirection");
+modifier!(modifier_list_row_separator, "listRowSeparator");
+modifier!(modifier_list_section_separator, "listSectionSeparator");
+modifier!(modifier_list_row_separator_tint, "listRowSeparatorTint");
+modifier!(
+    modifier_list_section_separator_tint,
+    "listSectionSeparatorTint"
+);
+modifier!(
+    modifier_scroll_content_background,
+    "scrollContentBackground"
+);
+modifier!(modifier_scroll_indicators, "scrollIndicators");
 modifier!(modifier_opacity, "opacity");
 modifier!(modifier_foreground_style, "foregroundStyle");
 modifier!(modifier_tint, "tint");
@@ -317,6 +344,28 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("labelsHidden", modifier_labels_hidden),
     ("help", modifier_help),
     ("scrollDisabled", modifier_scroll_disabled),
+    ("compositingGroup", modifier_compositing_group),
+    ("drawingGroup", modifier_drawing_group),
+    ("unredacted", modifier_unredacted),
+    ("scrollClipDisabled", modifier_scroll_clip_disabled),
+    (
+        "interactiveDismissDisabled",
+        modifier_interactive_dismiss_disabled,
+    ),
+    ("accessibilityHidden", modifier_accessibility_hidden),
+    ("flipsForRightToLeftLayoutDirection", modifier_flips_for_rtl),
+    ("listRowSeparator", modifier_list_row_separator),
+    ("listSectionSeparator", modifier_list_section_separator),
+    ("listRowSeparatorTint", modifier_list_row_separator_tint),
+    (
+        "listSectionSeparatorTint",
+        modifier_list_section_separator_tint,
+    ),
+    (
+        "scrollContentBackground",
+        modifier_scroll_content_background,
+    ),
+    ("scrollIndicators", modifier_scroll_indicators),
     ("opacity", modifier_opacity),
     ("foregroundStyle", modifier_foreground_style),
     ("tint", modifier_tint),
