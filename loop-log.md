@@ -290,3 +290,25 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   them needs converting those to labeled `index` first (deferred). Remaining
   String/Array missing members are unsafe-pointer/span/Mirror APIs with no
   runtime memory model (infeasible).
+
+## Coverage iteration — URL filesystem-location statics
+
+- Coverage before → after: Foundation URL 37/81 → 55/81 (45.7% → 67.9%);
+  Foundation overall 445/615 → 463/615 (72.4% → 75.3%). stdlib/SwiftUI/
+  SwiftData unchanged.
+- Implemented 16 URL directory statics (temporaryDirectory, homeDirectory,
+  documentsDirectory, cachesDirectory, applicationSupportDirectory,
+  applicationDirectory, libraryDirectory, desktopDirectory, downloadsDirectory,
+  moviesDirectory, musicDirectory, picturesDirectory, sharedPublicDirectory,
+  trashDirectory, userDirectory) + currentDirectory() static method, all
+  returning file:// directory URLs derived from $HOME / OS temp dir /
+  std::env::current_dir. Added dataRepresentation (UTF-8 Data of absolute
+  string) and standardizedFileURL (alias of standardized) instance properties.
+- Added foundation_url_directories golden fixture; deterministic output uses
+  isFileURL/hasDirectoryPath/lastPathComponent so it survives $HOME variance.
+  Registered via register_static (BuiltinReceiver::URL). presubmit green.
+- Blockers: remaining URL missing members are resource-value/bookmark/security-
+  scope/async-bytes APIs (need a real filesystem+metadata model) and
+  format/formatted/parse/parseStrategy (need FormatStyle plumbing) — deferred.
+  Data's remaining gaps are unsafe-pointer/span/region APIs (no runtime memory
+  model, infeasible).
