@@ -369,3 +369,15 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Blockers: `.automatic`/`.linear` and other cross-enum-colliding tokens still
   need contextual enum typing; remaining View modifiers are
   closure/binding/preference/geometry APIs.
+
+## Coverage iteration — SwiftUI prominence & button-border-shape modifiers
+
+- Coverage before → after: SwiftUI implemented 278 → 281 (39.6% → 40.0%),
+  verified 258 → 261 (36.8% → 37.2%). View section +3. Others unchanged.
+- Implemented headerProminence/badgeProminence (.increased/.standard/
+  .decreased) and buttonBorderShape (.roundedRectangle/.capsule/.circle),
+  reusing the shared `_ControlStyle` token namespace; added 6 new unique
+  tokens. Added prominence-shapes SwiftUI golden fixture. presubmit green.
+- Blockers: same as prior SwiftUI iterations — remaining modifiers are
+  cross-enum-colliding tokens (need contextual typing) or closure/binding/
+  preference/geometry APIs.
