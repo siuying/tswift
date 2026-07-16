@@ -218,3 +218,24 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Added `list-editing` golden fixture + serialization unit test.
 - presubmit green. Note: `.id(_:)` is recorded as metadata; full view-identity
   semantics (state reset on id change) remain a deeper feature — deferred.
+
+## Coverage iteration — Decimal remainder + Foundation verification
+
+- Coverage before → after: Foundation verified 413 → 443 (67.2% → 72.0%),
+  implemented 443 → 445. stdlib 71.2%, SwiftUI 30.1%, SwiftData 8.8% unchanged.
+- Implemented real behavior for `Decimal.formTruncatingRemainder(dividingBy:)`
+  (`self - other * trunc(self/other)`, sign follows dividend; NaN/zero divisor
+  → NaN) and `Decimal.signalingNaN` (mirrors quiet NaN; `isSignaling` stays
+  false — Decimal has no distinct signaling NaN). Registry auto-updated.
+- Added 3 executable golden fixtures verifying already-implemented members:
+  16 URLError.Code cases (badServerResponse…zeroByteResource + `.code`/`failingURL`),
+  10 standalone Calendar members (short/veryShort/standalone month/weekday/quarter
+  symbols + isDateIn{Today,Tomorrow,Yesterday}), and the new Decimal members
+  (formTruncatingRemainder, signalingNaN, isSignaling, `/=`). Unit test for the
+  remainder algorithm added to decimal.rs.
+- Regenerated website coverage JSON — also corrected pre-existing SwiftUI drift
+  (accessibility modifiers registered but JSON stale).
+- presubmit green. Blockers: remaining Decimal missing members (`infinity` —
+  Decimal cannot represent infinity; `parse`/`parseStrategy`/`consuming` need
+  string-index parsing plumbing; `encode`/`hash(into:)` need Codable/Hasher
+  seams) deferred.
