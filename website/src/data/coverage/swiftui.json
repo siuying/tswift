@@ -2359,23 +2359,23 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 3,
+        "implemented": 1,
+        "partial": 2,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 3
       }
@@ -3133,7 +3133,7 @@
         {
           "name": "constant",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "endIndex",
@@ -3163,12 +3163,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "startIndex",
@@ -3188,13 +3188,13 @@
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 13,
+        "implemented": 2,
+        "partial": 2,
+        "missing": 9,
         "out_of_scope": 0,
         "total": 13
       }
@@ -3315,7 +3315,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectedValue",
@@ -3325,13 +3325,13 @@
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 3,
+        "implemented": 1,
+        "partial": 1,
+        "missing": 1,
         "out_of_scope": 0,
         "total": 3
       }
@@ -3342,7 +3342,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectedValue",
@@ -3352,13 +3352,13 @@
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 3,
+        "implemented": 1,
+        "partial": 1,
+        "missing": 1,
         "out_of_scope": 0,
         "total": 3
       }
@@ -3369,7 +3369,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "projectedValue",
@@ -3379,13 +3379,13 @@
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 3,
+        "implemented": 1,
+        "partial": 1,
+        "missing": 1,
         "out_of_scope": 0,
         "total": 3
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 87,
-    "partial": 26,
-    "missing": 589,
+    "implemented": 93,
+    "partial": 33,
+    "missing": 576,
     "out_of_scope": 0,
     "total": 702
   }

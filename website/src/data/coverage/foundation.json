@@ -1381,7 +1381,7 @@
         {
           "name": "dayOfYear",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "debugDescription",
@@ -1391,7 +1391,7 @@
         {
           "name": "defaultDigits",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "defaultDigitsNoAMPM",
@@ -1431,7 +1431,7 @@
         {
           "name": "era",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "exemplarLocation",
@@ -1536,7 +1536,7 @@
         {
           "name": "narrow",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "now",
@@ -1551,7 +1551,7 @@
         {
           "name": "oneDigit",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "ordinalOfDayInMonth",
@@ -1561,7 +1561,7 @@
         {
           "name": "padded",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "parse",
@@ -1576,7 +1576,7 @@
         {
           "name": "quarter",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "relatedGregorian",
@@ -1596,7 +1596,7 @@
         {
           "name": "short",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "specificName",
@@ -1611,7 +1611,7 @@
         {
           "name": "threeDigits",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "time",
@@ -1661,7 +1661,7 @@
         {
           "name": "twoDigits",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "twoDigitsNoAMPM",
@@ -1686,12 +1686,12 @@
         {
           "name": "weekday",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "wide",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "with12s",
@@ -1705,9 +1705,9 @@
         }
       ],
       "counts": {
-        "implemented": 36,
+        "implemented": 48,
         "partial": 0,
-        "missing": 51,
+        "missing": 39,
         "out_of_scope": 0,
         "total": 87
       }
@@ -3306,9 +3306,9 @@
     }
   ],
   "totals": {
-    "implemented": 401,
+    "implemented": 413,
     "partial": 30,
-    "missing": 184,
+    "missing": 172,
     "out_of_scope": 0,
     "total": 615
   }

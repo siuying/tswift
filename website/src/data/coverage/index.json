@@ -4,9 +4,9 @@
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {
-        "implemented": 401,
+        "implemented": 413,
         "partial": 30,
-        "missing": 184,
+        "missing": 172,
         "out_of_scope": 0,
         "total": 615
       }
@@ -37,9 +37,9 @@
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {
-        "implemented": 87,
-        "partial": 26,
-        "missing": 589,
+        "implemented": 93,
+        "partial": 33,
+        "missing": 576,
         "out_of_scope": 0,
         "total": 702
       }

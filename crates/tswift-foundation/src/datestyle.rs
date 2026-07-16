@@ -33,10 +33,20 @@
 //! | `.standard`  | "3:30:45 PM"         | "h:mm:ss a"       |
 //! | `.complete`  | "3:30:45 PM GMT"     | "h:mm:ss a" + " GMT" |
 //!
+//! ## Component tokens & field widths
+//!
+//! The component chain supports `year`, `month`, `day`, `hour`, `minute`,
+//! `second`, `weekday`, `era`, `quarter`, and `dayOfYear`. Each date token
+//! accepts an optional field-width symbol, e.g. `.month(.wide)`,
+//! `.day(.twoDigits)`, `.year(.padded(4))`, `.weekday(.narrow)`,
+//! `.quarter(.oneDigit)`, `.era(.wide)`. Widths resolve through the
+//! `Date.FormatStyle.Symbol.Width` builtin enum (a nominal carrier: only the
+//! case name is read). `abbreviated` is the default width and is not a distinct
+//! enum case here.
+//!
 //! ## Skipped / out-of-scope
 //!
-//! - `era`, `quarter`, `dayOfYear`, `week`, `weekday`, `timeZone`, `locale`
-//!   component tokens on `Date.FormatStyle` — not implemented; documented here.
+//! - `week`, `timeZone`, `locale` component tokens on `Date.FormatStyle`.
 //! - `Date.FormatStyle.Symbol.Month.Standalone` and other nested symbol types.
 //! - `Date.FormatStyle.attributed` (returns `AttributedString`).
 //! - `ISO8601FormatStyle` options (`.withInternetDateTime` etc.) — always full ISO.
@@ -81,25 +91,61 @@ fn date_format_style_obj(recv: &SwiftValue) -> Result<Vec<SwiftValue>, StdError>
     }
 }
 
+/// Extract a width-symbol case name from a component argument, if present.
+///
+/// Component methods accept an optional field-width symbol, e.g.
+/// `.month(.wide)`, `.day(.twoDigits)`, `.year(.padded(4))`. The symbol is a
+/// leading-dot enum whose case name we key on; `.padded(n)` additionally
+/// carries an integer pad width, which we encode as `padded:<n>`.
+fn width_from_arg(arg: &Arg) -> Option<String> {
+    match &arg.value {
+        SwiftValue::Enum(e) => {
+            let case = e.case.as_str();
+            if case == "padded" {
+                let n = match e.payload.first() {
+                    Some(SwiftValue::Int(i)) => i.raw.max(0),
+                    _ => 1,
+                };
+                Some(format!("padded:{n}"))
+            } else {
+                Some(case.to_string())
+            }
+        }
+        _ => None,
+    }
+}
+
 fn add_component(
     _ctx: &mut dyn StdContext,
     recv: SwiftValue,
     args: Vec<Arg>,
     component: &str,
 ) -> Result<Option<Outcome>, StdError> {
-    if !args.is_empty() {
-        // Accept width-modifier arguments but ignore them (e.g. `.month(.wide)`).
-        // We only check for a single argument which may carry an enum/int payload.
-    }
+    // A component may carry an optional width symbol (`.month(.wide)`); encode it
+    // into the stored token as `token|width` so `format_components` can honour it.
+    let token = match args.first().and_then(width_from_arg) {
+        Some(width) => format!("{component}|{width}"),
+        None => component.to_string(),
+    };
     let mut components = date_format_style_obj(&recv)?;
-    let name = SwiftValue::Str(component.into());
-    if !components.iter().any(|v| v == &name) {
-        components.push(name);
-    }
+    // A later call for the same component (any width) replaces the earlier one.
+    components.retain(|v| match v {
+        SwiftValue::Str(s) => split_token(s).0 != component,
+        _ => true,
+    });
+    components.push(SwiftValue::Str(token.into()));
     Ok(Some(Outcome {
         result: make_format_style(components),
         receiver: recv,
     }))
+}
+
+/// Split a stored component token into `(name, width)`.
+fn split_token(token: &str) -> (&str, Option<&str>) {
+    match token.split_once('|') {
+        Some((name, width)) => (name, Some(width)),
+        None => (token, None),
+    }
 }
 
 macro_rules! component_method {
@@ -120,6 +166,10 @@ component_method!(dfs_day, "day");
 component_method!(dfs_hour, "hour");
 component_method!(dfs_minute, "minute");
 component_method!(dfs_second, "second");
+component_method!(dfs_weekday, "weekday");
+component_method!(dfs_era, "era");
+component_method!(dfs_quarter, "quarter");
+component_method!(dfs_day_of_year, "dayOfYear");
 
 /// `Date.FormatStyle.format(_:)` — the `FormatStyle` protocol method.
 /// Takes a `Date` argument and returns the formatted `String`, mirroring
@@ -225,32 +275,23 @@ const TIME_STYLE_CASES: &[&str] = &["omitted", "shortened", "standard", "complet
 /// Produces en_US-style output by constructing a format pattern from the
 /// present components.
 fn format_components(civil: &crate::calendar::Civil, components: &[SwiftValue]) -> String {
-    let has = |token: &str| {
-        components
-            .iter()
-            .any(|v| matches!(v, SwiftValue::Str(s) if s.as_str() == token))
+    // Resolve each token's optional width symbol (`None` == token absent).
+    let width = |token: &str| -> Option<Option<String>> {
+        components.iter().find_map(|v| match v {
+            SwiftValue::Str(s) => {
+                let (name, w) = split_token(s);
+                (name == token).then(|| w.map(str::to_string))
+            }
+            _ => None,
+        })
     };
 
-    let has_year = has("year");
-    let has_month = has("month");
-    let has_day = has("day");
-    let has_hour = has("hour");
-    let has_minute = has("minute");
-    let has_second = has("second");
+    let date_part = format_date_part(civil, &width);
 
-    // Build date part.
-    let date_part = match (has_year, has_month, has_day) {
-        (true, true, true) => format_pattern(civil, "MMM d, yyyy"),
-        (true, true, false) => format_pattern(civil, "MMMM yyyy"),
-        (true, false, true) => format_pattern(civil, "d yyyy"),
-        (true, false, false) => format_pattern(civil, "yyyy"),
-        (false, true, true) => format_pattern(civil, "MMM d"),
-        (false, true, false) => format_pattern(civil, "MMMM"),
-        (false, false, true) => format_pattern(civil, "d"),
-        (false, false, false) => String::new(),
-    };
-
-    // Build time part.
+    // Build time part (widths on time fields fall back to their defaults).
+    let has_hour = width("hour").is_some();
+    let has_minute = width("minute").is_some();
+    let has_second = width("second").is_some();
     let time_part = match (has_hour, has_minute, has_second) {
         (true, true, true) => format_pattern(civil, "h:mm:ss a"),
         (true, true, false) => format_pattern(civil, "h:mm a"),
@@ -266,6 +307,139 @@ fn format_components(civil: &crate::calendar::Civil, components: &[SwiftValue]) 
         (false, true) => date_part,
         (true, false) => time_part,
         (true, true) => String::new(),
+    }
+}
+
+/// CLDR pattern letters for a width-annotated date component.
+fn month_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("defaultDigits") => "M",
+        Some("twoDigits") => "MM",
+        Some("wide") => "MMMM",
+        Some("narrow") => "MMMMM",
+        _ => "MMM", // abbreviated (default)
+    }
+}
+
+fn year_pat(width: Option<&str>) -> String {
+    match width {
+        Some("twoDigits") => "yy".to_string(),
+        Some(w) if w.starts_with("padded:") => {
+            let n: usize = w["padded:".len()..].parse().unwrap_or(1);
+            "y".repeat(n.max(1))
+        }
+        _ => "y".to_string(), // defaultDigits (full year)
+    }
+}
+
+fn day_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("twoDigits") => "dd",
+        _ => "d",
+    }
+}
+
+fn weekday_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("wide") => "EEEE",
+        Some("narrow") => "EEEEE",
+        Some("short") => "EEEEEE",
+        _ => "EEE", // abbreviated (default)
+    }
+}
+
+fn quarter_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("oneDigit") => "Q",
+        Some("twoDigits") => "QQ",
+        Some("wide") => "QQQQ",
+        _ => "QQQ", // abbreviated (default)
+    }
+}
+
+fn era_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("wide") => "GGGG",
+        Some("narrow") => "GGGGG",
+        _ => "G", // abbreviated (default)
+    }
+}
+
+fn day_of_year_pat(width: Option<&str>) -> &'static str {
+    match width {
+        Some("twoDigits") => "DD",
+        Some("threeDigits") => "DDD",
+        _ => "D",
+    }
+}
+
+/// Assemble and render the date portion of a component chain.
+fn format_date_part<F>(civil: &crate::calendar::Civil, width: &F) -> String
+where
+    F: Fn(&str) -> Option<Option<String>>,
+{
+    // Each field: `Some(inner)` when the token is present; `inner` carries the
+    // optional width symbol. `w(&field)` narrows that to a non-empty width str.
+    let year = width("year");
+    let month = width("month");
+    let day = width("day");
+    let quarter = width("quarter");
+    let weekday = width("weekday");
+    let era = width("era");
+    let day_of_year = width("dayOfYear");
+
+    fn w(field: &Option<Option<String>>) -> Option<&str> {
+        field
+            .as_ref()
+            .and_then(|inner| inner.as_deref())
+            .filter(|s| !s.is_empty())
+    }
+
+    // Core month/day/year cluster (with en_US comma before the year).
+    let core = match (month.is_some(), day.is_some(), year.is_some()) {
+        (true, true, true) => format!(
+            "{} {}, {}",
+            month_pat(w(&month)),
+            day_pat(w(&day)),
+            year_pat(w(&year))
+        ),
+        (true, true, false) => format!("{} {}", month_pat(w(&month)), day_pat(w(&day))),
+        (true, false, true) => format!("{} {}", month_pat(w(&month)), year_pat(w(&year))),
+        (true, false, false) => month_pat(w(&month)).to_string(),
+        (false, true, true) => format!("{}, {}", day_pat(w(&day)), year_pat(w(&year))),
+        (false, true, false) => day_pat(w(&day)).to_string(),
+        (false, false, true) => year_pat(w(&year)),
+        (false, false, false) => String::new(),
+    };
+
+    let mut mid: Vec<String> = Vec::new();
+    if quarter.is_some() {
+        mid.push(quarter_pat(w(&quarter)).to_string());
+    }
+    if !core.is_empty() {
+        mid.push(core);
+    }
+    if day_of_year.is_some() {
+        mid.push(day_of_year_pat(w(&day_of_year)).to_string());
+    }
+    let mut mid = mid.join(" ");
+    if era.is_some() {
+        if !mid.is_empty() {
+            mid.push(' ');
+        }
+        mid.push_str(era_pat(w(&era)));
+    }
+
+    let pattern = match (weekday.is_some(), mid.is_empty()) {
+        (true, false) => format!("{}, {}", weekday_pat(w(&weekday)), mid),
+        (true, true) => weekday_pat(w(&weekday)).to_string(),
+        (false, _) => mid,
+    };
+
+    if pattern.is_empty() {
+        String::new()
+    } else {
+        format_pattern(civil, &pattern)
     }
 }
 
@@ -407,6 +581,25 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // collision with the pre-existing `JSONEncoder.iso8601` / `JSONDecoder.iso8601`
     // static values (which are not enum cases and therefore don't clash).
     interp.register_builtin_enum("Date.FormatStyle", &["iso8601"]);
+    // Field-width symbols for the component chain (`.month(.wide)`,
+    // `.day(.twoDigits)`, `.year(.padded(4))`, …). A single enum holds every
+    // width case so leading-dot resolution finds each one by its unique name;
+    // `add_component` keys only on the case name, so the enum type is nominal.
+    // `abbreviated` is intentionally omitted (it is the default and already a
+    // case of `Date.FormatStyle.DateStyle`, which would make it ambiguous).
+    interp.register_builtin_enum_with_payloads(
+        "Date.FormatStyle.Symbol.Width",
+        &[
+            ("wide", &[]),
+            ("narrow", &[]),
+            ("short", &[]),
+            ("twoDigits", &[]),
+            ("defaultDigits", &[]),
+            ("oneDigit", &[]),
+            ("threeDigits", &[]),
+            ("padded", &["Int"]),
+        ],
+    );
 
     // --- Static values ---
     // `.dateTime` resolves to an empty `Date.FormatStyle` struct to seed a
@@ -422,6 +615,10 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ("hour", dfs_hour),
         ("minute", dfs_minute),
         ("second", dfs_second),
+        ("weekday", dfs_weekday),
+        ("era", dfs_era),
+        ("quarter", dfs_quarter),
+        ("dayOfYear", dfs_day_of_year),
         ("format", dfs_format),
     ] {
         interp.register_labeled_intrinsic(
@@ -478,6 +675,10 @@ pub fn extra_registered_keys() -> Vec<String> {
         "Date.FormatStyle.hour".to_string(),
         "Date.FormatStyle.minute".to_string(),
         "Date.FormatStyle.second".to_string(),
+        "Date.FormatStyle.weekday".to_string(),
+        "Date.FormatStyle.era".to_string(),
+        "Date.FormatStyle.quarter".to_string(),
+        "Date.FormatStyle.dayOfYear".to_string(),
         "Date.formatted".to_string(),
         // --- Short aliases so the inventory coverage tool (splits on first `.')
         //     counts these as Date members (type=Date, member=<name>).
@@ -495,6 +696,20 @@ pub fn extra_registered_keys() -> Vec<String> {
         "Date.hour".to_string(),
         "Date.minute".to_string(),
         "Date.second".to_string(),
+        "Date.weekday".to_string(),
+        "Date.era".to_string(),
+        "Date.quarter".to_string(),
+        "Date.dayOfYear".to_string(),
+        // Field-width symbols honoured by the component chain (`.month(.wide)`,
+        // `.day(.twoDigits)`, `.year(.padded(n))`, `.quarter(.oneDigit)`, …).
+        "Date.wide".to_string(),
+        "Date.narrow".to_string(),
+        "Date.short".to_string(),
+        "Date.twoDigits".to_string(),
+        "Date.defaultDigits".to_string(),
+        "Date.padded".to_string(),
+        "Date.oneDigit".to_string(),
+        "Date.threeDigits".to_string(),
         "Date.dateTime".to_string(),
         // Short alias for FormatStyle.format(_:) — registered on
         // DateFormatStyle receiver (auto-appears as Date.FormatStyle.format
@@ -688,6 +903,90 @@ mod tests {
             static_ty: None,
         }];
         assert_eq!(fmt(d, args), "Jun 21, 2024");
+    }
+
+    fn style(tokens: &[&str]) -> Vec<Arg> {
+        let comps: Vec<SwiftValue> = tokens
+            .iter()
+            .map(|t| SwiftValue::Str((*t).into()))
+            .collect();
+        vec![Arg {
+            label: None,
+            value: make_format_style(comps),
+            static_ty: None,
+        }]
+    }
+
+    #[test]
+    fn component_chain_new_tokens_default_widths() {
+        // 2024-06-21 15:30:45 UTC is a Friday, Q2, day-of-year 173.
+        let d = date_val(2024, 6, 21, 15, 30, 45);
+        assert_eq!(fmt(d.clone(), style(&["weekday"])), "Fri");
+        assert_eq!(fmt(d.clone(), style(&["era", "year"])), "2024 AD");
+        assert_eq!(fmt(d.clone(), style(&["quarter", "year"])), "Q2 2024");
+        assert_eq!(fmt(d.clone(), style(&["dayOfYear"])), "173");
+        assert_eq!(fmt(d, style(&["weekday", "month", "day"])), "Fri, Jun 21");
+    }
+
+    #[test]
+    fn component_chain_field_widths() {
+        let d = date_val(2024, 6, 21, 15, 30, 45);
+        assert_eq!(
+            fmt(d.clone(), style(&["month|wide", "day", "year"])),
+            "June 21, 2024"
+        );
+        assert_eq!(
+            fmt(d.clone(), style(&["month|narrow", "day|twoDigits"])),
+            "J 21"
+        );
+        assert_eq!(fmt(d.clone(), style(&["weekday|wide"])), "Friday");
+        assert_eq!(fmt(d.clone(), style(&["weekday|short"])), "Fr");
+        assert_eq!(fmt(d.clone(), style(&["weekday|narrow"])), "F");
+        assert_eq!(fmt(d.clone(), style(&["year|twoDigits"])), "24");
+        assert_eq!(fmt(d.clone(), style(&["year|padded:6"])), "002024");
+        assert_eq!(fmt(d.clone(), style(&["quarter|wide"])), "2nd quarter");
+        assert_eq!(fmt(d, style(&["era|wide", "year"])), "2024 Anno Domini");
+    }
+
+    #[test]
+    fn single_digit_day_two_digits_pads() {
+        // 2024-01-05 is a Friday.
+        let d = date_val(2024, 1, 5, 8, 7, 9);
+        assert_eq!(
+            fmt(d, style(&["month|twoDigits", "day|twoDigits"])),
+            "01 05"
+        );
+    }
+
+    #[test]
+    fn later_component_replaces_earlier_width() {
+        // `add_component` keeps only the last width for a repeated token.
+        let ctx = &mut MockCtx(Vec::new());
+        let base = make_format_style(vec![]);
+        let with_default = add_component(ctx, base, vec![], "month")
+            .unwrap()
+            .unwrap()
+            .receiver;
+        let wide_arg = Arg {
+            label: None,
+            value: SwiftValue::Enum(Rc::new(tswift_core::EnumObj {
+                type_name: "Date.FormatStyle.Symbol.Width".into(),
+                case: "wide".into(),
+                payload: vec![],
+            })),
+            static_ty: None,
+        };
+        let replaced = add_component(ctx, with_default, vec![wide_arg], "month")
+            .unwrap()
+            .unwrap()
+            .result;
+        let d = date_val(2024, 6, 21, 15, 30, 45);
+        let args = vec![Arg {
+            label: None,
+            value: replaced,
+            static_ty: None,
+        }];
+        assert_eq!(fmt(d, args), "June");
     }
 
     #[test]

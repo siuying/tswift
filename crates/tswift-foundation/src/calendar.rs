@@ -758,6 +758,16 @@ pub(crate) fn weekday_of_day(day: i64) -> i64 {
     (day.rem_euclid(7) + 4) % 7 + 1
 }
 
+/// 1-based day-of-year for a civil date (Jan 1 == 1).
+pub(crate) fn day_of_year(civil: &Civil) -> i64 {
+    days_from_civil(civil.year, civil.month, civil.day) - days_from_civil(civil.year, 1, 1) + 1
+}
+
+/// 1-based calendar quarter (1..=4) for a civil date.
+pub(crate) fn quarter_of(civil: &Civil) -> i64 {
+    (civil.month - 1) / 3 + 1
+}
+
 fn calendar_is_date_in_weekend(
     _ctx: &mut dyn StdContext,
     recv: SwiftValue,

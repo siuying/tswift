@@ -33,6 +33,8 @@ const MONTH_NAMES: &[&str] = &[
     "December",
 ];
 
+const QUARTER_NAMES: &[&str] = &["1st quarter", "2nd quarter", "3rd quarter", "4th quarter"];
+
 const WEEKDAY_NAMES: &[&str] = &[
     "Sunday",
     "Monday",
@@ -169,6 +171,8 @@ fn format_field(civil: &Civil, symbol: char, count: usize) -> String {
             1 => format!("{}", civil.month),
             2 => format!("{:02}", civil.month),
             3 => MONTH_NAMES[(civil.month - 1) as usize][..3].to_string(),
+            // CLDR: MMMMM == narrow (single letter); MMMM == wide (full name).
+            5 => MONTH_NAMES[(civil.month - 1) as usize][..1].to_string(),
             _ => MONTH_NAMES[(civil.month - 1) as usize].to_string(),
         },
         'd' => {
@@ -185,12 +189,34 @@ fn format_field(civil: &Civil, symbol: char, count: usize) -> String {
         'a' => if civil.hour < 12 { "AM" } else { "PM" }.to_string(),
         'E' => {
             let name = WEEKDAY_NAMES[(civil.weekday - 1) as usize];
-            if count >= 4 {
-                name.to_string()
-            } else {
-                name[..3].to_string()
+            match count {
+                // CLDR: EEEEEE == short ("Fr"), EEEEE == narrow ("F"),
+                // EEEE == wide ("Friday"), else abbreviated ("Fri").
+                6 => name[..2].to_string(),
+                5 => name[..1].to_string(),
+                4 => name.to_string(),
+                _ => name[..3].to_string(),
             }
         }
+        'Q' | 'q' => {
+            let q = crate::calendar::quarter_of(civil);
+            match count {
+                1 => format!("{q}"),
+                2 => format!("{q:02}"),
+                3 => format!("Q{q}"),
+                _ => QUARTER_NAMES[(q - 1) as usize].to_string(),
+            }
+        }
+        'G' => {
+            // Proleptic-Gregorian era from the astronomical year sign.
+            let ad = civil.year > 0;
+            match count {
+                5 => if ad { "A" } else { "B" }.to_string(),
+                4 => if ad { "Anno Domini" } else { "Before Christ" }.to_string(),
+                _ => if ad { "AD" } else { "BC" }.to_string(),
+            }
+        }
+        'D' => pad(crate::calendar::day_of_year(civil), count),
         // Unsupported symbol: emit it verbatim so the gap is visible.
         other => other.to_string().repeat(count),
     }
