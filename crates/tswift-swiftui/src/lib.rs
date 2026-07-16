@@ -554,6 +554,64 @@ struct ScrollDismissesKeyboardMode {
     static let interactively = ScrollDismissesKeyboardMode(token: "interactively")
     static let never = ScrollDismissesKeyboardMode(token: "never")
 }
+struct ImageScale {
+    let token: String
+    static let small = ImageScale(token: "small")
+    static let medium = ImageScale(token: "medium")
+    static let large = ImageScale(token: "large")
+}
+struct KeyboardType {
+    let token: String
+    static let `default` = KeyboardType(token: "default")
+    static let asciiCapable = KeyboardType(token: "asciiCapable")
+    static let numbersAndPunctuation = KeyboardType(token: "numbersAndPunctuation")
+    static let URL = KeyboardType(token: "URL")
+    static let numberPad = KeyboardType(token: "numberPad")
+    static let phonePad = KeyboardType(token: "phonePad")
+    static let namePhonePad = KeyboardType(token: "namePhonePad")
+    static let emailAddress = KeyboardType(token: "emailAddress")
+    static let decimalPad = KeyboardType(token: "decimalPad")
+    static let twitter = KeyboardType(token: "twitter")
+    static let webSearch = KeyboardType(token: "webSearch")
+    static let asciiCapableNumberPad = KeyboardType(token: "asciiCapableNumberPad")
+}
+struct UITextAutocapitalizationType {
+    let token: String
+    static let none = UITextAutocapitalizationType(token: "none")
+    static let words = UITextAutocapitalizationType(token: "words")
+    static let sentences = UITextAutocapitalizationType(token: "sentences")
+    static let allCharacters = UITextAutocapitalizationType(token: "allCharacters")
+}
+struct MenuActionDismissBehavior {
+    let token: String
+    static let automatic = MenuActionDismissBehavior(token: "automatic")
+    static let enabled = MenuActionDismissBehavior(token: "enabled")
+    static let disabled = MenuActionDismissBehavior(token: "disabled")
+}
+struct ButtonRepeatBehavior {
+    let token: String
+    static let automatic = ButtonRepeatBehavior(token: "automatic")
+    static let enabled = ButtonRepeatBehavior(token: "enabled")
+    static let disabled = ButtonRepeatBehavior(token: "disabled")
+}
+struct TextScale {
+    let token: String
+    static let `default` = TextScale(token: "default")
+    static let secondary = TextScale(token: "secondary")
+}
+struct WritingToolsBehavior {
+    let token: String
+    static let automatic = WritingToolsBehavior(token: "automatic")
+    static let complete = WritingToolsBehavior(token: "complete")
+    static let limited = WritingToolsBehavior(token: "limited")
+    static let disabled = WritingToolsBehavior(token: "disabled")
+}
+struct ImageDynamicRange {
+    let token: String
+    static let standard = ImageDynamicRange(token: "standard")
+    static let constrainedHigh = ImageDynamicRange(token: "constrainedHigh")
+    static let high = ImageDynamicRange(token: "high")
+}
 struct DynamicTypeSize {
     let token: String
     static let xSmall = DynamicTypeSize(token: "xSmall")
@@ -1177,6 +1235,90 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_dynamic_type_size,
         vec![BuiltinParam::positional("DynamicTypeSize")],
     );
+    interp.register_struct_method_typed(
+        "imageScale",
+        modifiers::modifier_image_scale,
+        vec![BuiltinParam::positional("ImageScale")],
+    );
+    interp.register_struct_method_typed(
+        "keyboardType",
+        modifiers::modifier_keyboard_type,
+        vec![BuiltinParam::positional("KeyboardType")],
+    );
+    interp.register_struct_method_typed(
+        "autocapitalization",
+        modifiers::modifier_autocapitalization,
+        vec![BuiltinParam::positional("UITextAutocapitalizationType")],
+    );
+    interp.register_struct_method_typed(
+        "menuActionDismissBehavior",
+        modifiers::modifier_menu_action_dismiss_behavior,
+        vec![BuiltinParam::positional("MenuActionDismissBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "buttonRepeatBehavior",
+        modifiers::modifier_button_repeat_behavior,
+        vec![BuiltinParam::positional("ButtonRepeatBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "textScale",
+        modifiers::modifier_text_scale,
+        vec![BuiltinParam::positional("TextScale")],
+    );
+    interp.register_struct_method_typed(
+        "writingToolsBehavior",
+        modifiers::modifier_writing_tools_behavior,
+        vec![BuiltinParam::positional("WritingToolsBehavior")],
+    );
+    interp.register_struct_method_typed(
+        "allowedDynamicRange",
+        modifiers::modifier_allowed_dynamic_range,
+        vec![BuiltinParam::positional("ImageDynamicRange")],
+    );
+    interp.register_struct_method_typed(
+        "labelsVisibility",
+        modifiers::modifier_labels_visibility,
+        vec![BuiltinParam::positional("Visibility")],
+    );
+    // Convert the color and prominence/autocap modifiers to the typed seam too:
+    // the new namespaces reuse `.secondary` (Color), `.words`/`.sentences`
+    // (TextInputAutocapitalization) and `.standard` (_ControlStyle), so these
+    // must resolve contextually rather than by (now-broken) uniqueness.
+    interp.register_struct_method_typed(
+        "foregroundColor",
+        modifiers::modifier_foreground_color,
+        vec![BuiltinParam::positional("Color")],
+    );
+    interp.register_struct_method_typed(
+        "accentColor",
+        modifiers::modifier_accent_color,
+        vec![BuiltinParam::positional("Color")],
+    );
+    interp.register_struct_method_typed(
+        "tint",
+        modifiers::modifier_tint,
+        vec![BuiltinParam::positional("Color")],
+    );
+    interp.register_struct_method_typed(
+        "foregroundStyle",
+        modifiers::modifier_foreground_style,
+        vec![BuiltinParam::positional("Color")],
+    );
+    interp.register_struct_method_typed(
+        "textInputAutocapitalization",
+        modifiers::modifier_text_input_autocapitalization,
+        vec![BuiltinParam::positional("TextInputAutocapitalization")],
+    );
+    interp.register_struct_method_typed(
+        "headerProminence",
+        modifiers::modifier_header_prominence,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "badgeProminence",
+        modifiers::modifier_badge_prominence,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -1523,11 +1665,13 @@ mod tests {
                 "View.accessibilityShowsLargeContentViewer",
                 "View.accessibilitySortPriority",
                 "View.accessibilityValue",
+                "View.allowedDynamicRange",
                 "View.allowsHitTesting",
                 "View.allowsTightening",
                 "View.allowsWindowActivationEvents",
                 "View.animation",
                 "View.aspectRatio",
+                "View.autocapitalization",
                 "View.autocorrectionDisabled",
                 "View.background",
                 "View.badge",
@@ -1539,6 +1683,7 @@ mod tests {
                 "View.border",
                 "View.brightness",
                 "View.buttonBorderShape",
+                "View.buttonRepeatBehavior",
                 "View.buttonStyle",
                 "View.clipShape",
                 "View.clipped",
@@ -1593,6 +1738,7 @@ mod tests {
                 "View.hueRotation",
                 "View.id",
                 "View.ignoresSafeArea",
+                "View.imageScale",
                 "View.indexViewStyle",
                 "View.inspectorColumnWidth",
                 "View.interactionActivityTrackingTag",
@@ -1600,11 +1746,13 @@ mod tests {
                 "View.invalidatableContent",
                 "View.italic",
                 "View.kerning",
+                "View.keyboardType",
                 "View.labelIconToTitleSpacing",
                 "View.labelReservedIconWidth",
                 "View.labelStyle",
                 "View.labeledContentStyle",
                 "View.labelsHidden",
+                "View.labelsVisibility",
                 "View.layoutPriority",
                 "View.lineHeight",
                 "View.lineLimit",
@@ -1620,6 +1768,7 @@ mod tests {
                 "View.listSectionSpacing",
                 "View.listStyle",
                 "View.mask",
+                "View.menuActionDismissBehavior",
                 "View.menuIndicator",
                 "View.menuOrder",
                 "View.menuStyle",
@@ -1706,6 +1855,7 @@ mod tests {
                 "View.textEditorStyle",
                 "View.textFieldStyle",
                 "View.textInputAutocapitalization",
+                "View.textScale",
                 "View.tint",
                 "View.toggleStyle",
                 "View.tracking",
@@ -1713,6 +1863,7 @@ mod tests {
                 "View.truncationMode",
                 "View.underline",
                 "View.unredacted",
+                "View.writingToolsBehavior",
                 "View.zIndex",
                 "ZStack.init",
                 "withAnimation",

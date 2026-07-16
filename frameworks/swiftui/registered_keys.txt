@@ -54,11 +54,13 @@ View.accessibilityRespondsToUserInteraction
 View.accessibilityShowsLargeContentViewer
 View.accessibilitySortPriority
 View.accessibilityValue
+View.allowedDynamicRange
 View.allowsHitTesting
 View.allowsTightening
 View.allowsWindowActivationEvents
 View.animation
 View.aspectRatio
+View.autocapitalization
 View.autocorrectionDisabled
 View.background
 View.badge
@@ -70,6 +72,7 @@ View.bold
 View.border
 View.brightness
 View.buttonBorderShape
+View.buttonRepeatBehavior
 View.buttonStyle
 View.clipShape
 View.clipped
@@ -124,6 +127,7 @@ View.hoverEffectDisabled
 View.hueRotation
 View.id
 View.ignoresSafeArea
+View.imageScale
 View.indexViewStyle
 View.inspectorColumnWidth
 View.interactionActivityTrackingTag
@@ -131,11 +135,13 @@ View.interactiveDismissDisabled
 View.invalidatableContent
 View.italic
 View.kerning
+View.keyboardType
 View.labelIconToTitleSpacing
 View.labelReservedIconWidth
 View.labelStyle
 View.labeledContentStyle
 View.labelsHidden
+View.labelsVisibility
 View.layoutPriority
 View.lineHeight
 View.lineLimit
@@ -151,6 +157,7 @@ View.listSectionSeparatorTint
 View.listSectionSpacing
 View.listStyle
 View.mask
+View.menuActionDismissBehavior
 View.menuIndicator
 View.menuOrder
 View.menuStyle
@@ -237,6 +244,7 @@ View.textCase
 View.textEditorStyle
 View.textFieldStyle
 View.textInputAutocapitalization
+View.textScale
 View.tint
 View.toggleStyle
 View.tracking
@@ -244,6 +252,7 @@ View.transition
 View.truncationMode
 View.underline
 View.unredacted
+View.writingToolsBehavior
 View.zIndex
 ZStack.init
 withAnimation

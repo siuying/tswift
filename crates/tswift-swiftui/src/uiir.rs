@@ -205,6 +205,14 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "ScrollBounceBehavior" => "scrollBounceBehavior",
             "ScrollDismissesKeyboardMode" => "scrollDismissesKeyboard",
             "DynamicTypeSize" => "dynamicTypeSize",
+            "ImageScale" => "imageScale",
+            "KeyboardType" => "keyboardType",
+            "UITextAutocapitalizationType" => "autocapitalization",
+            "MenuActionDismissBehavior" => "menuActionDismissBehavior",
+            "ButtonRepeatBehavior" => "buttonRepeatBehavior",
+            "TextScale" => "textScale",
+            "WritingToolsBehavior" => "writingToolsBehavior",
+            "ImageDynamicRange" => "allowedDynamicRange",
             _ => "token",
         };
         out.push_str("{\"$\":");

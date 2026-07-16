@@ -190,6 +190,18 @@ modifier!(
     "scrollDismissesKeyboard"
 );
 modifier!(modifier_dynamic_type_size, "dynamicTypeSize");
+modifier!(modifier_image_scale, "imageScale");
+modifier!(modifier_keyboard_type, "keyboardType");
+modifier!(modifier_autocapitalization, "autocapitalization");
+modifier!(
+    modifier_menu_action_dismiss_behavior,
+    "menuActionDismissBehavior"
+);
+modifier!(modifier_button_repeat_behavior, "buttonRepeatBehavior");
+modifier!(modifier_text_scale, "textScale");
+modifier!(modifier_writing_tools_behavior, "writingToolsBehavior");
+modifier!(modifier_allowed_dynamic_range, "allowedDynamicRange");
+modifier!(modifier_labels_visibility, "labelsVisibility");
 modifier!(modifier_equatable, "equatable");
 modifier!(modifier_focus_section, "focusSection");
 modifier!(modifier_ignores_safe_area, "ignoresSafeArea");
@@ -573,6 +585,18 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_scroll_dismisses_keyboard,
     ),
     ("dynamicTypeSize", modifier_dynamic_type_size),
+    ("imageScale", modifier_image_scale),
+    ("keyboardType", modifier_keyboard_type),
+    ("autocapitalization", modifier_autocapitalization),
+    (
+        "menuActionDismissBehavior",
+        modifier_menu_action_dismiss_behavior,
+    ),
+    ("buttonRepeatBehavior", modifier_button_repeat_behavior),
+    ("textScale", modifier_text_scale),
+    ("writingToolsBehavior", modifier_writing_tools_behavior),
+    ("allowedDynamicRange", modifier_allowed_dynamic_range),
+    ("labelsVisibility", modifier_labels_visibility),
     ("equatable", modifier_equatable),
     ("focusSection", modifier_focus_section),
     ("ignoresSafeArea", modifier_ignores_safe_area),

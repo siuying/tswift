@@ -47,6 +47,14 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "ScrollBounceBehavior"
             | "ScrollDismissesKeyboardMode"
             | "DynamicTypeSize"
+            | "ImageScale"
+            | "KeyboardType"
+            | "UITextAutocapitalizationType"
+            | "MenuActionDismissBehavior"
+            | "ButtonRepeatBehavior"
+            | "TextScale"
+            | "WritingToolsBehavior"
+            | "ImageDynamicRange"
     ) {
         return None;
     }
