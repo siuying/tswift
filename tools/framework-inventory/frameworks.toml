@@ -73,6 +73,7 @@ inventory = "frameworks/swiftui/inventory.md"
 registry = "frameworks/swiftui/registered_keys.txt"
 scope = "frameworks/swiftui/scope.toml"
 fixture_prefix = "swiftui_"
+fixture_dir = "tests/swiftui-fixtures"
 
 [charts]
 display_name = "Charts"

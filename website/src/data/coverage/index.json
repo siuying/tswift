@@ -1,22 +1,11 @@
 {
   "frameworks": [
     {
-      "framework": "charts",
-      "display_name": "Charts",
-      "totals": {
-        "implemented": 0,
-        "partial": 58,
-        "missing": 2,
-        "out_of_scope": 7,
-        "total": 67
-      }
-    },
-    {
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {
-        "implemented": 399,
-        "partial": 32,
+        "implemented": 401,
+        "partial": 30,
         "missing": 184,
         "out_of_scope": 0,
         "total": 615
@@ -26,8 +15,8 @@
       "framework": "stdlib",
       "display_name": "Swift stdlib",
       "totals": {
-        "implemented": 363,
-        "partial": 1,
+        "implemented": 364,
+        "partial": 0,
         "missing": 147,
         "out_of_scope": 0,
         "total": 511
@@ -48,9 +37,9 @@
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {
-        "implemented": 0,
-        "partial": 112,
-        "missing": 590,
+        "implemented": 87,
+        "partial": 26,
+        "missing": 589,
         "out_of_scope": 0,
         "total": 702
       }

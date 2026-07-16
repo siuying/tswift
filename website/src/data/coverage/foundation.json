@@ -1541,7 +1541,7 @@
         {
           "name": "now",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "omitted",
@@ -1636,7 +1636,7 @@
         {
           "name": "timeIntervalSinceNow",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "timeIntervalSinceReferenceDate",
@@ -1705,8 +1705,8 @@
         }
       ],
       "counts": {
-        "implemented": 34,
-        "partial": 2,
+        "implemented": 36,
+        "partial": 0,
         "missing": 51,
         "out_of_scope": 0,
         "total": 87
@@ -3306,8 +3306,8 @@
     }
   ],
   "totals": {
-    "implemented": 399,
-    "partial": 32,
+    "implemented": 401,
+    "partial": 30,
     "missing": 184,
     "out_of_scope": 0,
     "total": 615

@@ -336,7 +336,7 @@
         {
           "name": "!",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "&&",
@@ -400,8 +400,8 @@
         }
       ],
       "counts": {
-        "implemented": 9,
-        "partial": 1,
+        "implemented": 10,
+        "partial": 0,
         "missing": 3,
         "out_of_scope": 0,
         "total": 13
@@ -2762,8 +2762,8 @@
     }
   ],
   "totals": {
-    "implemented": 363,
-    "partial": 1,
+    "implemented": 364,
+    "partial": 0,
     "missing": 147,
     "out_of_scope": 0,
     "total": 511

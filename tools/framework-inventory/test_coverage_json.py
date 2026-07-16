@@ -10,6 +10,7 @@ Run:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -254,6 +255,17 @@ class EmitJsonSchemaTests(unittest.TestCase):
         narrow = cov.to_dict(include_all=False)
         wide = cov.to_dict(include_all=True)
         self.assertLessEqual(len(narrow["sections"]), len(wide["sections"]))
+
+    def test_swiftui_coverage_uses_uiir_golden_fixtures(self) -> None:
+        cov = coverage_mod.Coverage("swiftui")
+        self.assertIn("Text", cov.used)
+        self.assertIn("VStack", cov.used)
+        self.assertEqual(cov.member_state("Text", "init"), "verified")
+
+    def test_unary_not_is_credited_without_matching_not_equal(self) -> None:
+        self.assertEqual(coverage_mod._strip_literals("!true != false"), "!true != false")
+        unary_not = re.compile(r"(?<![=!])!(?!=)")
+        self.assertEqual(unary_not.findall("!true != false"), ["!"])
 
 
 class GenerateWebsiteJsonTests(unittest.TestCase):

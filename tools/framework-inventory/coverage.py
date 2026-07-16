@@ -231,9 +231,13 @@ def fixture_tokens(framework: str, prefix: str | None) -> set[str]:
     operator_re = re.compile(
         r"(?<=\s)(?:" + "|".join(re.escape(t) for t in _OP_TOKENS) + r")(?=\s)"
     )
+    unary_not_re = re.compile(r"(?<![=!])!(?!=)")
 
     candidates: list[Path]
-    if framework == "stdlib":
+    fixture_dir = framework_desc(framework).get("fixture_dir")
+    if fixture_dir:
+        candidates = list(root_path(fixture_dir).glob("*.swift"))
+    elif framework == "stdlib":
         candidates = list(FIXTURES.glob("*.swift"))
     else:
         candidates = []
@@ -245,9 +249,11 @@ def fixture_tokens(framework: str, prefix: str | None) -> set[str]:
 
     for swift in candidates:
         src = swift.read_text()
+        code = _strip_literals(src)
         tokens.update(member_re.findall(src))
         tokens.update(call_re.findall(src))
-        tokens.update(operator_re.findall(_strip_literals(src)))
+        tokens.update(operator_re.findall(code))
+        tokens.update(unary_not_re.findall(code))
     return tokens
 
 

@@ -97,12 +97,12 @@
         {
           "name": "accessibilityHint",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityIdentifier",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityIgnoresInvertColors",
@@ -117,7 +117,7 @@
         {
           "name": "accessibilityLabel",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityLabeledPair",
@@ -187,7 +187,7 @@
         {
           "name": "accessibilityValue",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityZoomAction",
@@ -247,7 +247,7 @@
         {
           "name": "aspectRatio",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "assistiveAccessNavigationIcon",
@@ -272,7 +272,7 @@
         {
           "name": "background",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "backgroundExtensionEffect",
@@ -317,12 +317,12 @@
         {
           "name": "bold",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "border",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "brightness",
@@ -347,17 +347,17 @@
         {
           "name": "buttonStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "clipShape",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "clipped",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "colorEffect",
@@ -472,7 +472,7 @@
         {
           "name": "cornerRadius",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "cuttable",
@@ -562,7 +562,7 @@
         {
           "name": "disabled",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "disclosureGroupStyle",
@@ -647,7 +647,7 @@
         {
           "name": "environmentObject",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "equatable",
@@ -732,7 +732,7 @@
         {
           "name": "fixedSize",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "flipsForRightToLeftLayoutDirection",
@@ -787,7 +787,7 @@
         {
           "name": "font",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "fontDesign",
@@ -797,7 +797,7 @@
         {
           "name": "fontWeight",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "fontWidth",
@@ -807,12 +807,12 @@
         {
           "name": "foregroundColor",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "foregroundStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "formStyle",
@@ -822,7 +822,7 @@
         {
           "name": "frame",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "fullScreenCover",
@@ -842,7 +842,7 @@
         {
           "name": "gesture",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "glassEffect",
@@ -1012,7 +1012,7 @@
         {
           "name": "italic",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "itemProvider",
@@ -1082,7 +1082,7 @@
         {
           "name": "layoutPriority",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "layoutValue",
@@ -1097,7 +1097,7 @@
         {
           "name": "lineLimit",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "lineSpacing",
@@ -1177,7 +1177,7 @@
         {
           "name": "listStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "luminanceToAlpha",
@@ -1262,7 +1262,7 @@
         {
           "name": "multilineTextAlignment",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "navigationBarBackButtonHidden",
@@ -1292,7 +1292,7 @@
         {
           "name": "navigationDestination",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "navigationDocument",
@@ -1322,7 +1322,7 @@
         {
           "name": "navigationTitle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "navigationTransition",
@@ -1337,17 +1337,17 @@
         {
           "name": "offset",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onAppear",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onChange",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onCommand",
@@ -1507,12 +1507,12 @@
         {
           "name": "onSubmit",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onTapGesture",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onVolumeViewpointChange",
@@ -1527,7 +1527,7 @@
         {
           "name": "opacity",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "ornament",
@@ -1537,7 +1537,7 @@
         {
           "name": "overlay",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "overlayPreferenceValue",
@@ -1547,7 +1547,7 @@
         {
           "name": "padding",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "pageCommand",
@@ -1762,12 +1762,12 @@
         {
           "name": "scaledToFill",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "scaledToFit",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "scenePadding",
@@ -1912,7 +1912,7 @@
         {
           "name": "shadow",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "sheet",
@@ -1967,7 +1967,7 @@
         {
           "name": "strikethrough",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "submitLabel",
@@ -2027,7 +2027,7 @@
         {
           "name": "tabItem",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "tabViewBottomAccessory",
@@ -2077,7 +2077,7 @@
         {
           "name": "tag",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "task",
@@ -2087,7 +2087,7 @@
         {
           "name": "textCase",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "textContentType",
@@ -2102,7 +2102,7 @@
         {
           "name": "textFieldStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "textInputAutocapitalization",
@@ -2147,7 +2147,7 @@
         {
           "name": "tint",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "toggleStyle",
@@ -2277,7 +2277,7 @@
         {
           "name": "underline",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "unredacted",
@@ -2342,12 +2342,12 @@
         {
           "name": "zIndex",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 53,
+        "implemented": 47,
+        "partial": 6,
         "missing": 415,
         "out_of_scope": 0,
         "total": 468
@@ -2461,7 +2461,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "italic",
@@ -2535,8 +2535,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 29,
         "out_of_scope": 0,
         "total": 30
@@ -2553,12 +2553,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -2570,12 +2570,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -2587,12 +2587,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -2604,7 +2604,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "minLength",
@@ -2613,8 +2613,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -2631,12 +2631,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -2648,12 +2648,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -2760,7 +2760,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "mint",
@@ -2839,9 +2839,9 @@
         }
       ],
       "counts": {
-        "implemented": 0,
+        "implemented": 1,
         "partial": 0,
-        "missing": 35,
+        "missing": 34,
         "out_of_scope": 0,
         "total": 35
       }
@@ -2857,7 +2857,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "inset",
@@ -2881,8 +2881,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 5,
         "out_of_scope": 0,
         "total": 6
@@ -2909,7 +2909,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "inset",
@@ -2933,8 +2933,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 7,
         "out_of_scope": 0,
         "total": 8
@@ -2951,7 +2951,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "inset",
@@ -2970,8 +2970,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 4,
         "out_of_scope": 0,
         "total": 5
@@ -2988,7 +2988,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "inset",
@@ -3012,8 +3012,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 5,
         "out_of_scope": 0,
         "total": 6
@@ -3025,7 +3025,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "inset",
@@ -3044,8 +3044,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 3,
         "out_of_scope": 0,
         "total": 4
@@ -3072,12 +3072,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 3,
         "out_of_scope": 0,
         "total": 4
@@ -3094,12 +3094,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3111,12 +3111,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3210,12 +3210,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3232,12 +3232,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3254,12 +3254,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3276,12 +3276,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3298,12 +3298,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3423,12 +3423,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3445,12 +3445,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3477,7 +3477,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "showsIndicators",
@@ -3486,8 +3486,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 4,
         "out_of_scope": 0,
         "total": 5
@@ -3499,12 +3499,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3516,12 +3516,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3533,12 +3533,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3550,12 +3550,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3567,12 +3567,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -3670,12 +3670,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3692,7 +3692,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "isDetailLink",
@@ -3701,8 +3701,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 2,
         "out_of_scope": 0,
         "total": 3
@@ -3741,7 +3741,7 @@
         {
           "name": "append",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "codable",
@@ -3751,17 +3751,17 @@
         {
           "name": "count",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "isEmpty",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "removeLast",
@@ -3770,8 +3770,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 5,
+        "implemented": 4,
+        "partial": 1,
         "missing": 2,
         "out_of_scope": 0,
         "total": 7
@@ -3788,12 +3788,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3810,12 +3810,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -3832,12 +3832,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 1,
         "out_of_scope": 0,
         "total": 2
@@ -4056,12 +4056,12 @@
         {
           "name": "offset",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "opacity",
           "kind": "let",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "push",
@@ -4080,8 +4080,8 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 9,
+        "implemented": 2,
+        "partial": 7,
         "missing": 3,
         "out_of_scope": 0,
         "total": 12
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 0,
-    "partial": 112,
-    "missing": 590,
+    "implemented": 87,
+    "partial": 26,
+    "missing": 589,
     "out_of_scope": 0,
     "total": 702
   }

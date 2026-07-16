@@ -23,6 +23,8 @@ app/scene lifecycle remain out of scope (deferred to a backlog ADR / never).
 [core_members]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
+# Explicit RGB colors are prelude values and serialize to host-neutral RGBA.
+Color = ["init"]
 # Gesture value types (slice 7): init + onEnded lowering via .gesture(_:).
 # DragGesture/streaming gestures remain out of scope (need async event channel).
 TapGesture = ["init", "onEnded"]
