@@ -696,3 +696,16 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   URL plumbing), ModelContainer.configurations/schema/deleteAllData, and the
   0%-coverage Schema/PersistentModel/PersistentIdentifier sections (need @Model
   macro introspection surface).
+
+## Coverage iteration — SwiftData ModelContainer schema & deleteAllData
+
+- Coverage before → after: SwiftData implemented 25 → 27 (21.9% → 23.7%),
+  verified 23 → 25 (20.2% → 21.9%). ModelContainer 2 → 4 (25.0% → 50.0%).
+- ModelContainer.schema (contextual property) returns a lightweight Schema
+  value with the container's entity type names in registration order.
+  ModelContainer.deleteAllData() runs one `DELETE FROM <table>` per model type
+  and resets the tracking sets of every context on the shared connection, so a
+  later fetch/fetchCount sees the emptied store (verified: count 2 → 0).
+- Verified by the extended swiftdata_change_tracking golden. presubmit green.
+- Session arc: SwiftData 10.5% → 23.7% implemented (+15 members) over three
+  iterations, all golden-verified with green presubmit.
