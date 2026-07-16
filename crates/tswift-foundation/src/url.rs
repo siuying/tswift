@@ -11,8 +11,8 @@
 use std::rc::Rc;
 
 use tswift_core::{
-    Arg, BuiltinReceiver, LabeledMethodEntry, MethodEntry, Outcome, PropertySetterFn, StdContext,
-    StdError, StdResult, StructObj, SwiftValue,
+    Arg, BuiltinReceiver, LabeledMethodEntry, MethodEntry, Outcome, PropertySetterFn, StaticFn,
+    StdContext, StdError, StdResult, StructObj, SwiftValue,
 };
 
 use crate::type_error;
@@ -48,9 +48,39 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         ("baseURL", url_base_url),
         ("hasDirectoryPath", url_has_directory_path),
         ("standardized", url_standardized),
+        ("standardizedFileURL", url_standardized),
         ("absoluteURL", url_absolute_url),
+        ("dataRepresentation", url_data_representation),
     ] {
         interp.register_property(BuiltinReceiver::URL, name, f);
+    }
+
+    // Well-known filesystem-location statics (`URL.temporaryDirectory`,
+    // `URL.homeDirectory`, …). Each returns a `file://` URL derived from the
+    // process environment (`$HOME`, the OS temp dir), matching Foundation's
+    // search-path semantics for a single-user macOS-style layout.
+    for (name, f) in [
+        ("temporaryDirectory", url_temporary_directory as StaticFn),
+        ("homeDirectory", url_home_directory),
+        ("documentsDirectory", url_documents_directory),
+        ("cachesDirectory", url_caches_directory),
+        (
+            "applicationSupportDirectory",
+            url_application_support_directory,
+        ),
+        ("applicationDirectory", url_application_directory),
+        ("libraryDirectory", url_library_directory),
+        ("desktopDirectory", url_desktop_directory),
+        ("downloadsDirectory", url_downloads_directory),
+        ("moviesDirectory", url_movies_directory),
+        ("musicDirectory", url_music_directory),
+        ("picturesDirectory", url_pictures_directory),
+        ("sharedPublicDirectory", url_shared_public_directory),
+        ("trashDirectory", url_trash_directory),
+        ("userDirectory", url_user_directory),
+        ("currentDirectory", url_current_directory),
+    ] {
+        interp.register_static(BuiltinReceiver::URL, name, f);
     }
     for (name, mutating, f) in [
         (
@@ -1691,6 +1721,129 @@ fn url_standardize(
 /// `absoluteURL` — since we only model absolute URLs, returns self.
 fn url_absolute_url(recv: SwiftValue) -> StdResult {
     Ok(recv)
+}
+
+// ---- dataRepresentation --------------------------------------------------
+
+/// `URL.dataRepresentation` — the URL's absolute string encoded as UTF-8
+/// `Data`, matching Foundation (which serializes the URL bytes).
+fn url_data_representation(recv: SwiftValue) -> StdResult {
+    Ok(crate::data_value(url_string(&recv)?.into_bytes()))
+}
+
+// ---- filesystem-location statics -----------------------------------------
+
+/// The process home directory (`$HOME`), falling back to `/` when unset.
+fn home_dir() -> String {
+    std::env::var("HOME").unwrap_or_else(|_| "/".into())
+}
+
+/// Build a `file://` URL from an absolute filesystem `path`, appending a
+/// trailing slash so directory URLs report `hasDirectoryPath == true`.
+fn dir_url(path: &str) -> SwiftValue {
+    let trimmed = path.trim_end_matches('/');
+    url_value(format!("file://{trimmed}/"))
+}
+
+/// `$HOME`-relative directory URL for the given sub-path.
+fn home_subdir(sub: &str) -> SwiftValue {
+    let home = home_dir();
+    let home = home.trim_end_matches('/');
+    dir_url(&format!("{home}/{sub}"))
+}
+
+fn no_args(args: &[Arg], name: &str) -> Result<(), StdError> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        Err(type_error(format!("URL.{name} takes no arguments")))
+    }
+}
+
+fn url_temporary_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "temporaryDirectory")?;
+    let tmp = std::env::temp_dir();
+    Ok(dir_url(&tmp.to_string_lossy()))
+}
+
+fn url_home_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "homeDirectory")?;
+    Ok(dir_url(&home_dir()))
+}
+
+fn url_documents_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "documentsDirectory")?;
+    Ok(home_subdir("Documents"))
+}
+
+fn url_caches_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "cachesDirectory")?;
+    Ok(home_subdir("Library/Caches"))
+}
+
+fn url_application_support_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "applicationSupportDirectory")?;
+    Ok(home_subdir("Library/Application Support"))
+}
+
+fn url_application_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "applicationDirectory")?;
+    Ok(dir_url("/Applications"))
+}
+
+fn url_library_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "libraryDirectory")?;
+    Ok(home_subdir("Library"))
+}
+
+fn url_desktop_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "desktopDirectory")?;
+    Ok(home_subdir("Desktop"))
+}
+
+fn url_downloads_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "downloadsDirectory")?;
+    Ok(home_subdir("Downloads"))
+}
+
+fn url_movies_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "moviesDirectory")?;
+    Ok(home_subdir("Movies"))
+}
+
+fn url_music_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "musicDirectory")?;
+    Ok(home_subdir("Music"))
+}
+
+fn url_pictures_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "picturesDirectory")?;
+    Ok(home_subdir("Pictures"))
+}
+
+fn url_shared_public_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "sharedPublicDirectory")?;
+    Ok(home_subdir("Public"))
+}
+
+fn url_trash_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "trashDirectory")?;
+    Ok(home_subdir(".Trash"))
+}
+
+fn url_user_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "userDirectory")?;
+    Ok(dir_url("/Users"))
+}
+
+/// `URL.currentDirectory()` — a static *method* returning the process's
+/// working directory as a file URL.
+fn url_current_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    no_args(&args, "currentDirectory()")?;
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "/".into());
+    Ok(dir_url(&cwd))
 }
 
 // ---- resolvingSymlinksInPath / resolveSymlinksInPath ---------------------
