@@ -1,0 +1,14 @@
+hasChanges (empty): false
+hasChanges (inserted): true
+insertedCount: 2
+hasChanges (saved): false
+fetchCount: 2
+changedCount: 1
+hasChanges (dirty): true
+pages after rollback: 412
+hasChanges (rolled back): false
+deletedCount: 1
+deletedCount after rollback: 0
+fetchCount after rollback: 2
+fetchCount after transaction: 4
+hasChanges after transaction: false

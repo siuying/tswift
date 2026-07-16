@@ -318,6 +318,9 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
         ("delete", context_delete as _),
         ("save", context_save as _),
         ("fetch", context_fetch as _),
+        ("fetchCount", context_fetch_count as _),
+        ("rollback", context_rollback as _),
+        ("transaction", context_transaction as _),
     ] {
         interp.register_intrinsic(
             context,
@@ -328,6 +331,10 @@ pub(crate) fn install(interp: &mut Interpreter<'_>) {
             },
         );
     }
+    interp.register_contextual_property(context, "hasChanges", context_has_changes);
+    interp.register_contextual_property(context, "insertedModelsArray", context_inserted_models);
+    interp.register_contextual_property(context, "changedModelsArray", context_changed_models);
+    interp.register_contextual_property(context, "deletedModelsArray", context_deleted_models);
 }
 
 // ---------------------------------------------------------------------------
@@ -1904,6 +1911,200 @@ fn context_fetch(
         result: SwiftValue::Array(Rc::new(objects)),
         receiver: recv,
     })
+}
+
+// ---------------------------------------------------------------------------
+// fetchCount / change tracking / rollback / transaction
+// ---------------------------------------------------------------------------
+
+/// `ModelContext.fetchCount(_:) -> Int` — the number of rows a matching
+/// `fetch(_:)` would return. Mirrors `fetch`'s in-context semantics exactly
+/// (pending-deleted rows excluded) by running the same plan and counting.
+fn context_fetch_count(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let id = context_id(&recv)?;
+    let descriptor = args.first().cloned().ok_or_else(|| {
+        type_error("ModelContext.fetchCount(_:) expects a FetchDescriptor argument")
+    })?;
+    let plan = read_fetch_plan(&descriptor)?;
+    let iid = ctx.interpreter_id();
+    let mut state = with_state(iid, |s| s.contexts.remove(&id))
+        .ok_or_else(|| type_error("ModelContext.fetchCount(): unknown context"))?;
+    let result = fetch_rows(ctx, &mut state, &plan);
+    with_state(iid, |s| {
+        s.contexts.insert(id, state);
+    });
+    let objects = result?;
+    Ok(Outcome {
+        result: SwiftValue::int(objects.len() as i128),
+        receiver: recv,
+    })
+}
+
+/// Whether a tracked (persisted) object's current field values differ from the
+/// snapshot taken at its last flush — i.e. it is dirty and would UPDATE on save.
+/// Encoding errors are treated as "not dirty" so a change-tracking query never
+/// throws for a transiently invalid field (`save()` reports it authoritatively).
+fn tracked_is_dirty(tracked: &Tracked, schemas: &[ModelSchema]) -> bool {
+    let Ok(schema) = schema_for(schemas, &tracked.obj.borrow().class_name) else {
+        return false;
+    };
+    match row_values(&tracked.obj.borrow(), schema) {
+        Ok(values) => values != tracked.snapshot,
+        Err(_) => false,
+    }
+}
+
+fn context_has_changes(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    let id = context_id(&recv)?;
+    let changed = with_state(ctx.interpreter_id(), |s| {
+        let Some(state) = s.contexts.get(&id) else {
+            return false;
+        };
+        !state.inserted.is_empty()
+            || !state.deleted.is_empty()
+            || state
+                .tracked
+                .iter()
+                .any(|t| tracked_is_dirty(t, &state.schemas))
+    });
+    Ok(SwiftValue::Bool(changed))
+}
+
+fn context_inserted_models(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    let id = context_id(&recv)?;
+    let objects = with_state(ctx.interpreter_id(), |s| {
+        s.contexts.get(&id).map_or_else(Vec::new, |state| {
+            state
+                .inserted
+                .iter()
+                .map(|o| SwiftValue::Object(Rc::clone(o)))
+                .collect()
+        })
+    });
+    Ok(SwiftValue::Array(Rc::new(objects)))
+}
+
+fn context_changed_models(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    let id = context_id(&recv)?;
+    let objects = with_state(ctx.interpreter_id(), |s| {
+        s.contexts.get(&id).map_or_else(Vec::new, |state| {
+            state
+                .tracked
+                .iter()
+                .filter(|t| tracked_is_dirty(t, &state.schemas))
+                .map(|t| SwiftValue::Object(Rc::clone(&t.obj)))
+                .collect()
+        })
+    });
+    Ok(SwiftValue::Array(Rc::new(objects)))
+}
+
+fn context_deleted_models(ctx: &mut dyn StdContext, recv: SwiftValue) -> StdResult {
+    let id = context_id(&recv)?;
+    let objects = with_state(ctx.interpreter_id(), |s| {
+        s.contexts.get(&id).map_or_else(Vec::new, |state| {
+            state
+                .deleted
+                .iter()
+                .map(|(o, _)| SwiftValue::Object(Rc::clone(o)))
+                .collect()
+        })
+    });
+    Ok(SwiftValue::Array(Rc::new(objects)))
+}
+
+/// Restore a tracked object's fields to its last-flushed snapshot, undoing any
+/// in-memory edits so a rolled-back dirty object matches the store again.
+fn restore_snapshot(tracked: &Tracked, schemas: &[ModelSchema]) {
+    let Ok(schema) = schema_for(schemas, &tracked.obj.borrow().class_name) else {
+        return;
+    };
+    let mut obj = tracked.obj.borrow_mut();
+    for (col, value) in schema.columns.iter().zip(&tracked.snapshot) {
+        obj.set(&col.name, db_to_swift(value, col));
+    }
+}
+
+/// Discard every un-saved change: drop pending inserts, un-mark pending
+/// deletes (returning them to the tracked set), and revert dirty tracked
+/// objects to their last-flushed snapshot. Nothing is written to the store.
+fn rollback_state(state: &mut ContextState) {
+    state.inserted.clear();
+    let schemas = Rc::clone(&state.schemas);
+    for (obj, rowid) in state.deleted.drain(..).collect::<Vec<_>>() {
+        let snapshot = schema_for(&schemas, &obj.borrow().class_name)
+            .and_then(|schema| row_values(&obj.borrow(), schema))
+            .unwrap_or_default();
+        state
+            .by_identity
+            .insert((obj.borrow().class_name.clone(), rowid), Rc::clone(&obj));
+        state.tracked.push(Tracked {
+            obj,
+            rowid,
+            snapshot,
+        });
+    }
+    for tracked in &state.tracked {
+        restore_snapshot(tracked, &schemas);
+    }
+}
+
+fn context_rollback(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let id = context_id(&recv)?;
+    with_state(ctx.interpreter_id(), |s| {
+        if let Some(state) = s.contexts.get_mut(&id) {
+            rollback_state(state);
+        }
+    });
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
+/// `ModelContext.transaction(_ block:)` — run `block`, then `save()` the
+/// context so the whole body commits atomically. If `block` throws, discard
+/// its partial changes (`rollback`) and re-propagate, so a failed transaction
+/// leaves the context clean.
+fn context_transaction(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let id = context_id(&recv)?;
+    let closure = args.iter().find_map(|a| match a {
+        SwiftValue::Closure(cid) => Some(*cid),
+        _ => None,
+    });
+    let Some(closure) = closure else {
+        return Err(type_error(
+            "ModelContext.transaction(_:) expects a closure argument",
+        ));
+    };
+    match ctx.call_closure(closure, vec![]) {
+        Ok(_) => {
+            // Commit the body's accumulated changes.
+            let outcome = context_save(ctx, recv, vec![])?;
+            Ok(outcome)
+        }
+        Err(err) => {
+            // Body failed: discard its partial changes and re-propagate.
+            with_state(ctx.interpreter_id(), |s| {
+                if let Some(state) = s.contexts.get_mut(&id) {
+                    rollback_state(state);
+                }
+            });
+            Err(err)
+        }
+    }
 }
 
 fn fetch_rows(
