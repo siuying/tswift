@@ -92,7 +92,7 @@
         {
           "name": "accessibilityHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityHint",
@@ -217,12 +217,12 @@
         {
           "name": "allowsHitTesting",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsTightening",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "allowsWindowActivationEvents",
@@ -242,7 +242,7 @@
         {
           "name": "animation",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "aspectRatio",
@@ -302,17 +302,17 @@
         {
           "name": "baselineOffset",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "blendMode",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "blur",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "bold",
@@ -327,7 +327,7 @@
         {
           "name": "brightness",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "buttonBorderShape",
@@ -367,12 +367,12 @@
         {
           "name": "colorInvert",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "colorMultiply",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "colorScheme",
@@ -382,7 +382,7 @@
         {
           "name": "compositingGroup",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "confirmationDialog",
@@ -447,7 +447,7 @@
         {
           "name": "contrast",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "controlGroupStyle",
@@ -457,7 +457,7 @@
         {
           "name": "controlSize",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "coordinateSpace",
@@ -612,7 +612,7 @@
         {
           "name": "drawingGroup",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dropConfiguration",
@@ -737,7 +737,7 @@
         {
           "name": "flipsForRightToLeftLayoutDirection",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focusEffectDisabled",
@@ -792,7 +792,7 @@
         {
           "name": "fontDesign",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "fontWeight",
@@ -802,7 +802,7 @@
         {
           "name": "fontWidth",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "foregroundColor",
@@ -867,7 +867,7 @@
         {
           "name": "grayscale",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "gridCellAnchor",
@@ -912,12 +912,12 @@
         {
           "name": "help",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "hidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "highPriorityGesture",
@@ -947,7 +947,7 @@
         {
           "name": "hueRotation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "id",
@@ -1002,7 +1002,7 @@
         {
           "name": "interactiveDismissDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "invalidatableContent",
@@ -1022,7 +1022,7 @@
         {
           "name": "kerning",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "keyboardShortcut",
@@ -1062,7 +1062,7 @@
         {
           "name": "labelsHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "labelsVisibility",
@@ -1102,7 +1102,7 @@
         {
           "name": "lineSpacing",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listItemTint",
@@ -1137,12 +1137,12 @@
         {
           "name": "listRowSeparator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowSeparatorTint",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listRowSpacing",
@@ -1162,12 +1162,12 @@
         {
           "name": "listSectionSeparator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listSectionSeparatorTint",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listSectionSpacing",
@@ -1232,7 +1232,7 @@
         {
           "name": "minimumScaleFactor",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "modifier",
@@ -1247,12 +1247,12 @@
         {
           "name": "monospaced",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "monospacedDigit",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "moveDisabled",
@@ -1707,7 +1707,7 @@
         {
           "name": "redacted",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "refreshable",
@@ -1732,7 +1732,7 @@
         {
           "name": "rotationEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "safeAreaBar",
@@ -1752,12 +1752,12 @@
         {
           "name": "saturation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scaleEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scaledToFill",
@@ -1782,17 +1782,17 @@
         {
           "name": "scrollClipDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollContentBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollDisabled",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollDismissesKeyboard",
@@ -1812,7 +1812,7 @@
         {
           "name": "scrollIndicators",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "scrollIndicatorsFlash",
@@ -2007,7 +2007,7 @@
         {
           "name": "symbolRenderingMode",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "symbolVariableValueMode",
@@ -2227,7 +2227,7 @@
         {
           "name": "tracking",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transaction",
@@ -2257,12 +2257,12 @@
         {
           "name": "transition",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "truncationMode",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "typeSelectEquivalent",
@@ -2282,7 +2282,7 @@
         {
           "name": "unredacted",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "userActivity",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 47,
-        "partial": 6,
-        "missing": 415,
+        "implemented": 88,
+        "partial": 8,
+        "missing": 372,
         "out_of_scope": 0,
         "total": 468
       }
@@ -2401,7 +2401,7 @@
         {
           "name": "accessibilityLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityTextContentType",
@@ -2411,12 +2411,12 @@
         {
           "name": "baselineOffset",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "bold",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "customAttribute",
@@ -2431,7 +2431,7 @@
         {
           "name": "font",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fontDesign",
@@ -2441,7 +2441,7 @@
         {
           "name": "fontWeight",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fontWidth",
@@ -2451,12 +2451,12 @@
         {
           "name": "foregroundColor",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "foregroundStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -2466,22 +2466,22 @@
         {
           "name": "italic",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "kerning",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "monospaced",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "monospacedDigit",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "speechAdjustedPitch",
@@ -2506,7 +2506,7 @@
         {
           "name": "strikethrough",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textScale",
@@ -2521,7 +2521,7 @@
         {
           "name": "tracking",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "typesettingLanguage",
@@ -2531,13 +2531,13 @@
         {
           "name": "underline",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 1,
+        "implemented": 15,
         "partial": 0,
-        "missing": 29,
+        "missing": 15,
         "out_of_scope": 0,
         "total": 30
       }
@@ -2670,7 +2670,7 @@
         {
           "name": "accentColor",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "animatableData",
@@ -2680,17 +2680,17 @@
         {
           "name": "black",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "blue",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "brown",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cgColor",
@@ -2700,12 +2700,12 @@
         {
           "name": "clear",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cyan",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "description",
@@ -2730,12 +2730,12 @@
         {
           "name": "gray",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "green",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hash",
@@ -2755,7 +2755,7 @@
         {
           "name": "indigo",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -2765,7 +2765,7 @@
         {
           "name": "mint",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "mix",
@@ -2775,32 +2775,32 @@
         {
           "name": "opacity",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "orange",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "pink",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "primary",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "purple",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "red",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "resolve",
@@ -2815,12 +2815,12 @@
         {
           "name": "secondary",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "teal",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transferRepresentation",
@@ -2830,18 +2830,18 @@
         {
           "name": "white",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "yellow",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 1,
+        "implemented": 21,
         "partial": 0,
-        "missing": 34,
+        "missing": 14,
         "out_of_scope": 0,
         "total": 35
       }
@@ -3864,7 +3864,7 @@
         {
           "name": "bouncy",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "customMirror",
@@ -3879,12 +3879,12 @@
         {
           "name": "default",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "delay",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "description",
@@ -3894,12 +3894,12 @@
         {
           "name": "easeIn",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "easeInOut",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "easeOut",
@@ -3924,17 +3924,17 @@
         {
           "name": "interactiveSpring",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "interpolatingSpring",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "linear",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "logicallyComplete",
@@ -3944,12 +3944,12 @@
         {
           "name": "repeatCount",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "repeatForever",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "shouldMerge",
@@ -3959,22 +3959,22 @@
         {
           "name": "smooth",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "snappy",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "speed",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "spring",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "systemOverlayAppearance",
@@ -3999,7 +3999,7 @@
         {
           "name": "timingCurve",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "velocity",
@@ -4008,9 +4008,9 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 12,
-        "missing": 20,
+        "implemented": 15,
+        "partial": 1,
+        "missing": 16,
         "out_of_scope": 0,
         "total": 32
       }
@@ -4021,22 +4021,22 @@
         {
           "name": "animation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "asymmetric",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "combined",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "identity",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -4051,7 +4051,7 @@
         {
           "name": "move",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "offset",
@@ -4066,32 +4066,32 @@
         {
           "name": "push",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "scale",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "slide",
           "kind": "var",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 2,
-        "partial": 7,
-        "missing": 3,
+        "implemented": 10,
+        "partial": 0,
+        "missing": 2,
         "out_of_scope": 0,
         "total": 12
       }
     }
   ],
   "totals": {
-    "implemented": 93,
-    "partial": 33,
-    "missing": 576,
+    "implemented": 191,
+    "partial": 17,
+    "missing": 494,
     "out_of_scope": 0,
     "total": 702
   }

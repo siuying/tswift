@@ -24,8 +24,14 @@ modifiers, layout arguments, structural containers (`Group`/`Divider`/
 `ScrollView`), decoration (`border`/`shadow`/`clipShape`), content views
 (`Label`/`Image`/`ProgressView`), lazy stacks & grids, `Form`, and control
 styling — each landed in all three appliers (runtime, web, iOS) with goldens.
-Async (Tier 6), `GeometryReader` (Tier 7), and navigation (Tier 8) are not
-started.
+The latest breadth pass widened it further: the full `Animation` curve family
+(`.default`, `timingCurve`, `interpolatingSpring`, `interactiveSpring`) and
+`AnyTransition` combinators, the system `Color` palette with `.opacity(_:)`,
+Text typography (kerning/tracking/baseline/monospacing), graphic effects
+(blur/brightness/contrast/saturation/grayscale/rotationEffect via `Angle`),
+and list/scroll styling plus token-enum modifiers (blendMode, controlSize,
+symbolRenderingMode, redacted, truncationMode). Async (Tier 6),
+`GeometryReader` (Tier 7), and navigation (Tier 8) are not started.
 
 **Legend:** ✅ Implemented · 🟡 Partial · ⬜ Missing · 🚫 Out of scope.
 The surface count below tracks individual API members across the iOS SDK
