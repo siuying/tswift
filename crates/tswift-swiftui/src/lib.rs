@@ -154,6 +154,14 @@ struct Binding<Value> {
         get { box.value }
         nonmutating set { box.value = newValue }
     }
+    // A binding projects to itself, which lets `$binding` be passed through to
+    // controls in exactly the same way as `$state`.
+    var projectedValue: Binding<Value> { self }
+    // A constant binding deliberately retains a private box. Controls can
+    // write their event payload into it, but no external state is observed.
+    static func constant(_ value: Value) -> Binding<Value> {
+        Binding(box: _StateBox(value))
+    }
 }
 @propertyWrapper
 struct State<Value> {

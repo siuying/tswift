@@ -21,6 +21,14 @@ app/scene lifecycle remain out of scope (deferred to a backlog ADR / never).
 # scale form NYI). AsyncImagePhase is a prelude struct (not the real SwiftUI enum);
 # .success/.failure/.empty cases are accessible via .isSuccess/.isFailure/.isEmpty.
 [core_members]
+State = ["init", "projectedValue", "wrappedValue"]
+# `Binding.constant` uses a private reference box and `projectedValue` returns
+# the binding itself. Collection/key-path forms need generic collection and
+# transaction support not yet exposed by the frontend.
+Binding = ["init", "constant", "projectedValue", "wrappedValue"]
+StateObject = ["init", "wrappedValue"]
+ObservedObject = ["init", "wrappedValue"]
+EnvironmentObject = ["init", "wrappedValue"]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
 # Explicit RGB colors are prelude values and serialize to host-neutral RGBA.
