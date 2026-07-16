@@ -385,6 +385,26 @@ struct Angle {
     static func radians(_ radians: Double) -> Angle { Angle(radians: radians) }
     static let zero = Angle(degrees: 0)
 }
+// `EdgeInsets` — per-edge padding amounts for `.listRowInsets`, `.padding`,
+// safe-area insets, etc. Serialized as `{"$":"edgeInsets","top":…,…}`.
+struct EdgeInsets {
+    var top: Double
+    var leading: Double
+    var bottom: Double
+    var trailing: Double
+    init(top: Double, leading: Double, bottom: Double, trailing: Double) {
+        self.top = top
+        self.leading = leading
+        self.bottom = bottom
+        self.trailing = trailing
+    }
+    init() {
+        self.top = 0
+        self.leading = 0
+        self.bottom = 0
+        self.trailing = 0
+    }
+}
 struct Font {
     let token: String
     static let largeTitle = Font(token: "largeTitle")
@@ -1356,6 +1376,7 @@ mod tests {
                 "TextField.init",
                 "Toggle.init",
                 "VStack.init",
+                "View.accentColor",
                 "View.accessibilityAddTraits",
                 "View.accessibilityDirectTouch",
                 "View.accessibilityElement",
@@ -1393,6 +1414,7 @@ mod tests {
                 "View.colorInvert",
                 "View.colorMultiply",
                 "View.compositingGroup",
+                "View.contextMenu",
                 "View.contrast",
                 "View.controlGroupStyle",
                 "View.controlSize",
@@ -1444,8 +1466,11 @@ mod tests {
                 "View.labeledContentStyle",
                 "View.labelsHidden",
                 "View.layoutPriority",
+                "View.lineHeight",
                 "View.lineLimit",
                 "View.lineSpacing",
+                "View.listRowBackground",
+                "View.listRowInsets",
                 "View.listRowSeparator",
                 "View.listRowSeparatorTint",
                 "View.listRowSpacing",
@@ -1454,6 +1479,7 @@ mod tests {
                 "View.listSectionSeparatorTint",
                 "View.listSectionSpacing",
                 "View.listStyle",
+                "View.mask",
                 "View.menuIndicator",
                 "View.menuStyle",
                 "View.minimumScaleFactor",
@@ -1463,6 +1489,7 @@ mod tests {
                 "View.multilineTextAlignment",
                 "View.navigationBarBackButtonHidden",
                 "View.navigationBarHidden",
+                "View.navigationBarTitle",
                 "View.navigationDestination",
                 "View.navigationLinkIndicatorVisibility",
                 "View.navigationSplitViewColumnWidth",
@@ -1482,6 +1509,7 @@ mod tests {
                 "View.padding",
                 "View.persistentSystemOverlays",
                 "View.pickerStyle",
+                "View.position",
                 "View.previewDisplayName",
                 "View.privacySensitive",
                 "View.progressViewStyle",
@@ -1489,6 +1517,7 @@ mod tests {
                 "View.replaceDisabled",
                 "View.resizable",
                 "View.rotationEffect",
+                "View.safeAreaPadding",
                 "View.saturation",
                 "View.scaleEffect",
                 "View.scaledToFill",

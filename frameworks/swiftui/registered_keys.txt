@@ -38,6 +38,7 @@ Text.init
 TextField.init
 Toggle.init
 VStack.init
+View.accentColor
 View.accessibilityAddTraits
 View.accessibilityDirectTouch
 View.accessibilityElement
@@ -75,6 +76,7 @@ View.clipped
 View.colorInvert
 View.colorMultiply
 View.compositingGroup
+View.contextMenu
 View.contrast
 View.controlGroupStyle
 View.controlSize
@@ -126,8 +128,11 @@ View.labelStyle
 View.labeledContentStyle
 View.labelsHidden
 View.layoutPriority
+View.lineHeight
 View.lineLimit
 View.lineSpacing
+View.listRowBackground
+View.listRowInsets
 View.listRowSeparator
 View.listRowSeparatorTint
 View.listRowSpacing
@@ -136,6 +141,7 @@ View.listSectionSeparator
 View.listSectionSeparatorTint
 View.listSectionSpacing
 View.listStyle
+View.mask
 View.menuIndicator
 View.menuStyle
 View.minimumScaleFactor
@@ -145,6 +151,7 @@ View.moveDisabled
 View.multilineTextAlignment
 View.navigationBarBackButtonHidden
 View.navigationBarHidden
+View.navigationBarTitle
 View.navigationDestination
 View.navigationLinkIndicatorVisibility
 View.navigationSplitViewColumnWidth
@@ -164,6 +171,7 @@ View.overlay
 View.padding
 View.persistentSystemOverlays
 View.pickerStyle
+View.position
 View.previewDisplayName
 View.privacySensitive
 View.progressViewStyle
@@ -171,6 +179,7 @@ View.redacted
 View.replaceDisabled
 View.resizable
 View.rotationEffect
+View.safeAreaPadding
 View.saturation
 View.scaleEffect
 View.scaledToFill

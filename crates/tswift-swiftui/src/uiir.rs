@@ -258,6 +258,22 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             out.push_str(&tswift_core::format_double(deg));
             out.push('}');
         }
+        // `EdgeInsets` serializes as `{"$":"edgeInsets","top":…,…}`.
+        SwiftValue::Struct(obj) if obj.type_name == "EdgeInsets" => {
+            let edge = |name: &str| match obj.get(name) {
+                Some(SwiftValue::Double(d)) => *d,
+                Some(SwiftValue::Int(i)) => i.raw as f64,
+                _ => 0.0,
+            };
+            out.push_str(r#"{"$":"edgeInsets""#);
+            for name in ["top", "leading", "bottom", "trailing"] {
+                out.push_str(",\"");
+                out.push_str(name);
+                out.push_str("\":");
+                out.push_str(&tswift_core::format_double(edge(name)));
+            }
+            out.push('}');
+        }
         // A nested view value (e.g. `.background(SomeView())`) serializes as a
         // node; anything else falls back to its display string.
         other if view_type_name(other).is_some() => write_node(other, "0", out),

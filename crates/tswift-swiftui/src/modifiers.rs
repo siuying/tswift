@@ -165,6 +165,15 @@ modifier!(
 modifier!(modifier_header_prominence, "headerProminence");
 modifier!(modifier_badge_prominence, "badgeProminence");
 modifier!(modifier_button_border_shape, "buttonBorderShape");
+// Value-passthrough geometry/appearance modifiers (scalars, colors, strings,
+// edge insets) — the host interprets the recorded name + args. None carry a
+// leading-dot token, so they never contend in the implicit-member namespace.
+modifier!(modifier_position, "position");
+modifier!(modifier_accent_color, "accentColor");
+modifier!(modifier_safe_area_padding, "safeAreaPadding");
+modifier!(modifier_list_row_insets, "listRowInsets");
+modifier!(modifier_navigation_bar_title, "navigationBarTitle");
+modifier!(modifier_line_height, "lineHeight");
 // Text-input modifiers. `submitLabel` carries a `SubmitLabel` token;
 // `textInputAutocapitalization` a `TextInputAutocapitalization`.
 // `autocorrectionDisabled`/`focusable`/`disableAutocorrection` are Bool toggles
@@ -479,6 +488,36 @@ pub(crate) fn modifier_overlay(
     compose_modifier(ctx, recv, "overlay", args)
 }
 
+/// `.mask(alignment:) { content }` — records a nested masking view, lowered the
+/// same way as `overlay`/`background` (the host uses it as an alpha mask).
+pub(crate) fn modifier_mask(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "mask", args)
+}
+
+/// `.contextMenu { menuItems }` — records the long-press menu subtree as a
+/// nested view (the host renders the item buttons on demand).
+pub(crate) fn modifier_context_menu(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "contextMenu", args)
+}
+
+/// `.listRowBackground(_ view)` — records a nested backing view for a list row
+/// (the host draws it behind the row content).
+pub(crate) fn modifier_list_row_background(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "listRowBackground", args)
+}
+
 /// View modifiers registered as generic struct methods, by Swift name. Drives
 /// both [`install`] and the `View.<name>` coverage keys in [`registered_keys`].
 pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
@@ -490,6 +529,15 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("foregroundColor", modifier_foreground_color),
     ("background", modifier_background),
     ("overlay", modifier_overlay),
+    ("mask", modifier_mask),
+    ("contextMenu", modifier_context_menu),
+    ("listRowBackground", modifier_list_row_background),
+    ("position", modifier_position),
+    ("accentColor", modifier_accent_color),
+    ("safeAreaPadding", modifier_safe_area_padding),
+    ("listRowInsets", modifier_list_row_insets),
+    ("navigationBarTitle", modifier_navigation_bar_title),
+    ("lineHeight", modifier_line_height),
     ("fill", modifier_fill),
     ("tag", modifier_tag),
     ("tabItem", modifier_tab_item),
