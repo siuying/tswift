@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/Doc.astro
 title: Libraries
-description: tswift's native Rust implementations of Swift's standard library, Foundation, SwiftUI, and SwiftData.
+description: tswift's native Rust implementations of Swift's standard library, Foundation, SwiftUI, Charts, and SwiftData.
 section: how-it-works
 ---
 
@@ -27,12 +27,14 @@ flowchart BT
     std["tswift-std\\nStandard library"]
     fnd["Foundation\\n(partial)"]
     swiftui["SwiftUI\\n(partial)"]
+    charts["Charts\\n(render-host surface)"]
     swiftdata["SwiftData\\n(subset)"]
 
     src --> fe --> rt
     std --> rt
     fnd --> rt
     swiftui --> rt
+    charts --> rt
     swiftdata --> rt
 `}
 </Mermaid>
@@ -134,6 +136,20 @@ animation are implemented; full layout fidelity and a native (non-web)
 rendering target remain open work.
 
 See the [SwiftUI status page →](/status/swiftui) for detailed counts.
+
+---
+
+## Charts (render-host surface)
+
+Charts shares SwiftUI's host-neutral UIIR path. `Chart` and its 2D marks
+(`BarMark`, `LineMark`, `PointMark`, `AreaMark`, `RuleMark`, `RectangleMark`,
+and `SectorMark`) evaluate into chart and mark values; styling, axis, scale,
+legend, selection, and scrolling modifiers remain attached for a host to
+interpret. The web host renders deterministic SVG, while the iOS host lowers to
+native Charts; these are explicit fidelity tiers rather than a claim of
+pixel-identical parity.
+
+See the [Charts status page →](/status/charts) for the scoped API reference.
 
 ---
 
