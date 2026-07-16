@@ -483,3 +483,22 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Unlocks a path for the remaining token modifiers (imageScale,
   keyboardType, menuActionDismissBehavior, etc.) — each just needs a typed
   namespace + typed registration.
+
+## Coverage iteration — SwiftUI input/image/behavior token modifiers
+
+- Coverage before → after: SwiftUI implemented 317 → 326 (45.2% → 46.4%),
+  verified 297 → 306 (42.3% → 43.6%). View +9. Others unchanged.
+- Second typed-seam batch: imageScale, keyboardType, autocapitalization,
+  menuActionDismissBehavior, buttonRepeatBehavior, textScale,
+  writingToolsBehavior, allowedDynamicRange, labelsVisibility (reuses the
+  existing Visibility namespace). Added 8 new token structs to the PRELUDE,
+  token_of, and the UIIR tag map.
+- Cascade: the new namespaces reuse .small/.secondary/.words/.sentences/
+  .standard/.none/.default, so converted the affected uniqueness-resolved
+  modifiers to typed — foregroundColor, foregroundStyle, accentColor, tint,
+  textInputAutocapitalization, headerProminence, badgeProminence. Every
+  existing golden re-rendered byte-identical (behavior-preserving). green.
+- Takeaway: the uniqueness→typed migration is now the standard move; each
+  new token type is cheap but forces typing any older modifier that shared a
+  name. Remaining token modifiers (textContentType, contentShape tokens,
+  scenePadding, defersSystemGestures) follow the same recipe.
