@@ -502,3 +502,17 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   new token type is cheap but forces typing any older modifier that shared a
   name. Remaining token modifiers (textContentType, contentShape tokens,
   scenePadding, defersSystemGestures) follow the same recipe.
+
+## Coverage iteration — SwiftUI text/scroll/dialog token modifiers
+
+- Coverage before → after: SwiftUI implemented 326 → 332 (46.4% → 47.3%),
+  verified 306 → 312 (43.6% → 44.4%). View +6. Others unchanged.
+- Third typed-seam batch: textContentType (UITextContentType, 18 tokens),
+  textSelectionAffinity, scrollInputBehavior, dialogSeverity, plus
+  defaultHoverEffect and presentationDragIndicator reusing existing
+  HoverEffect / Visibility namespaces. Four new token structs. No cascade
+  this round — new tokens were unique or already resolved by typed peers.
+  presubmit green.
+- Cumulative SwiftUI arc this session: 40.0% → 47.3% implemented (+51
+  modifiers), after breaking the token-collision plateau with the typed
+  register_struct_method_typed seam.
