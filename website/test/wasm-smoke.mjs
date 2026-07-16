@@ -44,6 +44,8 @@ check('wasm exports the SwiftUI host entry points', () => {
 //    in-place patch stream (the wire format `<swiftui-canvas>` applies).
 check('counter renders and a tap returns a setText patch', () => {
   const src = [
+    'import SwiftUI',
+    '',
     'struct CounterView: View {',
     '  @State private var count = 0',
     '  var body: some View {',
@@ -275,6 +277,8 @@ check('AsyncStream program runs and produces the expected output', () => {
 //    compile + render a tree.
 const SWIFTUI_PRESETS = {
   Toggle: [
+    'import SwiftUI',
+    '',
     'struct GreetingView: View {',
     '  @State private var isOn = true',
     '  var body: some View {',
@@ -286,6 +290,8 @@ const SWIFTUI_PRESETS = {
     '}',
   ].join('\n'),
   List: [
+    'import SwiftUI',
+    '',
     'struct FruitList: View {',
     '  let fruits = ["Apple", "Banana", "Cherry"]',
     '  var body: some View {',
@@ -298,6 +304,8 @@ const SWIFTUI_PRESETS = {
     '}',
   ].join('\n'),
   Profile: [
+    'import SwiftUI',
+    '',
     'struct ProfileCard: View {',
     '  var body: some View {',
     '    VStack(spacing: 12) {',
