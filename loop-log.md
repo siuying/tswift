@@ -1224,3 +1224,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
     `tabItem`/`searchSuggestions`).
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI preference-value/ornament modifiers (+3)
+
+- **SwiftUI 476→479 impl, 456→459 verified (65.0% → 65.4%)**. Golden-verified
+  via new `preference-value-and-ornament` fixture.
+- New modifiers:
+  - `backgroundPreferenceValue(_:_:)` / `overlayPreferenceValue(_:_:)` — take a
+    `(Value) -> View` transform; the preference `Value` is not computed by a
+    headless runtime, so they record a bare marker + stashed closure
+    (`closure_modifier!`) rather than fake empty content.
+  - `ornament { }` — `viewbuilder_modifier!` lowers the trailing `@ViewBuilder`
+    to a nested child subtree (labeled visibility/anchor/alignment dropped).
+- **Deferred**: `scrollPosition`/`focused` need optional-`@State`/`@FocusState`
+  infra (not yet modeled); left as tripwires.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
