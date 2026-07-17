@@ -258,6 +258,7 @@ View.presentationBackgroundInteraction
 View.presentationCompactAdaptation
 View.presentationContentInteraction
 View.presentationCornerRadius
+View.presentationDetents
 View.presentationDragIndicator
 View.presentationSizing
 View.previewDevice
@@ -266,6 +267,7 @@ View.previewInterfaceOrientation
 View.previewLayout
 View.privacySensitive
 View.progressViewStyle
+View.projectionEffect
 View.redacted
 View.refreshable
 View.replaceDisabled
@@ -298,6 +300,7 @@ View.searchPresentationToolbarBehavior
 View.searchToolbarBehavior
 View.sectionIndexLabel
 View.selectionDisabled
+View.sensoryFeedback
 View.shadow
 View.sheet
 View.sliderThumbVisibility
@@ -313,6 +316,7 @@ View.submitLabel
 View.submitScope
 View.swipeActions
 View.symbolColorRenderingMode
+View.symbolEffect
 View.symbolEffectsRemoved
 View.symbolRenderingMode
 View.symbolVariableValueMode
@@ -342,6 +346,7 @@ View.toolbarRole
 View.toolbarTitleDisplayMode
 View.toolbarVisibility
 View.tracking
+View.transformEffect
 View.transition
 View.truncationMode
 View.typeSelectEquivalent

@@ -745,6 +745,17 @@ modifier!(
 modifier!(modifier_section_index_label, "sectionIndexLabel");
 modifier!(modifier_hover_effect_group, "hoverEffectGroup");
 modifier!(modifier_navigation_transition, "navigationTransition");
+// Geometry-effect value passthroughs (no token): `transformEffect` carries a
+// `CGAffineTransform`, `projectionEffect` a `ProjectionTransform` — recorded
+// straight onto the node for the host to apply.
+modifier!(modifier_transform_effect, "transformEffect");
+modifier!(modifier_projection_effect, "projectionEffect");
+// Token modifiers typed in `install`: `symbolEffect` (SymbolEffect),
+// `sensoryFeedback` (SensoryFeedback token + a `trigger:` value passthrough),
+// `presentationDetents` (a `[PresentationDetent]` token array).
+modifier!(modifier_symbol_effect, "symbolEffect");
+modifier!(modifier_sensory_feedback, "sensoryFeedback");
+modifier!(modifier_presentation_detents, "presentationDetents");
 
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
@@ -1407,6 +1418,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("sectionIndexLabel", modifier_section_index_label),
     ("hoverEffectGroup", modifier_hover_effect_group),
     ("navigationTransition", modifier_navigation_transition),
+    ("transformEffect", modifier_transform_effect),
+    ("projectionEffect", modifier_projection_effect),
+    ("symbolEffect", modifier_symbol_effect),
+    ("sensoryFeedback", modifier_sensory_feedback),
+    ("presentationDetents", modifier_presentation_detents),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).

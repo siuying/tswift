@@ -1190,6 +1190,46 @@ struct AnyTransition {
         return t
     }
 }
+// `.symbolEffect(_:)` — SF Symbol content-transition/animation token. Only the
+// discrete leading-dot presets are modelled (the `.repeat`/`options:` builders
+// are out of scope v1); the host reads the token and animates the symbol.
+struct SymbolEffect {
+    let token: String
+    static let bounce = SymbolEffect(token: "bounce")
+    static let pulse = SymbolEffect(token: "pulse")
+    static let variableColor = SymbolEffect(token: "variableColor")
+    static let scale = SymbolEffect(token: "scale")
+    static let appear = SymbolEffect(token: "appear")
+    static let disappear = SymbolEffect(token: "disappear")
+    static let wiggle = SymbolEffect(token: "wiggle")
+    static let rotate = SymbolEffect(token: "rotate")
+    static let breathe = SymbolEffect(token: "breathe")
+}
+// `.sensoryFeedback(_:trigger:)` — a haptic/audio feedback token fired when the
+// `trigger:` value changes. The impact/weight builders are out of scope; the
+// discrete presets are modelled as tokens.
+struct SensoryFeedback {
+    let token: String
+    static let success = SensoryFeedback(token: "success")
+    static let warning = SensoryFeedback(token: "warning")
+    static let error = SensoryFeedback(token: "error")
+    static let selection = SensoryFeedback(token: "selection")
+    static let increase = SensoryFeedback(token: "increase")
+    static let decrease = SensoryFeedback(token: "decrease")
+    static let start = SensoryFeedback(token: "start")
+    static let stop = SensoryFeedback(token: "stop")
+    static let alignment = SensoryFeedback(token: "alignment")
+    static let levelChange = SensoryFeedback(token: "levelChange")
+    static let impact = SensoryFeedback(token: "impact")
+}
+// `.presentationDetents([...])` — the resting heights a sheet may snap to.
+// Only the discrete `.medium`/`.large` presets are modelled (the
+// `.fraction(_)`/`.height(_)`/`.custom` builders are out of scope v1).
+struct PresentationDetent {
+    let token: String
+    static let medium = PresentationDetent(token: "medium")
+    static let large = PresentationDetent(token: "large")
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier
@@ -1965,6 +2005,31 @@ fn install_inner(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("for", "Edge.Set"),
         ],
     );
+    // Symbol/haptic/detent token modifiers: leading-dot presets resolve against
+    // the declared token type. `sensoryFeedback` also carries a `trigger:`
+    // value (any Equatable, self-typed); `presentationDetents` takes an array
+    // of `PresentationDetent` tokens (`[.medium, .large]`). Note: the
+    // `.success`/`.failure` SensoryFeedback presets collide with the builtin
+    // `Result` enum cases and degrade to a bare token string — the other
+    // presets (`.selection`, `.warning`, …) tag cleanly.
+    interp.register_struct_method_typed(
+        "symbolEffect",
+        modifiers::modifier_symbol_effect,
+        vec![BuiltinParam::positional("SymbolEffect")],
+    );
+    interp.register_struct_method_typed(
+        "sensoryFeedback",
+        modifiers::modifier_sensory_feedback,
+        vec![
+            BuiltinParam::positional("SensoryFeedback"),
+            BuiltinParam::labeled("trigger", "Equatable"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "presentationDetents",
+        modifiers::modifier_presentation_detents,
+        vec![BuiltinParam::positional("[PresentationDetent]")],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -2515,6 +2580,7 @@ mod tests {
                 "View.presentationCompactAdaptation",
                 "View.presentationContentInteraction",
                 "View.presentationCornerRadius",
+                "View.presentationDetents",
                 "View.presentationDragIndicator",
                 "View.presentationSizing",
                 "View.previewDevice",
@@ -2523,6 +2589,7 @@ mod tests {
                 "View.previewLayout",
                 "View.privacySensitive",
                 "View.progressViewStyle",
+                "View.projectionEffect",
                 "View.redacted",
                 "View.refreshable",
                 "View.replaceDisabled",
@@ -2555,6 +2622,7 @@ mod tests {
                 "View.searchToolbarBehavior",
                 "View.sectionIndexLabel",
                 "View.selectionDisabled",
+                "View.sensoryFeedback",
                 "View.shadow",
                 "View.sheet",
                 "View.sliderThumbVisibility",
@@ -2570,6 +2638,7 @@ mod tests {
                 "View.submitScope",
                 "View.swipeActions",
                 "View.symbolColorRenderingMode",
+                "View.symbolEffect",
                 "View.symbolEffectsRemoved",
                 "View.symbolRenderingMode",
                 "View.symbolVariableValueMode",
@@ -2599,6 +2668,7 @@ mod tests {
                 "View.toolbarTitleDisplayMode",
                 "View.toolbarVisibility",
                 "View.tracking",
+                "View.transformEffect",
                 "View.transition",
                 "View.truncationMode",
                 "View.typeSelectEquivalent",
