@@ -887,3 +887,35 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   (`withUnsafeBufferPointer`, `span`, `mutableSpan`, `withContiguousStorage…`)
   and `Hasher`/`customMirror` reflection — low value in this runtime.
 - presubmit green each slice; coverage JSON regenerated + drift-clean.
+
+## Coverage iteration — SwiftUI nested-subtree modifiers
+
+- **SwiftUI**: 423 → 428 impl (60.3% → 61.0%), 403 → 408 verified (57.4% →
+  58.1%). View modifiers 300→305 verified. Five real modifiers, all
+  golden-verified via new `inset-and-swipe` fixture:
+  - `contentShape(_:)` — records a nested hit-test shape descriptor (serialized
+    like `clipShape`/`containerShape`). Leading `ContentShapeKinds` form
+    (`.contentShape(.dragPreview, shape)`) not modelled; common single-shape
+    form recorded straight onto the node.
+  - `swipeActions(edge:allowsFullSwipe:content:)` — row action buttons captured
+    as a nested subtree via `compose_modifier` (lowered like `contextMenu`).
+    `edge:`/`allowsFullSwipe:` config not modelled yet (buttons recorded).
+  - `safeAreaInset(edge:alignment:spacing:content:)` + newer `safeAreaBar(...)`
+    — content `@ViewBuilder` resolved into a nested subtree (like `overlay`);
+    `edge` (typed against `Edge` so `.top`/`.bottom`/`.leading`/`.trailing`
+    resolve) and optional `spacing` ride on the modifier. `alignment:` not
+    modelled.
+  - `inspector(isPresented:content:)` — reuses the sheet/popover presentation
+    machinery: a `Binding<Bool>` gates a `@ViewBuilder` pane realized as a
+    `Presentation` child node with `style: "inspector"`. Fixture keeps it closed
+    (no pane renders), exercising the capture path.
+- Registration: `modifier!`/custom fns + `MODIFIER_FNS` (auto-drives
+  `View.<name>` coverage keys and `registered_keys.txt`); typed specs for
+  `safeAreaInset`/`safeAreaBar` `edge:` in `install`; expected-keys test vec and
+  registered_keys.txt regenerated.
+- Advisor (fable-5, prior session) had already confirmed the presentation
+  vertical-slice design; the presentation family (sheet/popover/alert/etc.) is
+  DONE, so this slice picks up cheap adjacent nested-subtree + binding-gated
+  modifiers on the same machinery.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
+  JSON regenerated; HTML progress report refreshed.
