@@ -1350,3 +1350,20 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   binding are dropped.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI glass-effect / focus-scope modifiers (+4)
+
+- **SwiftUI 520→524 impl, 500→504 verified (71.2% → 71.8%)**. Golden-verified
+  via new `glass-focus-modifiers` fixture.
+- New modifiers:
+  - `glassEffectID(_:in:)` / `glassEffectUnion(id:namespace:)` — reuse the
+    `matched_identity` lowering (record `id:`, drop the opaque namespace).
+  - `focusScope(_:)` — records the `@Namespace` identity token (NamespaceID).
+  - `defaultAppStorage(_:)` — records the UserDefaults marker.
+- **Fidelity tier (honest)**: recorded-only — Liquid Glass identity / focus
+  scope / storage marker cross the UIIR boundary; no live glass unioning or
+  focus propagation.
+- Deferred: `writingDirection`/`menuButtonStyle`/`tabViewSearchActivation` need
+  typed leading-dot token params (install-time typed registration) — tripwire.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
