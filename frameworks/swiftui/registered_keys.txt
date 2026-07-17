@@ -39,7 +39,12 @@ TextField.init
 Toggle.init
 VStack.init
 View.accentColor
+View.accessibilityActions
+View.accessibilityActivationPoint
 View.accessibilityAddTraits
+View.accessibilityChartDescriptor
+View.accessibilityChildren
+View.accessibilityCustomContent
 View.accessibilityDirectTouch
 View.accessibilityElement
 View.accessibilityHeading
@@ -50,9 +55,11 @@ View.accessibilityIgnoresInvertColors
 View.accessibilityInputLabels
 View.accessibilityLabel
 View.accessibilityRemoveTraits
+View.accessibilityRepresentation
 View.accessibilityRespondsToUserInteraction
 View.accessibilityShowsLargeContentViewer
 View.accessibilitySortPriority
+View.accessibilityTextContentType
 View.accessibilityValue
 View.alert
 View.allowedDynamicRange

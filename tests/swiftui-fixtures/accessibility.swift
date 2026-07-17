@@ -22,6 +22,22 @@ struct V: View {
             .accessibilityIgnoresInvertColors(true)
             .accessibilityDirectTouch(true)
             .accessibilityShowsLargeContentViewer()
+            Text("points")
+                .accessibilityActivationPoint(.center)
+                .accessibilityTextContentType(.sourceCode)
+                .accessibilityCustomContent("Points", "42")
+                .accessibilityChartDescriptor("trend")
+            Text("grouped")
+                .accessibilityChildren {
+                    Text("child a")
+                    Text("child b")
+                }
+                .accessibilityRepresentation {
+                    Text("standard control")
+                }
+                .accessibilityActions {
+                    Text("action label")
+                }
         }
     }
 }

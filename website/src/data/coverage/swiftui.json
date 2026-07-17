@@ -22,12 +22,12 @@
         {
           "name": "accessibilityActions",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityActivationPoint",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityAddTraits",
@@ -42,17 +42,17 @@
         {
           "name": "accessibilityChartDescriptor",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityChildren",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityCustomContent",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityDefaultFocus",
@@ -142,7 +142,7 @@
         {
           "name": "accessibilityRepresentation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityRespondsToUserInteraction",
@@ -182,7 +182,7 @@
         {
           "name": "accessibilityTextContentType",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityValue",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 315,
+        "implemented": 322,
         "partial": 11,
-        "missing": 142,
+        "missing": 135,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 418,
+    "implemented": 425,
     "partial": 20,
-    "missing": 264,
+    "missing": 257,
     "out_of_scope": 0,
     "total": 702
   }

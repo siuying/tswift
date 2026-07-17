@@ -256,6 +256,28 @@ modifier!(
     "accessibilityInputLabels"
 );
 modifier!(modifier_accessibility_element, "accessibilityElement");
+// Accessibility metadata additions (all recorded onto the view node; no
+// on-device assistive tech in a headless runtime). `accessibilityActivation-
+// Point` carries a `UnitPoint` token (typed in `install`); `accessibility-
+// TextContentType` an `AccessibilityTextContentType` token (typed in
+// `install`); `accessibilityCustomContent` a label + value pair; and
+// `accessibilityChartDescriptor` an opaque descriptor recorded as a passthrough.
+modifier!(
+    modifier_accessibility_activation_point,
+    "accessibilityActivationPoint"
+);
+modifier!(
+    modifier_accessibility_text_content_type,
+    "accessibilityTextContentType"
+);
+modifier!(
+    modifier_accessibility_custom_content,
+    "accessibilityCustomContent"
+);
+modifier!(
+    modifier_accessibility_chart_descriptor,
+    "accessibilityChartDescriptor"
+);
 modifier!(
     modifier_accessibility_ignores_invert_colors,
     "accessibilityIgnoresInvertColors"
@@ -796,6 +818,38 @@ pub(crate) fn modifier_mask(
     compose_modifier(ctx, recv, "mask", args)
 }
 
+/// `.accessibilityChildren(children: { … })` — records a nested `@ViewBuilder`
+/// subtree describing the element's accessibility children, lowered like
+/// `overlay`/`background`. The host records the subtree; there is no on-device
+/// assistive tech in a headless runtime.
+pub(crate) fn modifier_accessibility_children(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "accessibilityChildren", args)
+}
+
+/// `.accessibilityRepresentation { … }` — records a nested `@ViewBuilder`
+/// standard-control representation, lowered like `overlay`/`background`.
+pub(crate) fn modifier_accessibility_representation(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "accessibilityRepresentation", args)
+}
+
+/// `.accessibilityActions { … }` — records a nested `@ViewBuilder` group of
+/// accessibility actions, lowered like `overlay`/`background`.
+pub(crate) fn modifier_accessibility_actions(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    compose_modifier(ctx, recv, "accessibilityActions", args)
+}
+
 /// `.contextMenu { menuItems }` — records the long-press menu subtree as a
 /// nested view (the host renders the item buttons on demand).
 pub(crate) fn modifier_context_menu(
@@ -1108,6 +1162,28 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_accessibility_input_labels,
     ),
     ("accessibilityElement", modifier_accessibility_element),
+    (
+        "accessibilityActivationPoint",
+        modifier_accessibility_activation_point,
+    ),
+    (
+        "accessibilityTextContentType",
+        modifier_accessibility_text_content_type,
+    ),
+    (
+        "accessibilityCustomContent",
+        modifier_accessibility_custom_content,
+    ),
+    (
+        "accessibilityChartDescriptor",
+        modifier_accessibility_chart_descriptor,
+    ),
+    ("accessibilityChildren", modifier_accessibility_children),
+    (
+        "accessibilityRepresentation",
+        modifier_accessibility_representation,
+    ),
+    ("accessibilityActions", modifier_accessibility_actions),
     (
         "accessibilityIgnoresInvertColors",
         modifier_accessibility_ignores_invert_colors,

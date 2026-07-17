@@ -382,6 +382,19 @@ struct AccessibilityHeadingLevel {
     static let h5 = AccessibilityHeadingLevel(token: "h5")
     static let h6 = AccessibilityHeadingLevel(token: "h6")
 }
+// `AccessibilityTextContentType` — the semantic text category for
+// `.accessibilityTextContentType(_:)`. Leading-dot token namespace.
+struct AccessibilityTextContentType {
+    let token: String
+    static let plain = AccessibilityTextContentType(token: "plain")
+    static let console = AccessibilityTextContentType(token: "console")
+    static let fileSystem = AccessibilityTextContentType(token: "fileSystem")
+    static let messaging = AccessibilityTextContentType(token: "messaging")
+    static let narrative = AccessibilityTextContentType(token: "narrative")
+    static let sourceCode = AccessibilityTextContentType(token: "sourceCode")
+    static let spreadsheet = AccessibilityTextContentType(token: "spreadsheet")
+    static let wordProcessing = AccessibilityTextContentType(token: "wordProcessing")
+}
 // `AccessibilityChildBehavior` — how `.accessibilityElement(children:)` folds
 // descendant accessibility elements.
 struct AccessibilityChildBehavior {
@@ -1523,6 +1536,16 @@ fn install_inner(interp: &mut Interpreter<'_>) {
             "AccessibilityChildBehavior",
         )],
     );
+    interp.register_struct_method_typed(
+        "accessibilityActivationPoint",
+        modifiers::modifier_accessibility_activation_point,
+        vec![BuiltinParam::positional("UnitPoint")],
+    );
+    interp.register_struct_method_typed(
+        "accessibilityTextContentType",
+        modifiers::modifier_accessibility_text_content_type,
+        vec![BuiltinParam::positional("AccessibilityTextContentType")],
+    );
     // Token-valued modifiers whose leading-dot arg resolves against a dedicated
     // parameter type. Contextual typing is what lets shared tokens like
     // `.automatic`/`.fill`/`.circle`/`.small`/`.light`/`.medium` resolve per
@@ -2481,7 +2504,12 @@ mod tests {
                 "Toggle.init",
                 "VStack.init",
                 "View.accentColor",
+                "View.accessibilityActions",
+                "View.accessibilityActivationPoint",
                 "View.accessibilityAddTraits",
+                "View.accessibilityChartDescriptor",
+                "View.accessibilityChildren",
+                "View.accessibilityCustomContent",
                 "View.accessibilityDirectTouch",
                 "View.accessibilityElement",
                 "View.accessibilityHeading",
@@ -2492,9 +2520,11 @@ mod tests {
                 "View.accessibilityInputLabels",
                 "View.accessibilityLabel",
                 "View.accessibilityRemoveTraits",
+                "View.accessibilityRepresentation",
                 "View.accessibilityRespondsToUserInteraction",
                 "View.accessibilityShowsLargeContentViewer",
                 "View.accessibilitySortPriority",
+                "View.accessibilityTextContentType",
                 "View.accessibilityValue",
                 "View.alert",
                 "View.allowedDynamicRange",
