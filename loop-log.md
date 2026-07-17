@@ -1171,3 +1171,22 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   in order; no live effect/scroll/preference wiring. Hosts honor or ignore.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI preference/phase/command modifiers (+5)
+
+- **SwiftUI 464→469 impl, 444→449 verified (63.2% → 64.0%)**. Golden-verified
+  via new `preference-and-command-modifiers` fixture.
+- New recorded-only modifiers:
+  - `transformPreference(_:_:)`, `phaseAnimator(_:content:)`,
+    `onCommand(_:perform:)`, `onPasteCommand(of:perform:)` — reuse the
+    `closure_modifier!` macro (bare marker + stashed trailing closure).
+  - `preference(key:value:)` — carries no closure; records the `value` payload
+    (hosts read the preference value). The `key:` metatype is not representable
+    in the value model, so it is dropped (recorded-only tier).
+- **Deliberately dropped** (args not constructible in a headless fixture, so
+  cannot be golden-verified honestly): `anchorPreference`/
+  `transformAnchorPreference` (need `Anchor.Source` `.bounds`, an unresolved
+  leading-dot token) and `onReceive` (needs a Combine/Timer/NotificationCenter
+  publisher, none modeled). Left as tripwires for when those types land.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
