@@ -1058,3 +1058,30 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Golden-verified via `stdlib_with_extended_lifetime` CLI fixture (zero-param
   body, value-taking body, and a Void body with a class side effect).
 - presubmit green; coverage JSON regenerated; HTML report refreshed.
+
+## Coverage iteration — SwiftUI accessibility modifiers (+7 verified)
+
+- **SwiftUI 438→445 impl, 418→425 verified (59.5% → 60.5%)**; View section
+  326→333 impl (67.3% → 68.8%). All golden-verified via the extended
+  `accessibility` render fixture.
+- Advisor (pi/fable-5) had already delivered the presentation-modifier design;
+  on reading the code, presentation modifiers (sheet/popover/alert/confirmation-
+  Dialog/fullScreenCover + dismiss event) are **already implemented** (ADR-0019,
+  `session.rs::presentation_node`). Redundant advisor archived; pivoted to a
+  clean, honest View-modifier slice with no new infra.
+- New recording modifiers (all `modifier!` + MODIFIER_FNS table):
+  - `accessibilityActivationPoint(_:)` — typed `UnitPoint` leading-dot token.
+  - `accessibilityTextContentType(_:)` — new `AccessibilityTextContentType`
+    token namespace (plain/console/fileSystem/messaging/narrative/sourceCode/
+    spreadsheet/wordProcessing); typed + serialized as a tagged token
+    (`token_of` allowlist + `uiir` tag map).
+  - `accessibilityCustomContent(_:_:)` — label+value passthrough.
+  - `accessibilityChartDescriptor(_:)` — opaque descriptor passthrough.
+  - `accessibilityChildren`/`accessibilityRepresentation`/`accessibilityActions`
+    — `@ViewBuilder`-composed nested subtrees, lowered via `compose_modifier`
+    exactly like `overlay`/`background`.
+- **Fidelity tier (honest)**: recorded-only. No on-device assistive tech in a
+  headless runtime — the UIIR carries the semantic data; hosts honor or ignore.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated; HTML progress report refreshed.
