@@ -1,0 +1,1 @@
+[[{"op":"insert","parentId":"0","index":2,"node":{"id":"0.2","kind":"Presentation","args":{"style":"alert","title":"Delete?","message":"This cannot be undone"},"modifiers":[],"children":[{"id":"0.2.0","kind":"Button","args":{"title":"OK"},"modifiers":[],"children":[]}]}}],[{"op":"setText","id":"0.1","text":"confirmed 1"},{"op":"remove","id":"0.2"}]]

@@ -1176,6 +1176,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("sheet", modifier_sheet),
     ("fullScreenCover", modifier_full_screen_cover),
     ("popover", modifier_popover),
+    ("alert", modifier_alert),
+    ("confirmationDialog", modifier_confirmation_dialog),
     // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
     // same marker+handler route as `.onTapGesture`/`.onLongPressGesture`.
     ("gesture", modifier_gesture),
@@ -1862,6 +1864,79 @@ pub(crate) fn modifier_popover(
     args: Vec<Arg>,
 ) -> StdResult {
     presentation_modifier(ctx, recv, "popover", args)
+}
+
+/// `.alert(_:isPresented:actions:)` / `.confirmationDialog(...)` (ADR-0019).
+/// A title string gates a `@ViewBuilder` `actions` closure (buttons) on a
+/// `Binding<Bool>`, with an optional `message:` closure. Captured like the
+/// other presentation modifiers but with a `title` (and optional `_message`)
+/// on the record; the session evaluates `actions` into the node's children and
+/// `message` into a `message` arg. Any action tap auto-dismisses (SwiftUI
+/// semantics), handled in `session::dispatch`.
+///
+/// Note: SwiftUI's canonical two-trailing-closure form (`} message: {`) is not
+/// yet parseable; pass `message:` explicitly, or omit it.
+fn alert_modifier(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    style: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut title: Option<SwiftValue> = None;
+    let mut binding: Option<SwiftValue> = None;
+    let mut actions: Option<SwiftValue> = None;
+    let mut message: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("isPresented") => binding = Some(arg.value),
+            Some("actions") => actions = Some(arg.value),
+            Some("message") => message = Some(arg.value),
+            // `titleVisibility:` (confirmationDialog) is not modelled yet.
+            Some("titleVisibility") => {}
+            // Positional leading title (String or LocalizedStringKey token).
+            None if matches!(arg.value, SwiftValue::Str(_)) && title.is_none() => {
+                title = Some(arg.value)
+            }
+            // The trailing `@ViewBuilder` actions closure is unlabeled.
+            None if matches!(arg.value, SwiftValue::Closure(_)) => actions = Some(arg.value),
+            _ => {}
+        }
+    }
+    let (Some(binding), Some(actions @ SwiftValue::Closure(_))) = (binding, actions) else {
+        return Ok(recv);
+    };
+    let mut record_fields: Vec<(String, SwiftValue)> = vec![
+        ("style".into(), SwiftValue::Str(style.into())),
+        (crate::BINDING_FIELD.into(), binding),
+        ("_content".into(), actions),
+    ];
+    if let Some(t @ SwiftValue::Str(_)) = title {
+        record_fields.push(("title".into(), t));
+    }
+    if let Some(m @ SwiftValue::Closure(_)) = message {
+        record_fields.push(("_message".into(), m));
+    }
+    let record = SwiftValue::Struct(Rc::new(StructObj {
+        type_name: PRESENTATION_TYPE.into(),
+        fields: record_fields,
+    }));
+    append_presentation(recv, record)
+}
+
+pub(crate) fn modifier_alert(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    alert_modifier(ctx, recv, "alert", args)
+}
+
+pub(crate) fn modifier_confirmation_dialog(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    alert_modifier(ctx, recv, "confirmationDialog", args)
 }
 
 /// Build a `_Modifier` record: a struct carrying `name` plus each call argument

@@ -202,7 +202,7 @@
         {
           "name": "alert",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "alignmentGuide",
@@ -387,7 +387,7 @@
         {
           "name": "confirmationDialog",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "containerBackground",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 298,
+        "implemented": 300,
         "partial": 11,
-        "missing": 159,
+        "missing": 157,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 401,
+    "implemented": 403,
     "partial": 20,
-    "missing": 281,
+    "missing": 279,
     "out_of_scope": 0,
     "total": 702
   }

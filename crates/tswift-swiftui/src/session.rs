@@ -25,6 +25,24 @@ use crate::{
 /// until quiescent, bounded so a watcher toggling its own source cannot hang.
 const MAX_WATCH_PASSES: usize = 64;
 
+/// Extract the display string of a realized `Text` view (an alert/dialog
+/// `message:` closure resolves to one). Reads the `verbatim` or `key` arg;
+/// returns `None` for a non-`Text` value.
+fn message_text(view: &SwiftValue) -> Option<String> {
+    let SwiftValue::Struct(obj) = view else {
+        return None;
+    };
+    if obj.type_name != "Text" {
+        return None;
+    }
+    for key in ["verbatim", "key"] {
+        if let Some(SwiftValue::Str(s)) = obj.get(key) {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
 /// Whether a presentation's gating value is "open": a `Bool(true)`
 /// (`isPresented:`) or any non-`nil` value (`item:` presentations). Everything
 /// else (`Bool(false)`, `Nil`) is closed.
@@ -324,18 +342,33 @@ impl<'i, 'w> Session<'i, 'w> {
                 Some(SwiftValue::Str(s)) => s.clone(),
                 _ => "sheet".to_string(),
             };
-            let mut fields: Vec<(String, SwiftValue)> = vec![
-                ("style".into(), SwiftValue::Str(style)),
-                (
-                    MODIFIERS_FIELD.into(),
-                    SwiftValue::Array(Rc::new(Vec::new())),
-                ),
-                (
-                    CHILDREN_FIELD.into(),
-                    SwiftValue::Array(Rc::new(content.into_iter().collect())),
-                ),
-                (BINDING_FIELD.into(), binding),
-            ];
+            let mut arg_fields: Vec<(String, SwiftValue)> =
+                vec![("style".into(), SwiftValue::Str(style))];
+            // `alert`/`confirmationDialog` carry a `title` arg and an optional
+            // `message` arg (the `message:` closure evaluated to its text).
+            if let Some(SwiftValue::Str(t)) = rec.get("title") {
+                arg_fields.push(("title".into(), SwiftValue::Str(t.clone())));
+            }
+            if let Some(SwiftValue::Closure(mid)) = rec.get("_message") {
+                if let Some(msg) =
+                    crate::realize_pushed_screen(self.interp, &SwiftValue::Closure(*mid))
+                        .map_err(crate::std_error_to_eval)?
+                {
+                    if let Some(text) = message_text(&msg) {
+                        arg_fields.push(("message".into(), SwiftValue::Str(text)));
+                    }
+                }
+            }
+            let mut fields: Vec<(String, SwiftValue)> = arg_fields;
+            fields.push((
+                MODIFIERS_FIELD.into(),
+                SwiftValue::Array(Rc::new(Vec::new())),
+            ));
+            fields.push((
+                CHILDREN_FIELD.into(),
+                SwiftValue::Array(Rc::new(content.into_iter().collect())),
+            ));
+            fields.push((BINDING_FIELD.into(), binding));
             if let Some(d @ SwiftValue::Closure(_)) = rec.get("_onDismiss").cloned() {
                 fields.push((
                     HANDLERS_FIELD.into(),
@@ -587,6 +620,21 @@ impl<'i, 'w> Session<'i, 'w> {
                 } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
                     self.interp.invoke_closure(closure_id, Vec::new())?;
                 }
+                // Alert/confirmationDialog actions always dismiss (SwiftUI
+                // semantics): tapping any button inside an `alert`/
+                // `confirmationDialog` presentation closes it. Write the
+                // enclosing presentation's gating binding to closed after the
+                // action's own closure has run.
+                if name == "tap" {
+                    if let Some(binding) = alert_ancestor_binding(&tree, &event.id) {
+                        let current = self.interp.get_member(&binding, "wrappedValue")?;
+                        let closed = match current {
+                            SwiftValue::Bool(_) => SwiftValue::Bool(false),
+                            _ => SwiftValue::Nil,
+                        };
+                        self.interp.set_member(&binding, "wrappedValue", closed)?;
+                    }
+                }
             }
         }
         let tree = self.render()?;
@@ -792,6 +840,21 @@ pub fn collect_nav_destinations(subtree: &SwiftValue) -> HashMap<String, usize> 
         }
     });
     acc.into_iter().map(|(k, (_, cid))| (k, cid)).collect()
+}
+
+/// The gating `Binding` of the nearest `alert`/`confirmationDialog`
+/// `Presentation` node that encloses `target` (ADR-0019). Used to auto-dismiss
+/// an alert when any of its action buttons is tapped. Returns `None` when the
+/// tapped node is not inside such a presentation.
+fn alert_ancestor_binding(tree: &SwiftValue, target: &str) -> Option<SwiftValue> {
+    let (_, ancestor) = crate::tree::find_with_ancestor(tree, target, |obj| {
+        obj.type_name == PRESENTATION_NODE_KIND
+            && matches!(
+                obj.get("style"),
+                Some(SwiftValue::Str(s)) if s == "alert" || s == "confirmationDialog"
+            )
+    })?;
+    find_binding(tree, &ancestor?)
 }
 
 /// Find the `Binding` value stashed on the control node at structural path

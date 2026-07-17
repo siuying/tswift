@@ -54,6 +54,7 @@ View.accessibilityRespondsToUserInteraction
 View.accessibilityShowsLargeContentViewer
 View.accessibilitySortPriority
 View.accessibilityValue
+View.alert
 View.allowedDynamicRange
 View.allowsHitTesting
 View.allowsTightening
@@ -85,6 +86,7 @@ View.colorInvert
 View.colorMultiply
 View.colorScheme
 View.compositingGroup
+View.confirmationDialog
 View.containerCornerOffset
 View.containerRelativeFrame
 View.containerShape
