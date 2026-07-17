@@ -788,3 +788,40 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   visualEffect, transaction, searchScopes) — beyond value/token passthroughs.
   Swift Charts is not yet set up as a framework (no crate/inventory/scope);
   standing it up is greenfield infra requiring SDK swiftinterface extraction.
+
+## Coverage iteration — stdlib String/Substring indices+iterator; SwiftUI presentations
+
+- **stdlib**: 374 → 376 (73.2% → 73.6%). Added `indices` (materialised array of
+  `String.Index` over valid subscript positions; base-relative for Substring)
+  and `makeIterator` (Character array for explicit iteration) on both String
+  and Substring. String 29→30, Substring 20→21. Golden
+  `stdlib_string_indices_iterator` verifies iteration + subscripting; the
+  Substring `indices.first == startIndex` invariant holds in base coordinates.
+- **SwiftUI**: 418 → 421 impl (59.5% → 60.0%), 398 → 401 verified (56.7% →
+  57.1%). First slice of the presentation-modifier family: `.sheet`,
+  `.fullScreenCover`, `.popover`. Architecture designed via paseo-advisor
+  (fable-5, medium) — verdict: the ADR-0013 "portal patch op" tripwire
+  dissolves; the NavigationStack gated-subtree machinery already suffices.
+- Design (ADR-0019): the modifier captures a **deferred** `_presentations`
+  record (gating `Binding` + `@ViewBuilder` content closure + optional
+  `onDismiss`) instead of a serialized `_Modifier`. A new session render pass
+  (`presentation_node`, peer of `nav_stack_node`) reads the binding; when open
+  it evaluates the content closure fresh and appends an in-tree `Presentation`
+  child node (one node kind, `style` arg covers all styles). A host `dismiss`
+  event writes the binding back to closed and fires `onDismiss`; programmatic
+  close (state→false inside the sheet) drops the node on the next render for
+  free. No new patch op, zero golden churn (internal `_`-fields never
+  serialize). Goldens `sheet` (open→dismiss→onDismiss fires) and
+  `presentation-styles` (fullScreenCover + popover) verify insert/remove
+  patches.
+- **Known fidelity gap (named degraded tier)**: `onDismiss` fires on a host
+  `dismiss` event but not on programmatic close — SwiftUI fires on any
+  dismissal. Closing it needs per-node presented-state tracking across renders;
+  deferred until a fixture demands it (recorded in ADR-0019).
+- Deferred siblings per advisor: `.alert`/`.confirmationDialog` (same node kind
+  + title/message + auto-dismiss-on-action — the natural next slice),
+  `@Namespace`/`matchedGeometryEffect` (identity token, no morph),
+  `.onKeyPress` (needs a handled-flag on the dispatch response), `.visualEffect`
+  (needs host geometry feedback), `.transaction` (animation-hint tier only).
+- presubmit green (incl. wasm smoke + website checks); website coverage JSON
+  regenerated.
