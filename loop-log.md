@@ -1102,3 +1102,26 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   - `previewContext(_:)` — value passthrough.
 - **Fidelity tier (honest)**: recorded-only; hosts honor or ignore.
 - presubmit green; coverage JSON regenerated; HTML report refreshed.
+
+## Coverage iteration — SwiftUI searchable family (+5 verified)
+
+- **SwiftUI 449→454 impl, 429→434 verified (61.1% → 61.8%)**; View section
+  +5. Golden-verified via new `search-modifiers` fixture.
+- Addresses the flagged `searchScopes` blocker plus the whole search family:
+  - `searchable(text:placement:prompt:)` — snapshots the bound query string
+    (read once via `wrappedValue`), records the `SearchFieldPlacement` token
+    (new namespace: automatic/toolbar/sidebar/navigationBarDrawer) + prompt.
+  - `searchScopes(_:activation:scopes:)` — scope-selection snapshot, new
+    `SearchScopeActivation` token (automatic/onSearchPresentation/onTextEntry),
+    and the `@ViewBuilder` scope list lowered to a child subtree (like overlay).
+  - `searchSuggestions { }` — `@ViewBuilder` suggestion subtree.
+  - `searchFocused(_:equals:)` / `searchSelection(_:)` — binding snapshots.
+- New infra reused: `binding_snapshot` (read `wrappedValue`, else record as-is)
+  + `compose_content` (shared `@ViewBuilder`→single-node lowering helper, cf.
+  `tabItem`). `searchable`/`searchScopes` registered typed (token resolution) +
+  in MODIFIER_FNS (coverage key). Two new token namespaces wired through
+  `token_of` allowlist + uiir tag map.
+- **Fidelity tier (honest)**: recorded-only — bindings read once, not wired for
+  live two-way search; hosts honor or ignore the recorded metadata.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated; HTML progress report refreshed.
