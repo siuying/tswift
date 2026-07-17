@@ -1441,6 +1441,14 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("highPriorityGesture", modifier_gesture),
     ("simultaneousGesture", modifier_gesture),
     ("ornament", modifier_ornament),
+    ("tabViewBottomAccessory", modifier_tab_view_bottom_accessory),
+    ("tabViewSidebarHeader", modifier_tab_view_sidebar_header),
+    ("tabViewSidebarFooter", modifier_tab_view_sidebar_footer),
+    (
+        "tabViewSidebarBottomBar",
+        modifier_tab_view_sidebar_bottom_bar,
+    ),
+    ("textInputSuggestions", modifier_text_input_suggestions),
     (
         "backgroundPreferenceValue",
         modifier_background_preference_value,
@@ -2309,6 +2317,16 @@ macro_rules! viewbuilder_modifier {
 viewbuilder_modifier!(modifier_toolbar_title_menu, "toolbarTitleMenu");
 viewbuilder_modifier!(modifier_section_actions, "sectionActions");
 viewbuilder_modifier!(modifier_ornament, "ornament");
+// `@ViewBuilder`-content accessory/suggestion modifiers (iOS 26 tab-view
+// accessories, text-input suggestion menus) lowered to a nested child subtree.
+viewbuilder_modifier!(modifier_tab_view_bottom_accessory, "tabViewBottomAccessory");
+viewbuilder_modifier!(modifier_tab_view_sidebar_header, "tabViewSidebarHeader");
+viewbuilder_modifier!(modifier_tab_view_sidebar_footer, "tabViewSidebarFooter");
+viewbuilder_modifier!(
+    modifier_tab_view_sidebar_bottom_bar,
+    "tabViewSidebarBottomBar"
+);
+viewbuilder_modifier!(modifier_text_input_suggestions, "textInputSuggestions");
 /// `.matchedGeometryEffect(id:in:properties:anchor:isSource:)` and
 /// `.matchedTransitionSource(id:in:configuration:)` — record the geometry
 /// identity `id:` (a Hashable) plus `isSource:` when present; the `in:`

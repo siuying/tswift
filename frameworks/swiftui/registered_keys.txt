@@ -372,6 +372,10 @@ View.symbolVariableValueMode
 View.symbolVariant
 View.tabBarMinimizeBehavior
 View.tabItem
+View.tabViewBottomAccessory
+View.tabViewSidebarBottomBar
+View.tabViewSidebarFooter
+View.tabViewSidebarHeader
 View.tabViewStyle
 View.tableStyle
 View.tag
@@ -381,6 +385,7 @@ View.textContentType
 View.textEditorStyle
 View.textFieldStyle
 View.textInputAutocapitalization
+View.textInputSuggestions
 View.textScale
 View.textSelection
 View.textSelectionAffinity
