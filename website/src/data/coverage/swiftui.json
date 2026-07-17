@@ -252,7 +252,7 @@
         {
           "name": "assistiveAccessNavigationIcon",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "attributedTextFormattingDefinition",
@@ -397,7 +397,7 @@
         {
           "name": "containerCornerOffset",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "containerRelativeFrame",
@@ -407,7 +407,7 @@
         {
           "name": "containerShape",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "containerValue",
@@ -527,7 +527,7 @@
         {
           "name": "dialogIcon",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dialogPreventsAppTermination",
@@ -672,27 +672,27 @@
         {
           "name": "fileDialogConfirmationLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogCustomizationID",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogDefaultDirectory",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogImportsUnresolvedAliases",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogMessage",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogURLEnabled",
@@ -847,7 +847,7 @@
         {
           "name": "glassEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "glassEffectID",
@@ -942,7 +942,7 @@
         {
           "name": "hoverEffectGroup",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "hueRotation",
@@ -1027,7 +1027,7 @@
         {
           "name": "keyboardShortcut",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "keyboardType",
@@ -1157,7 +1157,7 @@
         {
           "name": "listSectionMargins",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "listSectionSeparator",
@@ -1182,7 +1182,7 @@
         {
           "name": "luminanceToAlpha",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "mask",
@@ -1327,7 +1327,7 @@
         {
           "name": "navigationTransition",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationViewStyle",
@@ -1727,7 +1727,7 @@
         {
           "name": "rotation3DEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "rotationEffect",
@@ -1847,7 +1847,7 @@
         {
           "name": "searchCompletion",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchDictationBehavior",
@@ -1897,7 +1897,7 @@
         {
           "name": "sectionIndexLabel",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "selectionDisabled",
@@ -1957,7 +1957,7 @@
         {
           "name": "statusBar",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "statusBarHidden",
@@ -2182,7 +2182,7 @@
         {
           "name": "toolbarItemHidden",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbarRole",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 275,
+        "implemented": 295,
         "partial": 11,
-        "missing": 182,
+        "missing": 162,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 378,
+    "implemented": 398,
     "partial": 20,
-    "missing": 304,
+    "missing": 284,
     "out_of_scope": 0,
     "total": 702
   }

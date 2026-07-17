@@ -270,7 +270,7 @@
         {
           "name": "deleteAllData",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "erase",
@@ -295,13 +295,13 @@
         {
           "name": "schema",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 2,
+        "implemented": 4,
         "partial": 0,
-        "missing": 6,
+        "missing": 4,
         "out_of_scope": 0,
         "total": 8
       }
@@ -367,12 +367,12 @@
         {
           "name": "isStoredInMemoryOnly",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "name",
           "kind": "let",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "schema",
@@ -391,9 +391,9 @@
         }
       ],
       "counts": {
-        "implemented": 1,
+        "implemented": 3,
         "partial": 0,
-        "missing": 15,
+        "missing": 13,
         "out_of_scope": 0,
         "total": 16
       }
@@ -419,7 +419,7 @@
         {
           "name": "changedModelsArray",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "container",
@@ -444,7 +444,7 @@
         {
           "name": "deletedModelsArray",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "didSave",
@@ -469,7 +469,7 @@
         {
           "name": "fetchCount",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fetchHistory",
@@ -484,7 +484,7 @@
         {
           "name": "hasChanges",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -499,7 +499,7 @@
         {
           "name": "insertedModelsArray",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "model",
@@ -519,7 +519,7 @@
         {
           "name": "rollback",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "save",
@@ -529,7 +529,7 @@
         {
           "name": "transaction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "undoManager",
@@ -543,9 +543,9 @@
         }
       ],
       "counts": {
-        "implemented": 5,
+        "implemented": 12,
         "partial": 0,
-        "missing": 23,
+        "missing": 16,
         "out_of_scope": 0,
         "total": 28
       }
@@ -561,12 +561,12 @@
         {
           "name": "fetchLimit",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fetchOffset",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "includePendingChanges",
@@ -581,7 +581,7 @@
         {
           "name": "predicate",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "propertiesToFetch",
@@ -596,13 +596,13 @@
         {
           "name": "sortBy",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 1,
+        "implemented": 5,
         "partial": 0,
-        "missing": 8,
+        "missing": 4,
         "out_of_scope": 0,
         "total": 9
       }
@@ -717,9 +717,9 @@
     }
   ],
   "totals": {
-    "implemented": 10,
+    "implemented": 25,
     "partial": 2,
-    "missing": 102,
+    "missing": 87,
     "out_of_scope": 0,
     "total": 114
   }

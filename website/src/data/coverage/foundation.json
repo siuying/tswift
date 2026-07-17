@@ -448,7 +448,7 @@
         {
           "name": "endIndex",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "filteredIndexSet",
@@ -493,12 +493,12 @@
         {
           "name": "index",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "indexRange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -578,7 +578,7 @@
         {
           "name": "startIndex",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "subscript",
@@ -602,9 +602,9 @@
         }
       ],
       "counts": {
-        "implemented": 28,
+        "implemented": 32,
         "partial": 1,
-        "missing": 13,
+        "missing": 9,
         "out_of_scope": 0,
         "total": 42
       }
@@ -3306,9 +3306,9 @@
     }
   ],
   "totals": {
-    "implemented": 461,
+    "implemented": 465,
     "partial": 2,
-    "missing": 152,
+    "missing": 148,
     "out_of_scope": 0,
     "total": 615
   }
