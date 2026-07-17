@@ -552,7 +552,7 @@
         {
           "name": "digitalCrownRotation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "disableAutocorrection",
@@ -572,7 +572,7 @@
         {
           "name": "dismissalConfirmationDialog",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "distortionEffect",
@@ -702,7 +702,7 @@
         {
           "name": "fileExporter",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileExporterFilenameLabel",
@@ -712,12 +712,12 @@
         {
           "name": "fileImporter",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileMover",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "findDisabled",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 392,
+        "implemented": 397,
         "partial": 11,
-        "missing": 65,
+        "missing": 60,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 495,
+    "implemented": 500,
     "partial": 20,
-    "missing": 187,
+    "missing": 182,
     "out_of_scope": 0,
     "total": 702
   }
