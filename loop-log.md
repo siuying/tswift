@@ -872,3 +872,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   extended `stdlib_substring` (`Substring(_:)` from String/Substring/empty +
   `~=`). presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated and drift-check clean.
+
+## Coverage iteration — stdlib String char-view + small-collection ctors
+
+- **stdlib**: 382 → 388 (74.8% → 75.9%). Two slices:
+  - String character-view/contiguity parity with Substring: `characters`
+    (returns self), `isContiguousUTF8` (always true), `makeContiguousUTF8()`
+    (no-op mutating). String 33→36 (67.9%). Registered in `tswift-std`; golden
+    `stdlib_string_init` extended.
+  - `ArraySlice(_:)`/`CollectionOfOne` init + subscript marked `core_members`
+    (interpreter-level, already working). ArraySlice 18→19, CollectionOfOne
+    8→9. Golden `stdlib_arrayslice` covers `ArraySlice(_:)`.
+- Remaining stdlib gaps are dominated by unsafe-pointer / span APIs
+  (`withUnsafeBufferPointer`, `span`, `mutableSpan`, `withContiguousStorage…`)
+  and `Hasher`/`customMirror` reflection — low value in this runtime.
+- presubmit green each slice; coverage JSON regenerated + drift-clean.
