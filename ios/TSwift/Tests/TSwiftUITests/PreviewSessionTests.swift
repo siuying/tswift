@@ -6,6 +6,8 @@ import XCTest
 @MainActor
 final class PreviewSessionTests: XCTestCase {
     private let counter = """
+    import SwiftUI
+
     struct CounterView: View {
         @State private var count = 0
         var body: some View {
