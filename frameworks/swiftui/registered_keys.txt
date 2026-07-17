@@ -92,6 +92,7 @@ View.containerRelativeFrame
 View.containerShape
 View.contentCaptureProtected
 View.contentMargins
+View.contentShape
 View.contentTransition
 View.contextMenu
 View.contrast
@@ -163,6 +164,7 @@ View.id
 View.ignoresSafeArea
 View.imageScale
 View.indexViewStyle
+View.inspector
 View.inspectorColumnWidth
 View.interactionActivityTrackingTag
 View.interactiveDismissDisabled
@@ -270,6 +272,8 @@ View.replaceDisabled
 View.resizable
 View.rotation3DEffect
 View.rotationEffect
+View.safeAreaBar
+View.safeAreaInset
 View.safeAreaPadding
 View.saturation
 View.scaleEffect
@@ -307,6 +311,7 @@ View.statusBarHidden
 View.strikethrough
 View.submitLabel
 View.submitScope
+View.swipeActions
 View.symbolColorRenderingMode
 View.symbolEffectsRemoved
 View.symbolRenderingMode

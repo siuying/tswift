@@ -702,6 +702,11 @@ modifier!(modifier_luminance_to_alpha, "luminanceToAlpha");
 modifier!(modifier_rotation3d_effect, "rotation3DEffect");
 modifier!(modifier_keyboard_shortcut, "keyboardShortcut");
 modifier!(modifier_container_shape, "containerShape");
+// `.contentShape(_ shape:)` — records a nested hit-test/preview shape descriptor
+// (serialized like `clipShape`). The leading `ContentShapeKinds` form
+// (`.contentShape(.dragPreview, shape)`) is not modelled; the common
+// single-shape form is recorded straight onto the node.
+modifier!(modifier_content_shape, "contentShape");
 modifier!(modifier_dialog_icon, "dialogIcon");
 modifier!(
     modifier_file_dialog_confirmation_label,
@@ -785,6 +790,113 @@ pub(crate) fn modifier_list_row_background(
     args: Vec<Arg>,
 ) -> StdResult {
     compose_modifier(ctx, recv, "listRowBackground", args)
+}
+
+/// `.swipeActions(edge:allowsFullSwipe:content:)` — records the row's swipe
+/// action buttons as a nested view subtree (lowered like `contextMenu`). The
+/// `edge:`/`allowsFullSwipe:` configuration is not modelled yet; the buttons
+/// are recorded so the host can present them on swipe.
+pub(crate) fn modifier_swipe_actions(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let content: Vec<Arg> = args
+        .into_iter()
+        .filter(|a| matches!(a.label.as_deref(), None | Some("content")))
+        .collect();
+    compose_modifier(ctx, recv, "swipeActions", content)
+}
+
+/// `.inspector(isPresented:content:)` — a `Binding<Bool>` gates a
+/// `@ViewBuilder` inspector pane, realized as a `Presentation` child node with
+/// `style: "inspector"` (reuses the sheet/popover presentation machinery).
+pub(crate) fn modifier_inspector(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    presentation_modifier(ctx, recv, "inspector", args)
+}
+
+/// `.safeAreaInset(edge:alignment:spacing:content:)` and the newer
+/// `.safeAreaBar(...)` — record an inset/bar view pinned to one `edge:` of the
+/// safe area. The content `@ViewBuilder` is resolved into a nested subtree
+/// (like `overlay`); `edge` (an `Edge` token) and optional `spacing`
+/// (`CGFloat`) ride along on the modifier so the host can position the inset.
+/// `alignment:` is not modelled yet.
+fn safe_area_inset_modifier(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    name: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut edge: Option<SwiftValue> = None;
+    let mut spacing: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("edge") => edge = Some(arg.value),
+            Some("spacing") => spacing = Some(arg.value),
+            // `alignment:` is accepted but not modelled.
+            Some("alignment") => {}
+            // The trailing `@ViewBuilder` content (unlabeled or `content:`).
+            _ => {
+                let mut views = Vec::new();
+                match arg.value {
+                    SwiftValue::Closure(id) => {
+                        let block = ctx.eval_block_values(id)?;
+                        expand_into(ctx, block, &mut views, 0, &[])?;
+                    }
+                    other => expand_into(ctx, other, &mut views, 0, &[])?,
+                }
+                content = match views.len() {
+                    0 => None,
+                    1 => Some(views.into_iter().next().expect("len checked")),
+                    _ => Some(container_value("ZStack", views)),
+                };
+            }
+        }
+    }
+    let mut margs: Vec<Arg> = Vec::new();
+    if let Some(content) = content {
+        margs.push(Arg {
+            label: None,
+            value: content,
+            static_ty: None,
+        });
+    }
+    if let Some(edge) = edge {
+        margs.push(Arg {
+            label: Some("edge".into()),
+            value: edge,
+            static_ty: None,
+        });
+    }
+    if let Some(spacing) = spacing {
+        margs.push(Arg {
+            label: Some("spacing".into()),
+            value: spacing,
+            static_ty: None,
+        });
+    }
+    append_modifier(recv, make_modifier(name, margs))
+}
+
+pub(crate) fn modifier_safe_area_inset(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    safe_area_inset_modifier(ctx, recv, "safeAreaInset", args)
+}
+
+pub(crate) fn modifier_safe_area_bar(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    safe_area_inset_modifier(ctx, recv, "safeAreaBar", args)
 }
 
 /// View modifiers registered as generic struct methods, by Swift name. Drives
@@ -1178,6 +1290,15 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("popover", modifier_popover),
     ("alert", modifier_alert),
     ("confirmationDialog", modifier_confirmation_dialog),
+    // `.inspector(isPresented:content:)` reuses the presentation machinery.
+    ("inspector", modifier_inspector),
+    // Nested-subtree modifiers: `.contentShape` (hit-test shape),
+    // `.swipeActions` (row action buttons), `.safeAreaInset`/`.safeAreaBar`
+    // (edge-pinned inset views).
+    ("contentShape", modifier_content_shape),
+    ("swipeActions", modifier_swipe_actions),
+    ("safeAreaInset", modifier_safe_area_inset),
+    ("safeAreaBar", modifier_safe_area_bar),
     // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
     // same marker+handler route as `.onTapGesture`/`.onLongPressGesture`.
     ("gesture", modifier_gesture),

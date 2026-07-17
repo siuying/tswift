@@ -1740,6 +1740,18 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_edges_ignoring_safe_area,
         vec![BuiltinParam::positional("Edge.Set")],
     );
+    // `safeAreaInset(edge:)` / `safeAreaBar(edge:)` — the `edge:` token
+    // (`.top`/`.bottom`/`.leading`/`.trailing`) resolves against `Edge`.
+    interp.register_struct_method_typed(
+        "safeAreaInset",
+        modifiers::modifier_safe_area_inset,
+        vec![BuiltinParam::labeled("edge", "Edge")],
+    );
+    interp.register_struct_method_typed(
+        "safeAreaBar",
+        modifiers::modifier_safe_area_bar,
+        vec![BuiltinParam::labeled("edge", "Edge")],
+    );
     // `listSectionMargins(_ edges: Edge.Set = .all, _ length: CGFloat?)` — the
     // leading `.horizontal`/`.all` token resolves against `Edge.Set`.
     interp.register_struct_method_typed(
@@ -2337,6 +2349,7 @@ mod tests {
                 "View.containerShape",
                 "View.contentCaptureProtected",
                 "View.contentMargins",
+                "View.contentShape",
                 "View.contentTransition",
                 "View.contextMenu",
                 "View.contrast",
@@ -2408,6 +2421,7 @@ mod tests {
                 "View.ignoresSafeArea",
                 "View.imageScale",
                 "View.indexViewStyle",
+                "View.inspector",
                 "View.inspectorColumnWidth",
                 "View.interactionActivityTrackingTag",
                 "View.interactiveDismissDisabled",
@@ -2515,6 +2529,8 @@ mod tests {
                 "View.resizable",
                 "View.rotation3DEffect",
                 "View.rotationEffect",
+                "View.safeAreaBar",
+                "View.safeAreaInset",
                 "View.safeAreaPadding",
                 "View.saturation",
                 "View.scaleEffect",
@@ -2552,6 +2568,7 @@ mod tests {
                 "View.strikethrough",
                 "View.submitLabel",
                 "View.submitScope",
+                "View.swipeActions",
                 "View.symbolColorRenderingMode",
                 "View.symbolEffectsRemoved",
                 "View.symbolRenderingMode",
