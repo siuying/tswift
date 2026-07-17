@@ -1414,6 +1414,26 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_matched_transition_source,
     ),
     ("renameAction", modifier_rename_action),
+    // Event-listener modifiers (recorded-only: bare marker + stashed closure).
+    ("onKeyPress", modifier_on_key_press),
+    ("onContinueUserActivity", modifier_on_continue_user_activity),
+    (
+        "onScrollTargetVisibilityChange",
+        modifier_on_scroll_target_visibility_change,
+    ),
+    ("onDrop", modifier_on_drop),
+    ("onDragSessionUpdated", modifier_on_drag_session_updated),
+    ("onDropSessionUpdated", modifier_on_drop_session_updated),
+    (
+        "onInteractiveResizeChange",
+        modifier_on_interactive_resize_change,
+    ),
+    ("onLongTouchGesture", modifier_on_long_touch_gesture),
+    (
+        "onVolumeViewpointChange",
+        modifier_on_volume_viewpoint_change,
+    ),
+    ("onWorldRecenter", modifier_on_world_recenter),
     ("toolbarTitleMenu", modifier_toolbar_title_menu),
     ("sectionActions", modifier_section_actions),
     // Gesture composition: priority/simultaneous variants lower to the same
@@ -2222,6 +2242,30 @@ closure_modifier!(modifier_phase_animator, "phaseAnimator");
 closure_modifier!(modifier_on_command, "onCommand");
 closure_modifier!(modifier_on_paste_command, "onPasteCommand");
 closure_modifier!(modifier_rename_action, "renameAction");
+// Event-listener modifiers (recorded-only: bare marker + stashed closure). Each
+// records that the listener is present; the callback argument (KeyPress,
+// NSUserActivity, drop providers, resize/viewpoint/recenter payloads) is not
+// synthesized by a headless runtime, so non-closure arguments (activity types,
+// UTType lists, id metatypes, thresholds) are dropped from the marker.
+closure_modifier!(modifier_on_key_press, "onKeyPress");
+closure_modifier!(modifier_on_continue_user_activity, "onContinueUserActivity");
+closure_modifier!(
+    modifier_on_scroll_target_visibility_change,
+    "onScrollTargetVisibilityChange"
+);
+closure_modifier!(modifier_on_drop, "onDrop");
+closure_modifier!(modifier_on_drag_session_updated, "onDragSessionUpdated");
+closure_modifier!(modifier_on_drop_session_updated, "onDropSessionUpdated");
+closure_modifier!(
+    modifier_on_interactive_resize_change,
+    "onInteractiveResizeChange"
+);
+closure_modifier!(modifier_on_long_touch_gesture, "onLongTouchGesture");
+closure_modifier!(
+    modifier_on_volume_viewpoint_change,
+    "onVolumeViewpointChange"
+);
+closure_modifier!(modifier_on_world_recenter, "onWorldRecenter");
 // `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
 // not a plain `@ViewBuilder`: the preference `Value` is not computed by a
 // headless runtime, so the transform cannot be realized — record a bare marker
