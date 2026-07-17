@@ -378,7 +378,9 @@ String.uppercased
 String.utf16
 String.utf8
 String.wholeMatch
+String.withCString
 String.withContiguousStorageIfAvailable
+String.withUTF8
 Substring.append
 Substring.base
 Substring.characters
@@ -410,7 +412,9 @@ Substring.unicodeScalars
 Substring.uppercased
 Substring.utf16
 Substring.utf8
+Substring.withCString
 Substring.withContiguousStorageIfAvailable
+Substring.withUTF8
 abs
 assert
 assertionFailure

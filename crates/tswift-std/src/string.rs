@@ -208,6 +208,12 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
         "withContiguousStorageIfAvailable",
         with_contiguous_storage_if_available,
     );
+    // Contiguous UTF-8 / C-string buffer access: the closure receives the code
+    // units as a contiguous `Array` buffer (a RandomAccessCollection, like
+    // `UnsafeBufferPointer`); `withCString` null-terminates with a trailing 0.
+    // Read-only fidelity tier: mutation through the buffer is not modeled.
+    pure("withUTF8", with_utf8);
+    pure("withCString", with_c_string);
 
     // --- Mutating append ---
     interp.register_intrinsic(
@@ -218,6 +224,45 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
             func: append,
         },
     );
+}
+
+/// `withUTF8(_:)` — invoke `body` with the UTF-8 code units exposed as a
+/// contiguous buffer of `UInt8` (modeled as an `Array` value, like
+/// `UnsafeBufferPointer<UInt8>`) and return its result. Read-only tier.
+fn with_utf8(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let bytes: Vec<SwiftValue> = str_of(&recv)?
+        .bytes()
+        .map(|b| SwiftValue::Int(IntValue::new(i128::from(b), IntWidth::U8)))
+        .collect();
+    let id = buffer_closure(&args, "withUTF8")?;
+    let result = ctx.call_closure(id, vec![SwiftValue::Array(Rc::new(bytes))])?;
+    val(result, recv)
+}
+
+/// `withCString(_:)` — invoke `body` with the null-terminated UTF-8 bytes
+/// exposed as a contiguous buffer of `CChar` (`Int8`), matching Swift's
+/// `UnsafePointer<CChar>`. The trailing `0` terminator is included so the
+/// closure can walk to the null byte. Read-only tier.
+fn with_c_string(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let mut units: Vec<SwiftValue> = str_of(&recv)?
+        .bytes()
+        .map(|b| SwiftValue::Int(IntValue::new(i128::from(b as i8), IntWidth::I8)))
+        .collect();
+    units.push(SwiftValue::Int(IntValue::new(0, IntWidth::I8)));
+    let id = buffer_closure(&args, "withCString")?;
+    let result = ctx.call_closure(id, vec![SwiftValue::Array(Rc::new(units))])?;
+    val(result, recv)
+}
+
+/// The trailing closure id from a buffer-access call.
+fn buffer_closure(args: &[SwiftValue], who: &str) -> Result<usize, StdError> {
+    args.iter()
+        .rev()
+        .find_map(|a| match a {
+            SwiftValue::Closure(id) => Some(*id),
+            _ => None,
+        })
+        .ok_or_else(|| type_err(format!("{who} expects a closure")))
 }
 
 /// `withContiguousStorageIfAvailable(_:)` — a `String`/`Substring` is not
