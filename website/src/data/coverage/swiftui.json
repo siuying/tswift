@@ -922,7 +922,7 @@
         {
           "name": "highPriorityGesture",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "horizontalRadioGroupLayout",
@@ -1717,7 +1717,7 @@
         {
           "name": "renameAction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "replaceDisabled",
@@ -1892,7 +1892,7 @@
         {
           "name": "sectionActions",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "sectionIndexLabel",
@@ -1922,7 +1922,7 @@
         {
           "name": "simultaneousGesture",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "sliderThumbVisibility",
@@ -2197,7 +2197,7 @@
         {
           "name": "toolbarTitleMenu",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "toolbarVisibility",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 348,
+        "implemented": 353,
         "partial": 11,
-        "missing": 109,
+        "missing": 104,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 451,
+    "implemented": 456,
     "partial": 20,
-    "missing": 231,
+    "missing": 226,
     "out_of_scope": 0,
     "total": 702
   }
