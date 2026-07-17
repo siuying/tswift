@@ -769,3 +769,22 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Next: IndexSet formIndex (needs dispatcher inout write-back like Array),
   hash(into:) (no Hasher surface yet). Foundation Date (55%) FormatStyle cases
   and URL (68%) remain the largest gaps.
+
+## Coverage iteration — SwiftUI container/assistive/nav-transition modifiers
+
+- Coverage before → after: SwiftUI implemented 413 → 418 (58.8% → 59.5%),
+  verified 393 → 398 (56.0% → 56.7%). +5 View modifiers, golden-verified.
+- containerCornerOffset (Edge.Set token + sizeToFit: Bool, typed in install),
+  assistiveAccessNavigationIcon (String via systemImage:), sectionIndexLabel
+  (String/Text label), hoverEffectGroup (no-arg group hint), navigationTransition
+  (new `NavigationTransition` token struct .automatic/.slide, typed). Each
+  records its real value onto the UIIR node — verified in the new
+  container-and-nav golden.
+- Session arc: SwiftUI 56.7% → 59.5% implemented (+20 modifiers) over three
+  iterations; Foundation 75.3% → 75.9% (+4). All golden-verified, presubmit
+  green each time.
+- Blocker: remaining SwiftUI View modifiers overwhelmingly need closures/
+  bindings/namespaces (sheet/popover/alert, matchedGeometryEffect, onKeyPress,
+  visualEffect, transaction, searchScopes) — beyond value/token passthroughs.
+  Swift Charts is not yet set up as a framework (no crate/inventory/scope);
+  standing it up is greenfield infra requiring SDK swiftinterface extraction.
