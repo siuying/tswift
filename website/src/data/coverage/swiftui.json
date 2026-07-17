@@ -412,7 +412,7 @@
         {
           "name": "containerValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contentCaptureProtected",
@@ -642,7 +642,7 @@
         {
           "name": "environment",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "environmentObject",
@@ -777,12 +777,12 @@
         {
           "name": "focusedSceneValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focusedValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "font",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 383,
+        "implemented": 387,
         "partial": 11,
-        "missing": 74,
+        "missing": 70,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 486,
+    "implemented": 490,
     "partial": 20,
-    "missing": 196,
+    "missing": 192,
     "out_of_scope": 0,
     "total": 702
   }
