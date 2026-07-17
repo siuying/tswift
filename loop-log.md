@@ -1367,3 +1367,16 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   typed leading-dot token params (install-time typed registration) — tripwire.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI typed-token modifiers (+2)
+
+- **SwiftUI 524→526 impl, 504→506 verified (71.8% → 72.1%)**. Golden-verified
+  via new `token-direction-modifiers` fixture.
+- New typed-token modifiers (new prelude token types + `register_struct_method\
+  _typed` so leading-dot args resolve against a dedicated parameter type):
+  - `writingDirection(_:)` → `TextDirection` (`.leftToRight`/`.rightToLeft`).
+  - `tabViewSearchActivation(_:)` → `TabViewSearchActivation`
+    (`.automatic`/`.searchTabSelection`/`.textEntry`).
+- Clears the previous slice's tripwire for typed leading-dot tokens.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
