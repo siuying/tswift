@@ -709,3 +709,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Verified by the extended swiftdata_change_tracking golden. presubmit green.
 - Session arc: SwiftData 10.5% → 23.7% implemented (+15 members) over three
   iterations, all golden-verified with green presubmit.
+
+## Coverage iteration — SwiftUI effect & dialog value-passthrough modifiers
+
+- Coverage before → after: SwiftUI implemented 398 → 409 (56.7% → 58.3%),
+  verified 378 → 389 (53.8% → 55.4%). +11 View modifiers, all golden-verified.
+- Eleven value-passthrough View modifiers (no leading-dot token, so no
+  install-time typing needed): luminanceToAlpha (no-arg filter),
+  rotation3DEffect (Angle + axis: tuple), keyboardShortcut (KeyEquivalent),
+  containerShape (nested shape, like clipShape), dialogIcon (nested Image),
+  fileDialogConfirmationLabel/CustomizationID/Message (String),
+  fileDialogImportsUnresolvedAliases (Bool), fileDialogDefaultDirectory (URL),
+  toolbarItemHidden (Bool). Each records its real value onto the UIIR node
+  (verified in the new effects-and-dialogs golden — axis tuple, Angle, nested
+  Circle()/Image, URL all serialize correctly).
+- Mechanism: added `modifier!` defs + MODIFIER_FNS entries (auto-registers the
+  `View.<name>` coverage keys) and updated the hardcoded expected-keys list in
+  registered_keys_cover_v1_constructors. New tests/swiftui-fixtures fixture +
+  regenerated .uiir.json golden. presubmit green (incl. wasm smoke).
+- Next: remaining View modifiers increasingly need closures/bindings/namespaces
+  (visualEffect, transaction, onGeometryChange, matchedGeometryEffect,
+  searchScopes, sheet/popover/alert). Token modifiers (glassEffect,
+  writingDirection, presentationDetents, symbolEffect) need new token structs +
+  install typing. SwiftData Schema/PersistentModel (0%) still needs @Model
+  macro introspection.
