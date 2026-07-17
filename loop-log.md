@@ -1306,3 +1306,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   list; fixtures use `{ return [...] }`.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI scoped-value key-path modifiers (+4)
+
+- **SwiftUI 506→510 impl, 486→490 verified (69.2% → 69.8%)**. Golden-verified
+  via new `scoped-value-modifiers` fixture.
+- New modifiers via a new `scoped_value_modifier!` macro (records only the
+  written value; drops the opaque key-path function):
+  - `environment(_:_:)`, `focusedValue(_:_:)`, `focusedSceneValue(_:_:)`,
+    `containerValue(_:_:)`.
+- **Fidelity tier (honest)**: recorded-only — the written value crosses the
+  UIIR boundary; the `WritableKeyPath` root is an opaque runtime function with
+  no stable serialization (rendered "(Function)"), so it is dropped rather than
+  emitted as noise. No live environment/focus propagation.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
