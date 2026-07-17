@@ -919,3 +919,36 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   modifiers on the same machinery.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
   JSON regenerated; HTML progress report refreshed.
+
+## Coverage iteration — SwiftUI token/effect passthrough modifiers
+
+- **SwiftUI**: 428 → 433 impl (61.0% → 61.7%), 408 → 413 verified (58.1% →
+  58.8%). Five real modifiers on the proven `modifier!` + `MODIFIER_FNS` +
+  typed-`install` machinery, all golden-verified via new `symbol-and-detents`
+  fixture:
+  - `symbolEffect(_:)` — SF Symbol animation token (`SymbolEffect`:
+    `.bounce`/`.pulse`/`.wiggle`/…). Tagged token `{"$":"symbolEffect",…}`.
+  - `sensoryFeedback(_:trigger:)` — haptic/audio token (`SensoryFeedback`) plus
+    a `trigger:` value passthrough (any Equatable). Typed positional token +
+    labeled `trigger`.
+  - `presentationDetents(_:)` — `[PresentationDetent]` token array
+    (`[.medium, .large]`); leading-dot presets resolve in the array literal via
+    the `[PresentationDetent]` typed param (precedent: `[GridItem]`).
+  - `transformEffect(_:)` / `projectionEffect(_:)` — geometry-effect value
+    passthroughs (recorded straight onto the node, no token).
+- Recipe touched 4 seams: PRELUDE token structs (lib.rs), `token_of` allowlist
+  (values.rs), `write_value` tag map (uiir.rs), typed `install` registrations.
+  Expected-keys test vec + `registered_keys.txt` regenerated.
+- **Collision surfaced**: `.success`/`.failure` SensoryFeedback presets collide
+  with the builtin `Result` enum cases (interp.rs `register_builtin_result`) and
+  degrade to a bare token string; the fixture uses `.selection`. Documented in
+  the install comment.
+- **`String.write(_:)` (TextOutputStream) rejected** — collides with
+  Foundation's label-blind `String.write(to:)`/`write(toFile:)` intrinsic (same
+  `"write"` registry key), which shadows the mutating append. Not cleanly
+  separable without label-aware intrinsic dispatch; reverted.
+- Remaining stdlib tail is dominated by unsafe-pointer/span/reflection/SIMD
+  (`withUnsafeBufferPointer`, `span`, `mutableSpan`, `customMirror`, `hash`,
+  `pointwiseMin/Max`) — low value in this runtime.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
+  JSON regenerated + drift-clean; HTML progress report refreshed.
