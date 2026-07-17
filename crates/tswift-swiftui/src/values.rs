@@ -95,6 +95,8 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "WindowStyle"
             | "WindowToolbarStyle"
             | "TypesettingLanguage"
+            | "MarkStackingMethod"
+            | "InterpolationMethod"
     ) {
         return None;
     }

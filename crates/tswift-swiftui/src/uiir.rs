@@ -253,6 +253,8 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "PresentationSizing" => "presentationSizing",
             "TextInputDictationBehavior" => "textInputDictationBehavior",
             "WindowToolbarFullScreenVisibility" => "windowToolbarFullScreenVisibility",
+            "MarkStackingMethod" => "markStacking",
+            "InterpolationMethod" => "interpolationMethod",
             _ => "token",
         };
         out.push_str("{\"$\":");
@@ -302,6 +304,23 @@ fn write_value(value: &SwiftValue, out: &mut String) {
         // so hosts do not coerce String("3") into a numeric plottable.
         SwiftValue::Struct(obj) if obj.type_name == "PlottableValue" => {
             write_plottable_value(obj, out)
+        }
+        // A Charts `MarkDimension` serializes as `{"$":"markDimension","kind":…,
+        // "value":…}` (`.automatic` carries value 0).
+        SwiftValue::Struct(obj) if obj.type_name == "MarkDimension" => {
+            out.push_str(r#"{"$":"markDimension","kind":"#);
+            match obj.get("kind") {
+                Some(SwiftValue::Str(s)) => write_string(s, out),
+                _ => out.push_str("\"automatic\""),
+            }
+            let value = match obj.get("value") {
+                Some(SwiftValue::Double(d)) => *d,
+                Some(SwiftValue::Int(i)) => i.raw as f64,
+                _ => 0.0,
+            };
+            out.push_str(",\"value\":");
+            out.push_str(&tswift_core::format_double(value));
+            out.push('}');
         }
         // An `Angle` serializes as a tagged `{"$":"angle","degrees":…}`.
         SwiftValue::Struct(obj) if obj.type_name == "Angle" => {

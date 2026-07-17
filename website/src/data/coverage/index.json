@@ -1,6 +1,17 @@
 {
   "frameworks": [
     {
+      "framework": "charts",
+      "display_name": "Swift Charts",
+      "totals": {
+        "implemented": 16,
+        "partial": 0,
+        "missing": 3,
+        "out_of_scope": 0,
+        "total": 19
+      }
+    },
+    {
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {

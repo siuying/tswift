@@ -16,6 +16,7 @@
 //! tree *is* the UIIR — no `tswift-core` change is needed for view values.
 
 pub(crate) mod async_image;
+pub mod charts;
 pub mod diff;
 pub(crate) mod modifiers;
 pub(crate) mod navigation;
@@ -1248,6 +1249,50 @@ struct PresentationDetent {
     static let medium = PresentationDetent(token: "medium")
     static let large = PresentationDetent(token: "large")
 }
+// ── Swift Charts (ADR-0020) ────────────────────────────────────────────────
+// A labelled data point mapped onto a chart's x/y/angle scale. `.value(_:_:)`
+// is the only factory modelled; the value is stored dynamically (Double / Int /
+// String / Date all flow through unchanged) and serialized as
+// `{"$":"plottable","label":…,"value":…}`.
+struct PlottableValue<Value> {
+    let label: String
+    let value: Value
+    static func value(_ label: String, _ value: Value) -> PlottableValue<Value> {
+        PlottableValue(label: label, value: value)
+    }
+}
+// A mark's along-axis size. `.automatic` (scale-driven) plus the explicit
+// `.fixed(_)`/`.ratio(_)`/`.inset(_)` builders; serialized as
+// `{"$":"markDimension","kind":…,"value":…}` (issue #205 GridItem precedent).
+struct MarkDimension {
+    let kind: String
+    let value: Double
+    static let automatic = MarkDimension(kind: "automatic", value: 0)
+    static func fixed(_ value: Double) -> MarkDimension { MarkDimension(kind: "fixed", value: value) }
+    static func ratio(_ value: Double) -> MarkDimension { MarkDimension(kind: "ratio", value: value) }
+    static func inset(_ value: Double) -> MarkDimension { MarkDimension(kind: "inset", value: value) }
+}
+// How overlapping marks in the same x-position combine. Pure token (the
+// `cardinal(tension:)`-style parameterized cases are out of scope v1).
+struct MarkStackingMethod {
+    let token: String
+    static let standard = MarkStackingMethod(token: "standard")
+    static let center = MarkStackingMethod(token: "center")
+    static let normalized = MarkStackingMethod(token: "normalized")
+    static let unstacked = MarkStackingMethod(token: "unstacked")
+}
+// The curve fit connecting LineMark/AreaMark points. Only the bare presets are
+// modelled (`.cardinal(tension:)`/`.catmullRom(alpha:)` builders are v1 gaps).
+struct InterpolationMethod {
+    let token: String
+    static let linear = InterpolationMethod(token: "linear")
+    static let monotone = InterpolationMethod(token: "monotone")
+    static let cardinal = InterpolationMethod(token: "cardinal")
+    static let catmullRom = InterpolationMethod(token: "catmullRom")
+    static let stepStart = InterpolationMethod(token: "stepStart")
+    static let stepCenter = InterpolationMethod(token: "stepCenter")
+    static let stepEnd = InterpolationMethod(token: "stepEnd")
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier
@@ -2104,6 +2149,8 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         with_animation,
         vec![BuiltinParam::positional("Animation")],
     );
+    // Swift Charts marks (ADR-0020) render through this same pipeline.
+    charts::install(interp);
 }
 
 /// `withAnimation(_:_:)` — runs the trailing closure immediately, drops the
@@ -2370,6 +2417,14 @@ mod coverage_dump {
         let path = root.join("frameworks/swiftui/registered_keys.txt");
         let body = super::registered_keys().join("\n") + "\n";
         std::fs::write(&path, body).expect("write registered_keys.txt");
+    }
+
+    #[test]
+    fn dump_charts_registered_keys() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join("frameworks/charts/registered_keys.txt");
+        let body = super::charts::registered_keys().join("\n") + "\n";
+        std::fs::write(&path, body).expect("write charts registered_keys.txt");
     }
 }
 

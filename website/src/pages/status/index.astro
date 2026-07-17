@@ -22,12 +22,14 @@ const foundation = byFramework.foundation.totals;
 const swiftui = byFramework.swiftui.totals;
 const charts = byFramework.charts.totals;
 const swiftdata = byFramework.swiftdata.totals;
+const charts = byFramework.charts.totals;
 const languagePct = pctInfo(language);
 const stdlibPct = pctInfo(stdlib);
 const foundationPct = pctInfo(foundation);
 const swiftuiPct = pctInfo(swiftui);
 const chartsPct = pctInfo(charts);
 const swiftdataPct = pctInfo(swiftdata);
+const chartsPct = pctInfo(charts);
 // Hand-authored tier prose (kept short/curated), paired positionally with
 // counts parsed from docs/swift-runtime/feature-checklist.md — numbers are
 // never hand-typed, only the label text is.
@@ -91,6 +93,12 @@ const tierLabels = [
       <div class={`pct-big ${swiftdataPct.tier}`}>{swiftdataPct.label}</div>
       <p style="font-size:.85rem">@Model, ModelContainer/Context, #Predicate subset · {swiftdata.implemented} implemented · {swiftdata.partial} partial · {swiftdata.missing} missing (of {swiftdata.total})</p>
       <a href="/status/swiftdata" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>Swift Charts</h3>
+      <div class={`pct-big ${chartsPct.tier}`}>{chartsPct.label}</div>
+      <p style="font-size:.85rem">Chart container + Bar/Line/Point/Area/Rule/Rectangle/Sector marks · {charts.implemented} implemented · {charts.partial} partial · {charts.missing} missing (of {charts.total})</p>
+      <a href="/status/charts" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
   </div>
 

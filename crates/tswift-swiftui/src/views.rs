@@ -89,7 +89,7 @@ pub(crate) fn foreach_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResul
 /// `List(_:id:rowContent:)` shorthand: materialize the data sequence, run the
 /// content `@ViewBuilder` per element, and tag each produced view with a stable
 /// identity key. `who` names the caller for error messages.
-fn keyed_rows(
+pub(crate) fn keyed_rows(
     ctx: &mut dyn StdContext,
     args: Vec<Arg>,
     who: &str,
