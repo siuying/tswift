@@ -38,7 +38,8 @@ Int = [
   "==", "!=", "<", "<=", ">", ">=",
   "&", "&=", "|", "|=", "^", "^=", "&<<", "&>>", "&<<=", "&>>=",
 ]
-String = ["+", "+=", "==", "<"]
+String = ["+", "+=", "==", "<", "init", "subscript", "~="]
+Substring = ["init", "subscript", "~="]
 Bool = ["&&", "||", "==", "!", "init", "encode"]
 Set = ["=="]
 Dictionary = ["==", "subscript", "init", "encode"]

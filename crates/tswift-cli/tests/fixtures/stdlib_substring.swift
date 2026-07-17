@@ -153,3 +153,16 @@ print(str.count)             // 5
 // ---- Chaining operations -----------------------------------------------------
 print(world.prefix(5))       // World
 print(world.suffix(1))       // !
+
+// ---- Substring(_:) initializer --------------------------------------------
+let fromStr = Substring("direct")
+print(fromStr)               // direct
+print(fromStr.count)         // 6
+let fromSub = Substring(world)
+print(fromSub)               // World!
+let emptySub = Substring()
+print(emptySub.isEmpty)      // true
+
+// ---- pattern-match operator (~=) ------------------------------------------
+print("World!" ~= world)     // true
+print("nope" ~= world)       // false

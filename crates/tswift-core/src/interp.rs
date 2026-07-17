@@ -261,6 +261,30 @@ fn trap(msg: String) -> Signal {
     Signal::Error(EvalError::Trap(msg))
 }
 
+/// Render `value` in `radix` (2...36) for `String(_:radix:uppercase:)`.
+/// A negative value is prefixed with `-` and formatted by magnitude, matching
+/// Swift.
+fn int_to_radix_string(value: i128, radix: u32, uppercase: bool) -> String {
+    debug_assert!((2..=36).contains(&radix));
+    if value == 0 {
+        return "0".to_string();
+    }
+    let negative = value < 0;
+    let mut n = value.unsigned_abs();
+    let radix = radix as u128;
+    let mut digits = Vec::new();
+    while n > 0 {
+        let d = (n % radix) as u32;
+        let c = std::char::from_digit(d, 36).unwrap();
+        digits.push(if uppercase { c.to_ascii_uppercase() } else { c });
+        n /= radix;
+    }
+    if negative {
+        digits.push('-');
+    }
+    digits.iter().rev().collect()
+}
+
 type Eval = Result<SwiftValue, Signal>;
 
 /// One declared Swift parameter, precomputed from its `AST_PARAM` node.
@@ -5279,10 +5303,16 @@ impl<'w> Interpreter<'w> {
         // Scalar conversion initializers (one argument each).
         for name in [
             "Int", "Int8", "Int16", "Int32", "Int64", "UInt", "UInt8", "UInt16", "UInt32",
-            "UInt64", "Double", "Float", "String", "Bool",
+            "UInt64", "Double", "Float", "Bool",
         ] {
             t.insert(name, Self::ctor_conversion);
         }
+        // `String` has extra stdlib multi-argument initializers
+        // (`repeating:count:`, `_:radix:uppercase:`) on top of scalar
+        // conversion, so it gets a dedicated constructor.
+        t.insert("String", Self::ctor_string);
+        // `Substring(_:)` — build a full-range view over a StringProtocol arg.
+        t.insert("Substring", Self::ctor_substring);
         BuiltinCtors { table: t }
     }
 
@@ -5385,6 +5415,131 @@ impl<'w> Interpreter<'w> {
 
     /// Single-argument scalar/sequence conversion initializers (integer widths,
     /// `Double`/`Float`/`String`/`Bool`, `ContiguousArray`, `CollectionOfOne`).
+    /// `String` initializers beyond scalar conversion:
+    /// `String(repeating:count:)` (repeat a String or Character `count` times)
+    /// and `String(_:radix:uppercase:)` (integer-to-string in base 2...36).
+    /// Any shape this does not recognise falls through to `ctor_conversion`
+    /// (single-argument scalar/`describing:` forms) or, failing that, `Ok(None)`
+    /// so a framework-registered `String(label:)` free fn (e.g.
+    /// `data:encoding:`) still gets its turn.
+    fn ctor_string(
+        interp: &mut Interpreter,
+        name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        // `String(repeating: <String|Character>, count: Int)`
+        if args.len() == 2
+            && args[0].label.as_deref() == Some("repeating")
+            && args[1].label.as_deref() == Some("count")
+        {
+            let unit = match &args[0].value {
+                SwiftValue::Str(s) => s.clone(),
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "String(repeating:count:) expects a String, got {}",
+                        other.type_name()
+                    ))
+                    .into())
+                }
+            };
+            let count = match &args[1].value {
+                SwiftValue::Int(i) => i.raw,
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "String(repeating:count:) expects an Int count, got {}",
+                        other.type_name()
+                    ))
+                    .into())
+                }
+            };
+            if count < 0 {
+                return Err(trap(
+                    "String(repeating:count:) requires a non-negative count".into(),
+                ));
+            }
+            return Ok(Some(SwiftValue::Str(unit.repeat(count as usize))));
+        }
+        // `String(_ value: some BinaryInteger, radix: Int, uppercase: Bool = false)`
+        if (args.len() == 2 || args.len() == 3)
+            && args[0].label.is_none()
+            && args[1].label.as_deref() == Some("radix")
+        {
+            let value = match &args[0].value {
+                SwiftValue::Int(i) => i.raw,
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "String(_:radix:) expects an integer, got {}",
+                        other.type_name()
+                    ))
+                    .into())
+                }
+            };
+            let radix = match &args[1].value {
+                SwiftValue::Int(i) => i.raw,
+                other => {
+                    return Err(EvalError::Type(format!(
+                        "String(_:radix:) expects an Int radix, got {}",
+                        other.type_name()
+                    ))
+                    .into())
+                }
+            };
+            if !(2..=36).contains(&radix) {
+                return Err(trap("String(_:radix:) radix must be in 2...36".into()));
+            }
+            let uppercase = match args.get(2).map(|a| &a.value) {
+                Some(SwiftValue::Bool(b)) => *b,
+                Some(other) => {
+                    return Err(EvalError::Type(format!(
+                        "String(_:radix:uppercase:) expects a Bool, got {}",
+                        other.type_name()
+                    ))
+                    .into())
+                }
+                None => false,
+            };
+            return Ok(Some(SwiftValue::Str(int_to_radix_string(
+                value,
+                radix as u32,
+                uppercase,
+            ))));
+        }
+        Self::ctor_conversion(interp, name, args)
+    }
+
+    /// `Substring(_:)` — a full-range view over a `String` or `Substring`.
+    /// `Substring()` is the empty substring.
+    fn ctor_substring(
+        _interp: &mut Interpreter,
+        _name: &str,
+        args: &[CallArg],
+    ) -> Result<Option<SwiftValue>, Signal> {
+        match args {
+            [] => Ok(Some(SwiftValue::Substring {
+                base: Rc::new(String::new()),
+                start: 0,
+                end: 0,
+            })),
+            [arg] => match &arg.value {
+                SwiftValue::Str(s) => {
+                    let end = crate::graphemes(s).len();
+                    Ok(Some(SwiftValue::Substring {
+                        base: Rc::new(s.clone()),
+                        start: 0,
+                        end,
+                    }))
+                }
+                sub @ SwiftValue::Substring { .. } => Ok(Some(sub.clone())),
+                other => Err(EvalError::Type(format!(
+                    "Substring(_:) expects a String or Substring, got {}",
+                    other.type_name()
+                ))
+                .into()),
+            },
+            _ => Ok(None),
+        }
+    }
+
     fn ctor_conversion(
         interp: &mut Interpreter,
         name: &str,
@@ -6583,6 +6738,20 @@ fn strip_regex_delimiters(raw: &str) -> &str {
 mod tests {
     use super::*;
     use crate::stdlib::Arg;
+
+    #[test]
+    fn int_to_radix_string_matches_swift() {
+        assert_eq!(int_to_radix_string(255, 16, false), "ff");
+        assert_eq!(int_to_radix_string(255, 16, true), "FF");
+        assert_eq!(int_to_radix_string(10, 2, false), "1010");
+        assert_eq!(int_to_radix_string(-42, 2, false), "-101010");
+        assert_eq!(int_to_radix_string(0, 16, false), "0");
+        assert_eq!(int_to_radix_string(35, 36, false), "z");
+        assert_eq!(
+            int_to_radix_string(i128::MIN, 10, false),
+            i128::MIN.to_string()
+        );
+    }
 
     #[test]
     fn type_table_queries_reflect_registered_declarations() {
