@@ -1259,3 +1259,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI tab-view accessory modifiers (+5)
+
+- **SwiftUI 489→494 impl, 469→474 verified (66.8% → 67.5%)**. Golden-verified
+  via new `tab-accessory-modifiers` fixture.
+- New `@ViewBuilder`-content modifiers (reuse `viewbuilder_modifier!`: lower the
+  trailing content closure to a nested child subtree):
+  - `tabViewBottomAccessory`, `tabViewSidebarHeader`, `tabViewSidebarFooter`,
+    `tabViewSidebarBottomBar` (iOS 26 tab-view accessories), and
+    `textInputSuggestions` (content-only overload).
+- **Fidelity tier (honest)**: recorded-only nested subtree — the accessory/
+  suggestion content crosses the UIIR boundary as a child node; no live
+  tab-bar/sidebar placement. Labeled args (visibility/anchor) dropped.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
