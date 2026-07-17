@@ -1448,6 +1448,13 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_accessibility_zoom_action,
     ),
     ("dropDestination", modifier_drop_destination),
+    ("copyable", modifier_copyable),
+    ("cuttable", modifier_cuttable),
+    ("pasteDestination", modifier_paste_destination),
+    ("itemProvider", modifier_item_provider),
+    ("userActivity", modifier_user_activity),
+    ("exportsItemProviders", modifier_exports_item_providers),
+    ("importsItemProviders", modifier_imports_item_providers),
     ("toolbarTitleMenu", modifier_toolbar_title_menu),
     ("sectionActions", modifier_section_actions),
     // Gesture composition: priority/simultaneous variants lower to the same
@@ -2307,6 +2314,17 @@ closure_modifier!(
     "accessibilityZoomAction"
 );
 closure_modifier!(modifier_drop_destination, "dropDestination");
+// Data-transfer / item-provider modifiers (recorded-only: bare marker + stashed
+// closure). Copy/cut/paste/drag payloads and item providers are not produced by
+// a headless runtime, so the closure body is not invoked; non-closure args
+// (payload metatype, content-type lists, activity type) are dropped.
+closure_modifier!(modifier_copyable, "copyable");
+closure_modifier!(modifier_cuttable, "cuttable");
+closure_modifier!(modifier_paste_destination, "pasteDestination");
+closure_modifier!(modifier_item_provider, "itemProvider");
+closure_modifier!(modifier_user_activity, "userActivity");
+closure_modifier!(modifier_exports_item_providers, "exportsItemProviders");
+closure_modifier!(modifier_imports_item_providers, "importsItemProviders");
 // `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
 // not a plain `@ViewBuilder`: the preference `Value` is not computed by a
 // headless runtime, so the transform cannot be realized — record a bare marker
