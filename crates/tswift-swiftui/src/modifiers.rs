@@ -1403,6 +1403,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ),
     ("onPreferenceChange", modifier_on_preference_change),
     ("onModifierKeysChanged", modifier_on_modifier_keys_changed),
+    ("transformPreference", modifier_transform_preference),
+    ("phaseAnimator", modifier_phase_animator),
+    ("onCommand", modifier_on_command),
+    ("onPasteCommand", modifier_on_paste_command),
+    ("preference", modifier_preference),
     // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
     // content realized as a `Presentation` child node by the session.
     ("sheet", modifier_sheet),
@@ -2192,6 +2197,26 @@ closure_modifier!(
 );
 closure_modifier!(modifier_on_preference_change, "onPreferenceChange");
 closure_modifier!(modifier_on_modifier_keys_changed, "onModifierKeysChanged");
+// Preference transform, phase animation, and command event handlers, all
+// recorded-only (bare marker + stashed closure).
+closure_modifier!(modifier_transform_preference, "transformPreference");
+closure_modifier!(modifier_phase_animator, "phaseAnimator");
+closure_modifier!(modifier_on_command, "onCommand");
+closure_modifier!(modifier_on_paste_command, "onPasteCommand");
+// `.preference(key:value:)` carries no closure: record the `value` (the host
+// reads the preference payload); the `key:` metatype is not representable and
+// is dropped (recorded-only tier).
+pub(crate) fn modifier_preference(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let value = args
+        .into_iter()
+        .find(|a| a.label.as_deref() == Some("value"));
+    let margs = value.into_iter().collect();
+    append_modifier(recv, make_modifier("preference", margs))
+}
 
 // ── Gesture value types (TapGesture / LongPressGesture) ────────────────────
 

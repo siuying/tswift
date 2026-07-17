@@ -238,6 +238,7 @@ View.navigationViewStyle
 View.offset
 View.onAppear
 View.onChange
+View.onCommand
 View.onContinuousHover
 View.onCopyCommand
 View.onCutCommand
@@ -251,6 +252,7 @@ View.onLongPressGesture
 View.onModifierKeysChanged
 View.onMoveCommand
 View.onOpenURL
+View.onPasteCommand
 View.onPencilDoubleTap
 View.onPencilSqueeze
 View.onPlayPauseCommand
@@ -265,10 +267,12 @@ View.overlay
 View.padding
 View.paletteSelectionEffect
 View.persistentSystemOverlays
+View.phaseAnimator
 View.pickerStyle
 View.pointerVisibility
 View.popover
 View.position
+View.preference
 View.preferredColorScheme
 View.presentationBackground
 View.presentationBackgroundInteraction
@@ -376,6 +380,7 @@ View.tracking
 View.transaction
 View.transformEffect
 View.transformEnvironment
+View.transformPreference
 View.transition
 View.truncationMode
 View.typeSelectEquivalent
