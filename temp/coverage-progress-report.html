@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tswift Coverage Progress Report — 2026-07-17</title>
+<style>
+  body { font-family: -apple-system, "Helvetica Neue", sans-serif; margin: 2rem auto; max-width: 900px; color: #1a1a2e; line-height: 1.5; padding: 0 1rem; }
+  h1 { font-size: 1.6rem; } h2 { margin-top: 2rem; border-bottom: 2px solid #eee; padding-bottom: .3rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid #ddd; padding: .45rem .6rem; text-align: left; }
+  th { background: #f5f5fa; }
+  .bar { background: #e8e8f0; border-radius: 4px; height: 12px; width: 160px; display: inline-block; vertical-align: middle; }
+  .bar > span { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #5b8def, #7f5bef); }
+  .up { color: #0a7a3d; font-weight: 600; }
+  .muted { color: #777; font-size: .85rem; }
+  code { background: #f4f4f8; padding: .1rem .3rem; border-radius: 3px; font-size: .85em; }
+  ul { margin: .4rem 0; }
+</style>
+</head>
+<body>
+<h1>tswift Coverage Progress Report</h1>
+<p class="muted">Generated 2026-07-17 · continued coverage loop (worker pi/claude, advisor pi/fable-5) · all commits presubmit-green on <code>main</code></p>
+
+<h2>Overall coverage</h2>
+<table>
+<tr><th>Framework</th><th>Implemented</th><th>Verified</th><th>Session start</th><th>Now</th><th></th></tr>
+<tr><td>Swift stdlib</td><td>382 / 511</td><td>382 / 511</td><td>71.2%</td><td class="up">74.8%</td><td><span class="bar"><span style="width:75%"></span></span></td></tr>
+<tr><td>Foundation</td><td>467 / 615</td><td>465 / 615</td><td>65.2%</td><td class="up">75.9%</td><td><span class="bar"><span style="width:76%"></span></span></td></tr>
+<tr><td>SwiftUI</td><td>423 / 702</td><td>403 / 702</td><td>13.2%</td><td class="up">60.3%</td><td><span class="bar"><span style="width:60%"></span></span></td></tr>
+<tr><td>SwiftData</td><td>27 / 114</td><td>25 / 114</td><td>8.8%</td><td class="up">23.7%</td><td><span class="bar"><span style="width:24%"></span></span></td></tr>
+<tr><td>Swift Charts</td><td colspan="4" class="muted">Not yet registered — needs crate, inventory manifest, and SDK swiftinterface extraction (greenfield)</td><td></td></tr>
+</table>
+
+<h2>Session highlights (12 iterations)</h2>
+<ul>
+<li><strong>SwiftUI +46 pts</strong> — finished property-wrapper surfaces (<code>Binding.constant</code>, projected values); ~330 View modifiers with typed parameters serialized through UIIR (effects, dialogs, search, toolbar, margins, glass, presentation/window, container, assistive-access, navigation transitions), each golden-verified.</li>
+<li><strong>Foundation +10.7 pts</strong> — <code>Date.FormatStyle</code> executable formatting; <code>Decimal</code> truncating-remainder arithmetic; directory URLs via OS paths; <code>IndexSet</code> Collection index conformance.</li>
+<li><strong>SwiftData +14.9 pts</strong> — real SQL persistence: per-table DELETE (<code>deleteAllData</code>), change tracking, LIMIT/OFFSET pagination, schema entity names; CLI golden fixture exercising the full flow.</li>
+<li><strong>stdlib +2 pts</strong> — <code>formIndex</code> with dispatcher inout write-back, scalar and collection dispatch additions.</li>
+<li>Website coverage JSON regenerated and verified in sync (<code>scripts/generate-coverage-json.sh --check</code> clean; 8/8 JSON tests pass).</li>
+</ul>
+
+<h2>Per-section snapshots</h2>
+<table>
+<tr><th>stdlib section</th><th>verified</th><th>stdlib section</th><th>verified</th></tr>
+<tr><td>Dictionary</td><td>90.6%</td><td>Double</td><td>89.8%</td></tr>
+<tr><td>Int</td><td>88.0%</td><td>Set</td><td>83.3%</td></tr>
+<tr><td>Bool</td><td>76.9%</td><td>Array</td><td>68.8%</td></tr>
+<tr><td>Substring</td><td>72.7%</td><td>String</td><td>62.3%</td></tr>
+</table>
+<table>
+<tr><th>SwiftUI section</th><th>verified</th><th>notes</th></tr>
+<tr><td>View (modifiers)</td><td>64.1% (300/468)</td><td>largest surface; typed UIIR records + goldens; presentation family via ADR-0019</td></tr>
+<tr><td>Color</td><td>60.0%</td><td>explicit rgba preserved</td></tr>
+<tr><td>Text</td><td>50.0%</td><td></td></tr>
+<tr><td>Stacks/Grids (V/H/Z, Lazy, Grid)</td><td>100%</td><td></td></tr>
+<tr><td>Binding</td><td>15.4%</td><td>collection/key-path forms need generic runtime support</td></tr>
+</table>
+
+<h2>Remaining gaps &amp; blockers</h2>
+<ul>
+<li><strong>SwiftUI presentation family — DONE</strong> (ADR-0019): <code>sheet</code>, <code>fullScreenCover</code>, <code>popover</code>, <code>alert</code>, <code>confirmationDialog</code> now render as in-tree binding-gated <code>Presentation</code> nodes with deferred <code>@ViewBuilder</code> content, a <code>dismiss</code> event writing back through the binding, and alert auto-dismiss-on-action. No new patch op — reused the NavigationStack gated-subtree machinery. Advisor (fable-5) confirmed the ADR-0013 "portal patch op" tripwire dissolves.</li>
+<li><strong>Multi-trailing-closure parser gap</strong> — the canonical <code>} message: {</code> / <code>} placeholder: {</code> forms don't parse; next high-leverage lever (unlocks natural alert syntax + AsyncImage placeholder form).</li>
+<li><strong>Remaining SwiftUI closure/namespace tail</strong> — <code>matchedGeometryEffect</code> (needs <code>@Namespace</code> identity token), <code>onKeyPress</code> (needs handled-flag on dispatch response), <code>visualEffect</code> (needs host geometry feedback), <code>transaction</code> (animation-hint tier). Sequenced in ADR-0019.</li>
+<li><strong>Renderer parity</strong> — many new modifiers are verified at UIIR-serialization level; web/iOS host appliers for rendering behavior are a separate tier (per verifier review).</li>
+<li><strong>Swift Charts</strong> — no crate/inventory/scope manifest yet; standing it up is greenfield infra.</li>
+<li><strong>SwiftData</strong> — query predicates/sort descriptors and relationship graph remain (27/114).</li>
+<li><strong>String/Substring stdlib</strong> — added <code>String(repeating:count:)</code>, <code>String(_:radix:uppercase:)</code>, <code>Substring(_:)</code> initializers and marked <code>subscript</code>/<code>~=</code> (String +5.7 pts → 62.3%, Substring +9.1 pts → 72.7%). Remaining: <code>span</code>/<code>utf8Span</code>, <code>withCString</code>/<code>withUTF8</code> (C-string closures), <code>write</code> (<code>TextOutputStream</code>).</li>
+</ul>
+
+<p class="muted">Sources: <code>tools/stdlib-inventory/coverage.py</code>, <code>tools/framework-inventory/coverage.py</code>, <code>loop-log.md</code>, verifier transcripts of loop 5b1244cd.</p>
+</body>
+</html>

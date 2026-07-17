@@ -849,3 +849,26 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Session arc: SwiftUI 59.5% → 60.3% impl (+5 presentation modifiers) across two
   slices; stdlib 73.2% → 73.6%. presubmit green each time (incl. wasm smoke +
   website checks); coverage JSON regenerated.
+
+## Coverage iteration — stdlib String/Substring initializers
+
+- **stdlib**: 376 → 382 (73.6% → 74.8%). String 30→33 (56.6%→62.3%),
+  Substring 21→24 (63.6%→72.7%). Added three real builtin constructors in
+  `interp.rs` `builtin_ctor_table`:
+  - `String(repeating: <String>, count: Int)` — repeat unit `count` times
+    (negative count traps).
+  - `String(_ value: BinaryInteger, radix: Int, uppercase: Bool = false)` —
+    base 2…36 formatting via `int_to_radix_string` (negative → `-` + magnitude,
+    matches Swift; unit-tested incl. `i128::MIN`).
+  - `Substring(_:)` — full-range view over a String/Substring; `Substring()`
+    empty. `ctor_string` delegates single-arg/`describing:` forms to
+    `ctor_conversion`, and returns `Ok(None)` for unrecognised shapes so
+    Foundation's `String(data:encoding:)`/`contentsOfFile:` free fn still wins.
+- Marked `subscript`, `init`, `~=` as `core_members` for String and Substring
+  in `frameworks/stdlib/scope.toml` — these are genuinely interpreter-level
+  (subscript dispatch, builtin ctor, `~=` free-fn pattern match all verified
+  working) but never surface in `registered_keys.txt`.
+- Goldens: new `stdlib_string_init` (repeating/radix/uppercase/scalar/`~=`) and
+  extended `stdlib_substring` (`Substring(_:)` from String/Substring/empty +
+  `~=`). presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated and drift-check clean.
