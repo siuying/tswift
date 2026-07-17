@@ -17,7 +17,7 @@
         {
           "name": "accessibilityAction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityActions",
@@ -37,7 +37,7 @@
         {
           "name": "accessibilityAdjustableAction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityChartDescriptor",
@@ -162,7 +162,7 @@
         {
           "name": "accessibilityScrollAction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "accessibilityScrollStatus",
@@ -192,7 +192,7 @@
         {
           "name": "accessibilityZoomAction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "actionSheet",
@@ -622,7 +622,7 @@
         {
           "name": "dropDestination",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "dropPreviewsFormation",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 371,
+        "implemented": 376,
         "partial": 11,
-        "missing": 86,
+        "missing": 81,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 474,
+    "implemented": 479,
     "partial": 20,
-    "missing": 208,
+    "missing": 203,
     "out_of_scope": 0,
     "total": 702
   }
