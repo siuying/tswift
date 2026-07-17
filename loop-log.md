@@ -1085,3 +1085,20 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated; HTML progress report refreshed.
+
+## Coverage iteration — SwiftUI container/layout/bar-item modifiers (+4)
+
+- **SwiftUI 445→449 impl, 425→429 verified (60.5% → 61.1%)**; View section
+  333→337 (68.8% → 69.7%). Golden-verified via new
+  `container-and-layout-modifiers` render fixture.
+- New recording modifiers:
+  - `containerBackground(_:for:)` / `containerBackground(for:){content}` —
+    ShapeStyle/Color token or `@ViewBuilder` content (lowered like `background`)
+    + new `ContainerBackgroundPlacement` token namespace (navigation/
+    navigationSplitView/tabView/window), typed + tagged-token serialized.
+  - `navigationBarItems(leading:trailing:)` — nested accessory views recorded
+    like `tabItem` (each labeled arg expanded to a node).
+  - `layoutValue(key:value:)` — LayoutValueKey metatype + value passthrough.
+  - `previewContext(_:)` — value passthrough.
+- **Fidelity tier (honest)**: recorded-only; hosts honor or ignore.
+- presubmit green; coverage JSON regenerated; HTML report refreshed.
