@@ -10,7 +10,8 @@ use tswift_core::{Arg, StdContext, StdResult, StructMethodFn, StructObj, SwiftVa
 use crate::navigation::modifier_navigation_destination;
 use crate::{
     container_value, expand_into, token_of, type_error, ENV_FIELD, HANDLERS_FIELD, HANDLERS_TYPE,
-    MODIFIERS_FIELD, MODIFIER_TYPE, WATCH_FIELD, WATCH_TYPE,
+    MODIFIERS_FIELD, MODIFIER_TYPE, PRESENTATIONS_FIELD, PRESENTATION_TYPE, WATCH_FIELD,
+    WATCH_TYPE,
 };
 
 /// Define a view-modifier intrinsic that appends a named `_Modifier` record to
@@ -1170,6 +1171,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
+    // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
+    // content realized as a `Presentation` child node by the session.
+    ("sheet", modifier_sheet),
+    ("fullScreenCover", modifier_full_screen_cover),
+    ("popover", modifier_popover),
     // Gesture composition: `.gesture(TapGesture().onEnded { })` lowers to the
     // same marker+handler route as `.onTapGesture`/`.onLongPressGesture`.
     ("gesture", modifier_gesture),
@@ -1753,6 +1759,109 @@ fn add_watch(view: SwiftValue, value: SwiftValue, action: SwiftValue) -> StdResu
         type_name: obj.type_name.clone(),
         fields,
     })))
+}
+
+/// Presentation modifiers (ADR-0019): `.sheet` / `.fullScreenCover` /
+/// `.popover`. Each gates a `@ViewBuilder` content closure on a `Binding<Bool>`
+/// (`isPresented:`), with an optional `onDismiss:` closure. Rather than
+/// appending a serialized `_Modifier` (the content is deferred, not eager), the
+/// call captures a [`PRESENTATION_TYPE`] record onto the receiver's
+/// [`PRESENTATIONS_FIELD`] list. The session realizes an open presentation into
+/// a `Presentation` child node each render (see `session::presentation_node`).
+fn presentation_modifier(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    style: &str,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut binding: Option<SwiftValue> = None;
+    let mut on_dismiss: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("isPresented") => binding = Some(arg.value),
+            Some("onDismiss") => on_dismiss = Some(arg.value),
+            Some("content") => content = Some(arg.value),
+            // The trailing `@ViewBuilder` content closure is unlabeled.
+            None if matches!(arg.value, SwiftValue::Closure(_)) => content = Some(arg.value),
+            _ => {}
+        }
+    }
+    // Without a gating binding and content closure there is nothing to present;
+    // leave the view untouched (a permissive no-op rather than a hard error).
+    let (Some(binding), Some(content @ SwiftValue::Closure(_))) = (binding, content) else {
+        return Ok(recv);
+    };
+    let mut record_fields: Vec<(String, SwiftValue)> = vec![
+        ("style".into(), SwiftValue::Str(style.into())),
+        (crate::BINDING_FIELD.into(), binding),
+        ("_content".into(), content),
+    ];
+    if let Some(d @ SwiftValue::Closure(_)) = on_dismiss {
+        record_fields.push(("_onDismiss".into(), d));
+    }
+    let record = SwiftValue::Struct(Rc::new(StructObj {
+        type_name: PRESENTATION_TYPE.into(),
+        fields: record_fields,
+    }));
+    append_presentation(recv, record)
+}
+
+/// Append a [`PRESENTATION_TYPE`] record to `view`'s [`PRESENTATIONS_FIELD`]
+/// list (copy-on-write), creating the list if absent.
+fn append_presentation(view: SwiftValue, record: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(obj) = &view else {
+        return Err(type_error(format!(
+            "presentation modifier applied to non-view value `{}`",
+            view.type_name()
+        )));
+    };
+    let mut fields = obj.fields.clone();
+    if !fields.iter().any(|(k, _)| k == PRESENTATIONS_FIELD) {
+        fields.push((
+            PRESENTATIONS_FIELD.into(),
+            SwiftValue::Array(Rc::new(Vec::new())),
+        ));
+    }
+    let slot = fields
+        .iter_mut()
+        .find(|(k, _)| k == PRESENTATIONS_FIELD)
+        .map(|(_, v)| v)
+        .expect("_presentations slot ensured above");
+    let mut list = match slot {
+        SwiftValue::Array(items) => (**items).clone(),
+        _ => Vec::new(),
+    };
+    list.push(record);
+    *slot = SwiftValue::Array(Rc::new(list));
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
+
+pub(crate) fn modifier_sheet(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    presentation_modifier(ctx, recv, "sheet", args)
+}
+
+pub(crate) fn modifier_full_screen_cover(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    presentation_modifier(ctx, recv, "fullScreenCover", args)
+}
+
+pub(crate) fn modifier_popover(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    presentation_modifier(ctx, recv, "popover", args)
 }
 
 /// Build a `_Modifier` record: a struct carrying `name` plus each call argument

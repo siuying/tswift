@@ -103,6 +103,22 @@ pub const NAV_DESTINATIONS_TYPE: &str = "_NavDestinations";
 /// value }` record realized by invoking the captured destination closure with
 /// the value (re-evaluated fresh each render for `@State` liveness).
 pub const PUSHED_VALUE_TYPE: &str = "_PushedValue";
+/// Field name holding a view's captured presentation modifiers (`.sheet`,
+/// `.fullScreenCover`, `.popover`, …): an ordered list of [`PRESENTATION_TYPE`]
+/// records, each carrying a gating `Binding`, a `@ViewBuilder` content closure,
+/// an optional `onDismiss` closure, and a `style` tag. Never serialized
+/// (leading `_`); the session realizes each open presentation into a
+/// `Presentation` child node (ADR-0019).
+pub const PRESENTATIONS_FIELD: &str = "_presentations";
+/// Type name of a [`PRESENTATIONS_FIELD`] record. Fields: `style` (Str),
+/// `_binding` (the gating `Binding<Bool>`/`Binding<Item?>`), `_content` (the
+/// `@ViewBuilder` closure), and optional `_onDismiss` (a closure).
+pub const PRESENTATION_TYPE: &str = "_Presentation";
+/// UIIR node kind emitted for an open presentation (ADR-0019). The host renders
+/// it on a top layer (sheet/popover/alert/…) keyed by its `style` arg, never in
+/// flow, and emits a `dismiss` event that writes `false`/`nil` through the
+/// gating binding.
+pub const PRESENTATION_NODE_KIND: &str = "Presentation";
 /// Field name holding a `ForEach`-generated child's stable identity key. When
 /// present, the child's UIIR id is `{parent}.{key}` (not `{parent}.{index}`) so
 /// the keyed diff can emit `move` instead of replacing reordered rows.
@@ -2365,6 +2381,7 @@ mod tests {
                 "View.foregroundStyle",
                 "View.formStyle",
                 "View.frame",
+                "View.fullScreenCover",
                 "View.gaugeStyle",
                 "View.geometryGroup",
                 "View.gesture",
@@ -2474,6 +2491,7 @@ mod tests {
                 "View.persistentSystemOverlays",
                 "View.pickerStyle",
                 "View.pointerVisibility",
+                "View.popover",
                 "View.position",
                 "View.preferredColorScheme",
                 "View.presentationBackground",
@@ -2520,6 +2538,7 @@ mod tests {
                 "View.sectionIndexLabel",
                 "View.selectionDisabled",
                 "View.shadow",
+                "View.sheet",
                 "View.sliderThumbVisibility",
                 "View.speechAdjustedPitch",
                 "View.speechAlwaysIncludesPunctuation",

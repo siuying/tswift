@@ -136,6 +136,7 @@ View.foregroundColor
 View.foregroundStyle
 View.formStyle
 View.frame
+View.fullScreenCover
 View.gaugeStyle
 View.geometryGroup
 View.gesture
@@ -245,6 +246,7 @@ View.paletteSelectionEffect
 View.persistentSystemOverlays
 View.pickerStyle
 View.pointerVisibility
+View.popover
 View.position
 View.preferredColorScheme
 View.presentationBackground
@@ -291,6 +293,7 @@ View.searchToolbarBehavior
 View.sectionIndexLabel
 View.selectionDisabled
 View.shadow
+View.sheet
 View.sliderThumbVisibility
 View.speechAdjustedPitch
 View.speechAlwaysIncludesPunctuation

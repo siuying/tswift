@@ -15,14 +15,26 @@ use std::rc::Rc;
 use tswift_core::{EvalError, Interpreter, StructObj, SwiftValue};
 
 use crate::{
-    BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, NAV_DESTINATIONS_FIELD, NAV_DESTINATION_FIELD,
-    NAV_VALUE_FIELD, WATCH_FIELD,
+    BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, HANDLERS_TYPE, MODIFIERS_FIELD,
+    NAV_DESTINATIONS_FIELD, NAV_DESTINATION_FIELD, NAV_VALUE_FIELD, PRESENTATIONS_FIELD,
+    PRESENTATION_NODE_KIND, WATCH_FIELD,
 };
 
 /// Maximum `onChange` cascade passes per dispatch: a watcher's action may mutate
 /// state a *second* watcher observes (chained state). We re-render and re-scan
 /// until quiescent, bounded so a watcher toggling its own source cannot hang.
 const MAX_WATCH_PASSES: usize = 64;
+
+/// Whether a presentation's gating value is "open": a `Bool(true)`
+/// (`isPresented:`) or any non-`nil` value (`item:` presentations). Everything
+/// else (`Bool(false)`, `Nil`) is closed.
+fn is_presented(value: &SwiftValue) -> bool {
+    match value {
+        SwiftValue::Bool(b) => *b,
+        SwiftValue::Nil => false,
+        _ => true,
+    }
+}
 
 /// Coerce a host `set` payload to the binding's current value type, so each
 /// control writes a well-typed value (and a `Toggle<Bool>` can't be corrupted
@@ -130,6 +142,12 @@ impl<'i, 'w> Session<'i, 'w> {
         //
         // 1. Append each `NavigationStack`'s pushed screens (ADR-0013 §1).
         let tree = crate::tree::rewrite(tree, "0", &mut |obj, id| self.nav_stack_node(obj, id))?;
+        // 1b. Realize each open presentation (`.sheet`/`.fullScreenCover`/
+        // `.popover`) into a `Presentation` child node (ADR-0019). Runs after
+        // the nav pass so a presentation inside a pushed screen is visited, and
+        // before the tab/image passes so a sheet's content (which may hold a
+        // `TabView`/`AsyncImage`) is still walked.
+        let tree = crate::tree::rewrite(tree, "0", &mut |obj, _| self.presentation_node(obj))?;
         // 2. Re-apply any per-node `TabView` selection owned by the session
         // (the no-binding case): the freshly evaluated `body` defaults each
         // such tab view to its first tab, so the stored selection overrides it.
@@ -267,6 +285,89 @@ impl<'i, 'w> Session<'i, 'w> {
             _ => Vec::new(),
         };
         kids.extend(screens);
+        obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
+        Ok(())
+    }
+
+    /// Realize a node's open presentations (ADR-0019). For each
+    /// [`PRESENTATIONS_FIELD`] record whose gating `Binding` reads truthy
+    /// (`Bool(true)`, or a non-`nil` `item:` value), evaluate the deferred
+    /// `@ViewBuilder` content closure fresh and append a `Presentation` node as
+    /// the presenting node's last child. The `Presentation` node carries the
+    /// gating binding (`_binding`) and an optional `dismiss` handler
+    /// (`_handlers`) so a host `dismiss` event can write back and fire
+    /// `onDismiss`. A closed presentation contributes nothing (the diff removes
+    /// a previously-open node), and programmatic close (the bound state going
+    /// `false`) drops it on the next render for free.
+    fn presentation_node(&mut self, obj: &mut StructObj) -> Result<(), EvalError> {
+        let Some(SwiftValue::Array(records)) = obj.get(PRESENTATIONS_FIELD).cloned() else {
+            return Ok(());
+        };
+        let mut nodes: Vec<SwiftValue> = Vec::new();
+        for record in records.iter() {
+            let SwiftValue::Struct(rec) = record else {
+                continue;
+            };
+            let Some(binding) = rec.get(BINDING_FIELD).cloned() else {
+                continue;
+            };
+            let wrapped = self.interp.get_member(&binding, "wrappedValue")?;
+            if !is_presented(&wrapped) {
+                continue;
+            }
+            let Some(SwiftValue::Closure(cid)) = rec.get("_content").cloned() else {
+                continue;
+            };
+            let content = crate::realize_pushed_screen(self.interp, &SwiftValue::Closure(cid))
+                .map_err(crate::std_error_to_eval)?;
+            let style = match rec.get("style") {
+                Some(SwiftValue::Str(s)) => s.clone(),
+                _ => "sheet".to_string(),
+            };
+            let mut fields: Vec<(String, SwiftValue)> = vec![
+                ("style".into(), SwiftValue::Str(style)),
+                (
+                    MODIFIERS_FIELD.into(),
+                    SwiftValue::Array(Rc::new(Vec::new())),
+                ),
+                (
+                    CHILDREN_FIELD.into(),
+                    SwiftValue::Array(Rc::new(content.into_iter().collect())),
+                ),
+                (BINDING_FIELD.into(), binding),
+            ];
+            if let Some(d @ SwiftValue::Closure(_)) = rec.get("_onDismiss").cloned() {
+                fields.push((
+                    HANDLERS_FIELD.into(),
+                    SwiftValue::Struct(Rc::new(StructObj {
+                        type_name: HANDLERS_TYPE.into(),
+                        fields: vec![("dismiss".into(), d)],
+                    })),
+                ));
+            }
+            nodes.push(SwiftValue::Struct(Rc::new(StructObj {
+                type_name: PRESENTATION_NODE_KIND.into(),
+                fields,
+            })));
+        }
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let pos = match obj.fields.iter().position(|(k, _)| k == CHILDREN_FIELD) {
+            Some(pos) => pos,
+            None => {
+                obj.fields.push((
+                    CHILDREN_FIELD.into(),
+                    SwiftValue::Array(Rc::new(Vec::new())),
+                ));
+                obj.fields.len() - 1
+            }
+        };
+        let mut kids: Vec<SwiftValue> = match &obj.fields[pos].1 {
+            SwiftValue::Array(a) => a.iter().cloned().collect(),
+            _ => Vec::new(),
+        };
+        kids.extend(nodes);
         obj.fields[pos].1 = SwiftValue::Array(Rc::new(kids));
         Ok(())
     }
@@ -437,6 +538,24 @@ impl<'i, 'w> Session<'i, 'w> {
                     if stack.is_empty() {
                         self.nav_stack.remove(&event.id);
                     }
+                }
+            }
+            // A presentation dismissal (ADR-0019): the host swiped/tapped-away
+            // a `.sheet`/`.popover`/`.fullScreenCover`. Write the gating binding
+            // back to closed (`false` for `isPresented:`, `nil` for `item:`) so
+            // the next render drops the `Presentation` node, then fire the
+            // `onDismiss` closure if one was captured.
+            "dismiss" => {
+                if let Some(binding) = find_binding(&tree, &event.id) {
+                    let current = self.interp.get_member(&binding, "wrappedValue")?;
+                    let closed = match current {
+                        SwiftValue::Bool(_) => SwiftValue::Bool(false),
+                        _ => SwiftValue::Nil,
+                    };
+                    self.interp.set_member(&binding, "wrappedValue", closed)?;
+                }
+                if let Some(closure_id) = find_handler(&tree, &event.id, "dismiss") {
+                    self.interp.invoke_closure(closure_id, Vec::new())?;
                 }
             }
             // Any other event routes to the node's handler map by name. A `tap`
