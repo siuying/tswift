@@ -200,6 +200,14 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
     pure("contains", contains);
     pure("split", split);
     pure("makeIterator", make_iterator);
+    // A `String`/`Substring` has no contiguous storage over its `Character`
+    // elements (its backing store is UTF-8 bytes), so this always returns nil
+    // without invoking the closure — matching Swift's default `Collection`
+    // behavior.
+    pure(
+        "withContiguousStorageIfAvailable",
+        with_contiguous_storage_if_available,
+    );
 
     // --- Mutating append ---
     interp.register_intrinsic(
@@ -210,6 +218,21 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
             func: append,
         },
     );
+}
+
+/// `withContiguousStorageIfAvailable(_:)` — a `String`/`Substring` is not
+/// contiguous over its `Character` elements, so this returns `nil` without
+/// calling `body`, matching Swift's default `Collection` conformance.
+fn with_contiguous_storage_if_available(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    str_of(&recv)?;
+    Ok(Outcome {
+        result: SwiftValue::Nil,
+        receiver: recv,
+    })
 }
 
 /// Segment a string into extended grapheme clusters (Swift `Character`s).

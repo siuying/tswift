@@ -142,12 +142,12 @@
         {
           "name": "withContiguousStorageIfAvailable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBufferPointer",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBytes",
@@ -166,9 +166,9 @@
         }
       ],
       "counts": {
-        "implemented": 22,
+        "implemented": 24,
         "partial": 0,
-        "missing": 10,
+        "missing": 8,
         "out_of_scope": 0,
         "total": 32
       }
@@ -299,12 +299,12 @@
         {
           "name": "withContiguousStorageIfAvailable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBufferPointer",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBytes",
@@ -323,9 +323,9 @@
         }
       ],
       "counts": {
-        "implemented": 19,
+        "implemented": 21,
         "partial": 0,
-        "missing": 10,
+        "missing": 8,
         "out_of_scope": 0,
         "total": 29
       }
@@ -727,12 +727,12 @@
         {
           "name": "withContiguousStorageIfAvailable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBufferPointer",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBytes",
@@ -751,9 +751,9 @@
         }
       ],
       "counts": {
-        "implemented": 20,
+        "implemented": 22,
         "partial": 0,
-        "missing": 10,
+        "missing": 8,
         "out_of_scope": 0,
         "total": 30
       }
@@ -2305,7 +2305,7 @@
         {
           "name": "withContiguousStorageIfAvailable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withMutableCharacters",
@@ -2329,9 +2329,9 @@
         }
       ],
       "counts": {
-        "implemented": 36,
+        "implemented": 37,
         "partial": 0,
-        "missing": 17,
+        "missing": 16,
         "out_of_scope": 0,
         "total": 53
       }
@@ -2482,7 +2482,7 @@
         {
           "name": "withContiguousStorageIfAvailable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withMutableCharacters",
@@ -2506,9 +2506,9 @@
         }
       ],
       "counts": {
-        "implemented": 24,
+        "implemented": 25,
         "partial": 0,
-        "missing": 9,
+        "missing": 8,
         "out_of_scope": 0,
         "total": 33
       }
@@ -2762,9 +2762,9 @@
     }
   ],
   "totals": {
-    "implemented": 388,
+    "implemented": 396,
     "partial": 0,
-    "missing": 123,
+    "missing": 115,
     "out_of_scope": 0,
     "total": 511
   }

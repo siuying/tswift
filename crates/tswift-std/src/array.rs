@@ -61,6 +61,20 @@ pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
     mutating(interp, "reserveCapacity", reserve_capacity);
     mutating(interp, "replaceSubrange", replace_subrange);
     nonmutating(interp, "distance", distance);
+    // Buffer-pointer access: the closure receives the elements as a
+    // contiguous buffer (modeled as an `Array` value — a RandomAccessCollection
+    // like `UnsafeBufferPointer`). Read-only fidelity tier: mutation through the
+    // buffer (`withUnsafeMutableBufferPointer`) is not modeled.
+    nonmutating(
+        interp,
+        "withUnsafeBufferPointer",
+        with_unsafe_buffer_pointer,
+    );
+    nonmutating(
+        interp,
+        "withContiguousStorageIfAvailable",
+        with_contiguous_storage,
+    );
     // `index` is label-aware: index(after:)/index(before:)/index(_:offsetBy:)/
     // index(_:offsetBy:limitedBy:) over integer indices.
     interp.register_labeled_intrinsic(
@@ -573,6 +587,57 @@ fn distance(
             "distance(from:to:) expects two indexes".into(),
         ))),
     }
+}
+
+/// `Array.withUnsafeBufferPointer(_:)` — invoke `body` with the elements exposed
+/// as a contiguous buffer and return its result. The buffer is modeled as an
+/// `Array` value (a RandomAccessCollection, like `UnsafeBufferPointer`); the
+/// closure reads `count`/subscript/iteration through the normal collection
+/// intrinsics. Read-only tier: buffer mutation is not modeled.
+pub(crate) fn with_unsafe_buffer_pointer(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let buffer = buffer_value(&recv)?;
+    let id = buffer_closure(&args, "withUnsafeBufferPointer")?;
+    let result = ctx.call_closure(id, vec![buffer])?;
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+/// `Array.withContiguousStorageIfAvailable(_:)` — arrays are always contiguous,
+/// so this always invokes `body` and returns `.some(result)`.
+pub(crate) fn with_contiguous_storage(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    with_unsafe_buffer_pointer(ctx, recv, args)
+}
+
+/// Materialize a receiver's elements into a contiguous `Array` buffer value.
+fn buffer_value(recv: &SwiftValue) -> Result<SwiftValue, StdError> {
+    let elems = tswift_core::materialize_builtin_sequence(recv).ok_or_else(|| {
+        StdError::Error(EvalError::Type(format!(
+            "expected a collection receiver, got {}",
+            recv.type_name()
+        )))
+    })?;
+    Ok(SwiftValue::Array(Rc::new(elems)))
+}
+
+/// Extract the trailing closure id from a buffer-access call.
+fn buffer_closure(args: &[SwiftValue], who: &str) -> Result<usize, StdError> {
+    args.iter()
+        .rev()
+        .find_map(|a| match a {
+            SwiftValue::Closure(id) => Some(*id),
+            _ => None,
+        })
+        .ok_or_else(|| StdError::Error(EvalError::Type(format!("{who} expects a closure"))))
 }
 
 /// `Array.index` overloads over integer indexes. Label-aware so `index(after:)`

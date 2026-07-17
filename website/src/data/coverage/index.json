@@ -26,9 +26,9 @@
       "framework": "stdlib",
       "display_name": "Swift stdlib",
       "totals": {
-        "implemented": 388,
+        "implemented": 396,
         "partial": 0,
-        "missing": 123,
+        "missing": 115,
         "out_of_scope": 0,
         "total": 511
       }

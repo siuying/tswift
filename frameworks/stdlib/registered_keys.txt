@@ -34,6 +34,8 @@ Array.reserveCapacity
 Array.reverse
 Array.sort
 Array.startIndex
+Array.withContiguousStorageIfAvailable
+Array.withUnsafeBufferPointer
 ArraySlice.append
 ArraySlice.capacity
 ArraySlice.contains
@@ -61,6 +63,8 @@ ArraySlice.reserveCapacity
 ArraySlice.reverse
 ArraySlice.sort
 ArraySlice.startIndex
+ArraySlice.withContiguousStorageIfAvailable
+ArraySlice.withUnsafeBufferPointer
 Bool.description
 Bool.flatMap
 Bool.hashValue
@@ -124,6 +128,8 @@ ContiguousArray.reserveCapacity
 ContiguousArray.reverse
 ContiguousArray.sort
 ContiguousArray.startIndex
+ContiguousArray.withContiguousStorageIfAvailable
+ContiguousArray.withUnsafeBufferPointer
 Dictionary.capacity
 Dictionary.compactMapValues
 Dictionary.count
@@ -372,6 +378,7 @@ String.uppercased
 String.utf16
 String.utf8
 String.wholeMatch
+String.withContiguousStorageIfAvailable
 Substring.append
 Substring.base
 Substring.characters
@@ -403,6 +410,7 @@ Substring.unicodeScalars
 Substring.uppercased
 Substring.utf16
 Substring.utf8
+Substring.withContiguousStorageIfAvailable
 abs
 assert
 assertionFailure

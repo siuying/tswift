@@ -95,6 +95,19 @@ pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
     );
     pure(interp, "contains", contains);
     pure(interp, "removeAll", remove_all_nonmutating);
+    // Buffer-pointer access (read-only tier) — shares the `array` module
+    // implementation, which materializes the slice window into a contiguous
+    // buffer via `materialize_builtin_sequence`.
+    pure(
+        interp,
+        "withUnsafeBufferPointer",
+        crate::array::with_unsafe_buffer_pointer,
+    );
+    pure(
+        interp,
+        "withContiguousStorageIfAvailable",
+        crate::array::with_contiguous_storage,
+    );
 
     // Mutating methods — detach on mutation.
     label_aware(interp, "append", append_labeled);
