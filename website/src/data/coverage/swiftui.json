@@ -1192,12 +1192,12 @@
         {
           "name": "matchedGeometryEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "matchedTransitionSource",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "materialActiveAppearance",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 346,
+        "implemented": 348,
         "partial": 11,
-        "missing": 111,
+        "missing": 109,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 449,
+    "implemented": 451,
     "partial": 20,
-    "missing": 233,
+    "missing": 231,
     "out_of_scope": 0,
     "total": 702
   }
