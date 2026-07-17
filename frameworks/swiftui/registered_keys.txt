@@ -137,6 +137,7 @@ View.frame
 View.gaugeStyle
 View.geometryGroup
 View.gesture
+View.glassEffect
 View.grayscale
 View.gridCellAnchor
 View.gridCellColumns
@@ -185,6 +186,7 @@ View.listRowSeparator
 View.listRowSeparatorTint
 View.listRowSpacing
 View.listSectionIndexVisibility
+View.listSectionMargins
 View.listSectionSeparator
 View.listSectionSeparatorTint
 View.listSectionSpacing
@@ -278,6 +280,7 @@ View.scrollIndicatorsFlash
 View.scrollInputBehavior
 View.scrollTargetBehavior
 View.scrollTargetLayout
+View.searchCompletion
 View.searchDictationBehavior
 View.searchPresentationToolbarBehavior
 View.searchToolbarBehavior
@@ -289,6 +292,7 @@ View.speechAlwaysIncludesPunctuation
 View.speechAnnouncementsQueued
 View.speechSpellsOutCharacters
 View.springLoadingBehavior
+View.statusBar
 View.statusBarHidden
 View.strikethrough
 View.submitLabel

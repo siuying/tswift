@@ -810,6 +810,12 @@ struct TextInputDictationBehavior {
     static let automatic = TextInputDictationBehavior(token: "automatic")
     static let inactive = TextInputDictationBehavior(token: "inactive")
 }
+struct Glass {
+    let token: String
+    static let regular = Glass(token: "regular")
+    static let clear = Glass(token: "clear")
+    static let identity = Glass(token: "identity")
+}
 struct WindowToolbarFullScreenVisibility {
     let token: String
     static let automatic = WindowToolbarFullScreenVisibility(token: "automatic")
@@ -1713,6 +1719,27 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_edges_ignoring_safe_area,
         vec![BuiltinParam::positional("Edge.Set")],
     );
+    // `listSectionMargins(_ edges: Edge.Set = .all, _ length: CGFloat?)` — the
+    // leading `.horizontal`/`.all` token resolves against `Edge.Set`.
+    interp.register_struct_method_typed(
+        "listSectionMargins",
+        modifiers::modifier_list_section_margins,
+        vec![
+            BuiltinParam::positional("Edge.Set"),
+            BuiltinParam::positional("CGFloat"),
+        ],
+    );
+    // `glassEffect(_ glass: Glass = .regular, in shape: some Shape)` — the
+    // leading `.regular`/`.clear` token resolves against `Glass`; `in:` is a
+    // nested shape view recorded on the node.
+    interp.register_struct_method_typed(
+        "glassEffect",
+        modifiers::modifier_glass_effect,
+        vec![
+            BuiltinParam::positional("Glass"),
+            BuiltinParam::labeled("in", "View"),
+        ],
+    );
     // Grid/scroll/presentation/material/palette token modifiers. Grid layout
     // reuses UnitPoint / HorizontalAlignment / Axis.Set;
     // writingToolsAffordanceVisibility reuses Visibility; the rest introduce
@@ -2317,6 +2344,7 @@ mod tests {
                 "View.gaugeStyle",
                 "View.geometryGroup",
                 "View.gesture",
+                "View.glassEffect",
                 "View.grayscale",
                 "View.gridCellAnchor",
                 "View.gridCellColumns",
@@ -2365,6 +2393,7 @@ mod tests {
                 "View.listRowSeparatorTint",
                 "View.listRowSpacing",
                 "View.listSectionIndexVisibility",
+                "View.listSectionMargins",
                 "View.listSectionSeparator",
                 "View.listSectionSeparatorTint",
                 "View.listSectionSpacing",
@@ -2458,6 +2487,7 @@ mod tests {
                 "View.scrollInputBehavior",
                 "View.scrollTargetBehavior",
                 "View.scrollTargetLayout",
+                "View.searchCompletion",
                 "View.searchDictationBehavior",
                 "View.searchPresentationToolbarBehavior",
                 "View.searchToolbarBehavior",
@@ -2469,6 +2499,7 @@ mod tests {
                 "View.speechAnnouncementsQueued",
                 "View.speechSpellsOutCharacters",
                 "View.springLoadingBehavior",
+                "View.statusBar",
                 "View.statusBarHidden",
                 "View.strikethrough",
                 "View.submitLabel",

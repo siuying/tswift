@@ -720,6 +720,13 @@ modifier!(
     "fileDialogDefaultDirectory"
 );
 modifier!(modifier_toolbar_item_hidden, "toolbarItemHidden");
+// `searchCompletion` (String value), `statusBar(hidden:)` (Bool),
+// `listSectionMargins` (Edge.Set token + CGFloat, typed in install like
+// padding), and `glassEffect` (a `Glass` token + optional `in:` shape).
+modifier!(modifier_search_completion, "searchCompletion");
+modifier!(modifier_status_bar, "statusBar");
+modifier!(modifier_list_section_margins, "listSectionMargins");
+modifier!(modifier_glass_effect, "glassEffect");
 
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
@@ -1247,6 +1254,10 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_file_dialog_default_directory,
     ),
     ("toolbarItemHidden", modifier_toolbar_item_hidden),
+    ("searchCompletion", modifier_search_completion),
+    ("statusBar", modifier_status_bar),
+    ("listSectionMargins", modifier_list_section_margins),
+    ("glassEffect", modifier_glass_effect),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
