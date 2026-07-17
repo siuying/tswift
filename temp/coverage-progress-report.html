@@ -19,20 +19,22 @@
 </head>
 <body>
 <h1>tswift Coverage Progress Report</h1>
-<p class="muted">Generated 2026-07-17 · continued coverage loop (worker pi/claude, advisor pi/fable-5) · all commits presubmit-green on <code>main</code> · latest: SwiftUI searchable-family modifiers</p>
+<p class="muted">Generated 2026-07-17 · continued coverage loop (worker pi/claude, advisor pi/fable-5) · all commits presubmit-green on <code>main</code> · latest: SwiftUI closure-driven effect/scroll/event modifiers</p>
 
 <h2>Overall coverage</h2>
 <table>
 <tr><th>Framework</th><th>Implemented</th><th>Verified</th><th>Session start</th><th>Now</th><th></th></tr>
-<tr><td>Swift stdlib</td><td>397 / 511</td><td>397 / 511</td><td>71.2%</td><td class="up">77.7%</td><td><span class="bar"><span style="width:78%"></span></span></td></tr>
+<tr><td>Swift stdlib</td><td>401 / 511</td><td>401 / 511</td><td>71.2%</td><td class="up">78.5%</td><td><span class="bar"><span style="width:79%"></span></span></td></tr>
 <tr><td>Foundation</td><td>467 / 615</td><td>465 / 615</td><td>65.2%</td><td class="up">75.9%</td><td><span class="bar"><span style="width:76%"></span></span></td></tr>
-<tr><td>SwiftUI</td><td>454 / 702</td><td>434 / 702</td><td>13.2%</td><td class="up">64.7%</td><td><span class="bar"><span style="width:65%"></span></span></td></tr>
+<tr><td>SwiftUI</td><td>464 / 702</td><td>444 / 702</td><td>13.2%</td><td class="up">63.2% verified · 66.1% impl</td><td><span class="bar"><span style="width:63%"></span></span></td></tr>
 <tr><td>SwiftData</td><td>27 / 114</td><td>25 / 114</td><td>8.8%</td><td class="up">23.7%</td><td><span class="bar"><span style="width:24%"></span></span></td></tr>
 <tr><td>Swift Charts</td><td>16 / 19</td><td>16 / 19</td><td class="muted">unregistered</td><td class="up">84.2%</td><td><span class="bar"><span style="width:84%"></span></span></td></tr>
 </table>
 
-<h2>Session highlights (13 iterations)</h2>
+<h2>Session highlights (15 iterations)</h2>
 <ul>
+<li><strong>SwiftUI +1.4 pts (closure-driven modifiers)</strong> — recorded-only marker+stashed-closure tier via a new <code>closure_modifier!</code> macro: <code>transaction</code>, <code>visualEffect</code>, <code>transformEnvironment</code>, <code>scrollTransition</code>, <code>onGeometryChange</code>, <code>onScrollGeometryChange</code>, <code>onScrollPhaseChange</code>, <code>onScrollVisibilityChange</code>, <code>onPreferenceChange</code>, <code>onModifierKeysChanged</code> (+10 verified, 444/702). Golden <code>closure-effect-modifiers</code>.</li>
+<li><strong>stdlib +0.8 pts (String/Substring buffer access)</strong> — <code>withUTF8</code> / <code>withCString</code> on String and Substring (code units exposed as a contiguous buffer via <code>call_closure</code>; withCString null-terminates), read-only tier (+4 verified, 401/511). Golden <code>stdlib_string_buffer_access</code>.</li>
 <li><strong>Swift Charts stood up +84.2 pts</strong> — new tracked framework: <code>Chart</code> + 7 core marks rendering through the SwiftUI UIIR pipeline (ADR-0020), 16/19 stage-1 members implemented &amp; golden-verified.</li>
 <li><strong>SwiftUI +46 pts</strong> — finished property-wrapper surfaces (<code>Binding.constant</code>, projected values); ~330 View modifiers with typed parameters serialized through UIIR (effects, dialogs, search, toolbar, margins, glass, presentation/window, container, assistive-access, navigation transitions), each golden-verified.</li>
 <li><strong>Foundation +10.7 pts</strong> — <code>Date.FormatStyle</code> executable formatting; <code>Decimal</code> truncating-remainder arithmetic; directory URLs via OS paths; <code>IndexSet</code> Collection index conformance.</li>
@@ -50,7 +52,8 @@
 <tr><td>Int</td><td>88.0%</td><td>Set</td><td>83.3%</td></tr>
 <tr><td>Bool</td><td>76.9%</td><td>Array</td><td>68.8%</td></tr>
 <tr><td>Array</td><td>75.0%</td><td>Substring</td><td>75.8%</td></tr>
-<tr><td>ContiguousArray</td><td>73.3%</td><td>String</td><td>69.8%</td></tr>
+<tr><td>ContiguousArray</td><td>73.3%</td><td>String</td><td>73.6%</td></tr>
+<tr><td>Substring</td><td>81.8%</td><td>&nbsp;</td><td>&nbsp;</td></tr>
 </table>
 <table>
 <tr><th>SwiftUI section</th><th>verified</th><th>notes</th></tr>
@@ -69,11 +72,12 @@
 <li><strong>Window/scene style modifier slice — DONE</strong> — <code>presentedWindowStyle</code> (WindowStyle token), <code>presentedWindowToolbarStyle</code> (WindowToolbarStyle token), <code>typesettingLanguage</code> (TypesettingLanguage token), <code>digitalCrownAccessory</code> (Visibility token), and <code>touchBarItemPrincipal</code> (Bool). SwiftUI 61.7% → 62.4% impl (+5), 58.8% → 59.5% verified, all golden-verified (<code>window-style-and-touchbar</code> fixture). Adding <code>WindowStyle.plain</code> broke leading-dot <code>.plain</code> uniqueness, so <code>buttonStyle</code>/<code>listStyle</code>/<code>textFieldStyle</code>/<code>textEditorStyle</code> were typed against <code>_ControlStyle</code> to resolve contextually.</li>
 <li><strong>Token/effect passthrough slice — DONE</strong> — <code>symbolEffect</code> (SymbolEffect token), <code>sensoryFeedback</code> (SensoryFeedback token + <code>trigger:</code> value), <code>presentationDetents</code> (<code>[PresentationDetent]</code> token array), and the geometry-effect value passthroughs <code>transformEffect</code>/<code>projectionEffect</code>. SwiftUI 61.0% → 61.7% impl (+5), 58.1% → 58.8% verified, all golden-verified (<code>symbol-and-detents</code> fixture). Note: <code>.success</code>/<code>.failure</code> SensoryFeedback presets collide with the builtin <code>Result</code> enum cases and degrade to a bare token string.</li>
 <li><strong>SwiftUI searchable family — DONE</strong> — <code>searchable(text:placement:prompt:)</code> (snapshots bound query + <code>SearchFieldPlacement</code> token + prompt), <code>searchScopes(_:activation:scopes:)</code> (scope-selection snapshot + <code>SearchScopeActivation</code> token + lowered <code>@ViewBuilder</code> scope subtree), <code>searchSuggestions { }</code> (lowered suggestion subtree), <code>searchFocused</code>/<code>searchSelection</code> (binding snapshots). SwiftUI 449 → 454 impl, 429 → 434 verified (+5), golden-verified via the <code>search-modifiers</code> fixture. Fidelity tier: recorded-only (bindings read once, not wired for live two-way search).</li>
-<li><strong>Remaining SwiftUI closure/namespace tail</strong> — <code>matchedGeometryEffect</code> (needs <code>@Namespace</code> identity token), <code>onKeyPress</code> (needs handled-flag on dispatch response), <code>visualEffect</code> (needs host geometry feedback), <code>transaction</code> (animation-hint tier). Sequenced in ADR-0019.</li>
+<li><strong>SwiftUI closure-driven modifiers — DONE (recorded-only)</strong> — <code>visualEffect</code>, <code>transaction</code>, <code>transformEnvironment</code>, <code>scrollTransition</code>, and the <code>onGeometryChange</code>/<code>onScroll*Change</code>/<code>onPreferenceChange</code>/<code>onModifierKeysChanged</code> family now record a bare marker and stash the trailing closure (never serialized); a headless runtime synthesizes no Transaction/GeometryProxy/ScrollGeometry/preference value, so bodies are not invoked. SwiftUI 434 → 444 verified (+10).</li>
+<li><strong>Remaining SwiftUI namespace/key tail</strong> — <code>matchedGeometryEffect</code> (needs <code>@Namespace</code> identity token, currently unmodeled), <code>onKeyPress</code> (needs a <code>KeyEquivalent</code> token namespace + handled-flag on dispatch response). Sequenced next.</li>
 <li><strong>Renderer parity</strong> — many new modifiers are verified at UIIR-serialization level; web/iOS host appliers for rendering behavior are a separate tier (per verifier review).</li>
 <li><strong>Swift Charts — STOOD UP</strong> (ADR-0020): registered as a first-class framework (frameworks.toml + generated inventory from the iOS SDK swiftinterface + scope manifest + registry dump). Stage-1 <code>charts</code> module in <code>tswift-swiftui</code> implements the <code>Chart</code> container (static + data-driven) and the seven core marks (<code>BarMark</code>/<code>LineMark</code>/<code>PointMark</code>/<code>AreaMark</code>/<code>RuleMark</code>/<code>RectangleMark</code>/<code>SectorMark</code>) as SwiftUI view nodes with <code>PlottableValue</code>/<code>MarkDimension</code>/<code>MarkStackingMethod</code> channels, golden-verified via the <code>charts</code> render fixture. <strong>84.2% impl+verified</strong> of the tracked stage-1 surface (16/19; remaining 3 = Chart.body + literal-init dimensions + operator ==). Fidelity tier named honestly: channels-recorded, host-drawn (no scale/axis/legend/binning).</li>
 <li><strong>SwiftData</strong> — query predicates/sort descriptors and relationship graph remain (27/114).</li>
-<li><strong>String/Substring stdlib</strong> — added <code>String(repeating:count:)</code>, <code>String(_:radix:uppercase:)</code>, <code>Substring(_:)</code> initializers and marked <code>subscript</code>/<code>~=</code> (String +5.7 pts → 62.3%, Substring +9.1 pts → 72.7%). Also added <code>withContiguousStorageIfAvailable</code> (returns nil — no contiguous Character storage). Remaining: <code>span</code>/<code>utf8Span</code>, <code>withCString</code>/<code>withUTF8</code> (C-string closures), <code>write</code> (<code>TextOutputStream</code>).</li>
+<li><strong>String/Substring stdlib</strong> — added <code>String(repeating:count:)</code>, <code>String(_:radix:uppercase:)</code>, <code>Substring(_:)</code> initializers and marked <code>subscript</code>/<code>~=</code> (String +5.7 pts → 62.3%, Substring +9.1 pts → 72.7%). Also added <code>withContiguousStorageIfAvailable</code> (returns nil — no contiguous Character storage). Added <code>withUTF8</code>/<code>withCString</code> (code units as a contiguous buffer, read-only tier; String 73.6%, Substring 81.8%). Remaining: <code>span</code>/<code>utf8Span</code>; <code>write</code> is owned at runtime by Foundation's <code>write(to:)</code> (file URL), so a second stdlib <code>write(_:)</code> would be dead code.</li>
 </ul>
 
 <p class="muted">Sources: <code>tools/stdlib-inventory/coverage.py</code>, <code>tools/framework-inventory/coverage.py</code>, <code>loop-log.md</code>, verifier transcripts of loop 5b1244cd.</p>
