@@ -127,9 +127,11 @@ View.dialogIcon
 View.dialogPreventsAppTermination
 View.dialogSeverity
 View.digitalCrownAccessory
+View.digitalCrownRotation
 View.disableAutocorrection
 View.disabled
 View.disclosureGroupStyle
+View.dismissalConfirmationDialog
 View.draggable
 View.drawingGroup
 View.dropDestination
@@ -144,6 +146,9 @@ View.fileDialogCustomizationID
 View.fileDialogDefaultDirectory
 View.fileDialogImportsUnresolvedAliases
 View.fileDialogMessage
+View.fileExporter
+View.fileImporter
+View.fileMover
 View.fill
 View.findDisabled
 View.findNavigator

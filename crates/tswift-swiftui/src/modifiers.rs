@@ -1501,6 +1501,14 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("userActivity", modifier_user_activity),
     ("exportsItemProviders", modifier_exports_item_providers),
     ("importsItemProviders", modifier_imports_item_providers),
+    ("fileExporter", modifier_file_exporter),
+    ("fileImporter", modifier_file_importer),
+    ("fileMover", modifier_file_mover),
+    (
+        "dismissalConfirmationDialog",
+        modifier_dismissal_confirmation_dialog,
+    ),
+    ("digitalCrownRotation", modifier_digital_crown_rotation),
     ("toolbarTitleMenu", modifier_toolbar_title_menu),
     ("sectionActions", modifier_section_actions),
     // Gesture composition: priority/simultaneous variants lower to the same
@@ -2382,6 +2390,15 @@ closure_modifier!(modifier_item_provider, "itemProvider");
 closure_modifier!(modifier_user_activity, "userActivity");
 closure_modifier!(modifier_exports_item_providers, "exportsItemProviders");
 closure_modifier!(modifier_imports_item_providers, "importsItemProviders");
+// File / document / digital-crown modifiers (recorded-only closures).
+closure_modifier!(modifier_file_exporter, "fileExporter");
+closure_modifier!(modifier_file_importer, "fileImporter");
+closure_modifier!(modifier_file_mover, "fileMover");
+closure_modifier!(
+    modifier_dismissal_confirmation_dialog,
+    "dismissalConfirmationDialog"
+);
+closure_modifier!(modifier_digital_crown_rotation, "digitalCrownRotation");
 // `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
 // not a plain `@ViewBuilder`: the preference `Value` is not computed by a
 // headless runtime, so the transform cannot be realized — record a bare marker
