@@ -1240,3 +1240,22 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   infra (not yet modeled); left as tripwires.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI event-listener modifiers (+10)
+
+- **SwiftUI 479→489 impl, 459→469 verified (65.4% → 66.8%)**. Golden-verified
+  via new `event-listener-modifiers` fixture.
+- New recorded-only modifiers (all reuse the `closure_modifier!` macro: bare
+  marker + stashed trailing closure, drop non-closure args):
+  - `onKeyPress`, `onContinueUserActivity`, `onScrollTargetVisibilityChange`,
+    `onDrop`, `onDragSessionUpdated`, `onDropSessionUpdated`,
+    `onInteractiveResizeChange`, `onLongTouchGesture`,
+    `onVolumeViewpointChange`, `onWorldRecenter`.
+- **Fidelity tier (honest)**: recorded-only — the listener marker crosses the
+  UIIR boundary; the callback argument (KeyPress, NSUserActivity, drop
+  providers, resize/viewpoint/recenter payloads) is not synthesized by a
+  headless runtime, so the body is not invoked and non-closure args (activity
+  types, UTType lists, id metatypes, thresholds) are dropped.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated.
