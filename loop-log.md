@@ -1125,3 +1125,25 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   live two-way search; hosts honor or ignore the recorded metadata.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated; HTML progress report refreshed.
+
+## Coverage iteration — String/Substring buffer access (+4 verified)
+
+- **stdlib 397→401 impl/verified (77.7% → 78.5%)**; String 37→39
+  (69.8% → 73.6%), Substring 25→27 (75.8% → 81.8%). Golden-verified via new
+  `stdlib_string_buffer_access` fixture.
+- New shared-text intrinsics (registered for both `String` and `Substring`):
+  - `withUTF8(_:)` — invokes `body` with the UTF-8 code units as a contiguous
+    `UInt8` buffer (modeled as an `Array`, like `UnsafeBufferPointer<UInt8>`),
+    returning its result. Read-only tier (buffer mutation not modeled).
+  - `withCString(_:)` — invokes `body` with the null-terminated bytes as a
+    `CChar`/`Int8` buffer (trailing `0` included so the closure can walk to the
+    terminator).
+  - Both reuse the existing `call_closure` seam (cf. `Array.withUnsafeBuffer-
+    Pointer`) plus a local `buffer_closure` trailing-closure extractor.
+- **Dropped `write` from this slice**: `String.write` is already owned at
+  runtime by Foundation's `write(to:)` (TextOutputStreamable → file URL), which
+  overwrites any stdlib registration of the same name in the shared intrinsic
+  map. Registering a second `write(_:)` (TextOutputStream append) would be dead
+  code, so it was left out rather than faked.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated.
