@@ -2709,7 +2709,7 @@
         {
           "name": "withExtendedLifetime",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "withUnsafeBytes",
@@ -2753,18 +2753,18 @@
         }
       ],
       "counts": {
-        "implemented": 29,
+        "implemented": 30,
         "partial": 0,
-        "missing": 18,
+        "missing": 17,
         "out_of_scope": 0,
         "total": 47
       }
     }
   ],
   "totals": {
-    "implemented": 396,
+    "implemented": 397,
     "partial": 0,
-    "missing": 115,
+    "missing": 114,
     "out_of_scope": 0,
     "total": 511
   }

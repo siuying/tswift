@@ -68,6 +68,35 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("swap", swap_stub);
     // `numericCast(_:)` — integer width conversion.
     interp.register_free_fn("numericCast", numeric_cast);
+    // `withExtendedLifetime(_:_:)` — lifetime is a no-op in the interpreter, so
+    // this just runs the body and returns its result.
+    interp.register_free_fn("withExtendedLifetime", with_extended_lifetime);
+}
+
+/// `withExtendedLifetime(_ x: T, _ body: () -> R)` /
+/// `withExtendedLifetime(_ x: T, _ body: (T) -> R)` — the runtime keeps every
+/// value alive for the duration of a call anyway, so lifetime extension is a
+/// no-op: invoke `body` (passing `x`, harmlessly ignored by the `() -> R`
+/// overload) and return its result.
+fn with_extended_lifetime(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let body = args
+        .iter()
+        .rev()
+        .find_map(|a| match a.value {
+            SwiftValue::Closure(id) => Some(id),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            StdError::Error(EvalError::Type(
+                "withExtendedLifetime expects a closure".into(),
+            ))
+        })?;
+    let value = args
+        .iter()
+        .find(|a| !matches!(a.value, SwiftValue::Closure(_)))
+        .map(|a| a.value.clone())
+        .unwrap_or(SwiftValue::Void);
+    ctx.call_closure(body, vec![value])
 }
 
 // ---- output ----------------------------------------------------------------
