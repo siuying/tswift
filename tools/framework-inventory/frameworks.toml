@@ -90,3 +90,17 @@ inventory = "frameworks/charts/inventory.md"
 registry = "frameworks/charts/registered_keys.txt"
 scope = "frameworks/charts/scope.toml"
 fixture_prefix = "charts_"
+
+[eventkit]
+display_name = "EventKit"
+module = "EventKit"
+# EventKit is an Objective-C framework: its `.swiftinterface` is nearly empty
+# (only Swift-native additions like EventStoreChanged), while the real API is
+# bridged from Clang headers by the importer. Extract the faithful Swift-
+# imported surface via `swift-symbolgraph-extract` instead of the interface.
+kind = "objc-framework"
+sdk = "iphonesimulator"
+inventory = "frameworks/eventkit/inventory.md"
+registry = "frameworks/eventkit/registered_keys.txt"
+scope = "frameworks/eventkit/scope.toml"
+fixture_prefix = "eventkit_"
