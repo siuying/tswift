@@ -727,6 +727,18 @@ modifier!(modifier_search_completion, "searchCompletion");
 modifier!(modifier_status_bar, "statusBar");
 modifier!(modifier_list_section_margins, "listSectionMargins");
 modifier!(modifier_glass_effect, "glassEffect");
+// `containerCornerOffset` (Edge.Set token + Bool, typed in install),
+// `assistiveAccessNavigationIcon` (String via `systemImage:`),
+// `sectionIndexLabel` (String/Text label), `hoverEffectGroup` (no-arg group
+// hint), and `navigationTransition` (a `NavigationTransition` token).
+modifier!(modifier_container_corner_offset, "containerCornerOffset");
+modifier!(
+    modifier_assistive_access_navigation_icon,
+    "assistiveAccessNavigationIcon"
+);
+modifier!(modifier_section_index_label, "sectionIndexLabel");
+modifier!(modifier_hover_effect_group, "hoverEffectGroup");
+modifier!(modifier_navigation_transition, "navigationTransition");
 
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
@@ -1258,6 +1270,14 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("statusBar", modifier_status_bar),
     ("listSectionMargins", modifier_list_section_margins),
     ("glassEffect", modifier_glass_effect),
+    ("containerCornerOffset", modifier_container_corner_offset),
+    (
+        "assistiveAccessNavigationIcon",
+        modifier_assistive_access_navigation_icon,
+    ),
+    ("sectionIndexLabel", modifier_section_index_label),
+    ("hoverEffectGroup", modifier_hover_effect_group),
+    ("navigationTransition", modifier_navigation_transition),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).

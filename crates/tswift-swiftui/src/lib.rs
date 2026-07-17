@@ -816,6 +816,11 @@ struct Glass {
     static let clear = Glass(token: "clear")
     static let identity = Glass(token: "identity")
 }
+struct NavigationTransition {
+    let token: String
+    static let automatic = NavigationTransition(token: "automatic")
+    static let slide = NavigationTransition(token: "slide")
+}
 struct WindowToolbarFullScreenVisibility {
     let token: String
     static let automatic = WindowToolbarFullScreenVisibility(token: "automatic")
@@ -1740,6 +1745,23 @@ fn install_inner(interp: &mut Interpreter<'_>) {
             BuiltinParam::labeled("in", "View"),
         ],
     );
+    // `containerCornerOffset(_ edges: Edge.Set, sizeToFit: Bool = false)` — the
+    // leading `.horizontal`/`.all` token resolves against `Edge.Set`.
+    interp.register_struct_method_typed(
+        "containerCornerOffset",
+        modifiers::modifier_container_corner_offset,
+        vec![
+            BuiltinParam::positional("Edge.Set"),
+            BuiltinParam::labeled("sizeToFit", "Bool"),
+        ],
+    );
+    // `navigationTransition(_ style: some NavigationTransition)` — the leading
+    // `.automatic`/`.slide` token resolves against `NavigationTransition`.
+    interp.register_struct_method_typed(
+        "navigationTransition",
+        modifiers::modifier_navigation_transition,
+        vec![BuiltinParam::positional("NavigationTransition")],
+    );
     // Grid/scroll/presentation/material/palette token modifiers. Grid layout
     // reuses UnitPoint / HorizontalAlignment / Axis.Set;
     // writingToolsAffordanceVisibility reuses Visibility; the rest introduce
@@ -2268,6 +2290,7 @@ mod tests {
                 "View.alternatingRowBackgrounds",
                 "View.animation",
                 "View.aspectRatio",
+                "View.assistiveAccessNavigationIcon",
                 "View.autocapitalization",
                 "View.autocorrectionDisabled",
                 "View.background",
@@ -2291,6 +2314,7 @@ mod tests {
                 "View.colorMultiply",
                 "View.colorScheme",
                 "View.compositingGroup",
+                "View.containerCornerOffset",
                 "View.containerRelativeFrame",
                 "View.containerShape",
                 "View.contentCaptureProtected",
@@ -2359,6 +2383,7 @@ mod tests {
                 "View.horizontalRadioGroupLayout",
                 "View.hoverEffect",
                 "View.hoverEffectDisabled",
+                "View.hoverEffectGroup",
                 "View.hueRotation",
                 "View.id",
                 "View.ignoresSafeArea",
@@ -2421,6 +2446,7 @@ mod tests {
                 "View.navigationSplitViewStyle",
                 "View.navigationSubtitle",
                 "View.navigationTitle",
+                "View.navigationTransition",
                 "View.navigationViewStyle",
                 "View.offset",
                 "View.onAppear",
@@ -2491,6 +2517,7 @@ mod tests {
                 "View.searchDictationBehavior",
                 "View.searchPresentationToolbarBehavior",
                 "View.searchToolbarBehavior",
+                "View.sectionIndexLabel",
                 "View.selectionDisabled",
                 "View.shadow",
                 "View.sliderThumbVisibility",

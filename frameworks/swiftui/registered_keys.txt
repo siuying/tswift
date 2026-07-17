@@ -61,6 +61,7 @@ View.allowsWindowActivationEvents
 View.alternatingRowBackgrounds
 View.animation
 View.aspectRatio
+View.assistiveAccessNavigationIcon
 View.autocapitalization
 View.autocorrectionDisabled
 View.background
@@ -84,6 +85,7 @@ View.colorInvert
 View.colorMultiply
 View.colorScheme
 View.compositingGroup
+View.containerCornerOffset
 View.containerRelativeFrame
 View.containerShape
 View.contentCaptureProtected
@@ -152,6 +154,7 @@ View.hidden
 View.horizontalRadioGroupLayout
 View.hoverEffect
 View.hoverEffectDisabled
+View.hoverEffectGroup
 View.hueRotation
 View.id
 View.ignoresSafeArea
@@ -214,6 +217,7 @@ View.navigationSplitViewColumnWidth
 View.navigationSplitViewStyle
 View.navigationSubtitle
 View.navigationTitle
+View.navigationTransition
 View.navigationViewStyle
 View.offset
 View.onAppear
@@ -284,6 +288,7 @@ View.searchCompletion
 View.searchDictationBehavior
 View.searchPresentationToolbarBehavior
 View.searchToolbarBehavior
+View.sectionIndexLabel
 View.selectionDisabled
 View.shadow
 View.sliderThumbVisibility
