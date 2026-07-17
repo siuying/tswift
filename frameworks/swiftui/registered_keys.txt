@@ -85,6 +85,7 @@ View.colorMultiply
 View.colorScheme
 View.compositingGroup
 View.containerRelativeFrame
+View.containerShape
 View.contentCaptureProtected
 View.contentMargins
 View.contentTransition
@@ -101,6 +102,7 @@ View.defaultScrollAnchor
 View.defaultWheelPickerItemHeight
 View.defersSystemGestures
 View.deleteDisabled
+View.dialogIcon
 View.dialogPreventsAppTermination
 View.dialogSeverity
 View.disableAutocorrection
@@ -112,6 +114,11 @@ View.dynamicTypeSize
 View.edgesIgnoringSafeArea
 View.environmentObject
 View.equatable
+View.fileDialogConfirmationLabel
+View.fileDialogCustomizationID
+View.fileDialogDefaultDirectory
+View.fileDialogImportsUnresolvedAliases
+View.fileDialogMessage
 View.fill
 View.findDisabled
 View.fixedSize
@@ -155,6 +162,7 @@ View.interactiveDismissDisabled
 View.invalidatableContent
 View.italic
 View.kerning
+View.keyboardShortcut
 View.keyboardType
 View.labelIconToTitleSpacing
 View.labelReservedIconWidth
@@ -181,6 +189,7 @@ View.listSectionSeparator
 View.listSectionSeparatorTint
 View.listSectionSpacing
 View.listStyle
+View.luminanceToAlpha
 View.mask
 View.materialActiveAppearance
 View.menuActionDismissBehavior
@@ -249,6 +258,7 @@ View.redacted
 View.refreshable
 View.replaceDisabled
 View.resizable
+View.rotation3DEffect
 View.rotationEffect
 View.safeAreaPadding
 View.saturation
@@ -308,6 +318,7 @@ View.toolbarBackground
 View.toolbarBackgroundVisibility
 View.toolbarColorScheme
 View.toolbarForegroundStyle
+View.toolbarItemHidden
 View.toolbarRole
 View.toolbarTitleDisplayMode
 View.toolbarVisibility

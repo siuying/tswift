@@ -689,6 +689,38 @@ pub(crate) fn modifier_animation(
     append_modifier(recv, make_modifier("animation", margs))
 }
 
+// Value-passthrough modifiers (no leading-dot token): render/effect hints and
+// dialog/file-picker metadata the host records straight onto the view node.
+// `luminanceToAlpha` is a no-arg Core-Image-style filter; `rotation3DEffect`
+// carries an `Angle` + an `axis:` tuple (+ optional anchor/perspective);
+// `keyboardShortcut` carries a `KeyEquivalent` (Character) the host binds;
+// `containerShape`/`dialogIcon` carry a nested shape/`Image` value (serialized
+// like `clipShape`); the `fileDialog*` family carries String/Bool/URL config;
+// `toolbarItemHidden` is a Bool toggle.
+modifier!(modifier_luminance_to_alpha, "luminanceToAlpha");
+modifier!(modifier_rotation3d_effect, "rotation3DEffect");
+modifier!(modifier_keyboard_shortcut, "keyboardShortcut");
+modifier!(modifier_container_shape, "containerShape");
+modifier!(modifier_dialog_icon, "dialogIcon");
+modifier!(
+    modifier_file_dialog_confirmation_label,
+    "fileDialogConfirmationLabel"
+);
+modifier!(
+    modifier_file_dialog_customization_id,
+    "fileDialogCustomizationID"
+);
+modifier!(modifier_file_dialog_message, "fileDialogMessage");
+modifier!(
+    modifier_file_dialog_imports_unresolved_aliases,
+    "fileDialogImportsUnresolvedAliases"
+);
+modifier!(
+    modifier_file_dialog_default_directory,
+    "fileDialogDefaultDirectory"
+);
+modifier!(modifier_toolbar_item_hidden, "toolbarItemHidden");
+
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
     recv: SwiftValue,
@@ -1191,6 +1223,30 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "defaultWheelPickerItemHeight",
         modifier_default_wheel_picker_item_height,
     ),
+    // Value-passthrough render/effect & dialog/file-picker metadata modifiers.
+    ("luminanceToAlpha", modifier_luminance_to_alpha),
+    ("rotation3DEffect", modifier_rotation3d_effect),
+    ("keyboardShortcut", modifier_keyboard_shortcut),
+    ("containerShape", modifier_container_shape),
+    ("dialogIcon", modifier_dialog_icon),
+    (
+        "fileDialogConfirmationLabel",
+        modifier_file_dialog_confirmation_label,
+    ),
+    (
+        "fileDialogCustomizationID",
+        modifier_file_dialog_customization_id,
+    ),
+    ("fileDialogMessage", modifier_file_dialog_message),
+    (
+        "fileDialogImportsUnresolvedAliases",
+        modifier_file_dialog_imports_unresolved_aliases,
+    ),
+    (
+        "fileDialogDefaultDirectory",
+        modifier_file_dialog_default_directory,
+    ),
+    ("toolbarItemHidden", modifier_toolbar_item_hidden),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
