@@ -13,8 +13,11 @@ use tswift_core::{
 use crate::type_error;
 
 pub fn install(interp: &mut Interpreter<'_>) {
-    interp.register_builtin_enum("Decimal.RoundingMode", &["plain", "down", "up", "bankers"]);
-    interp.register_builtin_enum("FloatingPointSign", &["plus", "minus"]);
+    interp.register_builtin_enum_with_raw(
+        "Decimal.RoundingMode",
+        &[("plain", 0), ("down", 1), ("up", 2), ("bankers", 3)],
+    );
+    interp.register_builtin_enum_with_raw("FloatingPointSign", &[("plus", 0), ("minus", 1)]);
     interp.register_builtin_enum(
         "FloatingPointClassification",
         &[

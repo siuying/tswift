@@ -62,9 +62,14 @@ use crate::{data_bytes, data_value};
 /// on `interp`.
 pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     // ---- URLSessionTask.State enum ----
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "URLSessionTask.State",
-        &["running", "suspended", "canceling", "completed"],
+        &[
+            ("running", 0),
+            ("suspended", 1),
+            ("canceling", 2),
+            ("completed", 3),
+        ],
     );
 
     // ---- URLSession.ResponseDisposition enum (M4 delegates) ----
@@ -72,9 +77,14 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     // `.cancel` resolve when the contextual type is set on the completionHandler
     // parameter.  We also register the bare name so `URLSession.ResponseDisposition`
     // type references in protocol declarations are recognised.
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "URLSession.ResponseDisposition",
-        &["allow", "cancel", "becomeDownload", "becomeStream"],
+        &[
+            ("cancel", 0),
+            ("allow", 1),
+            ("becomeDownload", 2),
+            ("becomeStream", 3),
+        ],
     );
 
     // ---- URLSessionConfiguration ----

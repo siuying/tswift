@@ -47,9 +47,9 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // enum mechanism — the same pattern used for `Date.FormatStyle`.
     // The encoder itself does NOT expose `PropertyListEncoder.xml` etc.;
     // real Foundation places those cases on the separate Format type.
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "PropertyListSerialization.PropertyListFormat",
-        &["xml", "binary", "openStep"],
+        &[("xml", 100), ("binary", 200), ("openStep", 1)],
     );
 }
 
