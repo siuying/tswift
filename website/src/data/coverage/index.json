@@ -48,9 +48,9 @@
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {
-        "implemented": 490,
+        "implemented": 495,
         "partial": 20,
-        "missing": 192,
+        "missing": 187,
         "out_of_scope": 0,
         "total": 702
       }
