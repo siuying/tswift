@@ -164,6 +164,7 @@ View.handlesExternalEvents
 View.headerProminence
 View.help
 View.hidden
+View.highPriorityGesture
 View.horizontalRadioGroupLayout
 View.hoverEffect
 View.hoverEffectDisabled
@@ -296,6 +297,7 @@ View.progressViewStyle
 View.projectionEffect
 View.redacted
 View.refreshable
+View.renameAction
 View.replaceDisabled
 View.resizable
 View.rotation3DEffect
@@ -330,11 +332,13 @@ View.searchSelection
 View.searchSuggestions
 View.searchToolbarBehavior
 View.searchable
+View.sectionActions
 View.sectionIndexLabel
 View.selectionDisabled
 View.sensoryFeedback
 View.shadow
 View.sheet
+View.simultaneousGesture
 View.sliderThumbVisibility
 View.speechAdjustedPitch
 View.speechAlwaysIncludesPunctuation
@@ -376,6 +380,7 @@ View.toolbarForegroundStyle
 View.toolbarItemHidden
 View.toolbarRole
 View.toolbarTitleDisplayMode
+View.toolbarTitleMenu
 View.toolbarVisibility
 View.touchBarItemPrincipal
 View.tracking

@@ -1413,6 +1413,13 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "matchedTransitionSource",
         modifier_matched_transition_source,
     ),
+    ("renameAction", modifier_rename_action),
+    ("toolbarTitleMenu", modifier_toolbar_title_menu),
+    ("sectionActions", modifier_section_actions),
+    // Gesture composition: priority/simultaneous variants lower to the same
+    // marker+handler route as `.gesture(_:)`.
+    ("highPriorityGesture", modifier_gesture),
+    ("simultaneousGesture", modifier_gesture),
     // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
     // content realized as a `Presentation` child node by the session.
     ("sheet", modifier_sheet),
@@ -2208,6 +2215,40 @@ closure_modifier!(modifier_transform_preference, "transformPreference");
 closure_modifier!(modifier_phase_animator, "phaseAnimator");
 closure_modifier!(modifier_on_command, "onCommand");
 closure_modifier!(modifier_on_paste_command, "onPasteCommand");
+closure_modifier!(modifier_rename_action, "renameAction");
+
+/// Record a `@ViewBuilder`-content View modifier: lower the trailing closure to
+/// a nested child subtree (like `tabItem`/`searchSuggestions`) and attach it
+/// under `$swift_name`. Labeled arguments are dropped (recorded-only tier).
+macro_rules! viewbuilder_modifier {
+    ($fn_name:ident, $swift_name:literal) => {
+        pub(crate) fn $fn_name(
+            ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            args: Vec<Arg>,
+        ) -> StdResult {
+            let mut content: Option<SwiftValue> = None;
+            for arg in args {
+                if arg.label.is_none() {
+                    content = compose_content(ctx, arg.value)?;
+                }
+            }
+            let margs = match content {
+                Some(view) => vec![Arg {
+                    label: None,
+                    value: view,
+                    static_ty: None,
+                }],
+                None => Vec::new(),
+            };
+            append_modifier(recv, make_modifier($swift_name, margs))
+        }
+    };
+}
+
+// `@ViewBuilder`-content modifiers lowered to a nested child subtree.
+viewbuilder_modifier!(modifier_toolbar_title_menu, "toolbarTitleMenu");
+viewbuilder_modifier!(modifier_section_actions, "sectionActions");
 /// `.matchedGeometryEffect(id:in:properties:anchor:isSource:)` and
 /// `.matchedTransitionSource(id:in:configuration:)` — record the geometry
 /// identity `id:` (a Hashable) plus `isSource:` when present; the `in:`
