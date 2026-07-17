@@ -1336,3 +1336,17 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   live bar placement); the others record their scalar/token/binding value.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI file/document + crown modifiers (+5)
+
+- **SwiftUI 515→520 impl, 495→500 verified (70.5% → 71.2%)**. Golden-verified
+  via new `file-document-modifiers` fixture.
+- New recorded-only modifiers (reuse `closure_modifier!`):
+  - `fileExporter`, `fileImporter`, `fileMover`, `dismissalConfirmationDialog`,
+    `digitalCrownRotation`.
+- **Fidelity tier (honest)**: recorded-only — presentation binding + completion
+  closure are not driven by a headless runtime; the marker records presence,
+  the trailing closure is stashed, content-type lists / documents / crown
+  binding are dropped.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
