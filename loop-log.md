@@ -749,3 +749,23 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   expected-keys list. presubmit green (incl. wasm smoke).
 - Session arc: SwiftUI 56.7% → 58.8% implemented (+15 modifiers) over two
   iterations, all golden-verified.
+
+## Coverage iteration — Foundation IndexSet Collection index conformance
+
+- Coverage before → after: Foundation implemented 463 → 467 (75.3% → 75.9%),
+  verified 461 → 465 (75.0% → 75.6%). IndexSet 29 → 33 impl (32 verified,
+  76.2%).
+- Real Collection conformance over the opaque `IndexSet.Index` (a 0-based
+  position into the sorted members): startIndex (0), endIndex (count),
+  index(after:)/index(before:) (±1 position step, label-sensitive intrinsic),
+  indexRange(in: Range) (partition_point maps an integer range to the half-open
+  position range covering its members), and subscript(position) in the core
+  storage layer (reads the position-th sorted member from `_values`).
+- Verified end-to-end by extending the foundation_indexset_ops golden:
+  startIndex/endIndex, subscript at start/explicit/stepped positions, and
+  indexRange(in: 3..<9) → 1..<2 over {2,5,9}. presubmit green.
+- subscript is implemented (storage layer) but not a registry key, so it still
+  reads "missing" in coverage; the 4 registry members are the counted gain.
+- Next: IndexSet formIndex (needs dispatcher inout write-back like Array),
+  hash(into:) (no Hasher surface yet). Foundation Date (55%) FormatStyle cases
+  and URL (68%) remain the largest gaps.
