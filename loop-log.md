@@ -1190,3 +1190,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   publisher, none modeled). Left as tripwires for when those types land.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — @Namespace + matchedGeometryEffect (+2)
+
+- **SwiftUI 469→471 impl, 449→451 verified (64.0% → 64.2%)**. Resolves the
+  flagged `matchedGeometryEffect` blocker. Golden-verified via new
+  `matched-geometry` fixture.
+- New prelude infra: `@Namespace var ns` property wrapper whose `wrappedValue`
+  is an opaque `NamespaceID` identity token (the runtime is headless — no
+  layout engine to actually match geometry).
+- New modifiers (custom fns):
+  - `matchedGeometryEffect(id:in:properties:anchor:isSource:)` — records `id:`
+    (Hashable) and `isSource:`; drops the `in:` namespace + `properties:`/
+    `anchor:` (recorded-only tier).
+  - `matchedTransitionSource(id:in:configuration:)` — records `id:`.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- **Fidelity tier (honest)**: recorded-only — geometry identity crosses the
+  UIIR boundary; no on-device geometry matching/morph.
+- presubmit green; coverage JSON regenerated.
