@@ -2042,7 +2042,7 @@
         {
           "name": "tabViewSearchActivation",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabViewSidebarBottomBar",
@@ -2327,7 +2327,7 @@
         {
           "name": "writingDirection",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "writingToolsAffordanceVisibility",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 401,
+        "implemented": 403,
         "partial": 11,
-        "missing": 56,
+        "missing": 54,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 504,
+    "implemented": 506,
     "partial": 20,
-    "missing": 178,
+    "missing": 176,
     "out_of_scope": 0,
     "total": 702
   }
