@@ -39,9 +39,11 @@ TextField.init
 Toggle.init
 VStack.init
 View.accentColor
+View.accessibilityAction
 View.accessibilityActions
 View.accessibilityActivationPoint
 View.accessibilityAddTraits
+View.accessibilityAdjustableAction
 View.accessibilityChartDescriptor
 View.accessibilityChildren
 View.accessibilityCustomContent
@@ -57,10 +59,12 @@ View.accessibilityLabel
 View.accessibilityRemoveTraits
 View.accessibilityRepresentation
 View.accessibilityRespondsToUserInteraction
+View.accessibilityScrollAction
 View.accessibilityShowsLargeContentViewer
 View.accessibilitySortPriority
 View.accessibilityTextContentType
 View.accessibilityValue
+View.accessibilityZoomAction
 View.alert
 View.allowedDynamicRange
 View.allowsHitTesting
@@ -125,6 +129,7 @@ View.disabled
 View.disclosureGroupStyle
 View.draggable
 View.drawingGroup
+View.dropDestination
 View.dynamicTypeSize
 View.edgesIgnoringSafeArea
 View.environmentObject

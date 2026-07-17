@@ -1434,6 +1434,20 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_on_volume_viewpoint_change,
     ),
     ("onWorldRecenter", modifier_on_world_recenter),
+    ("accessibilityAction", modifier_accessibility_action),
+    (
+        "accessibilityAdjustableAction",
+        modifier_accessibility_adjustable_action,
+    ),
+    (
+        "accessibilityScrollAction",
+        modifier_accessibility_scroll_action,
+    ),
+    (
+        "accessibilityZoomAction",
+        modifier_accessibility_zoom_action,
+    ),
+    ("dropDestination", modifier_drop_destination),
     ("toolbarTitleMenu", modifier_toolbar_title_menu),
     ("sectionActions", modifier_section_actions),
     // Gesture composition: priority/simultaneous variants lower to the same
@@ -2274,6 +2288,25 @@ closure_modifier!(
     "onVolumeViewpointChange"
 );
 closure_modifier!(modifier_on_world_recenter, "onWorldRecenter");
+// Closure-driven accessibility actions and typed drop destination
+// (recorded-only: bare marker + stashed handler closure). The handler argument
+// (adjustment direction, scroll edge, zoom action, dropped items) is not
+// synthesized by a headless runtime, so the body is not invoked; non-closure
+// args (action kind, item metatype) are dropped.
+closure_modifier!(modifier_accessibility_action, "accessibilityAction");
+closure_modifier!(
+    modifier_accessibility_adjustable_action,
+    "accessibilityAdjustableAction"
+);
+closure_modifier!(
+    modifier_accessibility_scroll_action,
+    "accessibilityScrollAction"
+);
+closure_modifier!(
+    modifier_accessibility_zoom_action,
+    "accessibilityZoomAction"
+);
+closure_modifier!(modifier_drop_destination, "dropDestination");
 // `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
 // not a plain `@ViewBuilder`: the preference `Value` is not computed by a
 // headless runtime, so the transform cannot be realized — record a bare marker
