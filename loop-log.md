@@ -980,3 +980,46 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   non-unique, so its new occurrences add no regression.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
   JSON regenerated; HTML progress report refreshed.
+
+## Coverage iteration — Swift Charts stood up (ADR-0020)
+
+- **Swift Charts**: unregistered → **16/19 impl+verified (84.2%)** of the
+  stage-1 tracked surface. New first-class framework: `frameworks.toml`
+  `[charts]` entry, inventory generated from the iOS SDK
+  `Charts.swiftmodule/*.swiftinterface` (61 types), `frameworks/charts/scope.toml`
+  (tiers C1–C3 + honest `[out_of_scope]`), and a `registered_keys.txt` dumped by
+  a new `dump_charts_registered_keys` test.
+- **Design (advisor-confirmed)**: Charts marks *are* SwiftUI views — the weakest
+  sufficient requirement is registering mark constructors that produce ordinary
+  `view_value` leaf nodes under a `Chart` container, not a new render subsystem
+  or a separate crate. Implemented as a `charts` module inside `tswift-swiftui`
+  so marks compose with the existing modifier pipeline for free. ADR-0020.
+- **Runtime**: `Chart { … }` (static, `collect_children`) and
+  `Chart(data, id:) { d in … }` (data-driven, `keyed_rows` — sugar for a keyed
+  `ForEach` of marks). Seven marks (`BarMark`/`LineMark`/`PointMark`/`AreaMark`/
+  `RuleMark`/`RectangleMark`/`SectorMark`) record their plotted channels (`x`,
+  `y`, `xStart`, `yEnd`, `angle`, `width`, `height`, `innerRadius`,
+  `outerRadius`, `stacking`) as node args; unrecognized labels dropped.
+- **Channel types** (SwiftUI PRELUDE, GridItem precedent):
+  `PlottableValue<Value>.value(_:_:)` → `{"$":"plottable",label,value}` (value
+  stored dynamically); `MarkDimension.automatic/.fixed/.ratio/.inset` →
+  `{"$":"markDimension",kind,value}`; `MarkStackingMethod`/`InterpolationMethod`
+  token structs (token_of allowlist) → tagged tokens. Leading-dot resolution via
+  typed mark params (`x: PlottableValue`, `width: MarkDimension`,
+  `stacking: MarkStackingMethod`) — issue #203 pattern.
+- **Gotcha**: `MarkDimension.automatic` as a *computed* `static var` failed
+  typed-param leading-dot resolution (`.automatic` unresolved); switching it to a
+  `static let` fixed it (stored statics resolve, computed ones don't).
+- **Fidelity tier named honestly** (ADR-0020): channels-recorded, host-drawn —
+  no scale-domain/range inference, axis/legend layout, data binning, or mark
+  stacking. Out-of-scope: axes/legends/scales, ChartProxy geometry read-back,
+  scrollable/3-D charts, annotations, symbol shapes, vectorized plot content.
+- Golden-verified via new `charts` render fixture (`tswift swiftui render`);
+  every implemented member exercised. Remaining 3 "missing" = `Chart.body`
+  (container has no Swift body), MarkDimension literal-init, `==` operator —
+  all honest stage-1 gaps.
+- Website: `charts.json` (auto-generated), status "at a glance" card, and a
+  `status/charts.mdx` detail page. SwiftUI coverage unchanged (62.4%/59.5% — the
+  marks are filtered out of the swiftui registry dump).
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated + drift-clean; HTML progress report refreshed.
