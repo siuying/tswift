@@ -1857,7 +1857,7 @@
         {
           "name": "searchFocused",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchPresentationToolbarBehavior",
@@ -1867,17 +1867,17 @@
         {
           "name": "searchScopes",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchSelection",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchSuggestions",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchToolbarBehavior",
@@ -1887,7 +1887,7 @@
         {
           "name": "searchable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "sectionActions",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 326,
+        "implemented": 331,
         "partial": 11,
-        "missing": 131,
+        "missing": 126,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 429,
+    "implemented": 434,
     "partial": 20,
-    "missing": 253,
+    "missing": 248,
     "out_of_scope": 0,
     "total": 702
   }
