@@ -952,3 +952,31 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   `pointwiseMin/Max`) — low value in this runtime.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
   JSON regenerated + drift-clean; HTML progress report refreshed.
+
+## Coverage iteration — SwiftUI window/scene style + touchbar modifiers
+
+- **SwiftUI**: 433 → 438 impl (61.7% → 62.4%), 413 → 418 verified (58.8% →
+  59.5%). Five real modifiers on the proven `modifier!` + `MODIFIER_FNS` +
+  typed-`install` machinery, golden-verified via new `window-style-and-touchbar`
+  fixture:
+  - `presentedWindowStyle(_:)` — new `WindowStyle` token namespace
+    (`.automatic`/`.plain`/`.hinted`/`.volumetric`).
+  - `presentedWindowToolbarStyle(_:)` — new `WindowToolbarStyle` namespace
+    (`.automatic`/`.expanded`/`.unified`/`.unifiedCompact`).
+  - `typesettingLanguage(_:)` — new `TypesettingLanguage` namespace
+    (`.automatic`; `.explicit(_)` builder not modelled).
+  - `digitalCrownAccessory(_:)` — reuses the shared `Visibility` namespace
+    (`.visible`/`.hidden`/`.automatic`).
+  - `touchBarItemPrincipal(_:)` — plain `Bool` toggle (no token).
+- Recipe touched 4 seams: PRELUDE token structs (lib.rs), `token_of` allowlist
+  (values.rs), `write_value` tag map (uiir.rs), typed `install` registrations.
+  Expected-keys test vec + `registered_keys.txt` regenerated.
+- **Collision fixed**: adding `WindowStyle.plain` made the leading-dot `.plain`
+  non-unique, so the four untyped `_ControlStyle` style modifiers that relied on
+  global token uniqueness (`buttonStyle`/`listStyle`/`textFieldStyle`/
+  `textEditorStyle`) degraded to bare strings (surfaced by the `more-styles`/
+  `styling` goldens). Typed all four against `_ControlStyle` so `.plain` resolves
+  contextually — the established issue-#203 pattern. `.automatic` was already
+  non-unique, so its new occurrences add no regression.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks); coverage
+  JSON regenerated; HTML progress report refreshed.
