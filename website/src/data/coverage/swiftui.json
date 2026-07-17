@@ -1412,7 +1412,7 @@
         {
           "name": "onGeometryChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onHover",
@@ -1442,7 +1442,7 @@
         {
           "name": "onModifierKeysChanged",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onMoveCommand",
@@ -1477,7 +1477,7 @@
         {
           "name": "onPreferenceChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onReceive",
@@ -1487,12 +1487,12 @@
         {
           "name": "onScrollGeometryChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onScrollPhaseChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onScrollTargetVisibilityChange",
@@ -1502,7 +1502,7 @@
         {
           "name": "onScrollVisibilityChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onSubmit",
@@ -1842,7 +1842,7 @@
         {
           "name": "scrollTransition",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "searchCompletion",
@@ -2232,7 +2232,7 @@
         {
           "name": "transaction",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transformAnchorPreference",
@@ -2247,7 +2247,7 @@
         {
           "name": "transformEnvironment",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transformPreference",
@@ -2292,7 +2292,7 @@
         {
           "name": "visualEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "windowDismissBehavior",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 331,
+        "implemented": 341,
         "partial": 11,
-        "missing": 126,
+        "missing": 116,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 434,
+    "implemented": 444,
     "partial": 20,
-    "missing": 248,
+    "missing": 238,
     "out_of_scope": 0,
     "total": 702
   }
