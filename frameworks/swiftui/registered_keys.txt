@@ -74,6 +74,7 @@ View.autocapitalization
 View.autocorrectionDisabled
 View.background
 View.backgroundExtensionEffect
+View.backgroundPreferenceValue
 View.backgroundStyle
 View.badge
 View.badgeProminence
@@ -266,7 +267,9 @@ View.onScrollVisibilityChange
 View.onSubmit
 View.onTapGesture
 View.opacity
+View.ornament
 View.overlay
+View.overlayPreferenceValue
 View.padding
 View.paletteSelectionEffect
 View.persistentSystemOverlays

@@ -1420,6 +1420,12 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     // marker+handler route as `.gesture(_:)`.
     ("highPriorityGesture", modifier_gesture),
     ("simultaneousGesture", modifier_gesture),
+    ("ornament", modifier_ornament),
+    (
+        "backgroundPreferenceValue",
+        modifier_background_preference_value,
+    ),
+    ("overlayPreferenceValue", modifier_overlay_preference_value),
     // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
     // content realized as a `Presentation` child node by the session.
     ("sheet", modifier_sheet),
@@ -2216,6 +2222,15 @@ closure_modifier!(modifier_phase_animator, "phaseAnimator");
 closure_modifier!(modifier_on_command, "onCommand");
 closure_modifier!(modifier_on_paste_command, "onPasteCommand");
 closure_modifier!(modifier_rename_action, "renameAction");
+// `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
+// not a plain `@ViewBuilder`: the preference `Value` is not computed by a
+// headless runtime, so the transform cannot be realized — record a bare marker
+// and stash the closure (recorded-only), rather than fake empty content.
+closure_modifier!(
+    modifier_background_preference_value,
+    "backgroundPreferenceValue"
+);
+closure_modifier!(modifier_overlay_preference_value, "overlayPreferenceValue");
 
 /// Record a `@ViewBuilder`-content View modifier: lower the trailing closure to
 /// a nested child subtree (like `tabItem`/`searchSuggestions`) and attach it
@@ -2249,6 +2264,7 @@ macro_rules! viewbuilder_modifier {
 // `@ViewBuilder`-content modifiers lowered to a nested child subtree.
 viewbuilder_modifier!(modifier_toolbar_title_menu, "toolbarTitleMenu");
 viewbuilder_modifier!(modifier_section_actions, "sectionActions");
+viewbuilder_modifier!(modifier_ornament, "ornament");
 /// `.matchedGeometryEffect(id:in:properties:anchor:isSource:)` and
 /// `.matchedTransitionSource(id:in:configuration:)` — record the geometry
 /// identity `id:` (a Hashable) plus `isSource:` when present; the `in:`
