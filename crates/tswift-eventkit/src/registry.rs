@@ -3,7 +3,7 @@
 
 use tswift_core::Interpreter;
 
-use crate::{enums, objects};
+use crate::{enums, objects, store};
 
 /// Register the currently-supported EventKit surface on `interp`, under the
 /// `EventKit` module scope so strict import-gating requires `import EventKit`.
@@ -11,6 +11,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.module("EventKit", |interp| {
         enums::install(interp);
         objects::install(interp);
+        store::install(interp);
     });
 }
 
@@ -25,6 +26,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
 pub fn registered_keys() -> Vec<String> {
     let mut keys = enums::coverage_keys();
     keys.extend(objects::coverage_keys());
+    keys.extend(store::coverage_keys());
     keys.sort();
     keys.dedup();
     keys

@@ -22,6 +22,7 @@
 mod enums;
 mod objects;
 mod registry;
+mod store;
 
 #[cfg(test)]
 mod tests;
