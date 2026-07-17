@@ -2032,7 +2032,7 @@
         {
           "name": "tabViewBottomAccessory",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabViewCustomization",
@@ -2047,17 +2047,17 @@
         {
           "name": "tabViewSidebarBottomBar",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabViewSidebarFooter",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabViewSidebarHeader",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tabViewStyle",
@@ -2122,7 +2122,7 @@
         {
           "name": "textInputSuggestions",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "textRenderer",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 366,
+        "implemented": 371,
         "partial": 11,
-        "missing": 91,
+        "missing": 86,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 469,
+    "implemented": 474,
     "partial": 20,
-    "missing": 213,
+    "missing": 208,
     "out_of_scope": 0,
     "total": 702
   }
