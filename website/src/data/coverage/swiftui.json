@@ -427,7 +427,7 @@
         {
           "name": "contentShape",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "contentToolbar",
@@ -987,7 +987,7 @@
         {
           "name": "inspector",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "inspectorColumnWidth",
@@ -1737,12 +1737,12 @@
         {
           "name": "safeAreaBar",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "safeAreaInset",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "safeAreaPadding",
@@ -1987,7 +1987,7 @@
         {
           "name": "swipeActions",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "symbolColorRenderingMode",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 300,
+        "implemented": 305,
         "partial": 11,
-        "missing": 157,
+        "missing": 152,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 403,
+    "implemented": 408,
     "partial": 20,
-    "missing": 279,
+    "missing": 274,
     "out_of_scope": 0,
     "total": 702
   }
