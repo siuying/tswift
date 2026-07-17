@@ -1047,3 +1047,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   `materialize_builtin_sequence` so it is receiver-agnostic.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated; HTML progress report refreshed.
+
+## Coverage iteration — withExtendedLifetime (free fn +1)
+
+- **Stdlib 396 → 397 verified (77.5% → 77.7%)**; free functions 29 → 30.
+- `withExtendedLifetime(_ x:, _ body:)` — lifetime extension is a no-op in the
+  interpreter (every value stays alive across a call), so it runs `body` and
+  returns its result. The kept value is passed to the closure so both the
+  `() -> R` and `(T) -> R` overloads work (extra args ignored by arg binding).
+- Golden-verified via `stdlib_with_extended_lifetime` CLI fixture (zero-param
+  body, value-taking body, and a Void body with a class side effect).
+- presubmit green; coverage JSON regenerated; HTML report refreshed.
