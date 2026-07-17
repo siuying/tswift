@@ -839,6 +839,17 @@ impl<'w> Interpreter<'w> {
                             .ok_or_else(|| trap(format!("index {i} out of range")));
                     }
                 }
+                // `IndexSet[position]` reads the position-th sorted member from
+                // `_values` (opaque `IndexSet.Index` is a 0-based position).
+                if type_name == "IndexSet" {
+                    if let Some(SwiftValue::Array(items)) = obj.get("_values") {
+                        let i = subscript_index(indices)?;
+                        return items
+                            .get(i)
+                            .cloned()
+                            .ok_or_else(|| trap(format!("index {i} out of range")));
+                    }
+                }
                 // `CollectionOfOne[i]` — index 0 returns the element; anything else traps.
                 if type_name == "CollectionOfOne" {
                     let i = subscript_index(indices)?;

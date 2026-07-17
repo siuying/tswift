@@ -418,6 +418,33 @@ fn install_with_inner(interp: &mut Interpreter<'_>, caps: Capabilities) {
             },
         );
     }
+    // `Collection` conformance: opaque `IndexSet.Index` is a 0-based position
+    // into the sorted members. `startIndex`/`endIndex` bound the position
+    // range; `index(after:/before:)` steps it; `indexRange(in:)` maps an
+    // integer range to the position range covering its members. `subscript` is
+    // handled in the core storage layer (reads the position-th member).
+    interp.register_property(
+        BuiltinReceiver::IndexSet,
+        "startIndex",
+        index_set_start_index,
+    );
+    interp.register_property(BuiltinReceiver::IndexSet, "endIndex", index_set_end_index);
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "index",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_set_index_labeled,
+        },
+    );
+    interp.register_labeled_intrinsic(
+        BuiltinReceiver::IndexSet,
+        "indexRange",
+        LabeledMethodEntry {
+            mutating: false,
+            func: index_set_index_range,
+        },
+    );
 }
 
 /// Every Foundation entry registered by [`install`], as coverage keys.
@@ -2109,6 +2136,70 @@ fn index_set_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 
 fn index_set_count(recv: SwiftValue) -> StdResult {
     Ok(SwiftValue::int(index_set_values(&recv)?.len() as i128))
+}
+
+/// `startIndex` — the first position of the sorted members (always `0`).
+fn index_set_start_index(_recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(0))
+}
+
+/// `endIndex` — one past the last position (`count`).
+fn index_set_end_index(recv: SwiftValue) -> StdResult {
+    Ok(SwiftValue::int(index_set_values(&recv)?.len() as i128))
+}
+
+/// `index(after:)` / `index(before:)` — step an opaque position by ±1.
+fn index_set_index_labeled(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None);
+    };
+    let SwiftValue::Int(i) = &arg.value else {
+        return Err(type_error("index(after:)/index(before:) expects Int"));
+    };
+    let result = match arg.label.as_deref() {
+        Some("after") => SwiftValue::int(i.raw + 1),
+        Some("before") => SwiftValue::int(i.raw - 1),
+        _ => return Ok(None),
+    };
+    Ok(Some(Outcome {
+        result,
+        receiver: recv,
+    }))
+}
+
+/// `indexRange(in: range)` — the half-open range of positions whose members
+/// fall inside the integer `range` (`lowerBound` = first member ≥ range.lo,
+/// `upperBound` = first member ≥ range.hi).
+fn index_set_index_range(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> Result<Option<Outcome>, StdError> {
+    let [arg] = args.as_slice() else {
+        return Ok(None);
+    };
+    if arg.label.as_deref() != Some("in") {
+        return Ok(None);
+    }
+    let SwiftValue::Range { lo, hi, inclusive } = &arg.value else {
+        return Err(type_error("indexRange(in:) expects a Range<Int>"));
+    };
+    let hi_exclusive = if *inclusive { hi + 1 } else { *hi };
+    let sorted: Vec<i128> = index_set_values(&recv)?.into_iter().collect();
+    let lower = sorted.partition_point(|&v| v < *lo);
+    let upper = sorted.partition_point(|&v| v < hi_exclusive);
+    Ok(Some(Outcome {
+        result: SwiftValue::Range {
+            lo: lower as i128,
+            hi: upper as i128,
+            inclusive: false,
+        },
+        receiver: recv,
+    }))
 }
 
 fn index_set_is_empty(recv: SwiftValue) -> StdResult {

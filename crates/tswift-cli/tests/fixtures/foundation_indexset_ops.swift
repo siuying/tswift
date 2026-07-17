@@ -61,3 +61,20 @@ print(sh2.contains(2))
 print(sh2.contains(3))
 print(sh2.contains(4))
 print(sh2.contains(5))
+
+// Collection conformance: startIndex/endIndex bound the positions; subscript
+// reads the position-th sorted member; index(after:)/index(before:) step a
+// position; indexRange(in:) maps an integer range to a position range.
+var coll = IndexSet()
+coll.insert(2)
+coll.insert(5)
+coll.insert(9)
+print(coll.startIndex)          // 0
+print(coll.endIndex)            // 3
+print(coll[coll.startIndex])    // 2 (first member)
+print(coll[1])                  // 5 (second member)
+print(coll[coll.index(after: 1)])   // 9
+print(coll[coll.index(before: 2)])  // 5
+let ir = coll.indexRange(in: 3..<9)
+print(ir.lowerBound)            // 1 (first member >= 3 is 5, at position 1)
+print(ir.upperBound)            // 2 (first member >= 9 is 9, at position 2)

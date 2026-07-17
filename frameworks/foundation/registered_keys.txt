@@ -260,12 +260,15 @@ IndexSet.contains
 IndexSet.count
 IndexSet.debugDescription
 IndexSet.description
+IndexSet.endIndex
 IndexSet.filteredIndexSet
 IndexSet.first
 IndexSet.formIntersection
 IndexSet.formSymmetricDifference
 IndexSet.formUnion
 IndexSet.hashValue
+IndexSet.index
+IndexSet.indexRange
 IndexSet.init
 IndexSet.insert
 IndexSet.integerGreaterThan
@@ -281,6 +284,7 @@ IndexSet.rangeView
 IndexSet.remove
 IndexSet.removeAll
 IndexSet.shift
+IndexSet.startIndex
 IndexSet.symmetricDifference
 IndexSet.union
 IndexSet.update
