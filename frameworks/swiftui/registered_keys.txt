@@ -146,6 +146,7 @@ View.fileDialogImportsUnresolvedAliases
 View.fileDialogMessage
 View.fill
 View.findDisabled
+View.findNavigator
 View.fixedSize
 View.flipsForRightToLeftLayoutDirection
 View.focusEffectDisabled
@@ -312,6 +313,7 @@ View.presentationContentInteraction
 View.presentationCornerRadius
 View.presentationDetents
 View.presentationDragIndicator
+View.presentationPreventsAppTermination
 View.presentationSizing
 View.presentedWindowStyle
 View.presentedWindowToolbarStyle
@@ -392,6 +394,7 @@ View.tabViewSidebarBottomBar
 View.tabViewSidebarFooter
 View.tabViewSidebarHeader
 View.tabViewStyle
+View.tableColumnHeaders
 View.tableStyle
 View.tag
 View.task
@@ -406,6 +409,7 @@ View.textSelection
 View.textSelectionAffinity
 View.tint
 View.toggleStyle
+View.toolbar
 View.toolbarBackground
 View.toolbarBackgroundVisibility
 View.toolbarColorScheme
@@ -415,6 +419,7 @@ View.toolbarRole
 View.toolbarTitleDisplayMode
 View.toolbarTitleMenu
 View.toolbarVisibility
+View.touchBarCustomizationLabel
 View.touchBarItemPrincipal
 View.tracking
 View.transaction

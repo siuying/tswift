@@ -78,6 +78,17 @@ modifier!(modifier_minimum_scale_factor, "minimumScaleFactor");
 modifier!(modifier_allows_tightening, "allowsTightening");
 modifier!(modifier_labels_hidden, "labelsHidden");
 modifier!(modifier_help, "help");
+// Chrome / presentation value modifiers.
+modifier!(modifier_table_column_headers, "tableColumnHeaders");
+modifier!(
+    modifier_presentation_prevents_app_termination,
+    "presentationPreventsAppTermination"
+);
+modifier!(
+    modifier_touch_bar_customization_label,
+    "touchBarCustomizationLabel"
+);
+modifier!(modifier_find_navigator, "findNavigator");
 // Scoped-value modifiers: write a value into an environment / focused-value /
 // container-value key path. The key path is an opaque runtime function with no
 // stable serialization, so it is dropped; only the written value is recorded
@@ -1505,6 +1516,17 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_tab_view_sidebar_bottom_bar,
     ),
     ("textInputSuggestions", modifier_text_input_suggestions),
+    ("toolbar", modifier_toolbar),
+    ("tableColumnHeaders", modifier_table_column_headers),
+    (
+        "presentationPreventsAppTermination",
+        modifier_presentation_prevents_app_termination,
+    ),
+    (
+        "touchBarCustomizationLabel",
+        modifier_touch_bar_customization_label,
+    ),
+    ("findNavigator", modifier_find_navigator),
     (
         "backgroundPreferenceValue",
         modifier_background_preference_value,
@@ -2413,6 +2435,7 @@ viewbuilder_modifier!(
     "tabViewSidebarBottomBar"
 );
 viewbuilder_modifier!(modifier_text_input_suggestions, "textInputSuggestions");
+viewbuilder_modifier!(modifier_toolbar, "toolbar");
 /// `.matchedGeometryEffect(id:in:properties:anchor:isSource:)` and
 /// `.matchedTransitionSource(id:in:configuration:)` — record the geometry
 /// identity `id:` (a Hashable) plus `isSource:` when present; the `in:`
