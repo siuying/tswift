@@ -244,7 +244,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "insert",
@@ -323,9 +323,9 @@
         }
       ],
       "counts": {
-        "implemented": 18,
+        "implemented": 19,
         "partial": 0,
-        "missing": 11,
+        "missing": 10,
         "out_of_scope": 0,
         "total": 29
       }
@@ -555,7 +555,7 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "makeIterator",
@@ -585,13 +585,13 @@
         {
           "name": "subscript",
           "kind": "subscript",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 7,
+        "implemented": 9,
         "partial": 0,
-        "missing": 5,
+        "missing": 3,
         "out_of_scope": 0,
         "total": 12
       }
@@ -2762,9 +2762,9 @@
     }
   ],
   "totals": {
-    "implemented": 385,
+    "implemented": 388,
     "partial": 0,
-    "missing": 126,
+    "missing": 123,
     "out_of_scope": 0,
     "total": 511
   }

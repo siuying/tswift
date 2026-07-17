@@ -31,7 +31,7 @@ sequence_types = [
 # They count as both "implemented" and — when the token already appears in a
 # stdlib_*.swift fixture — "verified" for coverage reporting purposes.
 Array = ["+", "+=", "==", "subscript", "init", "encode"]
-ArraySlice = ["==", "subscript"]
+ArraySlice = ["==", "subscript", "init"]
 ContiguousArray = ["==", "subscript", "init", "encode"]
 Int = [
   "+", "+=", "-", "-=", "*", "*=", "/", "/=", "%", "%=",
@@ -47,6 +47,7 @@ Range = ["=="]
 ClosedRange = ["==", "<"]
 ReversedCollection = ["==", "<"]
 EmptyCollection = ["=="]
+CollectionOfOne = ["init", "subscript"]
 Optional = ["==", "!=", "unsafelyUnwrapped", "hashValue", "init", "some", "none", "encode"]
 # Floating-point type constants resolved directly by the interpreter
 # (interp/storage.rs `double_type_constant`), plus the `+`/`+=`/`==` operators

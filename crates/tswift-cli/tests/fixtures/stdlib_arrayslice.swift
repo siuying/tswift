@@ -105,3 +105,9 @@ nzi2.insert(contentsOf: [77, 88], at: nzi2.endIndex)  // at base index 3
 print(nzi2.count)             // 4
 print(nzi2[2])                // 77
 print(nzi2[3])                // 88
+
+// 17. ArraySlice(_:) initializer — full-range slice over an Array.
+let whole = ArraySlice([7, 8, 9])
+print(whole.count)            // 3
+print(whole[0])               // 7
+print(whole[2])               // 9
