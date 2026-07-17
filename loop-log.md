@@ -1321,3 +1321,18 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   emitted as noise. No live environment/focus propagation.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI toolbar + chrome/presentation modifiers (+5)
+
+- **SwiftUI 510→515 impl, 490→495 verified (69.8% → 70.5%)**. Golden-verified
+  via new `chrome-presentation-modifiers` fixture.
+- New modifiers:
+  - `toolbar { }` — `viewbuilder_modifier!` lowers the trailing `@ViewBuilder`
+    (ToolbarItem/plain views) to a nested child subtree.
+  - `tableColumnHeaders(_:)` (Visibility token), `presentationPreventsApp\
+    Termination(_:)` (Bool), `touchBarCustomizationLabel(_:)` (Text),
+    `findNavigator(isPresented:)` (Bool binding) — value-recording `modifier!`s.
+- **Fidelity tier (honest)**: `toolbar` records content as a nested subtree (no
+  live bar placement); the others record their scalar/token/binding value.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
