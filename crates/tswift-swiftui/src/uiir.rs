@@ -249,6 +249,8 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "TabBarMinimizeBehavior" => "tabBarMinimizeBehavior",
             "SearchPresentationToolbarBehavior" => "searchPresentationToolbarBehavior",
             "SearchToolbarBehavior" => "searchToolbarBehavior",
+            "SearchFieldPlacement" => "searchFieldPlacement",
+            "SearchScopeActivation" => "searchScopeActivation",
             "HandGestureShortcut" => "handGestureShortcut",
             "ScrollEdgeEffectStyle" => "scrollEdgeEffectStyle",
             "PresentationContentInteraction" => "presentationContentInteraction",

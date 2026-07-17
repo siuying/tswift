@@ -1529,6 +1529,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("previewContext", modifier_preview_context),
     ("navigationBarItems", modifier_navigation_bar_items),
     ("containerBackground", modifier_container_background),
+    ("searchable", modifier_searchable),
+    ("searchScopes", modifier_search_scopes),
+    ("searchSuggestions", modifier_search_suggestions),
+    ("searchFocused", modifier_search_focused),
+    ("searchSelection", modifier_search_selection),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
@@ -1660,6 +1665,194 @@ pub(crate) fn modifier_container_background(
         });
     }
     append_modifier(recv, make_modifier("containerBackground", margs))
+}
+
+// ── Search modifiers ───────────────────────────────────────────────────────
+//
+// The searchable family attaches a search field to a navigation container and
+// records its scopes/suggestions/focus state. Fidelity tier: **recorded-only**
+// — the gating text/selection/focus bindings are read once (a snapshot of the
+// current value is serialized) rather than wired for live two-way search, and
+// `@ViewBuilder` scope/suggestion lists are eagerly lowered to child subtrees
+// like `.overlay`. Hosts honor or ignore the recorded search metadata.
+
+/// Snapshot a `Binding`'s current value (its `wrappedValue`) for recording. A
+/// value that is not a readable binding (e.g. a raw literal) is recorded as-is.
+fn binding_snapshot(ctx: &mut dyn StdContext, value: SwiftValue) -> SwiftValue {
+    ctx.get_member(&value, "wrappedValue").unwrap_or(value)
+}
+
+/// Lower a `@ViewBuilder` closure (or a direct view value) into a single
+/// recorded content node — one view kept directly, several composed as a
+/// `Group` (cf. `tabItem`). Returns `None` for empty content.
+fn compose_content(
+    ctx: &mut dyn StdContext,
+    value: SwiftValue,
+) -> Result<Option<SwiftValue>, tswift_core::StdError> {
+    let mut views = Vec::new();
+    match value {
+        SwiftValue::Closure(id) => {
+            let block = ctx.eval_block_values(id)?;
+            expand_into(ctx, block, &mut views, 0, &[])?;
+        }
+        other => expand_into(ctx, other, &mut views, 0, &[])?,
+    }
+    Ok(match views.len() {
+        0 => None,
+        1 => Some(views.into_iter().next().expect("len checked")),
+        _ => Some(container_value("Group", views)),
+    })
+}
+
+/// `.searchable(text:placement:prompt:)` — attach a search field bound to a
+/// `Binding<String>`. Records a snapshot of the current search text plus the
+/// optional `placement:` (`SearchFieldPlacement` token) and `prompt:` string.
+pub(crate) fn modifier_searchable(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut margs: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("text") => margs.push(Arg {
+                label: Some("text".into()),
+                value: binding_snapshot(ctx, arg.value),
+                static_ty: None,
+            }),
+            Some("placement") => margs.push(Arg {
+                label: Some("placement".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            Some("prompt") => margs.push(Arg {
+                label: Some("prompt".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            _ => {}
+        }
+    }
+    append_modifier(recv, make_modifier("searchable", margs))
+}
+
+/// `.searchScopes(_:activation:scopes:)` / `.searchScopes(_:scopes:)` — record
+/// the current scope selection (snapshot of the leading `Binding`), the
+/// optional `activation:` (`SearchScopeActivation` token), and the `scopes:`
+/// `@ViewBuilder` list lowered to a child subtree.
+pub(crate) fn modifier_search_scopes(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut selection: Option<SwiftValue> = None;
+    let mut activation: Option<SwiftValue> = None;
+    let mut scopes: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("activation") => activation = Some(arg.value),
+            Some("scopes") => scopes = compose_content(ctx, arg.value)?,
+            None => match arg.value {
+                v @ SwiftValue::Closure(_) => scopes = compose_content(ctx, v)?,
+                other => selection = Some(binding_snapshot(ctx, other)),
+            },
+            _ => {}
+        }
+    }
+    let mut margs: Vec<Arg> = Vec::new();
+    if let Some(selection) = selection {
+        margs.push(Arg {
+            label: Some("selection".into()),
+            value: selection,
+            static_ty: None,
+        });
+    }
+    if let Some(activation) = activation {
+        margs.push(Arg {
+            label: Some("activation".into()),
+            value: activation,
+            static_ty: None,
+        });
+    }
+    if let Some(scopes) = scopes {
+        margs.push(Arg {
+            label: Some("scopes".into()),
+            value: scopes,
+            static_ty: None,
+        });
+    }
+    append_modifier(recv, make_modifier("searchScopes", margs))
+}
+
+/// `.searchSuggestions { … }` — record a `@ViewBuilder` list of suggestion
+/// views as a child subtree (lowered like `.overlay`).
+pub(crate) fn modifier_search_suggestions(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        // `searchSuggestions(_:for:)` (the String-completion form) is out of
+        // scope; only the trailing `@ViewBuilder` list is recorded.
+        if arg.label.is_none() {
+            content = compose_content(ctx, arg.value)?;
+        }
+    }
+    let margs = match content {
+        Some(view) => vec![Arg {
+            label: None,
+            value: view,
+            static_ty: None,
+        }],
+        None => Vec::new(),
+    };
+    append_modifier(recv, make_modifier("searchSuggestions", margs))
+}
+
+/// `.searchFocused(_:)` / `.searchFocused(_:equals:)` — record a snapshot of
+/// the search-focus binding, plus the optional `equals:` match value.
+pub(crate) fn modifier_search_focused(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut margs: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("equals") => margs.push(Arg {
+                label: Some("equals".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            None => margs.push(Arg {
+                label: None,
+                value: binding_snapshot(ctx, arg.value),
+                static_ty: None,
+            }),
+            _ => {}
+        }
+    }
+    append_modifier(recv, make_modifier("searchFocused", margs))
+}
+
+/// `.searchSelection(_:)` — record a snapshot of the search-selection binding.
+pub(crate) fn modifier_search_selection(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut margs: Vec<Arg> = Vec::new();
+    for arg in args {
+        if arg.label.is_none() {
+            margs.push(Arg {
+                label: None,
+                value: binding_snapshot(ctx, arg.value),
+                static_ty: None,
+            });
+        }
+    }
+    append_modifier(recv, make_modifier("searchSelection", margs))
 }
 
 /// Build a [`HANDLERS_TYPE`] record from `(event, closure)` pairs. Only closure

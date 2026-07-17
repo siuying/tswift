@@ -821,6 +821,19 @@ struct SearchToolbarBehavior {
     static let automatic = SearchToolbarBehavior(token: "automatic")
     static let minimize = SearchToolbarBehavior(token: "minimize")
 }
+struct SearchFieldPlacement {
+    let token: String
+    static let automatic = SearchFieldPlacement(token: "automatic")
+    static let toolbar = SearchFieldPlacement(token: "toolbar")
+    static let sidebar = SearchFieldPlacement(token: "sidebar")
+    static let navigationBarDrawer = SearchFieldPlacement(token: "navigationBarDrawer")
+}
+struct SearchScopeActivation {
+    let token: String
+    static let automatic = SearchScopeActivation(token: "automatic")
+    static let onSearchPresentation = SearchScopeActivation(token: "onSearchPresentation")
+    static let onTextEntry = SearchScopeActivation(token: "onTextEntry")
+}
 struct HandGestureShortcut {
     let token: String
     static let primaryAction = HandGestureShortcut(token: "primaryAction")
@@ -2027,6 +2040,24 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         vec![BuiltinParam::positional("SearchToolbarBehavior")],
     );
     interp.register_struct_method_typed(
+        "searchable",
+        modifiers::modifier_searchable,
+        vec![
+            BuiltinParam::labeled("text", "Binding"),
+            BuiltinParam::labeled("placement", "SearchFieldPlacement"),
+            BuiltinParam::labeled("prompt", "String"),
+        ],
+    );
+    interp.register_struct_method_typed(
+        "searchScopes",
+        modifiers::modifier_search_scopes,
+        vec![
+            BuiltinParam::positional("Binding"),
+            BuiltinParam::labeled("activation", "SearchScopeActivation"),
+            BuiltinParam::labeled("scopes", "AnyView"),
+        ],
+    );
+    interp.register_struct_method_typed(
         "handGestureShortcut",
         modifiers::modifier_hand_gesture_shortcut,
         vec![BuiltinParam::positional("HandGestureShortcut")],
@@ -2793,8 +2824,13 @@ mod tests {
                 "View.scrollTargetLayout",
                 "View.searchCompletion",
                 "View.searchDictationBehavior",
+                "View.searchFocused",
                 "View.searchPresentationToolbarBehavior",
+                "View.searchScopes",
+                "View.searchSelection",
+                "View.searchSuggestions",
                 "View.searchToolbarBehavior",
+                "View.searchable",
                 "View.sectionIndexLabel",
                 "View.selectionDisabled",
                 "View.sensoryFeedback",

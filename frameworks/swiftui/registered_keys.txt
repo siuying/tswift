@@ -310,8 +310,13 @@ View.scrollTargetBehavior
 View.scrollTargetLayout
 View.searchCompletion
 View.searchDictationBehavior
+View.searchFocused
 View.searchPresentationToolbarBehavior
+View.searchScopes
+View.searchSelection
+View.searchSuggestions
 View.searchToolbarBehavior
+View.searchable
 View.sectionIndexLabel
 View.selectionDisabled
 View.sensoryFeedback
