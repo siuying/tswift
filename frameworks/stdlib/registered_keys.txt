@@ -320,6 +320,7 @@ Set.symmetricDifference
 Set.union
 Set.update
 String.append
+String.characters
 String.contains
 String.count
 String.debugDescription
@@ -337,6 +338,7 @@ String.index
 String.indices
 String.insert
 String.isASCII
+String.isContiguousUTF8
 String.isEmpty
 String.isHexDigit
 String.isLetter
@@ -348,6 +350,7 @@ String.isWhitespace
 String.isWholeNumber
 String.last
 String.lowercased
+String.makeContiguousUTF8
 String.makeIterator
 String.map
 String.matches

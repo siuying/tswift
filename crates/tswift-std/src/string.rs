@@ -30,6 +30,11 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.register_property(s, "startIndex", start_index);
     interp.register_property(s, "endIndex", end_index);
     interp.register_property(s, "indices", indices);
+    // Character-view and contiguity properties (parity with Substring). A
+    // `String` is its own `Character` collection, so `characters` returns self;
+    // the runtime always stores contiguous UTF-8.
+    interp.register_property(s, "characters", characters);
+    interp.register_property(s, "isContiguousUTF8", is_contiguous_utf8);
 
     // `Character` predicate properties. A Character is a single-grapheme
     // String, so these classify the whole cluster: `isASCII` requires every
@@ -116,6 +121,15 @@ pub fn install(interp: &mut Interpreter<'_>) {
         MethodEntry {
             mutating: true,
             func: reserve_capacity,
+        },
+    );
+    // `makeContiguousUTF8()` — no-op mutating (runtime is always contiguous).
+    interp.register_intrinsic(
+        s,
+        "makeContiguousUTF8",
+        MethodEntry {
+            mutating: true,
+            func: make_contiguous_utf8,
         },
     );
     interp.register_intrinsic(
@@ -569,6 +583,29 @@ fn remove_all(_c: &mut dyn StdContext, _recv: SwiftValue, _a: Vec<SwiftValue>) -
 
 /// `String.reserveCapacity(_:)` — a no-op here; storage growth is implicit.
 fn reserve_capacity(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let s = str_of(&recv)?;
+    val(SwiftValue::Void, SwiftValue::Str(s))
+}
+
+/// `String.characters` — the `Character` view; a String IS its own character
+/// collection, so this returns self (deprecated in Swift 4+ but still valid).
+fn characters(recv: SwiftValue) -> StdResult {
+    let _ = str_of(&recv)?; // validate receiver type
+    Ok(recv)
+}
+
+/// `String.isContiguousUTF8` — always `true` (runtime stores contiguous UTF-8).
+fn is_contiguous_utf8(recv: SwiftValue) -> StdResult {
+    let _ = str_of(&recv)?;
+    Ok(SwiftValue::Bool(true))
+}
+
+/// `String.makeContiguousUTF8()` — no-op mutating (runtime is always contiguous).
+fn make_contiguous_utf8(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _a: Vec<SwiftValue>,
+) -> Outcomes {
     let s = str_of(&recv)?;
     val(SwiftValue::Void, SwiftValue::Str(s))
 }

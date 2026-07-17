@@ -2090,7 +2090,7 @@
         {
           "name": "characters",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "codingKey",
@@ -2185,7 +2185,7 @@
         {
           "name": "isContiguousUTF8",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "isEmpty",
@@ -2200,7 +2200,7 @@
         {
           "name": "makeContiguousUTF8",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "makeIterator",
@@ -2329,9 +2329,9 @@
         }
       ],
       "counts": {
-        "implemented": 33,
+        "implemented": 36,
         "partial": 0,
-        "missing": 20,
+        "missing": 17,
         "out_of_scope": 0,
         "total": 53
       }
@@ -2762,9 +2762,9 @@
     }
   ],
   "totals": {
-    "implemented": 382,
+    "implemented": 385,
     "partial": 0,
-    "missing": 129,
+    "missing": 126,
     "out_of_scope": 0,
     "total": 511
   }

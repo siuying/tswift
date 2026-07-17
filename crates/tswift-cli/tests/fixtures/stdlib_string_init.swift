@@ -23,3 +23,11 @@ print(String(describing: [1, 2, 3]))        // [1, 2, 3]
 let animal = "cat"
 print("cat" ~= animal)                       // true
 print("dog" ~= animal)                       // false
+
+// ---- character view / contiguity ------------------------------------------
+let greeting = "Hello"
+print(greeting.characters.count)             // 5
+print(greeting.isContiguousUTF8)             // true
+var mutable = "abc"
+mutable.makeContiguousUTF8()
+print(mutable)                               // abc
