@@ -498,7 +498,7 @@
         {
           "name": "relative",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "startIndex",
@@ -517,9 +517,9 @@
         }
       ],
       "counts": {
-        "implemented": 16,
+        "implemented": 17,
         "partial": 0,
-        "missing": 5,
+        "missing": 4,
         "out_of_scope": 0,
         "total": 21
       }
@@ -1766,7 +1766,7 @@
         {
           "name": "relative",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "startIndex",
@@ -1785,9 +1785,9 @@
         }
       ],
       "counts": {
-        "implemented": 16,
+        "implemented": 17,
         "partial": 0,
-        "missing": 5,
+        "missing": 4,
         "out_of_scope": 0,
         "total": 21
       }
@@ -2789,9 +2789,9 @@
     }
   ],
   "totals": {
-    "implemented": 416,
+    "implemented": 418,
     "partial": 0,
-    "missing": 98,
+    "missing": 96,
     "out_of_scope": 0,
     "total": 514
   }

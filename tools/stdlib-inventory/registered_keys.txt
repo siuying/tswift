@@ -93,6 +93,7 @@ ClosedRange.lowerBound
 ClosedRange.max
 ClosedRange.min
 ClosedRange.overlaps
+ClosedRange.relative
 ClosedRange.startIndex
 ClosedRange.upperBound
 CollectionOfOne.count
@@ -265,6 +266,7 @@ Range.lowerBound
 Range.max
 Range.min
 Range.overlaps
+Range.relative
 Range.startIndex
 Range.upperBound
 ReversedCollection.contains

@@ -44,6 +44,29 @@ pub fn install_for(interp: &mut Interpreter<'_>, recv: BuiltinReceiver) {
     nm(interp, "overlaps", overlaps);
     nm(interp, "distance", distance);
     nm(interp, "index", index);
+    nm(interp, "relative", relative);
+}
+
+/// `Range.relative(to:)` / `ClosedRange.relative(to:)` — the `RangeExpression`
+/// conformance. A concrete range already carries both bounds, so it returns
+/// itself as a half-open `Range<Bound>` (an inclusive `a...b` widens to
+/// `a..<(b+1)`); the `collection` argument only matters for partial ranges and
+/// is ignored here, matching Swift's `Range`/`ClosedRange` implementations.
+fn relative(
+    _c: &mut dyn StdContext,
+    recv: SwiftValue,
+    _args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    let (lo, hi, inclusive) = parts(&recv)?;
+    let end = if inclusive { hi + 1 } else { hi };
+    Ok(Outcome {
+        result: SwiftValue::Range {
+            lo,
+            hi: end,
+            inclusive: false,
+        },
+        receiver: recv,
+    })
 }
 
 /// Decompose a range value into `(lo, hi, inclusive)`.
