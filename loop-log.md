@@ -1290,3 +1290,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   so bodies are not invoked and the `for:` item metatype is dropped.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI data-transfer / item-provider modifiers (+7)
+
+- **SwiftUI 499→506 impl, 479→486 verified (68.2% → 69.2%)**. Golden-verified
+  via new `item-provider-modifiers` fixture.
+- New recorded-only modifiers (reuse `closure_modifier!`: bare marker + stashed
+  closure, drop non-closure args):
+  - `copyable`, `cuttable`, `pasteDestination`, `itemProvider`, `userActivity`,
+    `exportsItemProviders`, `importsItemProviders`.
+- **Fidelity tier (honest)**: recorded-only — copy/cut/paste/drag payloads and
+  item providers are not produced by a headless runtime, so closure bodies are
+  not invoked and payload metatypes / content-type lists are dropped.
+- Note: an array-literal-only closure body (`{ ["x"] }`) lexes as a capture
+  list; fixtures use `{ return [...] }`.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
