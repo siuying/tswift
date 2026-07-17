@@ -193,7 +193,8 @@ fn time_style_suffix(style_case: &str) -> &'static str {
 ///
 /// For builtin enum values, the case name IS the discriminant in our runtime.
 /// We also accept raw Int values (ordinals) as a fallback since the interpreter
-/// may resolve `.abbreviated` to a DateStyle int via `register_builtin_enum`.
+/// may resolve `.abbreviated` to a DateStyle enum value via
+/// `register_builtin_enum`.
 fn enum_case(value: &SwiftValue, date_ordinals: &[&'static str]) -> &'static str {
     match value {
         SwiftValue::Enum(obj) => match obj.case.as_str() {

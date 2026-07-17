@@ -1800,6 +1800,36 @@ impl<'w> Interpreter<'w> {
         self.record_type_module(name);
     }
 
+    /// Register a builtin integer-backed enum with its explicit raw values.
+    ///
+    /// The first case registered for a raw value is the canonical case returned
+    /// by `init(rawValue:)` when multiple cases share that value. Existing
+    /// registrations with the same type name are left unchanged, matching
+    /// [`register_builtin_enum`].
+    pub fn register_builtin_enum_with_raw(&mut self, name: &str, cases: &[(&str, i128)]) {
+        if self.types.is_enum(name) {
+            return;
+        }
+        let cases = cases
+            .iter()
+            .map(|(case, raw)| EnumCaseDef {
+                name: (*case).to_string(),
+                raw: Some(SwiftValue::int(*raw)),
+                payload_types: Vec::new(),
+            })
+            .collect();
+        self.types.insert_enum(
+            name.to_string(),
+            EnumDef {
+                cases,
+                methods: std::collections::HashMap::new(),
+                computed: std::collections::HashMap::new(),
+            },
+        );
+        self.types.mark_builtin_enum(name);
+        self.record_type_module(name);
+    }
+
     /// Register a builtin enum whose cases may carry positional associated
     /// values (e.g. `JSONEncoder.NonConformingFloatEncodingStrategy` with
     /// `.convertToString(positiveInfinity:negativeInfinity:nan:)`). Each entry
@@ -8833,6 +8863,82 @@ if case .b = e { print(\"b\") } else { print(\"not-b\") }
         )
         .unwrap();
         assert_eq!(out, "3\n4\n3\n");
+    }
+
+    #[test]
+    fn builtin_enum_raw_value_initializer_returns_matching_case() {
+        let out = run_with_host(
+            "import Foundation\nprint(RawEnum(rawValue: 10)?.rawValue ?? -1)\n",
+            |interp| {
+                interp.module("Foundation", |i| {
+                    i.register_builtin_enum_with_raw("RawEnum", &[("ten", 10), ("twenty", 20)]);
+                });
+            },
+        )
+        .unwrap();
+        assert_eq!(out, "10\n");
+    }
+
+    #[test]
+    fn builtin_enum_raw_value_initializer_returns_nil_for_unknown_value() {
+        let out = run_with_host(
+            "import Foundation\nprint(RawEnum(rawValue: 99) == nil)\n",
+            |interp| {
+                interp.module("Foundation", |i| {
+                    i.register_builtin_enum_with_raw("RawEnum", &[("ten", 10)]);
+                });
+            },
+        )
+        .unwrap();
+        assert_eq!(out, "true\n");
+    }
+
+    #[test]
+    fn builtin_enum_raw_value_property_returns_registered_value() {
+        let out = run_with_host(
+            "import Foundation\nprint(RawEnum.twenty.rawValue)\n",
+            |interp| {
+                interp.module("Foundation", |i| {
+                    i.register_builtin_enum_with_raw("RawEnum", &[("ten", 10), ("twenty", 20)]);
+                });
+            },
+        )
+        .unwrap();
+        assert_eq!(out, "20\n");
+    }
+
+    #[test]
+    fn builtin_enum_raw_value_initializer_uses_first_case_for_alias() {
+        let out = run_with_host(
+            "import Foundation\nlet value = RawEnum(rawValue: 10)\nprint(value == RawEnum.first)\nprint(value == RawEnum.alias)\n",
+            |interp| {
+                interp.module("Foundation", |i| {
+                    i.register_builtin_enum_with_raw(
+                        "RawEnum",
+                        &[("first", 10), ("alias", 10), ("other", 20)],
+                    );
+                });
+            },
+        )
+        .unwrap();
+        assert_eq!(out, "true\nfalse\n");
+    }
+
+    #[test]
+    fn builtin_nested_enum_raw_value_initializer_round_trips() {
+        let out = run_with_host(
+            "import Foundation\nlet value = RawOuter.Inner(rawValue: 10)\nprint(value?.rawValue ?? -1)\nprint(value == .first)\n",
+            |interp| {
+                interp.module("Foundation", |i| {
+                    i.register_builtin_enum_with_raw(
+                        "RawOuter.Inner",
+                        &[("first", 10), ("alias", 10)],
+                    );
+                });
+            },
+        )
+        .unwrap();
+        assert_eq!(out, "10\ntrue\n");
     }
 
     #[test]

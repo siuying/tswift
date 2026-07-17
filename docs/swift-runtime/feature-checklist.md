@@ -121,7 +121,7 @@ Legend for status of each checkbox: `[ ]` todo · `[~]` in progress · `[x]` don
 | [x] | `mutating` methods (inout self) | ✅ | ★★★ | R2 |
 | [x] | `enum` with simple cases | ✅ | ★★ | R2 |
 | [x] | Enum **associated values** | ✅ | ★★★ | R2 |
-| [x] | Enum **raw values** + `RawRepresentable` | ✅ | ★★ | R2 |
+| [x] | Enum **raw values** + `RawRepresentable` (including explicit raw values for builtin framework enums) | ✅ | ★★ | R2 |
 | [x] | `indirect` enums (recursive) | ⚠️ | ★★★ | R3 |
 | [x] | Enum methods / computed props | ✅ | ★★ | R2 |
 | [x] | `CaseIterable` synthesis | ✅ | ★★ | R4 |

@@ -16,9 +16,15 @@ use tswift_core::{
 use crate::type_error;
 
 pub fn install(interp: &mut Interpreter<'_>) {
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "NumberFormatter.Style",
-        &["none", "decimal", "currency", "percent", "scientific"],
+        &[
+            ("none", 0),
+            ("decimal", 1),
+            ("currency", 2),
+            ("percent", 3),
+            ("scientific", 4),
+        ],
     );
 
     interp.register_free_fn("NumberFormatter", number_formatter_init);
