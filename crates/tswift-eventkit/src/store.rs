@@ -243,10 +243,11 @@ fn method(
     }
 }
 
+/// The bare function-pointer shape a label-aware EventKit intrinsic uses.
+type LabeledFn = fn(&mut dyn StdContext, SwiftValue, Vec<Arg>) -> Result<Option<Outcome>, StdError>;
+
 /// Wrap a label-aware method closure into a [`LabeledMethodEntry`].
-fn labeled(
-    f: fn(&mut dyn StdContext, SwiftValue, Vec<Arg>) -> Result<Option<Outcome>, StdError>,
-) -> tswift_core::LabeledMethodEntry {
+fn labeled(f: LabeledFn) -> tswift_core::LabeledMethodEntry {
     tswift_core::LabeledMethodEntry {
         mutating: false,
         func: f,
@@ -411,10 +412,15 @@ fn store_save_item(
                 "EKReminder" => ("_reminders", "calendarItemIdentifier"),
                 _ => ("_events", "eventIdentifier"),
             };
-            let unset = matches!(obj.borrow().get(id_field), None | Some(SwiftValue::Nil));
+            let unset = matches!(obj.borrow().get(id_field), None | Some(SwiftValue::Nil))
+                || matches!(obj.borrow().get(id_field), Some(SwiftValue::Str(s)) if s.is_empty());
             if unset {
                 obj.borrow_mut()
                     .set(id_field, SwiftValue::Str(format!("{field}-{}", next_id())));
+            }
+            // Persisting clears the item's newness flag (EKObject.isNew).
+            if obj.borrow().get("isNew").is_some() {
+                obj.borrow_mut().set("isNew", SwiftValue::Bool(false));
             }
             upsert(&store, field, id_field, item);
         }

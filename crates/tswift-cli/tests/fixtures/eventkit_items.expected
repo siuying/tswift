@@ -1,0 +1,37 @@
+event title: Standup
+event notes: Daily sync, hasNotes: true
+event location: Room 4
+event availability: busy, status: confirmed
+event allDay: false, detached: false
+event is new before save: true, hasChanges: false
+event has calendar: true
+hasAlarms: true, count: 1
+hasRecurrenceRules: true
+hasAlarms after remove: false
+hasRecurrenceRules after remove: false
+hasAttendees: true, count: 1
+organizer: Organizer, role: chair
+organizer status: accepted, type: person
+organizer current user: false
+organizer url set: false, predicate: true
+organizer abRecord: true
+events granted: true
+event id set: true
+event is new after save: false
+calendarItem id set: true
+external id: true
+timeZone: true, created: true, modified: true
+birthday contact: true, personID: true
+occurrence: true, structuredLocation: true
+compare earlier vs later: orderedAscending
+compare later vs earlier: orderedDescending
+refresh: true
+reminder title: Buy milk, priority: 1
+reminder completed: false, completionDate: true
+reminder due month: 7
+reminder start day: 18
+reminder id set: true
+reminder is new after save: false
+found reminder: Buy milk
+event recurrenceRules set: false
+reminder removed: true

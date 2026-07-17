@@ -20,6 +20,7 @@
 //! conference providers, NSError-domain bridging).
 
 mod enums;
+mod items;
 mod objects;
 mod registry;
 mod store;

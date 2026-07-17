@@ -1,8 +1,17 @@
 alarm offset: -300.0
 alarm proximity: enter
+alarm absolute date set: false
 location: Office r=50.0
+location geo set: false
 alarm has location: true
 recurrence ends after: 10
 day of week: tuesday week 2
 rule freq: weekly interval: 2
 rule end count: 10
+rule first weekday: 0
+rule daysOfTheWeek set: false
+rule daysOfTheMonth set: false
+rule daysOfTheYear set: false
+rule monthsOfTheYear set: false
+rule weeksOfTheYear set: false
+rule setPositions set: false

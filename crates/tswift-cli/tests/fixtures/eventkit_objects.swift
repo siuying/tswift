@@ -12,11 +12,13 @@ let alarm = EKAlarm(relativeOffset: -300.0)
 print("alarm offset: \(alarm.relativeOffset)")
 alarm.proximity = EKAlarmProximity.enter
 print("alarm proximity: \(alarm.proximity)")
+print("alarm absolute date set: \(alarm.absoluteDate != nil)")
 
-// EKStructuredLocation — title + radius, attached to the alarm.
+// EKStructuredLocation — title + radius + geo location, attached to the alarm.
 let location = EKStructuredLocation(title: "Office")
 location.radius = 50.0
 print("location: \(location.title) r=\(location.radius)")
+print("location geo set: \(location.geoLocation != nil)")
 alarm.structuredLocation = location
 print("alarm has location: \(alarm.structuredLocation != nil)")
 
@@ -32,3 +34,10 @@ print("day of week: \(dayOfWeek.dayOfTheWeek) week \(dayOfWeek.weekNumber)")
 let rule = EKRecurrenceRule(recurrenceWith: EKRecurrenceFrequency.weekly, interval: 2, end: end)
 print("rule freq: \(rule.frequency) interval: \(rule.interval)")
 print("rule end count: \(rule.recurrenceEnd?.occurrenceCount ?? 0)")
+print("rule first weekday: \(rule.firstDayOfTheWeek)")
+print("rule daysOfTheWeek set: \(rule.daysOfTheWeek != nil)")
+print("rule daysOfTheMonth set: \(rule.daysOfTheMonth != nil)")
+print("rule daysOfTheYear set: \(rule.daysOfTheYear != nil)")
+print("rule monthsOfTheYear set: \(rule.monthsOfTheYear != nil)")
+print("rule weeksOfTheYear set: \(rule.weeksOfTheYear != nil)")
+print("rule setPositions set: \(rule.setPositions != nil)")

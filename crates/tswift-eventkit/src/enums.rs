@@ -35,6 +35,8 @@ const ENUMS: &[EnumDef] = &[
             "denied",
             "fullAccess",
             "writeOnly",
+            // Deprecated alias of `.fullAccess`, kept for source fidelity.
+            "authorized",
         ],
     },
     EnumDef {
@@ -132,6 +134,14 @@ const ENUMS: &[EnumDef] = &[
             "thursday",
             "friday",
             "saturday",
+            // Deprecated uppercase constant spellings (EKSunday…EKSaturday).
+            "EKSunday",
+            "EKMonday",
+            "EKTuesday",
+            "EKWednesday",
+            "EKThursday",
+            "EKFriday",
+            "EKSaturday",
         ],
     },
 ];
