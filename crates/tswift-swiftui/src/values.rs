@@ -92,6 +92,9 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "SymbolEffect"
             | "SensoryFeedback"
             | "PresentationDetent"
+            | "WindowStyle"
+            | "WindowToolbarStyle"
+            | "TypesettingLanguage"
     ) {
         return None;
     }

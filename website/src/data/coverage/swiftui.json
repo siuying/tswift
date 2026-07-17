@@ -547,7 +547,7 @@
         {
           "name": "digitalCrownAccessory",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "digitalCrownRotation",
@@ -1657,12 +1657,12 @@
         {
           "name": "presentedWindowStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentedWindowToolbarStyle",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "previewContext",
@@ -2222,7 +2222,7 @@
         {
           "name": "touchBarItemPrincipal",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "tracking",
@@ -2272,7 +2272,7 @@
         {
           "name": "typesettingLanguage",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "underline",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 310,
+        "implemented": 315,
         "partial": 11,
-        "missing": 147,
+        "missing": 142,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 413,
+    "implemented": 418,
     "partial": 20,
-    "missing": 269,
+    "missing": 264,
     "out_of_scope": 0,
     "total": 702
   }

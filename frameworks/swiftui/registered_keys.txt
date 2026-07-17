@@ -110,6 +110,7 @@ View.deleteDisabled
 View.dialogIcon
 View.dialogPreventsAppTermination
 View.dialogSeverity
+View.digitalCrownAccessory
 View.disableAutocorrection
 View.disabled
 View.disclosureGroupStyle
@@ -261,6 +262,8 @@ View.presentationCornerRadius
 View.presentationDetents
 View.presentationDragIndicator
 View.presentationSizing
+View.presentedWindowStyle
+View.presentedWindowToolbarStyle
 View.previewDevice
 View.previewDisplayName
 View.previewInterfaceOrientation
@@ -345,11 +348,13 @@ View.toolbarItemHidden
 View.toolbarRole
 View.toolbarTitleDisplayMode
 View.toolbarVisibility
+View.touchBarItemPrincipal
 View.tracking
 View.transformEffect
 View.transition
 View.truncationMode
 View.typeSelectEquivalent
+View.typesettingLanguage
 View.underline
 View.unredacted
 View.windowDismissBehavior

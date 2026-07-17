@@ -756,6 +756,19 @@ modifier!(modifier_projection_effect, "projectionEffect");
 modifier!(modifier_symbol_effect, "symbolEffect");
 modifier!(modifier_sensory_feedback, "sensoryFeedback");
 modifier!(modifier_presentation_detents, "presentationDetents");
+// Scene/window presentation-style token modifiers (typed in `install`):
+// `presentedWindowStyle` (WindowStyle), `presentedWindowToolbarStyle`
+// (WindowToolbarStyle), `typesettingLanguage` (TypesettingLanguage), and
+// `digitalCrownAccessory` (a `Visibility` token, reusing that namespace).
+// `touchBarItemPrincipal` is a plain `Bool` toggle (no token).
+modifier!(modifier_presented_window_style, "presentedWindowStyle");
+modifier!(
+    modifier_presented_window_toolbar_style,
+    "presentedWindowToolbarStyle"
+);
+modifier!(modifier_typesetting_language, "typesettingLanguage");
+modifier!(modifier_digital_crown_accessory, "digitalCrownAccessory");
+modifier!(modifier_touch_bar_item_principal, "touchBarItemPrincipal");
 
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
@@ -1423,6 +1436,14 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("symbolEffect", modifier_symbol_effect),
     ("sensoryFeedback", modifier_sensory_feedback),
     ("presentationDetents", modifier_presentation_detents),
+    ("presentedWindowStyle", modifier_presented_window_style),
+    (
+        "presentedWindowToolbarStyle",
+        modifier_presented_window_toolbar_style,
+    ),
+    ("typesettingLanguage", modifier_typesetting_language),
+    ("digitalCrownAccessory", modifier_digital_crown_accessory),
+    ("touchBarItemPrincipal", modifier_touch_bar_item_principal),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).

@@ -837,6 +837,24 @@ struct NavigationTransition {
     static let automatic = NavigationTransition(token: "automatic")
     static let slide = NavigationTransition(token: "slide")
 }
+struct WindowStyle {
+    let token: String
+    static let automatic = WindowStyle(token: "automatic")
+    static let plain = WindowStyle(token: "plain")
+    static let hinted = WindowStyle(token: "hinted")
+    static let volumetric = WindowStyle(token: "volumetric")
+}
+struct WindowToolbarStyle {
+    let token: String
+    static let automatic = WindowToolbarStyle(token: "automatic")
+    static let expanded = WindowToolbarStyle(token: "expanded")
+    static let unified = WindowToolbarStyle(token: "unified")
+    static let unifiedCompact = WindowToolbarStyle(token: "unifiedCompact")
+}
+struct TypesettingLanguage {
+    let token: String
+    static let automatic = TypesettingLanguage(token: "automatic")
+}
 struct WindowToolbarFullScreenVisibility {
     let token: String
     static let automatic = WindowToolbarFullScreenVisibility(token: "automatic")
@@ -2030,6 +2048,53 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_presentation_detents,
         vec![BuiltinParam::positional("[PresentationDetent]")],
     );
+    // Scene/window presentation-style token modifiers, each typed so its
+    // leading-dot `.automatic`/`.plain`/… member resolves against a dedicated
+    // namespace. `digitalCrownAccessory` reuses the shared `Visibility`
+    // namespace; `touchBarItemPrincipal` is a plain `Bool` (no typed seam).
+    interp.register_struct_method_typed(
+        "presentedWindowStyle",
+        modifiers::modifier_presented_window_style,
+        vec![BuiltinParam::positional("WindowStyle")],
+    );
+    interp.register_struct_method_typed(
+        "presentedWindowToolbarStyle",
+        modifiers::modifier_presented_window_toolbar_style,
+        vec![BuiltinParam::positional("WindowToolbarStyle")],
+    );
+    interp.register_struct_method_typed(
+        "typesettingLanguage",
+        modifiers::modifier_typesetting_language,
+        vec![BuiltinParam::positional("TypesettingLanguage")],
+    );
+    interp.register_struct_method_typed(
+        "digitalCrownAccessory",
+        modifiers::modifier_digital_crown_accessory,
+        vec![BuiltinParam::positional("Visibility")],
+    );
+    // Style modifiers whose `.plain` token now overlaps `WindowStyle.plain`
+    // must be typed against `_ControlStyle` so their leading-dot member resolves
+    // contextually instead of degrading to a bare string (issue #203 pattern).
+    interp.register_struct_method_typed(
+        "buttonStyle",
+        modifiers::modifier_button_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "listStyle",
+        modifiers::modifier_list_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "textFieldStyle",
+        modifiers::modifier_text_field_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
+    interp.register_struct_method_typed(
+        "textEditorStyle",
+        modifiers::modifier_text_editor_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
+    );
     // `withAnimation` — executes the trailing closure immediately and returns
     // its value.  The animation argument (if any) is accepted and dropped;
     // hosts that want to animate will read `.animation` modifiers and diff
@@ -2432,6 +2497,7 @@ mod tests {
                 "View.dialogIcon",
                 "View.dialogPreventsAppTermination",
                 "View.dialogSeverity",
+                "View.digitalCrownAccessory",
                 "View.disableAutocorrection",
                 "View.disabled",
                 "View.disclosureGroupStyle",
@@ -2583,6 +2649,8 @@ mod tests {
                 "View.presentationDetents",
                 "View.presentationDragIndicator",
                 "View.presentationSizing",
+                "View.presentedWindowStyle",
+                "View.presentedWindowToolbarStyle",
                 "View.previewDevice",
                 "View.previewDisplayName",
                 "View.previewInterfaceOrientation",
@@ -2667,11 +2735,13 @@ mod tests {
                 "View.toolbarRole",
                 "View.toolbarTitleDisplayMode",
                 "View.toolbarVisibility",
+                "View.touchBarItemPrincipal",
                 "View.tracking",
                 "View.transformEffect",
                 "View.transition",
                 "View.truncationMode",
                 "View.typeSelectEquivalent",
+                "View.typesettingLanguage",
                 "View.underline",
                 "View.unredacted",
                 "View.windowDismissBehavior",
