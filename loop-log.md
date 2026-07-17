@@ -1208,3 +1208,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - **Fidelity tier (honest)**: recorded-only — geometry identity crosses the
   UIIR boundary; no on-device geometry matching/morph.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI gesture/content modifiers (+5)
+
+- **SwiftUI 471→476 impl, 451→456 verified (64.2% → 65.0%)**. Golden-verified
+  via new `gesture-and-content-modifiers` fixture.
+- New modifiers:
+  - `highPriorityGesture(_:)` / `simultaneousGesture(_:)` — reuse the existing
+    `modifier_gesture` lowering (TapGesture/LongPressGesture → onTapGesture/
+    onLongPressGesture marker + handler), matching `.gesture(_:)`.
+  - `renameAction(_:)` — recorded-only marker + stashed closure
+    (`closure_modifier!`).
+  - `toolbarTitleMenu { }` / `sectionActions { }` — new `viewbuilder_modifier!`
+    macro lowers the trailing `@ViewBuilder` to a nested child subtree (like
+    `tabItem`/`searchSuggestions`).
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
