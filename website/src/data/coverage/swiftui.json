@@ -467,7 +467,7 @@
         {
           "name": "copyable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "cornerRadius",
@@ -477,7 +477,7 @@
         {
           "name": "cuttable",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "datePickerStyle",
@@ -662,7 +662,7 @@
         {
           "name": "exportsItemProviders",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "fileDialogBrowserOptions",
@@ -977,7 +977,7 @@
         {
           "name": "importsItemProviders",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "indexViewStyle",
@@ -1017,7 +1017,7 @@
         {
           "name": "itemProvider",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "kerning",
@@ -1562,7 +1562,7 @@
         {
           "name": "pasteDestination",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "persistentSystemOverlays",
@@ -2287,7 +2287,7 @@
         {
           "name": "userActivity",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "visualEffect",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 376,
+        "implemented": 383,
         "partial": 11,
-        "missing": 81,
+        "missing": 74,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 479,
+    "implemented": 486,
     "partial": 20,
-    "missing": 203,
+    "missing": 196,
     "out_of_scope": 0,
     "total": 702
   }
