@@ -1401,3 +1401,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   Character key would pull all 32 Character members into the targeted set and
   deflate the roll-up.
 - presubmit green (only pre-existing warnings); coverage JSON regenerated.
+
+## Coverage iteration — Range/ClosedRange relative(to:) (+2)
+
+- **Stdlib 416/514 → 418/514 verified (80.9% → 81.3%)**. Golden-verified via
+  new `stdlib_range_relative` fixture.
+- `RangeExpression.relative(to:)` on Range and ClosedRange: a concrete range
+  already carries both bounds, so it returns them as a half-open `Range`
+  (`a...b` widens to `a..<(b+1)`); the `collection` argument is ignored (only
+  partial ranges need it), matching the stdlib impls.
+- Range/ClosedRange verified 76.2% → 81.0%.
+- presubmit green; coverage JSON regenerated.
