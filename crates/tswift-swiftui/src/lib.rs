@@ -906,6 +906,17 @@ struct WindowToolbarFullScreenVisibility {
     static let automatic = WindowToolbarFullScreenVisibility(token: "automatic")
     static let onHover = WindowToolbarFullScreenVisibility(token: "onHover")
 }
+struct TextDirection {
+    let token: String
+    static let leftToRight = TextDirection(token: "leftToRight")
+    static let rightToLeft = TextDirection(token: "rightToLeft")
+}
+struct TabViewSearchActivation {
+    let token: String
+    static let automatic = TabViewSearchActivation(token: "automatic")
+    static let searchTabSelection = TabViewSearchActivation(token: "searchTabSelection")
+    static let textEntry = TabViewSearchActivation(token: "textEntry")
+}
 struct UITextContentType {
     let token: String
     static let name = UITextContentType(token: "name")
@@ -1637,6 +1648,16 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         "contentTransition",
         modifiers::modifier_content_transition,
         vec![BuiltinParam::positional("ContentTransition")],
+    );
+    interp.register_struct_method_typed(
+        "writingDirection",
+        modifiers::modifier_writing_direction,
+        vec![BuiltinParam::positional("TextDirection")],
+    );
+    interp.register_struct_method_typed(
+        "tabViewSearchActivation",
+        modifiers::modifier_tab_view_search_activation,
+        vec![BuiltinParam::positional("TabViewSearchActivation")],
     );
     interp.register_struct_method_typed(
         "scrollBounceBehavior",
@@ -2923,6 +2944,7 @@ mod tests {
                 "View.tabBarMinimizeBehavior",
                 "View.tabItem",
                 "View.tabViewBottomAccessory",
+                "View.tabViewSearchActivation",
                 "View.tabViewSidebarBottomBar",
                 "View.tabViewSidebarFooter",
                 "View.tabViewSidebarHeader",
@@ -2973,6 +2995,7 @@ mod tests {
                 "View.windowResizeAnchor",
                 "View.windowResizeBehavior",
                 "View.windowToolbarFullScreenVisibility",
+                "View.writingDirection",
                 "View.writingToolsAffordanceVisibility",
                 "View.writingToolsBehavior",
                 "View.zIndex",

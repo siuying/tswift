@@ -399,6 +399,7 @@ View.symbolVariant
 View.tabBarMinimizeBehavior
 View.tabItem
 View.tabViewBottomAccessory
+View.tabViewSearchActivation
 View.tabViewSidebarBottomBar
 View.tabViewSidebarFooter
 View.tabViewSidebarHeader
@@ -449,6 +450,7 @@ View.windowMinimizeBehavior
 View.windowResizeAnchor
 View.windowResizeBehavior
 View.windowToolbarFullScreenVisibility
+View.writingDirection
 View.writingToolsAffordanceVisibility
 View.writingToolsBehavior
 View.zIndex

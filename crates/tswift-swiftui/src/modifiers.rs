@@ -92,6 +92,13 @@ modifier!(modifier_find_navigator, "findNavigator");
 modifier!(modifier_default_app_storage, "defaultAppStorage");
 // `.focusScope(_ namespace:)` records the opaque `@Namespace` identity token.
 modifier!(modifier_focus_scope, "focusScope");
+// Token-valued modifiers (also registered typed in `install` so their
+// leading-dot arg resolves against a dedicated parameter type).
+modifier!(modifier_writing_direction, "writingDirection");
+modifier!(
+    modifier_tab_view_search_activation,
+    "tabViewSearchActivation"
+);
 // Scoped-value modifiers: write a value into an environment / focused-value /
 // container-value key path. The key path is an opaque runtime function with no
 // stable serialization, so it is dropped; only the written value is recorded
@@ -1542,6 +1549,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("findNavigator", modifier_find_navigator),
     ("defaultAppStorage", modifier_default_app_storage),
     ("focusScope", modifier_focus_scope),
+    ("writingDirection", modifier_writing_direction),
+    (
+        "tabViewSearchActivation",
+        modifier_tab_view_search_activation,
+    ),
     (
         "backgroundPreferenceValue",
         modifier_background_preference_value,
