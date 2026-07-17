@@ -1274,3 +1274,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   tab-bar/sidebar placement. Labeled args (visibility/anchor) dropped.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI accessibility-action modifiers (+5)
+
+- **SwiftUI 494→499 impl, 474→479 verified (67.5% → 68.2%)**. Golden-verified
+  via new `accessibility-action-modifiers` fixture.
+- New recorded-only modifiers (reuse `closure_modifier!`: bare marker + stashed
+  handler closure, drop non-closure args):
+  - `accessibilityAction`, `accessibilityAdjustableAction`,
+    `accessibilityScrollAction`, `accessibilityZoomAction`, and
+    `dropDestination(for:action:isTargeted:)`.
+- **Fidelity tier (honest)**: recorded-only — the action/drop listener marker
+  crosses the UIIR boundary; the handler argument (adjustment direction, scroll
+  edge, zoom action, dropped items) is not synthesized by a headless runtime,
+  so bodies are not invoked and the `for:` item metatype is dropped.
+- Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
+- presubmit green; coverage JSON regenerated.
