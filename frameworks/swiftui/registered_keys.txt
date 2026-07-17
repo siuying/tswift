@@ -211,6 +211,8 @@ View.listSectionSpacing
 View.listStyle
 View.luminanceToAlpha
 View.mask
+View.matchedGeometryEffect
+View.matchedTransitionSource
 View.materialActiveAppearance
 View.menuActionDismissBehavior
 View.menuIndicator

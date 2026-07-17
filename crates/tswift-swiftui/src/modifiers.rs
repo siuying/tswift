@@ -1408,6 +1408,11 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("onCommand", modifier_on_command),
     ("onPasteCommand", modifier_on_paste_command),
     ("preference", modifier_preference),
+    ("matchedGeometryEffect", modifier_matched_geometry_effect),
+    (
+        "matchedTransitionSource",
+        modifier_matched_transition_source,
+    ),
     // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
     // content realized as a `Presentation` child node by the session.
     ("sheet", modifier_sheet),
@@ -2203,6 +2208,50 @@ closure_modifier!(modifier_transform_preference, "transformPreference");
 closure_modifier!(modifier_phase_animator, "phaseAnimator");
 closure_modifier!(modifier_on_command, "onCommand");
 closure_modifier!(modifier_on_paste_command, "onPasteCommand");
+/// `.matchedGeometryEffect(id:in:properties:anchor:isSource:)` and
+/// `.matchedTransitionSource(id:in:configuration:)` — record the geometry
+/// identity `id:` (a Hashable) plus `isSource:` when present; the `in:`
+/// namespace is an opaque headless identity token with no layout engine to
+/// match against, so it is dropped (recorded-only tier). `properties:`/
+/// `anchor:`/`configuration:` are likewise dropped.
+pub(crate) fn modifier_matched_geometry_effect(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    matched_identity(recv, "matchedGeometryEffect", args)
+}
+
+pub(crate) fn modifier_matched_transition_source(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    matched_identity(recv, "matchedTransitionSource", args)
+}
+
+fn matched_identity(recv: SwiftValue, name: &str, args: Vec<Arg>) -> StdResult {
+    let mut margs: Vec<Arg> = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("id") | None => margs.push(Arg {
+                label: Some("id".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            Some("isSource") => margs.push(Arg {
+                label: Some("isSource".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            // `in:` namespace, `properties:`, `anchor:`, `configuration:` —
+            // dropped (opaque / no layout engine in a headless runtime).
+            _ => {}
+        }
+    }
+    append_modifier(recv, make_modifier(name, margs))
+}
+
 // `.preference(key:value:)` carries no closure: record the `value` (the host
 // reads the preference payload); the `key:` metatype is not representable and
 // is dropped (recorded-only tier).

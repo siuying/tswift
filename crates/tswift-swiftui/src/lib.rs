@@ -228,6 +228,16 @@ struct EnvironmentObject<ObjectType> {
     var wrappedValue: ObjectType { store! }
     init() { store = nil }
 }
+// `@Namespace var ns` yields a geometry-identity namespace. The runtime is
+// headless (no layout engine to actually match geometry), so a namespace is an
+// opaque identity token: `matchedGeometryEffect`/`matchedTransitionSource`
+// record their `id:` and drop the `in:` namespace (recorded-only tier).
+struct NamespaceID {}
+@propertyWrapper
+struct Namespace {
+    var wrappedValue: NamespaceID { NamespaceID() }
+    init() {}
+}
 struct Color {
     // Named system colors remain semantic tokens for host-specific resolution.
     // Explicit RGB values instead cross the UIIR boundary as RGBA components.
@@ -2725,6 +2735,8 @@ mod tests {
                 "View.listStyle",
                 "View.luminanceToAlpha",
                 "View.mask",
+                "View.matchedGeometryEffect",
+                "View.matchedTransitionSource",
                 "View.materialActiveAppearance",
                 "View.menuActionDismissBehavior",
                 "View.menuIndicator",
