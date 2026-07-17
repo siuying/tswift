@@ -334,6 +334,7 @@ String.hasPrefix
 String.hasSuffix
 String.hashValue
 String.index
+String.indices
 String.insert
 String.isASCII
 String.isEmpty
@@ -347,6 +348,7 @@ String.isWhitespace
 String.isWholeNumber
 String.last
 String.lowercased
+String.makeIterator
 String.map
 String.matches
 String.prefix
@@ -382,11 +384,13 @@ Substring.hasPrefix
 Substring.hasSuffix
 Substring.hashValue
 Substring.index
+Substring.indices
 Substring.isContiguousUTF8
 Substring.isEmpty
 Substring.last
 Substring.lowercased
 Substring.makeContiguousUTF8
+Substring.makeIterator
 Substring.prefix
 Substring.replaceSubrange
 Substring.split

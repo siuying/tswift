@@ -29,6 +29,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // --- String-only properties ---
     interp.register_property(s, "startIndex", start_index);
     interp.register_property(s, "endIndex", end_index);
+    interp.register_property(s, "indices", indices);
 
     // `Character` predicate properties. A Character is a single-grapheme
     // String, so these classify the whole cluster: `isASCII` requires every
@@ -184,6 +185,7 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
     pure("hasSuffix", has_suffix);
     pure("contains", contains);
     pure("split", split);
+    pure("makeIterator", make_iterator);
 
     // --- Mutating append ---
     interp.register_intrinsic(
@@ -250,6 +252,18 @@ fn last(recv: SwiftValue) -> StdResult {
         .next_back()
         .map(SwiftValue::Str)
         .unwrap_or(SwiftValue::Nil))
+}
+
+/// `String.makeIterator()` / `Substring.makeIterator()` — for-in over a string
+/// is driven by the interpreter's grapheme iteration, but an explicit
+/// `.makeIterator()` returns the `Character`s as an iterable array of
+/// single-grapheme strings.
+fn make_iterator(_c: &mut dyn StdContext, recv: SwiftValue, _a: Vec<SwiftValue>) -> Outcomes {
+    let items: Vec<SwiftValue> = graphemes(&str_of(&recv)?)
+        .into_iter()
+        .map(SwiftValue::Str)
+        .collect();
+    val(SwiftValue::Array(Rc::new(items)), recv)
 }
 
 // ---- Character predicates --------------------------------------------------
@@ -595,6 +609,15 @@ fn start_index(_recv: SwiftValue) -> StdResult {
 fn end_index(recv: SwiftValue) -> StdResult {
     let count = graphemes(&str_of(&recv)?).len();
     Ok(make_index(count))
+}
+
+/// `String.indices` — the collection of valid subscript positions
+/// (`startIndex..<endIndex`), materialised as an array of `String.Index`
+/// values so `for i in s.indices` and `Array(s.indices)` both work.
+fn indices(recv: SwiftValue) -> StdResult {
+    let count = graphemes(&str_of(&recv)?).len();
+    let items: Vec<SwiftValue> = (0..count).map(make_index).collect();
+    Ok(SwiftValue::Array(Rc::new(items)))
 }
 
 /// `String.index` — label-aware dispatch over four overloads:

@@ -37,6 +37,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     // These have different semantics than String (base-relative indices, views).
     interp.register_property(sub, "startIndex", sub_start_index);
     interp.register_property(sub, "endIndex", sub_end_index);
+    interp.register_property(sub, "indices", sub_indices);
 
     // `base` — ONLY under Substring; must NOT be callable on String.
     interp.register_property(sub, "base", base);
@@ -152,6 +153,15 @@ fn sub_start_index(recv: SwiftValue) -> StdResult {
 fn sub_end_index(recv: SwiftValue) -> StdResult {
     let (_, _, end) = sub_fields(&recv)?;
     Ok(make_index(end))
+}
+
+/// `Substring.indices` — valid subscript positions of the slice, expressed in
+/// the base string's coordinate space (`startIndex..<endIndex`), materialised
+/// as an array of `String.Index` values.
+fn sub_indices(recv: SwiftValue) -> StdResult {
+    let (_, start, end) = sub_fields(&recv)?;
+    let items: Vec<SwiftValue> = (start..end).map(make_index).collect();
+    Ok(SwiftValue::Array(Rc::new(items)))
 }
 
 /// `Substring.base` — the full original `String` the Substring was sliced from.
