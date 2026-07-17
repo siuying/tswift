@@ -1637,7 +1637,7 @@
         {
           "name": "presentationDetents",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "presentationDragIndicator",
@@ -1702,7 +1702,7 @@
         {
           "name": "projectionEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "redacted",
@@ -1907,7 +1907,7 @@
         {
           "name": "sensoryFeedback",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "shadow",
@@ -1997,7 +1997,7 @@
         {
           "name": "symbolEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "symbolEffectsRemoved",
@@ -2242,7 +2242,7 @@
         {
           "name": "transformEffect",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transformEnvironment",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 305,
+        "implemented": 310,
         "partial": 11,
-        "missing": 152,
+        "missing": 147,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 408,
+    "implemented": 413,
     "partial": 20,
-    "missing": 274,
+    "missing": 269,
     "out_of_scope": 0,
     "total": 702
   }
