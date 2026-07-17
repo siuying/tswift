@@ -1352,7 +1352,7 @@
         {
           "name": "onCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onContinueUserActivity",
@@ -1457,7 +1457,7 @@
         {
           "name": "onPasteCommand",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onPencilDoubleTap",
@@ -1572,7 +1572,7 @@
         {
           "name": "phaseAnimator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "pickerStyle",
@@ -1597,7 +1597,7 @@
         {
           "name": "preference",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "preferredColorScheme",
@@ -2252,7 +2252,7 @@
         {
           "name": "transformPreference",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "transition",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 341,
+        "implemented": 346,
         "partial": 11,
-        "missing": 116,
+        "missing": 111,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 444,
+    "implemented": 449,
     "partial": 20,
-    "missing": 238,
+    "missing": 233,
     "out_of_scope": 0,
     "total": 702
   }
