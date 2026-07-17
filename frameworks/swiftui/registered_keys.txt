@@ -103,6 +103,7 @@ View.containerBackground
 View.containerCornerOffset
 View.containerRelativeFrame
 View.containerShape
+View.containerValue
 View.contentCaptureProtected
 View.contentMargins
 View.contentShape
@@ -134,6 +135,7 @@ View.drawingGroup
 View.dropDestination
 View.dynamicTypeSize
 View.edgesIgnoringSafeArea
+View.environment
 View.environmentObject
 View.equatable
 View.exportsItemProviders
@@ -149,6 +151,8 @@ View.flipsForRightToLeftLayoutDirection
 View.focusEffectDisabled
 View.focusSection
 View.focusable
+View.focusedSceneValue
+View.focusedValue
 View.font
 View.fontDesign
 View.fontWeight

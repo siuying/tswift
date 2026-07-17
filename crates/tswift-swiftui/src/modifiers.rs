@@ -78,6 +78,37 @@ modifier!(modifier_minimum_scale_factor, "minimumScaleFactor");
 modifier!(modifier_allows_tightening, "allowsTightening");
 modifier!(modifier_labels_hidden, "labelsHidden");
 modifier!(modifier_help, "help");
+// Scoped-value modifiers: write a value into an environment / focused-value /
+// container-value key path. The key path is an opaque runtime function with no
+// stable serialization, so it is dropped; only the written value is recorded
+// (recorded-only tier). The no-arg `environment` object form records nothing.
+macro_rules! scoped_value_modifier {
+    ($fn_name:ident, $swift_name:literal) => {
+        pub(crate) fn $fn_name(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            args: Vec<Arg>,
+        ) -> StdResult {
+            let value = args
+                .into_iter()
+                .filter(|a| !matches!(a.value, SwiftValue::Closure(_)))
+                .next_back();
+            let margs = match value {
+                Some(arg) => vec![Arg {
+                    label: None,
+                    value: arg.value,
+                    static_ty: None,
+                }],
+                None => Vec::new(),
+            };
+            append_modifier(recv, make_modifier($swift_name, margs))
+        }
+    };
+}
+scoped_value_modifier!(modifier_environment, "environment");
+scoped_value_modifier!(modifier_focused_value, "focusedValue");
+scoped_value_modifier!(modifier_focused_scene_value, "focusedSceneValue");
+scoped_value_modifier!(modifier_container_value, "containerValue");
 modifier!(modifier_scroll_disabled, "scrollDisabled");
 // List & scroll styling. No-arg render hints (compositingGroup/drawingGroup/
 // unredacted), Bool toggles (scrollClipDisabled/interactiveDismissDisabled/
@@ -1073,6 +1104,10 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("allowsTightening", modifier_allows_tightening),
     ("labelsHidden", modifier_labels_hidden),
     ("help", modifier_help),
+    ("environment", modifier_environment),
+    ("focusedValue", modifier_focused_value),
+    ("focusedSceneValue", modifier_focused_scene_value),
+    ("containerValue", modifier_container_value),
     ("scrollDisabled", modifier_scroll_disabled),
     ("compositingGroup", modifier_compositing_group),
     ("drawingGroup", modifier_drawing_group),
