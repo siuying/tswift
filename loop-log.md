@@ -1147,3 +1147,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   code, so it was left out rather than faked.
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated.
+
+## Coverage iteration — SwiftUI closure-driven effect/scroll/event mods (+10)
+
+- **SwiftUI 454→464 impl, 434→444 verified (61.8% → 63.2%)**; View section
+  341 verified. Golden-verified via new `closure-effect-modifiers` fixture.
+- Addresses the flagged `visualEffect` / `transaction` blockers plus a coherent
+  family of closure-driven modifiers, all at an honest **recorded-only** tier:
+  - `transaction { }`, `visualEffect { }`, `transformEnvironment(_:_:)`,
+    `scrollTransition { }`, `onGeometryChange(for:of:action:)`,
+    `onScrollGeometryChange(...)`, `onScrollPhaseChange { }`,
+    `onScrollVisibilityChange(threshold:_:)`, `onPreferenceChange(_:perform:)`,
+    `onModifierKeysChanged { }`.
+- New `closure_modifier!` macro: appends a bare marker (so hosts know the
+  listener/effect is present) and stashes the trailing closure under the same
+  event key via the existing `attach_event` seam — closures never serialize.
+  The closure's argument (`Transaction`/`GeometryProxy`/`ScrollGeometry`/
+  preference value) is not synthesized by a headless runtime, so the body is
+  not invoked; non-closure args (metatypes, key paths) are dropped from the
+  marker. Registered through the `MODIFIER_FNS` table (coverage keys) and the
+  hardcoded `registered_keys_cover_v1_constructors` expectation was updated.
+- **Fidelity tier (honest)**: recorded-only — markers cross the UIIR boundary
+  in order; no live effect/scroll/preference wiring. Hosts honor or ignore.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated.
