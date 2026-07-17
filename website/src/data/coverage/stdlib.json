@@ -2205,7 +2205,7 @@
         {
           "name": "makeIterator",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "max",
@@ -2329,9 +2329,9 @@
         }
       ],
       "counts": {
-        "implemented": 29,
+        "implemented": 30,
         "partial": 0,
-        "missing": 24,
+        "missing": 23,
         "out_of_scope": 0,
         "total": 53
       }
@@ -2407,7 +2407,7 @@
         {
           "name": "indices",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -2506,9 +2506,9 @@
         }
       ],
       "counts": {
-        "implemented": 20,
+        "implemented": 21,
         "partial": 0,
-        "missing": 13,
+        "missing": 12,
         "out_of_scope": 0,
         "total": 33
       }
@@ -2762,9 +2762,9 @@
     }
   ],
   "totals": {
-    "implemented": 374,
+    "implemented": 376,
     "partial": 0,
-    "missing": 137,
+    "missing": 135,
     "out_of_scope": 0,
     "total": 511
   }

@@ -827,7 +827,7 @@
         {
           "name": "fullScreenCover",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "gaugeStyle",
@@ -1587,7 +1587,7 @@
         {
           "name": "popover",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "position",
@@ -1917,7 +1917,7 @@
         {
           "name": "sheet",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "simultaneousGesture",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 295,
+        "implemented": 298,
         "partial": 11,
-        "missing": 162,
+        "missing": 159,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 398,
+    "implemented": 401,
     "partial": 20,
-    "missing": 284,
+    "missing": 281,
     "out_of_scope": 0,
     "total": 702
   }
