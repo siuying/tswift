@@ -20,6 +20,7 @@
 //! conference providers, NSError-domain bridging).
 
 mod enums;
+mod objects;
 mod registry;
 
 #[cfg(test)]

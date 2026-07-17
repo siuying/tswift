@@ -1,0 +1,8 @@
+alarm offset: -300.0
+alarm proximity: enter
+location: Office r=50.0
+alarm has location: true
+recurrence ends after: 10
+day of week: tuesday week 2
+rule freq: weekly interval: 2
+rule end count: 10
