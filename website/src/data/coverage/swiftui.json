@@ -1357,7 +1357,7 @@
         {
           "name": "onContinueUserActivity",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onContinuousHover",
@@ -1392,17 +1392,17 @@
         {
           "name": "onDragSessionUpdated",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onDrop",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onDropSessionUpdated",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onExitCommand",
@@ -1422,12 +1422,12 @@
         {
           "name": "onInteractiveResizeChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onKeyPress",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onLongPressGesture",
@@ -1437,7 +1437,7 @@
         {
           "name": "onLongTouchGesture",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onModifierKeysChanged",
@@ -1497,7 +1497,7 @@
         {
           "name": "onScrollTargetVisibilityChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onScrollVisibilityChange",
@@ -1517,12 +1517,12 @@
         {
           "name": "onVolumeViewpointChange",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "onWorldRecenter",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "opacity",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 356,
+        "implemented": 366,
         "partial": 11,
-        "missing": 101,
+        "missing": 91,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 459,
+    "implemented": 469,
     "partial": 20,
-    "missing": 223,
+    "missing": 213,
     "out_of_scope": 0,
     "total": 702
   }
