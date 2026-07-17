@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Closure-driven layout / effect / scroll / event modifiers (recorded-only).
 // Each records a bare marker; the trailing closure is stashed under the same
 // event key and never serialized (a headless runtime synthesizes no

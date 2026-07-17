@@ -1,3 +1,5 @@
+import SwiftUI
+
 // C6 — list & scroll styling modifiers. Verifies the no-arg render hints
 // (compositingGroup, drawingGroup, unredacted), the Bool toggles
 // (scrollClipDisabled, interactiveDismissDisabled, accessibilityHidden,

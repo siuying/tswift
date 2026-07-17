@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Window / scene / container token modifiers. Verifies Edge.Set (scenePadding,
 // defersSystemGestures), Axis.Set (containerRelativeFrame), Visibility
 // (pointerVisibility) tokens reusing existing namespaces, and the four

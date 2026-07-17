@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Explicit SwiftUI RGB colors are semantic RGBA values, not host-specific
 // pixels. The UIIR golden covers both default and non-default opacity.
 struct ColorRgbaView: View {

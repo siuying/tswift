@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Token-valued modifiers resolved via the typed seam: each leading-dot arg
 // resolves against a dedicated parameter type, so shared names like
 // .automatic / .fill / .circle never collide with other namespaces.

@@ -1,3 +1,5 @@
+import SwiftUI
+
 // C5 — graphic/visual-effect modifiers. Verifies the Core Animation-style
 // filters that record a scalar, Bool, token, Color, or Angle the host applies:
 // blur/brightness/contrast/saturation/grayscale, colorInvert/colorMultiply,

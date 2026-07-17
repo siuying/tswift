@@ -1,3 +1,6 @@
+import Foundation
+import SwiftUI
+
 // Value-passthrough render/effect & dialog/file-picker metadata modifiers.
 // Each records a scalar / Angle+axis tuple / KeyEquivalent / nested shape or
 // Image / String / Bool / URL straight onto the view node (no leading-dot

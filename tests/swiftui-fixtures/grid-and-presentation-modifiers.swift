@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Grid cell/column layout modifiers reusing UnitPoint / HorizontalAlignment /
 // Axis.Set namespaces, scroll/presentation/material/palette token modifiers
 // with dedicated namespaces, and Color value passthroughs (listItemTint,

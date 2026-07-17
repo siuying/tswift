@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Search recording modifiers. Verifies:
 // - searchable(text:placement:prompt:) snapshots the bound query text and
 //   records the SearchFieldPlacement token + prompt;

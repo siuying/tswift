@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Token modifiers with dedicated namespaces (alternatingRowBackgrounds,
 // buttonSizing, defaultAdaptableTabBarPlacement, tabBarMinimizeBehavior,
 // searchPresentationToolbarBehavior, searchToolbarBehavior,

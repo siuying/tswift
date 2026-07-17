@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Gesture-composition, rename-action, and @ViewBuilder-content modifiers.
 // - highPriorityGesture / simultaneousGesture lower to the same marker+handler
 //   route as .gesture(_:) (onTapGesture / onLongPressGesture markers);

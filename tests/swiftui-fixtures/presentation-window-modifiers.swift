@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Presentation/search/window View modifiers. Token modifiers with dedicated
 // namespaces (presentationContentInteraction, presentationSizing,
 // searchDictationBehavior, windowToolbarFullScreenVisibility), a reused

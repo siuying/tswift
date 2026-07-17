@@ -56,7 +56,8 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         sector_mark_init,
         vec![
             BuiltinParam::labeled("angle", "PlottableValue"),
-            BuiltinParam::labeled("innerRadius", "CGFloat"),
+            BuiltinParam::labeled("innerRadius", "MarkDimension"),
+            BuiltinParam::labeled("outerRadius", "MarkDimension"),
             BuiltinParam::labeled("angularInset", "CGFloat"),
         ],
     );

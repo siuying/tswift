@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Value-passthrough (scalar/color/string/edge) and nested-view modifiers that
 // carry no leading-dot token: they never contend in the implicit-member
 // namespace, so the host interprets the recorded name + args directly.

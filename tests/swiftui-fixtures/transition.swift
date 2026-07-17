@@ -1,3 +1,5 @@
+import SwiftUI
+
 // UI9 — AnyTransition factories and combinators. Exercises the `AnyTransition`
 // value type end to end via `.transition(_:)`: the built-in curves (opacity,
 // slide, scale, identity), parameterized forms (scale(anchor:), move, push,

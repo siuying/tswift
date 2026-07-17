@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Preference / phase-animation / command modifiers (recorded-only).
 // `preference(key:value:)` records the value payload (the key metatype is not
 // representable and is dropped); the closure-driven ones record a bare marker

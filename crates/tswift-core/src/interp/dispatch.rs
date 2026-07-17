@@ -1071,14 +1071,20 @@ impl<'w> Interpreter<'w> {
                         .and_then(|a| a.place.clone());
                     if let Some(into_place) = into_place {
                         let labeled: Vec<Arg> = raw_args.iter().map(Arg::from).collect();
-                        if let Some(entry) = self.builtins.labeled_intrinsic(kind, "hash") {
-                            match (entry.func)(self, base_value.clone(), labeled) {
-                                Ok(Some(o)) => {
-                                    self.write_place(&into_place, o.result)?;
-                                    return Ok(Some(SwiftValue::Void));
+                        if let Some((entry, module)) = self
+                            .builtins
+                            .labeled_intrinsic(kind, "hash")
+                            .map(|t| (t.value, t.module))
+                        {
+                            if self.module_symbol_visible(module) {
+                                match (entry.func)(self, base_value.clone(), labeled) {
+                                    Ok(Some(o)) => {
+                                        self.write_place(&into_place, o.result)?;
+                                        return Ok(Some(SwiftValue::Void));
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => return Err(Self::std_error_to_signal(e)),
                                 }
-                                Ok(None) => {}
-                                Err(e) => return Err(Self::std_error_to_signal(e)),
                             }
                         }
                     }

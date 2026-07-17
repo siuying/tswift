@@ -1,3 +1,5 @@
+import SwiftUI
+
 // C1 — Text typography modifiers (Text -> Text). Verifies the weight/emphasis
 // stylers (bold, italic, underline, strikethrough) alongside the numeric
 // letter-spacing/baseline adjustments (kerning, tracking, baselineOffset) and

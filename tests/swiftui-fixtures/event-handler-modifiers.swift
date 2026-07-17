@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Single-closure event-handler modifiers: each records a marker; the closure
 // is bound under a distinct handler key and never serializes (only the marker
 // reaches the UIIR).

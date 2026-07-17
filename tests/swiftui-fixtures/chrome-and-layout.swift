@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Visibility-token chrome modifiers (Visibility `.visible` / `.hidden`) and
 // scalar layout modifiers (Int span / CGFloat width/spacing/height), all
 // recorded straight onto the view node.

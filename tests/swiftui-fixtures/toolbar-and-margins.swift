@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Toolbar bar-targeted modifiers (Visibility / ColorScheme token + a `for:`
 // ToolbarPlacement bar selector) plus value passthroughs contentMargins
 // (CGFloat) and previewDevice (String). Verifies the new ToolbarPlacement

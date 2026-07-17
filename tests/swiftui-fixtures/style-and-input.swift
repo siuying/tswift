@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Container/control style modifiers (each carries a leading-dot `_ControlStyle`
 // token; the host disambiguates by modifier name) plus text-input modifiers
 // (submitLabel/textInputAutocapitalization tokens, autocorrectionDisabled/

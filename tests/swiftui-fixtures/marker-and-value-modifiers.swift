@@ -1,3 +1,5 @@
+import SwiftUI
+
 // No-arg marker modifiers (all-defaulted overloads → bare call) and
 // single-value passthroughs that carry no leading-dot token.
 struct V: View {

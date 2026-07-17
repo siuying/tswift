@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Search / status-bar / section-margin / glass token & value modifiers. Each
 // records its real value (String, Bool, Edge.Set + CGFloat, Glass token +
 // nested shape) onto the view node.

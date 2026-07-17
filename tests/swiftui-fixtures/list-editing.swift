@@ -1,3 +1,5 @@
+import SwiftUI
+
 // List-editing, row-layout, and misc identity modifiers. Each records a scalar,
 // Bool, String, or passthrough value (no leading-dot token): deleteDisabled /
 // moveDisabled / selectionDisabled (Bool), listRowSpacing / listSectionSpacing

@@ -8,6 +8,9 @@ use tswift_core::{
 
 /// Register the `Int`/`Double` intrinsics of this slice.
 pub fn install(interp: &mut Interpreter<'_>) {
+    // `Double.sign` results (stdlib type, so registered under Swift, not
+    // Foundation, for strict import-gating).
+    interp.register_builtin_enum("FloatingPointSign", &["plus", "minus"]);
     // Int methods.
     method(interp, BuiltinReceiver::Int, "signum", int_signum);
     method(interp, BuiltinReceiver::Int, "isMultiple", int_is_multiple);

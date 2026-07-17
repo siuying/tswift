@@ -1,3 +1,5 @@
+import SwiftUI
+
 // More token-valued modifiers via the typed seam. Each leading-dot arg
 // resolves against a dedicated parameter type; several reuse shared names
 // (.small/.medium/.large/.none/.default/.words/.standard) that resolve

@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Additional style setters sharing the `_ControlStyle` token namespace. Each
 // carries a leading-dot token; the host disambiguates by the modifier name.
 // `.linear` is intentionally avoided for progressViewStyle (it collides with

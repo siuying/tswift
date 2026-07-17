@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Preference-value transforms and ornament content.
 // - background/overlayPreferenceValue take a (Value) -> View transform; the
 //   preference Value is not computed by a headless runtime, so they record a

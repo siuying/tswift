@@ -3,19 +3,34 @@
 use std::rc::Rc;
 
 use tswift_core::{Arg, BuiltinParam, StdContext, StdResult, StructObj, SwiftValue};
-use tswift_swiftui::{collect_children, container_value, view_value};
+use tswift_swiftui::{collect_children, container_value, keyed_rows, view_value};
 
 /// PlottableValue-typed x/y params shared by Bar/Line/Point/Area marks.
 pub(crate) fn xy_plottable_params() -> Vec<BuiltinParam> {
     vec![
         BuiltinParam::labeled("x", "PlottableValue"),
         BuiltinParam::labeled("y", "PlottableValue"),
+        BuiltinParam::labeled("series", "PlottableValue"),
+        BuiltinParam::labeled("width", "MarkDimension"),
+        BuiltinParam::labeled("height", "MarkDimension"),
+        BuiltinParam::labeled("stacking", "MarkStackingMethod"),
     ]
 }
 
 /// `Chart { marks… }` — container view collecting content-builder children.
+/// `Chart { … }` (static marks) or `Chart(data) { d in … }` / `Chart(data, id:)`
+/// (data-driven: sugar for a keyed `ForEach` of marks — one mark subtree per
+/// element, keyed like `ForEach` so hosts can diff rows).
 pub(crate) fn chart_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    Ok(container_value("Chart", collect_children(ctx, args)?))
+    let data_driven = args
+        .iter()
+        .any(|a| a.label.is_none() && !matches!(a.value, SwiftValue::Closure(_)));
+    let children = if data_driven {
+        keyed_rows(ctx, args, "Chart")?
+    } else {
+        collect_children(ctx, args)?
+    };
+    Ok(container_value("Chart", children))
 }
 
 /// Build a mark leaf view from the subset of `wanted` labels present in `args`
@@ -50,22 +65,26 @@ pub(crate) fn mark_leaf_all_labeled(kind: &str, args: Vec<Arg>) -> StdResult {
 
 /// `BarMark(x:y:)` — mark leaf carrying its plottable x/y args.
 pub(crate) fn bar_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    mark_leaf("BarMark", args, &["x", "y"])
+    mark_leaf(
+        "BarMark",
+        args,
+        &["x", "y", "width", "height", "stacking", "series"],
+    )
 }
 
 /// `LineMark(x:y:)` — line series mark.
 pub(crate) fn line_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    mark_leaf("LineMark", args, &["x", "y"])
+    mark_leaf("LineMark", args, &["x", "y", "series"])
 }
 
 /// `PointMark(x:y:)` — scatter/point mark.
 pub(crate) fn point_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    mark_leaf("PointMark", args, &["x", "y"])
+    mark_leaf("PointMark", args, &["x", "y", "series"])
 }
 
 /// `AreaMark(x:y:)` — filled area under a series.
 pub(crate) fn area_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    mark_leaf("AreaMark", args, &["x", "y"])
+    mark_leaf("AreaMark", args, &["x", "y", "stacking", "series"])
 }
 
 /// `RuleMark(...)` — store whatever labeled PlottableValue args are passed
@@ -84,7 +103,7 @@ pub(crate) fn sector_mark_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> Std
     mark_leaf(
         "SectorMark",
         args,
-        &["angle", "innerRadius", "angularInset"],
+        &["angle", "innerRadius", "outerRadius", "angularInset"],
     )
 }
 

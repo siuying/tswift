@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Container-corner / assistive-icon / section-index / hover-group / nav-
 // transition modifiers. Each records its real value (Edge.Set token + Bool,
 // String, no-arg, NavigationTransition token) onto the view node.

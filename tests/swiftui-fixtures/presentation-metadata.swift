@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Presentation / window / list metadata passthrough modifiers. Verifies that
 // each records its scalar / Bool / String / [String] / URL / token value onto
 // the view node so the serialized UIIR carries the semantic data. The hosts

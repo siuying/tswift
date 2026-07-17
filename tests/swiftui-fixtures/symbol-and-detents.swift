@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Token/value passthrough modifiers: `.symbolEffect` (SymbolEffect token),
 // `.sensoryFeedback` (SensoryFeedback token + a `trigger:` value),
 // `.presentationDetents` (a `[PresentationDetent]` token array), and the

@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct AlertView: View {
     @State private var show = false
     @State private var confirmed = 0

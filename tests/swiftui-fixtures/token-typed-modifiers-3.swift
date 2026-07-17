@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Third typed-seam token batch: text-content/selection, scroll input, dialog
 // severity, default hover effect (reusing HoverEffect) and presentation drag
 // indicator (reusing Visibility).

@@ -22,6 +22,26 @@ struct PlottableValue {
         PlottableValue(label: label, value: value)
     }
 }
+// A mark's along-axis size. `.automatic` (scale-driven) plus the explicit
+// `.fixed(_)`/`.ratio(_)`/`.inset(_)` builders; serialized as
+// `{"$":"markDimension","kind":…,"value":…}`.
+struct MarkDimension {
+    let kind: String
+    let value: Double
+    static let automatic = MarkDimension(kind: "automatic", value: 0)
+    static func fixed(_ value: Double) -> MarkDimension { MarkDimension(kind: "fixed", value: value) }
+    static func ratio(_ value: Double) -> MarkDimension { MarkDimension(kind: "ratio", value: value) }
+    static func inset(_ value: Double) -> MarkDimension { MarkDimension(kind: "inset", value: value) }
+}
+// How overlapping marks in the same x-position combine. Pure token (the
+// parameterized cases are out of scope v1).
+struct MarkStackingMethod {
+    let token: String
+    static let standard = MarkStackingMethod(token: "standard")
+    static let center = MarkStackingMethod(token: "center")
+    static let normalized = MarkStackingMethod(token: "normalized")
+    static let unstacked = MarkStackingMethod(token: "unstacked")
+}
 // Line/area interpolation token (`.interpolationMethod(.catmullRom)`).
 struct InterpolationMethod {
     let token: String

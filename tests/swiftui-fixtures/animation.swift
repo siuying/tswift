@@ -1,3 +1,5 @@
+import SwiftUI
+
 // UI9 — Animation curve factories. Exercises the `Animation` value type end to
 // end: the standard `.default` curve (reachable via backtick-escaped keyword),
 // the timing/ease families, the spring families, and the new custom curves

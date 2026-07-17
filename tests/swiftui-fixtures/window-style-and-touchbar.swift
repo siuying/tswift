@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Scene/window presentation-style token modifiers plus a Bool passthrough.
 // `.presentedWindowStyle` (WindowStyle token), `.presentedWindowToolbarStyle`
 // (WindowToolbarStyle token), `.typesettingLanguage` (TypesettingLanguage

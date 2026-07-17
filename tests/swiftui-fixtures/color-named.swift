@@ -1,3 +1,5 @@
+import SwiftUI
+
 // UI3 — Color system palette. Verifies the named system colors stay semantic
 // tokens across the UIIR boundary, plus `accentColor`, the primary/secondary
 // content colors, and the `.opacity(_:)` alpha adjustment on both named and

@@ -1,3 +1,6 @@
+import SwiftUI
+import Charts
+
 // Accessibility metadata modifiers. Verifies the semantic-data modifiers that
 // record onto the view node: trait sets (AccessibilityTraits), heading rank
 // (AccessibilityHeadingLevel), element grouping (AccessibilityChildBehavior),

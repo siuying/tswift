@@ -1,3 +1,5 @@
+import SwiftUI
+
 struct ConfirmDialogView: View {
     @State private var show = false
     @State private var choice = "none"

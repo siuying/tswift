@@ -1,3 +1,5 @@
+import SwiftUI
+
 // C7 — token-enum view modifiers. Verifies the modifiers that carry a typed
 // leading-dot token: blendMode (BlendMode), controlSize (ControlSize),
 // symbolRenderingMode (SymbolRenderingMode), redacted(reason:)

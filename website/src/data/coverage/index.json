@@ -2,13 +2,13 @@
   "frameworks": [
     {
       "framework": "charts",
-      "display_name": "Swift Charts",
+      "display_name": "Charts",
       "totals": {
-        "implemented": 16,
-        "partial": 0,
-        "missing": 3,
-        "out_of_scope": 0,
-        "total": 19
+        "implemented": 0,
+        "partial": 58,
+        "missing": 2,
+        "out_of_scope": 7,
+        "total": 67
       }
     },
     {

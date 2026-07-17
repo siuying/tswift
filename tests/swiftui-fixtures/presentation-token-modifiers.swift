@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Token modifiers introducing dedicated namespaces (each typed so its
 // leading-dot member arg resolves contextually) plus `edgesIgnoringSafeArea`
 // (reusing the Edge.Set namespace) and `backgroundStyle` (a Color value

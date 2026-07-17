@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Nested-subtree View modifiers: `.contentShape` (hit-test shape, recorded like
 // `clipShape`), `.swipeActions` (row action buttons as a nested subtree),
 // `.safeAreaInset`/`.safeAreaBar` (edge-pinned inset/bar views), and

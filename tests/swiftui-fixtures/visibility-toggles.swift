@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Chrome-visibility & interaction-disabling toggles plus accessibility speech
 // hints. Each carries a plain Bool / String / Double value (no leading-dot
 // token); the host records the scalar straight onto the view node.

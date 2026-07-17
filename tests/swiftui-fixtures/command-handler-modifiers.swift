@@ -1,3 +1,5 @@
+import SwiftUI
+
 // More single-closure event handlers: edit/pencil/hover commands. Each records
 // a marker; the closure binds under a distinct handler key and never
 // serializes.

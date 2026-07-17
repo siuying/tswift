@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Namespace geometry-identity modifiers (recorded-only). A `@Namespace` yields
 // an opaque identity token (no layout engine to match geometry in a headless
 // runtime), so `matchedGeometryEffect`/`matchedTransitionSource` record their

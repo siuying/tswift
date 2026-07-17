@@ -1,3 +1,5 @@
+import SwiftUI
+
 // Container / layout / bar-item recording modifiers. Verifies:
 // - containerBackground(_:for:) with a ShapeStyle token + placement token, and
 //   the containerBackground(for:) { content } @ViewBuilder form;
