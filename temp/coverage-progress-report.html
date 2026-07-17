@@ -19,12 +19,12 @@
 </head>
 <body>
 <h1>tswift Coverage Progress Report</h1>
-<p class="muted">Generated 2026-07-17 · continued coverage loop (worker pi/claude, advisor pi/fable-5) · all commits presubmit-green on <code>main</code> · latest: Swift Charts stood up (ADR-0020)</p>
+<p class="muted">Generated 2026-07-17 · continued coverage loop (worker pi/claude, advisor pi/fable-5) · all commits presubmit-green on <code>main</code> · latest: buffer-pointer access on collections + strings</p>
 
 <h2>Overall coverage</h2>
 <table>
 <tr><th>Framework</th><th>Implemented</th><th>Verified</th><th>Session start</th><th>Now</th><th></th></tr>
-<tr><td>Swift stdlib</td><td>388 / 511</td><td>388 / 511</td><td>71.2%</td><td class="up">75.9%</td><td><span class="bar"><span style="width:76%"></span></span></td></tr>
+<tr><td>Swift stdlib</td><td>396 / 511</td><td>396 / 511</td><td>71.2%</td><td class="up">77.5%</td><td><span class="bar"><span style="width:78%"></span></span></td></tr>
 <tr><td>Foundation</td><td>467 / 615</td><td>465 / 615</td><td>65.2%</td><td class="up">75.9%</td><td><span class="bar"><span style="width:76%"></span></span></td></tr>
 <tr><td>SwiftUI</td><td>438 / 702</td><td>418 / 702</td><td>13.2%</td><td class="up">62.4%</td><td><span class="bar"><span style="width:62%"></span></span></td></tr>
 <tr><td>SwiftData</td><td>27 / 114</td><td>25 / 114</td><td>8.8%</td><td class="up">23.7%</td><td><span class="bar"><span style="width:24%"></span></span></td></tr>
@@ -38,6 +38,7 @@
 <li><strong>Foundation +10.7 pts</strong> — <code>Date.FormatStyle</code> executable formatting; <code>Decimal</code> truncating-remainder arithmetic; directory URLs via OS paths; <code>IndexSet</code> Collection index conformance.</li>
 <li><strong>SwiftData +14.9 pts</strong> — real SQL persistence: per-table DELETE (<code>deleteAllData</code>), change tracking, LIMIT/OFFSET pagination, schema entity names; CLI golden fixture exercising the full flow.</li>
 <li><strong>stdlib +2 pts</strong> — <code>formIndex</code> with dispatcher inout write-back, scalar and collection dispatch additions.</li>
+<li><strong>stdlib +1.6 pts</strong> — buffer-pointer access: <code>withUnsafeBufferPointer</code> / <code>withContiguousStorageIfAvailable</code> on Array/ArraySlice/ContiguousArray (elements exposed as a contiguous Array buffer, read-only tier); String/Substring return nil (no contiguous Character storage). 396/511 verified.</li>
 <li>Website coverage JSON regenerated and verified in sync (<code>scripts/generate-coverage-json.sh --check</code> clean; 8/8 JSON tests pass).</li>
 </ul>
 
@@ -47,7 +48,8 @@
 <tr><td>Dictionary</td><td>90.6%</td><td>Double</td><td>89.8%</td></tr>
 <tr><td>Int</td><td>88.0%</td><td>Set</td><td>83.3%</td></tr>
 <tr><td>Bool</td><td>76.9%</td><td>Array</td><td>68.8%</td></tr>
-<tr><td>Substring</td><td>72.7%</td><td>String</td><td>67.9%</td></tr>
+<tr><td>Array</td><td>75.0%</td><td>Substring</td><td>75.8%</td></tr>
+<tr><td>ContiguousArray</td><td>73.3%</td><td>String</td><td>69.8%</td></tr>
 </table>
 <table>
 <tr><th>SwiftUI section</th><th>verified</th><th>notes</th></tr>
@@ -69,7 +71,7 @@
 <li><strong>Renderer parity</strong> — many new modifiers are verified at UIIR-serialization level; web/iOS host appliers for rendering behavior are a separate tier (per verifier review).</li>
 <li><strong>Swift Charts — STOOD UP</strong> (ADR-0020): registered as a first-class framework (frameworks.toml + generated inventory from the iOS SDK swiftinterface + scope manifest + registry dump). Stage-1 <code>charts</code> module in <code>tswift-swiftui</code> implements the <code>Chart</code> container (static + data-driven) and the seven core marks (<code>BarMark</code>/<code>LineMark</code>/<code>PointMark</code>/<code>AreaMark</code>/<code>RuleMark</code>/<code>RectangleMark</code>/<code>SectorMark</code>) as SwiftUI view nodes with <code>PlottableValue</code>/<code>MarkDimension</code>/<code>MarkStackingMethod</code> channels, golden-verified via the <code>charts</code> render fixture. <strong>84.2% impl+verified</strong> of the tracked stage-1 surface (16/19; remaining 3 = Chart.body + literal-init dimensions + operator ==). Fidelity tier named honestly: channels-recorded, host-drawn (no scale/axis/legend/binning).</li>
 <li><strong>SwiftData</strong> — query predicates/sort descriptors and relationship graph remain (27/114).</li>
-<li><strong>String/Substring stdlib</strong> — added <code>String(repeating:count:)</code>, <code>String(_:radix:uppercase:)</code>, <code>Substring(_:)</code> initializers and marked <code>subscript</code>/<code>~=</code> (String +5.7 pts → 62.3%, Substring +9.1 pts → 72.7%). Remaining: <code>span</code>/<code>utf8Span</code>, <code>withCString</code>/<code>withUTF8</code> (C-string closures), <code>write</code> (<code>TextOutputStream</code>).</li>
+<li><strong>String/Substring stdlib</strong> — added <code>String(repeating:count:)</code>, <code>String(_:radix:uppercase:)</code>, <code>Substring(_:)</code> initializers and marked <code>subscript</code>/<code>~=</code> (String +5.7 pts → 62.3%, Substring +9.1 pts → 72.7%). Also added <code>withContiguousStorageIfAvailable</code> (returns nil — no contiguous Character storage). Remaining: <code>span</code>/<code>utf8Span</code>, <code>withCString</code>/<code>withUTF8</code> (C-string closures), <code>write</code> (<code>TextOutputStream</code>).</li>
 </ul>
 
 <p class="muted">Sources: <code>tools/stdlib-inventory/coverage.py</code>, <code>tools/framework-inventory/coverage.py</code>, <code>loop-log.md</code>, verifier transcripts of loop 5b1244cd.</p>

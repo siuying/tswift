@@ -1023,3 +1023,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   marks are filtered out of the swiftui registry dump).
 - presubmit green (fmt + clippy + tests + wasm smoke + website checks);
   coverage JSON regenerated + drift-clean; HTML progress report refreshed.
+
+## Coverage iteration — buffer-pointer access (stdlib +1.6 pts)
+
+- **Stdlib 388 → 396 verified (75.9% → 77.5%)**. New members, all
+  golden-verified via `stdlib_buffer_pointer` CLI fixture:
+  - `withUnsafeBufferPointer(_:)` and `withContiguousStorageIfAvailable(_:)`
+    on Array, ArraySlice, ContiguousArray. The elements are materialized into
+    a contiguous `Array` buffer value (a RandomAccessCollection, like
+    `UnsafeBufferPointer`) and passed to the body closure; `count`/subscript/
+    iteration/`reduce` resolve through the normal collection intrinsics.
+    Contiguous storage always succeeds for arrays → `.some(result)`.
+  - `withContiguousStorageIfAvailable(_:)` on String/Substring returns nil
+    *without* invoking the closure — correct Swift behavior, since a String's
+    backing store is UTF-8 bytes, not contiguous `Character` storage.
+- **Fidelity tier (honest)**: read-only. Buffer mutation
+  (`withUnsafeMutableBufferPointer`, `withContiguousMutableStorageIfAvailable`,
+  `mutableSpan`) needs inout closure-param write-back and is deferred.
+- Section moves: Array 68.8% → 75.0%, ArraySlice 65.5% → 72.4%,
+  ContiguousArray 66.7% → 73.3%, String 67.9% → 69.8%, Substring 72.7% → 75.8%.
+- Seam reuse: ArraySlice registers the shared `array` module fns; String/
+  Substring share `install_shared_text_methods`. buffer_value uses
+  `materialize_builtin_sequence` so it is receiver-agnostic.
+- presubmit green (fmt + clippy + tests + wasm smoke + website checks);
+  coverage JSON regenerated; HTML progress report refreshed.
