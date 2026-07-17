@@ -282,7 +282,7 @@
         {
           "name": "backgroundPreferenceValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "backgroundStyle",
@@ -1532,7 +1532,7 @@
         {
           "name": "ornament",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "overlay",
@@ -1542,7 +1542,7 @@
         {
           "name": "overlayPreferenceValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "padding",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 353,
+        "implemented": 356,
         "partial": 11,
-        "missing": 104,
+        "missing": 101,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 456,
+    "implemented": 459,
     "partial": 20,
-    "missing": 226,
+    "missing": 223,
     "out_of_scope": 0,
     "total": 702
   }
