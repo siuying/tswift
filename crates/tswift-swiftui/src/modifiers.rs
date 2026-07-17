@@ -89,6 +89,9 @@ modifier!(
     "touchBarCustomizationLabel"
 );
 modifier!(modifier_find_navigator, "findNavigator");
+modifier!(modifier_default_app_storage, "defaultAppStorage");
+// `.focusScope(_ namespace:)` records the opaque `@Namespace` identity token.
+modifier!(modifier_focus_scope, "focusScope");
 // Scoped-value modifiers: write a value into an environment / focused-value /
 // container-value key path. The key path is an opaque runtime function with no
 // stable serialization, so it is dropped; only the written value is recorded
@@ -1459,6 +1462,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         "matchedTransitionSource",
         modifier_matched_transition_source,
     ),
+    ("glassEffectID", modifier_glass_effect_id),
+    ("glassEffectUnion", modifier_glass_effect_union),
     ("renameAction", modifier_rename_action),
     // Event-listener modifiers (recorded-only: bare marker + stashed closure).
     ("onKeyPress", modifier_on_key_press),
@@ -1535,6 +1540,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
         modifier_touch_bar_customization_label,
     ),
     ("findNavigator", modifier_find_navigator),
+    ("defaultAppStorage", modifier_default_app_storage),
+    ("focusScope", modifier_focus_scope),
     (
         "backgroundPreferenceValue",
         modifier_background_preference_value,
@@ -2473,6 +2480,25 @@ pub(crate) fn modifier_matched_transition_source(
     args: Vec<Arg>,
 ) -> StdResult {
     matched_identity(recv, "matchedTransitionSource", args)
+}
+
+/// `.glassEffectID(_:in:)` / `.glassEffectUnion(id:namespace:)` — record the
+/// Liquid Glass identity `id:`; the `in:`/`namespace:` token is opaque in a
+/// headless runtime and is dropped (recorded-only tier).
+pub(crate) fn modifier_glass_effect_id(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    matched_identity(recv, "glassEffectID", args)
+}
+
+pub(crate) fn modifier_glass_effect_union(
+    _ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    matched_identity(recv, "glassEffectUnion", args)
 }
 
 fn matched_identity(recv: SwiftValue, name: &str, args: Vec<Arg>) -> StdResult {

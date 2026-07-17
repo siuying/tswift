@@ -118,6 +118,7 @@ View.cornerRadius
 View.cuttable
 View.datePickerStyle
 View.defaultAdaptableTabBarPlacement
+View.defaultAppStorage
 View.defaultHoverEffect
 View.defaultScrollAnchor
 View.defaultWheelPickerItemHeight
@@ -155,6 +156,7 @@ View.findNavigator
 View.fixedSize
 View.flipsForRightToLeftLayoutDirection
 View.focusEffectDisabled
+View.focusScope
 View.focusSection
 View.focusable
 View.focusedSceneValue
@@ -172,6 +174,8 @@ View.gaugeStyle
 View.geometryGroup
 View.gesture
 View.glassEffect
+View.glassEffectID
+View.glassEffectUnion
 View.grayscale
 View.gridCellAnchor
 View.gridCellColumns
