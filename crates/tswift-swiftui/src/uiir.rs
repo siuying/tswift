@@ -198,6 +198,7 @@ fn write_value(value: &SwiftValue, out: &mut String) {
             "AccessibilityHeadingLevel" => "headingLevel",
             "AccessibilityChildBehavior" => "childBehavior",
             "AccessibilityTextContentType" => "accessibilityTextContentType",
+            "ContainerBackgroundPlacement" => "containerBackgroundPlacement",
             "ColorScheme" => "colorScheme",
             "SymbolVariants" => "symbolVariant",
             "HoverEffect" => "hoverEffect",

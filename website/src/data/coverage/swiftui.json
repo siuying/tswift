@@ -392,7 +392,7 @@
         {
           "name": "containerBackground",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "containerCornerOffset",
@@ -1087,7 +1087,7 @@
         {
           "name": "layoutValue",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "lineHeight",
@@ -1277,7 +1277,7 @@
         {
           "name": "navigationBarItems",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "navigationBarTitle",
@@ -1667,7 +1667,7 @@
         {
           "name": "previewContext",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "previewDevice",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 322,
+        "implemented": 326,
         "partial": 11,
-        "missing": 135,
+        "missing": 131,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 425,
+    "implemented": 429,
     "partial": 20,
-    "missing": 257,
+    "missing": 253,
     "out_of_scope": 0,
     "total": 702
   }

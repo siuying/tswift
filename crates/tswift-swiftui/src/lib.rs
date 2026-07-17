@@ -395,6 +395,15 @@ struct AccessibilityTextContentType {
     static let spreadsheet = AccessibilityTextContentType(token: "spreadsheet")
     static let wordProcessing = AccessibilityTextContentType(token: "wordProcessing")
 }
+// `ContainerBackgroundPlacement` — the container scope for
+// `.containerBackground(_:for:)`. Leading-dot token namespace.
+struct ContainerBackgroundPlacement {
+    let token: String
+    static let navigation = ContainerBackgroundPlacement(token: "navigation")
+    static let navigationSplitView = ContainerBackgroundPlacement(token: "navigationSplitView")
+    static let tabView = ContainerBackgroundPlacement(token: "tabView")
+    static let window = ContainerBackgroundPlacement(token: "window")
+}
 // `AccessibilityChildBehavior` — how `.accessibilityElement(children:)` folds
 // descendant accessibility elements.
 struct AccessibilityChildBehavior {
@@ -1546,6 +1555,15 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         modifiers::modifier_accessibility_text_content_type,
         vec![BuiltinParam::positional("AccessibilityTextContentType")],
     );
+    interp.register_struct_method_typed(
+        "containerBackground",
+        modifiers::modifier_container_background,
+        vec![
+            BuiltinParam::positional("View"),
+            BuiltinParam::labeled("for", "ContainerBackgroundPlacement"),
+            BuiltinParam::labeled("alignment", "Alignment"),
+        ],
+    );
     // Token-valued modifiers whose leading-dot arg resolves against a dedicated
     // parameter type. Contextual typing is what lets shared tokens like
     // `.automatic`/`.fill`/`.circle`/`.small`/`.light`/`.medium` resolve per
@@ -2559,6 +2577,7 @@ mod tests {
                 "View.colorScheme",
                 "View.compositingGroup",
                 "View.confirmationDialog",
+                "View.containerBackground",
                 "View.containerCornerOffset",
                 "View.containerRelativeFrame",
                 "View.containerShape",
@@ -2654,6 +2673,7 @@ mod tests {
                 "View.labelsVisibility",
                 "View.layoutDirectionBehavior",
                 "View.layoutPriority",
+                "View.layoutValue",
                 "View.lineHeight",
                 "View.lineLimit",
                 "View.lineSpacing",
@@ -2686,6 +2706,7 @@ mod tests {
                 "View.multilineTextAlignment",
                 "View.navigationBarBackButtonHidden",
                 "View.navigationBarHidden",
+                "View.navigationBarItems",
                 "View.navigationBarTitle",
                 "View.navigationBarTitleDisplayMode",
                 "View.navigationDestination",
@@ -2736,6 +2757,7 @@ mod tests {
                 "View.presentationSizing",
                 "View.presentedWindowStyle",
                 "View.presentedWindowToolbarStyle",
+                "View.previewContext",
                 "View.previewDevice",
                 "View.previewDisplayName",
                 "View.previewInterfaceOrientation",

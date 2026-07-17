@@ -791,6 +791,11 @@ modifier!(
 modifier!(modifier_typesetting_language, "typesettingLanguage");
 modifier!(modifier_digital_crown_accessory, "digitalCrownAccessory");
 modifier!(modifier_touch_bar_item_principal, "touchBarItemPrincipal");
+// `layoutValue(key:value:)` records a custom `LayoutValueKey` metatype + value;
+// `previewContext(_:)` records a preview-context value passthrough. Both are
+// recorded straight onto the node (no token, no closure).
+modifier!(modifier_layout_value, "layoutValue");
+modifier!(modifier_preview_context, "previewContext");
 
 pub(crate) fn modifier_background(
     ctx: &mut dyn StdContext,
@@ -1520,6 +1525,10 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("typesettingLanguage", modifier_typesetting_language),
     ("digitalCrownAccessory", modifier_digital_crown_accessory),
     ("touchBarItemPrincipal", modifier_touch_bar_item_principal),
+    ("layoutValue", modifier_layout_value),
+    ("previewContext", modifier_preview_context),
+    ("navigationBarItems", modifier_navigation_bar_items),
+    ("containerBackground", modifier_container_background),
 ];
 
 /// `.tabItem { Label/Text/Image }` — record a tab's bar label (ADR-0013 §2).
@@ -1556,6 +1565,101 @@ fn modifier_tab_item(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>)
         None => Vec::new(),
     };
     append_modifier(recv, make_modifier("tabItem", margs))
+}
+
+/// `.navigationBarItems(leading:trailing:)` (deprecated bar-item API) — records
+/// the leading/trailing bar accessory views. Each argument is an ordinary
+/// `View` value (not a `@ViewBuilder` closure), expanded and serialized like
+/// `tabItem`'s nested label so the host builds the bar items.
+fn modifier_navigation_bar_items(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut margs: Vec<Arg> = Vec::new();
+    for arg in args {
+        let label = arg.label.clone();
+        let mut views = Vec::new();
+        match arg.value {
+            SwiftValue::Closure(id) => {
+                let block = ctx.eval_block_values(id)?;
+                expand_into(ctx, block, &mut views, 0, &[])?;
+            }
+            other => expand_into(ctx, other, &mut views, 0, &[])?,
+        }
+        let content = match views.len() {
+            0 => continue,
+            1 => views.into_iter().next().expect("len checked"),
+            _ => container_value("Group", views),
+        };
+        margs.push(Arg {
+            label,
+            value: content,
+            static_ty: None,
+        });
+    }
+    append_modifier(recv, make_modifier("navigationBarItems", margs))
+}
+
+/// `.containerBackground(_:for:)` / `.containerBackground(for:alignment:) { … }`
+/// — records a container-scoped background: a `ShapeStyle`/`Color` token (or a
+/// nested `@ViewBuilder` content subtree, lowered like `background`) plus the
+/// `for:` `ContainerBackgroundPlacement` token and an optional `alignment:`.
+pub(crate) fn modifier_container_background(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut placement: Option<SwiftValue> = None;
+    let mut alignment: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("for") => placement = Some(arg.value),
+            Some("alignment") => alignment = Some(arg.value),
+            _ => match arg.value {
+                token if token_of(&token).is_some() => content = Some(token),
+                view_or_closure => {
+                    let mut views = Vec::new();
+                    match view_or_closure {
+                        SwiftValue::Closure(id) => {
+                            let block = ctx.eval_block_values(id)?;
+                            expand_into(ctx, block, &mut views, 0, &[])?;
+                        }
+                        other => expand_into(ctx, other, &mut views, 0, &[])?,
+                    }
+                    content = match views.len() {
+                        0 => None,
+                        1 => Some(views.into_iter().next().expect("len checked")),
+                        _ => Some(container_value("ZStack", views)),
+                    };
+                }
+            },
+        }
+    }
+    let mut margs: Vec<Arg> = Vec::new();
+    if let Some(content) = content {
+        margs.push(Arg {
+            label: None,
+            value: content,
+            static_ty: None,
+        });
+    }
+    if let Some(placement) = placement {
+        margs.push(Arg {
+            label: Some("for".into()),
+            value: placement,
+            static_ty: None,
+        });
+    }
+    if let Some(alignment) = alignment {
+        margs.push(Arg {
+            label: Some("alignment".into()),
+            value: alignment,
+            static_ty: None,
+        });
+    }
+    append_modifier(recv, make_modifier("containerBackground", margs))
 }
 
 /// Build a [`HANDLERS_TYPE`] record from `(event, closure)` pairs. Only closure

@@ -94,6 +94,7 @@ View.colorMultiply
 View.colorScheme
 View.compositingGroup
 View.confirmationDialog
+View.containerBackground
 View.containerCornerOffset
 View.containerRelativeFrame
 View.containerShape
@@ -189,6 +190,7 @@ View.labelsHidden
 View.labelsVisibility
 View.layoutDirectionBehavior
 View.layoutPriority
+View.layoutValue
 View.lineHeight
 View.lineLimit
 View.lineSpacing
@@ -221,6 +223,7 @@ View.moveDisabled
 View.multilineTextAlignment
 View.navigationBarBackButtonHidden
 View.navigationBarHidden
+View.navigationBarItems
 View.navigationBarTitle
 View.navigationBarTitleDisplayMode
 View.navigationDestination
@@ -271,6 +274,7 @@ View.presentationDragIndicator
 View.presentationSizing
 View.presentedWindowStyle
 View.presentedWindowToolbarStyle
+View.previewContext
 View.previewDevice
 View.previewDisplayName
 View.previewInterfaceOrientation

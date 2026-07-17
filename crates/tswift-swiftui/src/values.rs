@@ -38,6 +38,7 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "AccessibilityHeadingLevel"
             | "AccessibilityChildBehavior"
             | "AccessibilityTextContentType"
+            | "ContainerBackgroundPlacement"
             | "SubmitLabel"
             | "TextInputAutocapitalization"
             | "ColorScheme"
