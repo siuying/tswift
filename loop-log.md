@@ -825,3 +825,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   (needs host geometry feedback), `.transaction` (animation-hint tier only).
 - presubmit green (incl. wasm smoke + website checks); website coverage JSON
   regenerated.
+
+## Coverage iteration — SwiftUI alert/confirmationDialog presentations
+
+- **SwiftUI**: 421 → 423 impl (60.0% → 60.3%), 401 → 403 verified (57.1% →
+  57.4%). Second presentation slice (ADR-0019): `.alert` and
+  `.confirmationDialog`. A title string gates a `@ViewBuilder` `actions` closure
+  (buttons) on a `Binding<Bool>`, with an optional `message:` closure rendered
+  into a `message` arg. Reuses the `_presentations`/`Presentation`-node
+  machinery; adds `title`/`message` args on the node.
+- **Auto-dismiss on action** (SwiftUI semantics): tapping any button inside an
+  alert/confirmationDialog closes it — implemented via `alert_ancestor_binding`
+  (nearest enclosing alert Presentation) writing the gate closed after the
+  action closure runs. Goldens `alert` (title+message, OK increments then
+  dismisses) and `confirmation-dialog` (two actions, second sets choice then
+  dismisses) verify insert/setText/remove patches.
+- **Parser limitation surfaced**: the canonical two-trailing-closure form
+  (`} message: {`) is not parseable (multi-trailing-closure unsupported, same
+  gap AsyncImage's `} placeholder: {` hit). Workaround: pass `message:`
+  explicitly in parens. Supporting multi-trailing-closure in the parser is the
+  next high-leverage lever (unlocks AsyncImage placeholder form + natural alert
+  syntax) but is a broader parser change.
+- Session arc: SwiftUI 59.5% → 60.3% impl (+5 presentation modifiers) across two
+  slices; stdlib 73.2% → 73.6%. presubmit green each time (incl. wasm smoke +
+  website checks); coverage JSON regenerated.
