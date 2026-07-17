@@ -1380,3 +1380,24 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Clears the previous slice's tripwire for typed leading-dot tokens.
 - Updated the hardcoded `registered_keys_cover_v1_constructors` expectation.
 - presubmit green; coverage JSON regenerated.
+
+## Coverage iteration — Hasher type + Hashable.hash(into:) (+15)
+
+- **Stdlib 401/511 → 416/514 verified (78.5% → 80.9%)**. Golden-verified via
+  new `stdlib_hasher` fixture.
+- New `BuiltinReceiver::Hasher` (Struct `_state` FNV-1a digest): `Hasher()`,
+  `combine(_:)`, `finalize()`.
+- `hash(into:)` registered across 13 builtin Hashable receivers (Int, Double,
+  Bool, String, Substring, Array/ArraySlice/ContiguousArray, Dictionary, Set,
+  Range, ClosedRange, Optional, ReversedCollection). The inout Hasher is
+  written back via a dispatcher interception mirroring `formIndex`: the type's
+  `hash` intrinsic folds the receiver digest into the passed Hasher and returns
+  it, the dispatcher writes it through the inout place.
+- **Fidelity tier (honest)**: fixed FNV-1a seed → deterministic digests across
+  runs (Swift randomizes per run); equal values still hash equally, the
+  observable contract.
+- Deliberately did **not** register `hash` on `BuiltinReceiver::Character`: a
+  Character is a `Str` at runtime (dispatches through String), and adding a lone
+  Character key would pull all 32 Character members into the targeted set and
+  deflate the roll-up.
+- presubmit green (only pre-existing warnings); coverage JSON regenerated.
