@@ -492,7 +492,7 @@
         {
           "name": "defaultAppStorage",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "defaultFocus",
@@ -747,7 +747,7 @@
         {
           "name": "focusScope",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "focusSection",
@@ -852,7 +852,7 @@
         {
           "name": "glassEffectID",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "glassEffectTransition",
@@ -862,7 +862,7 @@
         {
           "name": "glassEffectUnion",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "grayscale",
@@ -2346,9 +2346,9 @@
         }
       ],
       "counts": {
-        "implemented": 397,
+        "implemented": 401,
         "partial": 11,
-        "missing": 60,
+        "missing": 56,
         "out_of_scope": 0,
         "total": 468
       }
@@ -4089,9 +4089,9 @@
     }
   ],
   "totals": {
-    "implemented": 500,
+    "implemented": 504,
     "partial": 20,
-    "missing": 182,
+    "missing": 178,
     "out_of_scope": 0,
     "total": 702
   }
