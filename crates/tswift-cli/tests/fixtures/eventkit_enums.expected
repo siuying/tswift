@@ -1,0 +1,10 @@
+access: full
+span: this event
+entity: reminder
+availability: busy
+priority: high
+calendar: calDAV
+recurrence: weekly
+alarm: display
+weekday: monday
+participant: required

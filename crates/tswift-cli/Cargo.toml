@@ -18,6 +18,7 @@ tswift-foundation.workspace = true
 tswift-swiftdata.workspace = true
 tswift-swiftui.workspace = true
 tswift-charts.workspace = true
+tswift-eventkit.workspace = true
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 
 [dev-dependencies]
