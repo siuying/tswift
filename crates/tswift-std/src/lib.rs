@@ -15,6 +15,7 @@ mod bool;
 mod contiguousarray;
 mod dictionary;
 mod free;
+mod hasher;
 mod optional;
 mod range;
 mod reversedcollection;
@@ -36,6 +37,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
         contiguousarray::install(interp);
         bool::install(interp);
         dictionary::install(interp);
+        hasher::install(interp);
         scalar::install(interp);
         range::install(interp);
         optional::install(interp);

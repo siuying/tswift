@@ -480,6 +480,9 @@ pub enum BuiltinReceiver {
     /// `Date.FormatStyle` — a format-style builder produced by `.dateTime`;
     /// represented as a `Struct { type_name: "Date.FormatStyle" }`.
     DateFormatStyle,
+    /// `Hasher` — the standard-library hashing accumulator; represented as a
+    /// `Struct { type_name: "Hasher" }` carrying an `_state` digest field.
+    Hasher,
     /// A framework-registered receiver type core has no built-in knowledge
     /// of. Core owns only the dispatch *mechanism* — the `(BuiltinReceiver,
     /// method-name)` intrinsic tables — never the vocabulary of concrete
@@ -536,6 +539,7 @@ impl BuiltinReceiver {
             BuiltinReceiver::CollectionOfOne => "CollectionOfOne",
             BuiltinReceiver::EmptyCollection => "EmptyCollection",
             BuiltinReceiver::DateFormatStyle => "Date.FormatStyle",
+            BuiltinReceiver::Hasher => "Hasher",
             BuiltinReceiver::Extension(name) => name,
         }
     }
@@ -583,6 +587,7 @@ impl BuiltinReceiver {
             "CollectionOfOne" => BuiltinReceiver::CollectionOfOne,
             "EmptyCollection" => BuiltinReceiver::EmptyCollection,
             "Date.FormatStyle" => BuiltinReceiver::DateFormatStyle,
+            "Hasher" => BuiltinReceiver::Hasher,
             _ => {
                 return EXTENSION_RECEIVERS
                     .with(|table| table.borrow().get(name).copied())
@@ -683,6 +688,7 @@ impl BuiltinReceiver {
             SwiftValue::Struct(obj) if obj.type_name == "Date.FormatStyle" => {
                 BuiltinReceiver::DateFormatStyle
             }
+            SwiftValue::Struct(obj) if obj.type_name == "Hasher" => BuiltinReceiver::Hasher,
             // Class-backed builtin types (`SwiftValue::Object`) classify by
             // their runtime class name, the same way a struct classifies by
             // `type_name`. Reachable once a builtin constructs Objects; user

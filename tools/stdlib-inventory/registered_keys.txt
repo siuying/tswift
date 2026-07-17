@@ -17,6 +17,7 @@ Array.distance
 Array.endIndex
 Array.first
 Array.formIndex
+Array.hash
 Array.hashValue
 Array.index
 Array.insert
@@ -46,6 +47,7 @@ ArraySlice.distance
 ArraySlice.endIndex
 ArraySlice.first
 ArraySlice.formIndex
+ArraySlice.hash
 ArraySlice.hashValue
 ArraySlice.index
 ArraySlice.insert
@@ -67,6 +69,7 @@ ArraySlice.withContiguousStorageIfAvailable
 ArraySlice.withUnsafeBufferPointer
 Bool.description
 Bool.flatMap
+Bool.hash
 Bool.hashValue
 Bool.map
 Bool.random
@@ -80,6 +83,7 @@ ClosedRange.description
 ClosedRange.distance
 ClosedRange.endIndex
 ClosedRange.first
+ClosedRange.hash
 ClosedRange.hashValue
 ClosedRange.index
 ClosedRange.indices
@@ -111,6 +115,7 @@ ContiguousArray.distance
 ContiguousArray.endIndex
 ContiguousArray.first
 ContiguousArray.formIndex
+ContiguousArray.hash
 ContiguousArray.hashValue
 ContiguousArray.index
 ContiguousArray.insert
@@ -138,6 +143,7 @@ Dictionary.description
 Dictionary.endIndex
 Dictionary.filter
 Dictionary.formIndex
+Dictionary.hash
 Dictionary.hashValue
 Dictionary.index
 Dictionary.isEmpty
@@ -168,6 +174,7 @@ Double.flatMap
 Double.formRemainder
 Double.formSquareRoot
 Double.formTruncatingRemainder
+Double.hash
 Double.hashValue
 Double.isCanonical
 Double.isEqual
@@ -207,6 +214,9 @@ EmptyCollection.last
 EmptyCollection.makeIterator
 EmptyCollection.next
 EmptyCollection.startIndex
+Hasher
+Hasher.combine
+Hasher.finalize
 Int.addingReportingOverflow
 Int.advanced
 Int.bitWidth
@@ -216,6 +226,7 @@ Int.distance
 Int.dividedReportingOverflow
 Int.dividingFullWidth
 Int.flatMap
+Int.hash
 Int.hashValue
 Int.isMultiple
 Int.leadingZeroBitCount
@@ -232,6 +243,7 @@ Int.trailingZeroBitCount
 Int.unsafelyUnwrapped
 Int.words
 Optional.flatMap
+Optional.hash
 Optional.map
 Optional.take
 Optional.unsafelyUnwrapped
@@ -243,6 +255,7 @@ Range.description
 Range.distance
 Range.endIndex
 Range.first
+Range.hash
 Range.hashValue
 Range.index
 Range.indices
@@ -259,6 +272,7 @@ ReversedCollection.count
 ReversedCollection.distance
 ReversedCollection.endIndex
 ReversedCollection.first
+ReversedCollection.hash
 ReversedCollection.hashValue
 ReversedCollection.index
 ReversedCollection.isEmpty
@@ -302,6 +316,7 @@ Set.formIndex
 Set.formIntersection
 Set.formSymmetricDifference
 Set.formUnion
+Set.hash
 Set.hashValue
 Set.index
 Set.insert
@@ -339,6 +354,7 @@ String.flatMap
 String.formIndex
 String.hasPrefix
 String.hasSuffix
+String.hash
 String.hashValue
 String.index
 String.indices
@@ -394,6 +410,7 @@ Substring.first
 Substring.formIndex
 Substring.hasPrefix
 Substring.hasSuffix
+Substring.hash
 Substring.hashValue
 Substring.index
 Substring.indices

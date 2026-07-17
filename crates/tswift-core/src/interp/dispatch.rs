@@ -1055,6 +1055,38 @@ impl<'w> Interpreter<'w> {
             }
         }
 
+        // `x.hash(into: &hasher)` — `Hashable.hash(into:)` on any builtin value.
+        // The `into:` Hasher is an `inout` argument, but the labeled-intrinsic
+        // path strips inout places, so (like `formIndex`) we intercept before
+        // labeled dispatch: the type's `hash` intrinsic folds the receiver's
+        // digest into the passed Hasher and returns the updated Hasher, which we
+        // write back through the `into:` place ourselves.
+        if method == "hash" {
+            if let Some(kind) = BuiltinReceiver::of(base_value) {
+                if self.builtins.labeled_intrinsic(kind, "hash").is_some() {
+                    let raw_args = self.eval_args(arg_nodes)?;
+                    let into_place = raw_args
+                        .iter()
+                        .find(|a| a.label.as_deref() == Some("into"))
+                        .and_then(|a| a.place.clone());
+                    if let Some(into_place) = into_place {
+                        let labeled: Vec<Arg> = raw_args.iter().map(Arg::from).collect();
+                        if let Some(entry) = self.builtins.labeled_intrinsic(kind, "hash") {
+                            match (entry.func)(self, base_value.clone(), labeled) {
+                                Ok(Some(o)) => {
+                                    self.write_place(&into_place, o.result)?;
+                                    return Ok(Some(SwiftValue::Void));
+                                }
+                                Ok(None) => {}
+                                Err(e) => return Err(Self::std_error_to_signal(e)),
+                            }
+                        }
+                    }
+                    evaluated_args = Some(raw_args);
+                }
+            }
+        }
+
         // Label-aware stdlib overloads (layer 1a): selected APIs need argument
         // labels to choose between overloads without leaking that policy into the
         // interpreter dispatcher.
