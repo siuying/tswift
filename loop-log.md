@@ -733,3 +733,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   writingDirection, presentationDetents, symbolEffect) need new token structs +
   install typing. SwiftData Schema/PersistentModel (0%) still needs @Model
   macro introspection.
+
+## Coverage iteration — SwiftUI search/status-bar/margin/glass modifiers
+
+- Coverage before → after: SwiftUI implemented 409 → 413 (58.3% → 58.8%),
+  verified 389 → 393 (55.4% → 56.0%). +4 View modifiers, golden-verified.
+- searchCompletion (String value), statusBar(hidden:) (Bool),
+  listSectionMargins (Edge.Set token + CGFloat, typed in install like padding),
+  glassEffect (new `Glass` token struct .regular/.clear/.identity + nested
+  `in:` shape view). Each records the real value onto the UIIR node — verified
+  in the new search-and-margins golden (Edge.Set resolves to
+  {"$":"edge","name":"horizontal"}; glass token + Capsule() nested shape).
+- Added a `Glass` prelude token struct + two typed install registrations so the
+  leading-dot args resolve against Edge.Set / Glass. Updated the hardcoded
+  expected-keys list. presubmit green (incl. wasm smoke).
+- Session arc: SwiftUI 56.7% → 58.8% implemented (+15 modifiers) over two
+  iterations, all golden-verified.
