@@ -1388,6 +1388,21 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
+    // Closure-driven layout / effect / scroll / event modifiers (recorded-only:
+    // bare marker + stashed closure, body not invoked in a headless runtime).
+    ("transaction", modifier_transaction),
+    ("visualEffect", modifier_visual_effect),
+    ("transformEnvironment", modifier_transform_environment),
+    ("scrollTransition", modifier_scroll_transition),
+    ("onGeometryChange", modifier_on_geometry_change),
+    ("onScrollGeometryChange", modifier_on_scroll_geometry_change),
+    ("onScrollPhaseChange", modifier_on_scroll_phase_change),
+    (
+        "onScrollVisibilityChange",
+        modifier_on_scroll_visibility_change,
+    ),
+    ("onPreferenceChange", modifier_on_preference_change),
+    ("onModifierKeysChanged", modifier_on_modifier_keys_changed),
     // Presentation modifiers (ADR-0019): binding-gated, deferred `@ViewBuilder`
     // content realized as a `Presentation` child node by the session.
     ("sheet", modifier_sheet),
@@ -2138,6 +2153,45 @@ fn modifier_on_change(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
         _ => Ok(recv),
     }
 }
+
+/// Record a closure-driven View modifier at the **recorded-only** fidelity
+/// tier: append a bare `$swift_name` marker so hosts know the listener/effect
+/// is present, and stash the trailing closure under the same event key (never
+/// serialized — cf. `attach_event`). The closure's argument (`Transaction`,
+/// `GeometryProxy`, `ScrollTransitionPhase`, a preference value, …) is not
+/// synthesized by this headless runtime, so the body is not invoked; only the
+/// marker crosses the UIIR boundary. Non-closure arguments (metatypes,
+/// key paths, tokens) are intentionally dropped from the marker.
+macro_rules! closure_modifier {
+    ($fn_name:ident, $swift_name:literal) => {
+        pub(crate) fn $fn_name(
+            _ctx: &mut dyn StdContext,
+            recv: SwiftValue,
+            args: Vec<Arg>,
+        ) -> StdResult {
+            let action = args
+                .into_iter()
+                .rev()
+                .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
+            attach_event(recv, $swift_name, $swift_name, Vec::new(), action)
+        }
+    };
+}
+
+// Closure-driven layout / effect / scroll / event modifiers (recorded-only).
+closure_modifier!(modifier_transaction, "transaction");
+closure_modifier!(modifier_visual_effect, "visualEffect");
+closure_modifier!(modifier_transform_environment, "transformEnvironment");
+closure_modifier!(modifier_scroll_transition, "scrollTransition");
+closure_modifier!(modifier_on_geometry_change, "onGeometryChange");
+closure_modifier!(modifier_on_scroll_geometry_change, "onScrollGeometryChange");
+closure_modifier!(modifier_on_scroll_phase_change, "onScrollPhaseChange");
+closure_modifier!(
+    modifier_on_scroll_visibility_change,
+    "onScrollVisibilityChange"
+);
+closure_modifier!(modifier_on_preference_change, "onPreferenceChange");
+closure_modifier!(modifier_on_modifier_keys_changed, "onModifierKeysChanged");
 
 // ── Gesture value types (TapGesture / LongPressGesture) ────────────────────
 
