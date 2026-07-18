@@ -2038,6 +2038,18 @@ impl<'w> Interpreter<'w> {
         self.read_struct_member(value, name).map_err(signal_eval)
     }
 
+    /// Read all non-void values produced by a computed property body. Render
+    /// hosts use this for result-builder-like properties whose ordinary member
+    /// read intentionally returns only the final value.
+    pub fn get_member_values(
+        &mut self,
+        value: &SwiftValue,
+        name: &str,
+    ) -> Result<Vec<SwiftValue>, EvalError> {
+        self.read_struct_member_values(value, name)
+            .map_err(signal_eval)
+    }
+
     /// Write `new` to `name` on struct `value`, running a computed setter when
     /// one exists. A render host uses this to push a control's new value through
     /// a `Binding` (whose `nonmutating set` stores into a shared reference box),
@@ -2308,6 +2320,46 @@ impl<'w> Interpreter<'w> {
             self.run_deinit(&v);
         }
         r
+    }
+
+    /// Evaluate a scoped block while retaining each non-void statement value.
+    /// This mirrors `eval_scoped_block`'s scope, defer, and lifetime handling;
+    /// only the result collection differs.
+    pub(super) fn eval_scoped_block_values(
+        &mut self,
+        node: &Node<'static>,
+    ) -> Result<Vec<SwiftValue>, EvalError> {
+        self.env.push();
+        self.defer_stack.push(Vec::new());
+        self.hoist(node);
+        let mut values = Vec::new();
+        let mut result = Ok(());
+        for child in expand_directives(node) {
+            match self.eval(&child) {
+                Ok(SwiftValue::Void) => {}
+                Ok(value) => values.push(value),
+                Err(Signal::Return(value)) => {
+                    if !matches!(value, SwiftValue::Void) {
+                        values.push(value);
+                    }
+                    break;
+                }
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
+            }
+        }
+        let defers = self.defer_stack.pop().unwrap_or_default();
+        for defer_body in defers.iter().rev() {
+            let _ = self.eval(defer_body);
+        }
+        let mut released = self.env.pop_owned();
+        released.reverse();
+        for value in released {
+            self.run_deinit(&value);
+        }
+        result.map(|()| values).map_err(signal_eval)
     }
 
     /// `do { … } catch <pattern> { … } …` — run the body; on a thrown error,

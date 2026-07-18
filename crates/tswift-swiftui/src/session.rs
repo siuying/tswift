@@ -144,11 +144,20 @@ fn extract_scene_root(
     roots: &mut Vec<(SwiftValue, Vec<SwiftValue>)>,
 ) -> Result<(), EvalError> {
     let SwiftValue::Struct(obj) = &scene else {
-        if let SwiftValue::Array(items) = scene {
-            for item in items.iter() {
-                extract_scene_root(interp, item.clone(), scopes, roots)?;
+        match scene {
+            SwiftValue::Array(items) => {
+                for item in items.iter() {
+                    extract_scene_root(interp, item.clone(), scopes, roots)?;
+                }
+                return Ok(());
             }
-            return Ok(());
+            SwiftValue::Tuple(items, _) => {
+                for item in items {
+                    extract_scene_root(interp, item, scopes, roots)?;
+                }
+                return Ok(());
+            }
+            _ => {}
         }
         return Err(EvalError::Unsupported(format!(
             "headless SwiftUI App scene must contain WindowGroup, found `{}`",
@@ -230,17 +239,15 @@ impl<'i, 'w> Session<'i, 'w> {
     /// lifecycle the headless host cannot provide.
     pub fn new_app(interp: &'i mut Interpreter<'w>, app_type: &str) -> Result<Self, EvalError> {
         let app = interp.make_struct(app_type, &[])?;
-        let scene = interp.get_member(&app, "body")?;
+        let scene = SwiftValue::Array(Rc::new(interp.get_member_values(&app, "body")?));
         let mut roots = Vec::new();
         extract_scene_root(interp, scene, &mut Vec::new(), &mut roots)?;
         let [(root, scopes)] = roots.as_slice() else {
             return Err(EvalError::Unsupported(match roots.len() {
-                0 => format!(
-                    "headless SwiftUI App entry `{app_type}` requires a WindowGroup scene"
-                ),
-                count => format!(
-                    "headless SwiftUI App entry supports one WindowGroup, found {count}; multi-window and platform scenes are unsupported"
-                ),
+                0 => {
+                    format!("headless SwiftUI App entry `{app_type}` requires a WindowGroup scene")
+                }
+                _ => "multiple windows".into(),
             }));
         };
         Ok(Session {
@@ -1115,6 +1122,41 @@ struct CounterView: View {
             })
             .expect("dispatch");
         assert!(uiir::to_json(&after).contains(r#""verbatim":"1""#));
+    }
+
+    #[test]
+    fn app_session_rejects_multiple_top_level_window_groups() {
+        let src = format!(
+            "import SwiftUI\n{PRELUDE}\n{}",
+            r#"
+struct A: View {
+    var body: some View { Text("A") }
+}
+
+struct B: View {
+    var body: some View { Text("B") }
+}
+
+@main struct DemoApp: App {
+    var body: some Scene {
+        WindowGroup { A() }
+        WindowGroup { B() }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "app.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+
+        let error = match Session::new_app(&mut interp, "DemoApp") {
+            Ok(_) => panic!("multiple top-level WindowGroups must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error, EvalError::Unsupported("multiple windows".into()));
     }
 
     #[test]

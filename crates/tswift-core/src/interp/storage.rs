@@ -974,6 +974,57 @@ impl<'w> Interpreter<'w> {
         Err(EvalError::Type(format!("struct {} has no member `{name}`", obj.type_name)).into())
     }
 
+    /// Read all non-void values produced by a computed property body. This is
+    /// the host-facing counterpart to `read_struct_member`, which preserves
+    /// ordinary Swift property semantics by returning only the final value.
+    pub(super) fn read_struct_member_values(
+        &mut self,
+        value: &SwiftValue,
+        name: &str,
+    ) -> Result<Vec<SwiftValue>, Signal> {
+        let SwiftValue::Struct(obj) = value else {
+            return Err(EvalError::Type(format!(
+                "`{name}` is not a member of {}",
+                value.type_name()
+            ))
+            .into());
+        };
+        let is_stored = obj.get(name).is_some()
+            || name
+                .strip_prefix('$')
+                .is_some_and(|field| self.wrapped_field(&obj.type_name, field));
+        if is_stored {
+            let v = self.read_struct_member(value, name)?;
+            return Ok(if matches!(v, SwiftValue::Void) {
+                Vec::new()
+            } else {
+                vec![v]
+            });
+        }
+        let getter = self
+            .types
+            .struct_def(&obj.type_name)
+            .and_then(|d| d.computed.get(name))
+            .filter(|c| !c.is_static)
+            .and_then(|c| c.getter)
+            .or_else(|| self.protocol_default_getter(&obj.type_name, name));
+        if let Some(body) = getter {
+            return self
+                .run_with_self_values(value.clone(), |me| {
+                    me.eval_scoped_block_values(&body).map_err(Signal::from)
+                })
+                .map(|(values, _)| values);
+        }
+        if let Some(v) = self.dynamic_member_read(value, &obj.type_name, name)? {
+            return Ok(if matches!(v, SwiftValue::Void) {
+                Vec::new()
+            } else {
+                vec![v]
+            });
+        }
+        Err(EvalError::Type(format!("struct {} has no member `{name}`", obj.type_name)).into())
+    }
+
     /// Find a `subscript(dynamicMember:)` getter on `type_name` and invoke it
     /// with `member` as a string key. Returns `None` when the type declares no
     /// dynamic-member subscript, so the caller can fall through to its error.
@@ -1049,6 +1100,21 @@ impl<'w> Interpreter<'w> {
             Err(e) => return Err(e),
         };
         Ok((value, updated))
+    }
+
+    /// Run a computed property body with `self` bound, retaining each
+    /// non-void statement value for result-builder-aware hosts.
+    pub(super) fn run_with_self_values(
+        &mut self,
+        this: SwiftValue,
+        body: impl FnOnce(&mut Self) -> Result<Vec<SwiftValue>, Signal>,
+    ) -> Result<(Vec<SwiftValue>, SwiftValue), Signal> {
+        let saved_env = self.env.enter_isolated();
+        self.env.declare("self", this, true);
+        let result = body(self);
+        let updated = self.env.get("self").unwrap_or(SwiftValue::Void);
+        self.env.restore(saved_env);
+        Ok((result?, updated))
     }
 
     /// Set a property on a struct value, honoring computed setters and
