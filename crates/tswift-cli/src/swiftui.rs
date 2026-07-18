@@ -104,6 +104,7 @@ fn prepare_source(path: &str, user: &str) -> Result<(Interpreter<'static>, Rende
     );
     tswift_swiftui::install(&mut interp);
     tswift_charts::install(&mut interp);
+    install_fixture_transport(&mut interp, path)?;
     if let Err(e) = interp.run(analysis) {
         eprintln!("error: {e}");
         return Err(ExitCode::FAILURE);
@@ -160,7 +161,15 @@ fn dispatch(path: &str, events_path: &str) -> ExitCode {
             Some(tree) => tree.clone(),
             None => break,
         };
-        let after = match session.dispatch(event) {
+        // `mount` is the CLI fixture spelling of a host lifecycle pass. Real
+        // hosts call `Session::run_mount_tasks` immediately after mounting;
+        // keeping it explicit in scripted events preserves the existing
+        // one-stream-per-event golden contract.
+        let after = match if event.event == "mount" {
+            session.run_mount_tasks()
+        } else {
+            session.dispatch(event)
+        } {
             Ok(tree) => tree,
             Err(e) => {
                 eprintln!("error: {e}");
@@ -181,6 +190,37 @@ fn dispatch(path: &str, events_path: &str) -> ExitCode {
     out.push(']');
     println!("{out}");
     ExitCode::SUCCESS
+}
+
+/// Install deterministic HTTP routes for a SwiftUI fixture when supplied.
+///
+/// The general CLI `run` command owns opt-in real networking via
+/// `--allow-network`. The render/dispatch host intentionally never opens the
+/// network: a sibling `<fixture>.http.json` route table (or the explicit
+/// `TSWIFT_HTTP_MOCK` override) is the only available capability. This keeps
+/// headless UI goldens offline while a missing transport remains the honest
+/// Foundation diagnostic from `URLSession`.
+fn install_fixture_transport(interp: &mut Interpreter<'_>, path: &str) -> Result<(), ExitCode> {
+    let configured = std::env::var("TSWIFT_HTTP_MOCK")
+        .ok()
+        .map(Into::into)
+        .or_else(|| {
+            let sibling = std::path::Path::new(path).with_extension("http.json");
+            sibling.exists().then_some(sibling)
+        });
+    let Some(path) = configured else {
+        return Ok(());
+    };
+    match crate::httpmock::load(&path.to_string_lossy()) {
+        Ok(transport) => {
+            interp.set_http_transport(Box::new(transport));
+            Ok(())
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            Err(ExitCode::FAILURE)
+        }
+    }
 }
 
 /// Render one host entry through the same session construction used by

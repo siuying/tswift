@@ -2223,7 +2223,7 @@ impl<'w> Interpreter<'w> {
         // Drain any spawned-but-unawaited tasks (detached `Task { }`) so their
         // side effects run before the program's outermost scope exits.
         if outcome.is_ok() {
-            if let Err(sig) = self.drain_pending_tasks() {
+            if let Err(sig) = self.drain_pending_tasks_signal() {
                 outcome = Err(sig);
             }
         }
@@ -2241,6 +2241,23 @@ impl<'w> Interpreter<'w> {
             Err(other) => Err(EvalError::Unsupported(format!(
                 "stray control flow: {other:?}"
             ))),
+        }
+    }
+
+    /// Run every outstanding `Task {}` body to completion.
+    ///
+    /// A long-lived render session, rather than its embedding host, owns this
+    /// drain: it runs immediately after a lifecycle or event closure and before
+    /// the session evaluates the next UIIR tree. This keeps state mutations
+    /// performed after `await` observable in that tree's patch stream.
+    pub fn drain_pending_tasks(&mut self) -> Result<(), EvalError> {
+        match self.drain_pending_tasks_signal() {
+            Ok(()) | Err(Signal::Return(_)) => Ok(()),
+            Err(Signal::Error(error)) => Err(error),
+            Err(Signal::Throw(value)) => Err(EvalError::Trap(format!("uncaught error: {value}"))),
+            Err(Signal::Break(_) | Signal::Continue(_) | Signal::Fallthrough) => Err(
+                EvalError::Trap("task body escaped its control-flow scope".into()),
+            ),
         }
     }
 

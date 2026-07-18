@@ -1,0 +1,1 @@
+[{"method":"GET","url":"https://fixture.example/title","status":200,"headers":{"Content-Type":"text/plain"},"body":"Fetched"}]

@@ -140,6 +140,10 @@ binding_collections = ["Binding.subscript", "Binding.init(projecting:)", "ForEac
 # Toolbar button actions are therefore explicitly unsupported until toolbar
 # content becomes an event-addressable UIIR subtree.
 [out_of_scope_members]
+# `.task` lifecycle work is drained inline by the render session before its next
+# UIIR tree is emitted. Cancellation on disappearance is therefore cooperative
+# only. `.refreshable`, timers, and `.onReceive` still need a separate
+# runtime-initiated host pump contract and remain out of scope.
 toolbar_actions = ["View.toolbar"]
 closure_callback_semantics = [
   "View.transaction", "View.visualEffect", "View.transformEnvironment",

@@ -310,7 +310,7 @@ impl<'w> Interpreter<'w> {
     /// the program so detached `Task { }` side effects still happen (structured
     /// concurrency guarantees a child finishes before its scope exits; here the
     /// whole program is the outermost scope).
-    pub(super) fn drain_pending_tasks(&mut self) -> Result<(), Signal> {
+    pub(super) fn drain_pending_tasks_signal(&mut self) -> Result<(), Signal> {
         self.drive_pending(0, |_| false)
     }
 

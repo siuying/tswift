@@ -1497,3 +1497,8 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - agent fix-attr-parse-regression: parsed expression-style wrapper arguments while consuming availability and specialization grammars opaquely; verified @available and @Environment key-path coverage.
 - agent reverify-binding-fix: PASS — presubmit green; @available variants, @Environment key path render, and child binding writeback all passed independently.
 - agent website-sync: PASS — refreshed live coverage data and status prose for SE-0279, SwiftData predicates, SwiftUI closures/bindings/environment/app entry, String/Substring indexes, Sequence/Collection protocols, and Charts phase 2d; rebuilt WASM; scripts/validate web green.
+
+## agent async-lifecycle-urlsession
+
+- Render sessions now own executor draining after lifecycle and dispatch closures, before the next UIIR render; `.task` runs on mount, `.task(id:)` re-runs after an id change, and `Task { await ... }` state mutations patch in the same dispatch. CLI SwiftUI goldens use sibling deterministic HTTP route tables; missing transport remains a diagnostic, while CLI real networking stays opt-in through `tswift run --allow-network`.
+- Coverage before → after: Foundation 465/615 verified (75.6%) → 465/615 (75.6%); SwiftUI 467/692 verified (67.5%) → 467/692 (67.5%) — behavior/fixtures changed, not the registry. Commit: `feat(swiftui): drain lifecycle async tasks`. Open blockers: `bytes`/download/publisher APIs and true mid-flight cancellation remain unsupported/degraded as scoped; no wasm/web code changed.

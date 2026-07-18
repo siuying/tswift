@@ -68,8 +68,14 @@ URLRequest = ["=="]
 #   three delegate protocols (URLSessionDelegate, URLSessionTaskDelegate,
 #   URLSessionDataDelegate) are **modelled** — backed by the tswift_core::http
 #   event-transport seam (mock/ureq/ffi/wasm).
-# - Bytes- and download-based members (bytes(for:), downloadTask) are NOT
-#   modelled; publisher-based members (dataTaskPublisher) are NOT modelled.
+# - `data(from:)`, `data(for:)`, and `upload(for:from:)` are modelled through
+#   the embedding-owned HTTP transport. `bytes(for:)`/`bytes(from:)` and all
+#   download forms are NOT modelled: although the transport can deliver chunks,
+#   the runtime has no public AsyncBytes or host-owned temporary-file contract.
+#   Publisher-based members (`dataTaskPublisher`) are NOT modelled.
+# - Cancellation is cooperative between delivered transport events. A one-shot
+#   or wasm batch request may already have completed before cancellation is
+#   observed; wasm can stop event delivery but cannot abort that completed fetch.
 # - Wasm degraded tier: the wasm tswiftHttp hook completes the fetch
 #   synchronously before events are dispatched; cancellation stops event
 #   delivery only — it cannot abort a fetch already returned.

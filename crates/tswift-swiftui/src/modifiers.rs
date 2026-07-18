@@ -2396,18 +2396,31 @@ fn modifier_on_appear(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
     attach_event(recv, "onAppear", "appear", Vec::new(), action)
 }
 
-/// `.task(priority:_:)` — SwiftUI runs the async action when the view appears
+/// `.task(priority:_:)` / `.task(id:priority:_:)` — SwiftUI runs the async action when the view appears
 /// and cancels it on disappear. The runtime's cooperative executor has no
 /// mid-flight cancellation, so v1 fires the action inline (any `await` inside
 /// runs to completion) when the host calls `run_mount_tasks` after mount. The
 /// optional `priority:` label is parsed and dropped (one signature covers all
-/// priorities). Emits a `task` marker modifier and binds the action under the
-/// `"task"` event; coexists with `.onAppear` (distinct handler keys).
+/// priorities). An `id:` is preserved in the marker so a render session can
+/// re-run the task when that value changes. Emits a `task` marker modifier and
+/// binds the action under the `"task"` event; coexists with `.onAppear` (distinct
+/// handler keys).
 fn modifier_task(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
-    let action = args
-        .into_iter()
-        .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
-    attach_event(recv, "task", "task", Vec::new(), action)
+    let mut action = None;
+    let mut marker_args = Vec::new();
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("id") => marker_args.push(Arg {
+                label: Some("id".into()),
+                value: arg.value,
+                static_ty: None,
+            }),
+            Some("priority") => {}
+            _ if matches!(arg.value, SwiftValue::Closure(_)) => action = Some(arg.value),
+            _ => {}
+        }
+    }
+    attach_event(recv, "task", "task", marker_args, action)
 }
 
 /// `.onDisappear(perform:)` — the host fires a `disappear` event on unmount;

@@ -7,6 +7,18 @@
 
 ## 1. Async / Task / URLSession / `.task {}` support
 
+> **Update — 2026-07-18.** The findings below describe the pre-lifecycle
+> implementation and are superseded for this slice. A `Session` now owns the
+> executor drain after lifecycle and dispatched event closures, before it
+> evaluates the tree to diff. `.task {}` runs once on mount,
+> `.task(id:)` runs again when its id changes, and both coexist with
+> `.onAppear`. The CLI SwiftUI harness accepts a deterministic sibling
+> `<fixture>.http.json` transport route table; `tswift run --allow-network`
+> remains the only CLI real-network opt-in. Missing transports still produce an
+> interpreter diagnostic, never a fake response. `bytes`/download/publisher
+> APIs and cancellation after an eagerly-completed wasm/one-shot fetch remain
+> unsupported or degraded as recorded in `frameworks/foundation/scope.toml`.
+
 ### async / await — ✅ FULLY SUPPORTED
 File: `crates/tswift-core/src/interp/concurrency.rs` (entire module)  
 Feature-checklist: `docs/swift-runtime/feature-checklist.md` lines 293–334

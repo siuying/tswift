@@ -9,7 +9,7 @@
 //! Node identity is the structural path (`"0"`, `"0.1"`, …) shared with
 //! `uiir`, so an event `id` from a host maps back to the same node.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tswift_core::{EvalError, Interpreter, StdContext, StructObj, SwiftValue};
@@ -88,6 +88,28 @@ fn fit_int(raw: i128, width: tswift_core::IntWidth) -> Option<SwiftValue> {
     v.in_range().then_some(SwiftValue::Int(v))
 }
 
+/// Identity passed to `task(id:)`, if present on this view. Plain `.task` uses
+/// `Void` as a stable per-mounted-node sentinel. Modifiers are retained in
+/// source order, so the final task marker is the one paired with the handler
+/// slot (later `.task` calls replace the same `"task"` handler key).
+fn task_identity(obj: &StructObj) -> SwiftValue {
+    let Some(SwiftValue::Array(modifiers)) = obj.get(MODIFIERS_FIELD) else {
+        return SwiftValue::Void;
+    };
+    modifiers
+        .iter()
+        .rev()
+        .find_map(|modifier| match modifier {
+            SwiftValue::Struct(record)
+                if matches!(record.get("name"), Some(SwiftValue::Str(name)) if name == "task") =>
+            {
+                Some(record.get("id").cloned().unwrap_or(SwiftValue::Void))
+            }
+            _ => None,
+        })
+        .unwrap_or(SwiftValue::Void)
+}
+
 /// A discrete host→runtime event (plan §3.3): a node `id`, an event name, and
 /// an optional payload value (e.g. a text field's new string).
 #[derive(Debug, Clone)]
@@ -122,6 +144,14 @@ pub struct Session<'i, 'w> {
     /// of the last `imagePhase` event (used to detect URL changes, which reset
     /// the phase back to `"empty"`).
     image_phase: HashMap<String, (String, String)>,
+    /// The last identity value whose `.task` ran for each mounted node. A node
+    /// without `task(id:)` uses `Void`, so it runs once per mount; changing an
+    /// explicit id schedules one new run after the render that observed it.
+    task_ids: HashMap<String, SwiftValue>,
+    /// Whether the host has completed its first lifecycle pass. Until then a
+    /// dispatch must not eagerly fire `.task` merely because a fixture/event
+    /// arrived before mount; after mount it lets `task(id:)` re-run on changes.
+    task_lifecycle_started: bool,
 }
 
 /// The retained value a session re-evaluates. App scenes are unwrapped once so
@@ -229,6 +259,8 @@ impl<'i, 'w> Session<'i, 'w> {
             tab_selection: HashMap::new(),
             nav_stack: HashMap::new(),
             image_phase: HashMap::new(),
+            task_ids: HashMap::new(),
+            task_lifecycle_started: false,
         })
     }
 
@@ -260,6 +292,8 @@ impl<'i, 'w> Session<'i, 'w> {
             tab_selection: HashMap::new(),
             nav_stack: HashMap::new(),
             image_phase: HashMap::new(),
+            task_ids: HashMap::new(),
+            task_lifecycle_started: false,
         })
     }
 
@@ -779,16 +813,26 @@ impl<'i, 'w> Session<'i, 'w> {
                 }
             }
         }
+        // Event closures may spawn `Task {}` work. The session owns the
+        // cooperative executor boundary, so drain before rendering/diffing and
+        // make state mutations after `await` observable in this response.
+        self.interp.drain_pending_tasks()?;
         let tree = self.render()?;
-        self.run_watchers(baseline, tree)
+        let tree = self.run_watchers(baseline, tree)?;
+        if self.task_lifecycle_started {
+            self.run_new_tasks(tree)
+        } else {
+            Ok(tree)
+        }
     }
 
-    /// Fire every pending `.task {}` closure on the current tree (ADR-0013 §3),
-    /// then re-render and run `onChange` watchers, returning the new tree.
+    /// Fire every newly-mounted or changed-id `.task {}` closure on the current
+    /// tree (ADR-0013 §3), then re-render and run `onChange` watchers.
     ///
     /// The host calls this once after a successful mount to run
-    /// appear-time async work (`.task` runs the action inline; any `await`
-    /// inside it runs to completion under the cooperative executor). A
+    /// appear-time async work. The render session owns the executor drain: any
+    /// `Task {}` spawned by a lifecycle closure completes before the following
+    /// render, so awaited state mutations are visible in its UIIR patches. A
     /// `.task` and a `.onAppear` on the same view coexist — they bind distinct
     /// handler keys and fire independently. With no `.task` modifiers this is a
     /// re-render that emits an empty patch set. Same `Result` shape as
@@ -798,21 +842,43 @@ impl<'i, 'w> Session<'i, 'w> {
             Some(tree) => tree.clone(),
             None => self.render()?,
         };
-        // Snapshot the watched-value baseline before firing tasks so any state a
-        // task mutates is observed by `onChange` watchers on re-render.
-        let baseline = collect_watch_values(&tree);
-        // Collect every `"task"` handler closure in structural order.
-        let mut task_closures: Vec<usize> = Vec::new();
-        crate::tree::walk(&tree, &mut |_, _, obj| {
-            if let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) {
-                if let Some(SwiftValue::Closure(cid)) = handlers.get("task") {
-                    task_closures.push(*cid);
-                }
+        self.task_lifecycle_started = true;
+        self.run_new_tasks(tree)
+    }
+
+    /// Run tasks whose node has just mounted or whose explicit task identity
+    /// differs from the last observed one. The caller supplies the pre-task
+    /// rendered tree so its `onChange` baseline includes mutations made by the
+    /// task body.
+    fn run_new_tasks(&mut self, baseline_tree: SwiftValue) -> Result<SwiftValue, EvalError> {
+        let baseline = collect_watch_values(&baseline_tree);
+        let mut mounted = HashSet::new();
+        let mut task_closures = Vec::new();
+        // Capture the task identity before executing closures: a closure may
+        // synchronously mutate state, but cannot cause itself to run twice in
+        // this lifecycle pass.
+        crate::tree::walk(&baseline_tree, &mut |id, _, obj| {
+            let Some(SwiftValue::Struct(handlers)) = obj.get(HANDLERS_FIELD) else {
+                return;
+            };
+            let Some(SwiftValue::Closure(cid)) = handlers.get("task") else {
+                return;
+            };
+            mounted.insert(id.to_string());
+            let identity = task_identity(obj);
+            if self.task_ids.get(id) != Some(&identity) {
+                self.task_ids.insert(id.to_string(), identity);
+                task_closures.push(*cid);
             }
         });
+        self.task_ids.retain(|id, _| mounted.contains(id));
         for cid in task_closures {
             self.interp.invoke_closure(cid, Vec::new())?;
         }
+        // Session, not host, owns task driving. Hosts only request a lifecycle
+        // pass or dispatch an event; this boundary ensures the next tree sees
+        // all detached `Task {}` effects spawned by either closure kind.
+        self.interp.drain_pending_tasks()?;
         let tree = self.render()?;
         self.run_watchers(baseline, tree)
     }
@@ -1824,6 +1890,68 @@ struct TaskView: View {
             "await inside .task ran inline and updated state: {}",
             uiir::to_json(&after)
         );
+    }
+
+    #[test]
+    fn task_modifier_restarts_when_its_id_changes() {
+        let mut interp = events_interp(
+            r#"
+struct TaskIDView: View {
+    @State private var id = 1
+    @State private var runs = 0
+    var body: some View {
+        VStack {
+            Text("runs=\(runs)")
+            Button("Next") { id += 1 }
+        }
+        .task(id: id) { runs += 1 }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "TaskIDView").expect("session");
+        session.render().expect("render");
+        let mounted = session.run_mount_tasks().expect("mount task");
+        assert!(
+            uiir::to_json(&mounted).contains("runs=1"),
+            "mounted: {mounted:?}"
+        );
+        let after = session
+            .dispatch(&Event {
+                id: "0.1".into(),
+                event: "tap".into(),
+                value: None,
+            })
+            .expect("dispatch");
+        assert!(uiir::to_json(&after).contains("runs=2"), "after: {after:?}");
+    }
+
+    #[test]
+    fn dispatch_drains_spawned_task_before_returning_tree() {
+        let mut interp = events_interp(
+            r#"
+struct SpawnedTaskView: View {
+    @State private var label = "idle"
+    func loaded() async -> String { "loaded" }
+    var body: some View {
+        VStack {
+            Text(label)
+            Button("Load") { Task { label = await loaded() } }
+        }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "SpawnedTaskView").expect("session");
+        session.render().expect("render");
+        let after = session
+            .dispatch(&Event {
+                id: "0.1".into(),
+                event: "tap".into(),
+                value: None,
+            })
+            .expect("dispatch");
+        assert!(uiir::to_json(&after).contains("loaded"), "after: {after:?}");
     }
 
     #[test]
