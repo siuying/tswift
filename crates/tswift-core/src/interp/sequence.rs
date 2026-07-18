@@ -19,6 +19,12 @@ impl<'w> Interpreter<'w> {
         })
     }
 
+    /// Whether a user nominal value declares `Collection` conformance.
+    pub(super) fn is_custom_collection(&self, value: &SwiftValue) -> bool {
+        self.value_type_name(value)
+            .is_some_and(|t| self.all_protocols(&t).iter().any(|p| p == "Collection"))
+    }
+
     fn is_sequence_conformer(&self, type_name: &str) -> bool {
         self.all_protocols(type_name)
             .iter()

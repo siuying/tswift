@@ -840,6 +840,9 @@ struct GlobalMembers {
     natives: HashMap<String, ModuleTagged<NativeFn>>,
     free_fns: HashMap<String, FreeFnEntry>,
     algorithms: HashMap<String, ModuleTagged<AlgoFn>>,
+    /// Coverage aliases for protocol requirements that share the algorithm or
+    /// property implementation but do not have a concrete receiver key.
+    protocol_members: HashMap<String, ModuleTagged<()>>,
     /// Name → per-module candidates (same module re-install replaces in place).
     struct_methods: HashMap<String, Vec<StructMethodEntry>>,
 }
@@ -855,6 +858,10 @@ impl GlobalMembers {
     fn add_algorithm(&mut self, name: &str, f: AlgoFn, module: ModuleId) {
         self.algorithms
             .insert(name.to_string(), ModuleTagged::new(f, module));
+    }
+    fn add_protocol_member(&mut self, protocol: &str, name: &str, module: ModuleId) {
+        self.protocol_members
+            .insert(format!("{protocol}.{name}"), ModuleTagged::new((), module));
     }
     /// Append a candidate for `entry.module`, or replace an existing same-
     /// (name, module) entry so re-install is idempotent.
@@ -905,6 +912,9 @@ impl GlobalMembers {
     }
     fn algorithm_names(&self) -> impl Iterator<Item = &String> {
         self.algorithms.keys()
+    }
+    fn protocol_member_names(&self) -> impl Iterator<Item = &String> {
+        self.protocol_members.keys()
     }
 }
 
@@ -1895,6 +1905,7 @@ impl<'w> Interpreter<'w> {
         for name in self.globals.algorithm_names() {
             keys.push(format!("Sequence.{name}"));
         }
+        keys.extend(self.globals.protocol_member_names().cloned());
         keys.sort();
         keys.dedup();
         keys
@@ -1962,6 +1973,13 @@ impl<'w> Interpreter<'w> {
     /// Register a `Sequence`/`Collection` algorithm by method name.
     pub fn register_algorithm(&mut self, name: &str, f: AlgoFn) {
         self.globals.add_algorithm(name, f, self.current_module);
+    }
+
+    /// Register a coverage-facing protocol member backed by a shared runtime
+    /// implementation (for example `Collection.count`).
+    pub fn register_protocol_member(&mut self, protocol: &str, name: &str) {
+        self.globals
+            .add_protocol_member(protocol, name, self.current_module);
     }
 
     /// Register a generic method intrinsic dispatched on any struct receiver by
@@ -5882,6 +5900,52 @@ impl StdContext for Interpreter<'_> {
             Err(Signal::Return(v)) => Ok(v),
             Err(sig) => Err(Self::signal_to_std_error(sig)),
         }
+    }
+
+    fn call_closure_inout(
+        &mut self,
+        id: usize,
+        accumulator: SwiftValue,
+        element: SwiftValue,
+    ) -> crate::stdlib::StdResult {
+        const ACCUMULATOR: &str = "$reduceAccumulator";
+        self.env.push();
+        self.env.declare(ACCUMULATOR, accumulator, true);
+        let place = Place {
+            root: ACCUMULATOR.into(),
+            path: Vec::new(),
+        };
+        let result = self.call_closure_with_args(
+            id,
+            vec![
+                CallArg {
+                    label: None,
+                    value: self.env.get(ACCUMULATOR).unwrap_or(SwiftValue::Nil),
+                    place: Some(place),
+                },
+                CallArg {
+                    label: None,
+                    value: element,
+                    place: None,
+                },
+            ],
+        );
+        let updated = self.env.get(ACCUMULATOR).unwrap_or(SwiftValue::Nil);
+        self.env.pop();
+        match result {
+            Ok(_) => Ok(updated),
+            Err(signal) => Err(Self::signal_to_std_error(signal)),
+        }
+    }
+
+    fn sequence_elements(&mut self, value: &SwiftValue) -> Option<Vec<SwiftValue>> {
+        materialize_sequence(value).or_else(|| {
+            self.is_custom_sequence(value)
+                .then(|| self.materialize_custom_sequence(value.clone()))
+                .transpose()
+                .ok()
+                .flatten()
+        })
     }
 
     fn eval_block_values(&mut self, id: usize) -> crate::stdlib::StdResult {

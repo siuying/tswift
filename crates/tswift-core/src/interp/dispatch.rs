@@ -111,7 +111,7 @@ impl<'w> Interpreter<'w> {
     /// parameters to their caller locations (`f(&x)` over a closure whose
     /// parameter is `inout`). Falls back to the value-only path when the
     /// closure has no `inout` parameters.
-    fn call_closure_with_args(&mut self, id: usize, args: Vec<CallArg>) -> Eval {
+    pub(super) fn call_closure_with_args(&mut self, id: usize, args: Vec<CallArg>) -> Eval {
         // A closure participates in the `inout` write-back path when it either
         // declares an explicit `inout` parameter or is being called with an
         // `&`-prefixed argument. The latter covers shorthand closures

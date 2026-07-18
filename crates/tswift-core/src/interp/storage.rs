@@ -1025,6 +1025,37 @@ impl<'w> Interpreter<'w> {
         Err(EvalError::Type(format!("struct {} has no member `{name}`", obj.type_name)).into())
     }
 
+    /// Default `Sequence`/`Collection` properties for a user-defined conformer.
+    /// Concrete builtin collections retain their specialised properties (for
+    /// example String.Index coordinates); this only runs after a nominal type's
+    /// own stored/computed members have had a chance to win.
+    fn generic_sequence_property(
+        &mut self,
+        value: &SwiftValue,
+        name: &str,
+    ) -> Result<Option<SwiftValue>, Signal> {
+        let is_collection = self.is_custom_collection(value);
+        if !matches!(name, "count" | "isEmpty" | "first" | "last" | "indices")
+            || (name == "indices" && !is_collection)
+        {
+            return Ok(None);
+        }
+        let items = self.materialize_custom_sequence(value.clone())?;
+        let result = match name {
+            "count" => SwiftValue::int(items.len() as i128),
+            "isEmpty" => SwiftValue::Bool(items.is_empty()),
+            "first" => items.into_iter().next().unwrap_or(SwiftValue::Nil),
+            "last" => items.into_iter().last().unwrap_or(SwiftValue::Nil),
+            "indices" => SwiftValue::Range {
+                lo: 0,
+                hi: items.len() as i128,
+                inclusive: false,
+            },
+            _ => return Ok(None),
+        };
+        Ok(Some(result))
+    }
+
     /// Find a `subscript(dynamicMember:)` getter on `type_name` and invoke it
     /// with `member` as a string key. Returns `None` when the type declares no
     /// dynamic-member subscript, so the caller can fall through to its error.
@@ -1871,6 +1902,11 @@ impl<'w> Interpreter<'w> {
                     if self.module_symbol_visible(module) {
                         return func(value).map_err(Self::std_error_to_signal);
                     }
+                }
+            }
+            if self.is_custom_sequence(&value) {
+                if let Some(result) = self.generic_sequence_property(&value, &member)? {
+                    return Ok(result);
                 }
             }
             return self.read_struct_member(&value, &member);

@@ -40,6 +40,29 @@ pub fn install(interp: &mut Interpreter<'_>) {
     a("starts", starts_with);
     a("randomElement", random_element);
     a("shuffled", shuffled);
+
+    // The algorithm table is the one implementation of the default protocol
+    // operations. Register the protocol names separately so coverage reports
+    // the shared capability rather than only concrete receiver call sites.
+    interp.register_protocol_member("Sequence", "makeIterator");
+    for name in [
+        "count",
+        "drop",
+        "dropFirst",
+        "dropLast",
+        "first",
+        "firstIndex",
+        "flatMap",
+        "indices",
+        "isEmpty",
+        "makeIterator",
+        "map",
+        "prefix",
+        "split",
+        "suffix",
+    ] {
+        interp.register_protocol_member("Collection", name);
+    }
 }
 
 // ---- closure-taking transforms --------------------------------------------
@@ -69,9 +92,11 @@ fn flat_map(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) ->
     let id = closure(&args, "flatMap")?;
     let mut out = Vec::new();
     for it in items {
-        match ctx.call_closure(id, vec![it])? {
-            SwiftValue::Array(inner) => out.extend(inner.as_ref().clone()),
-            other => out.push(other),
+        let transformed = ctx.call_closure(id, vec![it])?;
+        if let Some(inner) = ctx.sequence_elements(&transformed) {
+            out.extend(inner);
+        } else {
+            out.push(transformed);
         }
     }
     Ok(array(out))
@@ -92,11 +117,16 @@ fn reduce(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> S
     let id = closure(&args, "reduce")?;
     let mut acc = args
         .iter()
-        .find(|a| a.label.is_none())
+        .find(|a| a.label.is_none() || a.label.as_deref() == Some("into"))
         .map(|a| a.value.clone())
         .ok_or_else(|| type_err("reduce expects an initial value"))?;
+    let into = args.iter().any(|a| a.label.as_deref() == Some("into"));
     for it in items {
-        acc = ctx.call_closure(id, vec![acc, it])?;
+        acc = if into {
+            ctx.call_closure_inout(id, acc, it)?
+        } else {
+            ctx.call_closure(id, vec![acc, it])?
+        };
     }
     Ok(acc)
 }
@@ -318,17 +348,29 @@ fn drop_last(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) ->
     Ok(array(items[..items.len() - n].to_vec()))
 }
 
-fn split(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
-    let sep = labeled(&args, "separator")
-        .or_else(|| first_positional(&args))
-        .ok_or_else(|| type_err("split expects a separator"))?;
+fn split(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
+    let separator = labeled(&args, "separator").or_else(|| first_positional(&args));
+    let predicate = closure(&args, "split").ok();
+    if separator.is_none() && predicate.is_none() {
+        return Err(type_err("split expects a separator or closure"));
+    }
     let omit_empty = labeled(&args, "omittingEmptySubsequences")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let max_splits = labeled(&args, "maxSplits")
+        .and_then(|v| match v {
+            SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+            _ => None,
+        })
+        .unwrap_or(usize::MAX);
     let mut groups: Vec<Vec<SwiftValue>> = Vec::new();
     let mut cur: Vec<SwiftValue> = Vec::new();
     for it in items {
-        if it == sep {
+        let is_separator = match predicate {
+            Some(id) => truthy(ctx.call_closure(id, vec![it.clone()])?),
+            None => separator.as_ref().is_some_and(|sep| it == *sep),
+        };
+        if is_separator && groups.len() < max_splits {
             if !cur.is_empty() || !omit_empty {
                 groups.push(std::mem::take(&mut cur));
             }
@@ -342,7 +384,7 @@ fn split(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> Std
     Ok(array(groups.into_iter().map(array).collect()))
 }
 
-fn joined(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
+fn joined(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
     let sep = labeled(&args, "separator");
     // String elements → a single joined string.
     if items.iter().all(|v| matches!(v, SwiftValue::Str(_))) {
@@ -354,18 +396,19 @@ fn joined(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> St
         return Ok(SwiftValue::Str(parts.join(&sep)));
     }
     // Array elements → a flattened array (separator inserted between groups).
-    let sep_items = match sep {
-        Some(SwiftValue::Array(a)) => a.as_ref().clone(),
-        _ => Vec::new(),
-    };
+    let sep_items = sep
+        .as_ref()
+        .and_then(|v| ctx.sequence_elements(v))
+        .unwrap_or_default();
     let mut out = Vec::new();
     for (i, it) in items.into_iter().enumerate() {
         if i > 0 {
             out.extend(sep_items.clone());
         }
-        match it {
-            SwiftValue::Array(a) => out.extend(a.as_ref().clone()),
-            other => out.push(other),
+        if let Some(inner) = ctx.sequence_elements(&it) {
+            out.extend(inner);
+        } else {
+            out.push(it);
         }
     }
     Ok(array(out))
@@ -558,6 +601,24 @@ mod tests {
         fn out(&mut self) -> &mut dyn std::io::Write {
             unreachable!()
         }
+
+        fn call_closure_inout(
+            &mut self,
+            id: usize,
+            accumulator: SwiftValue,
+            element: SwiftValue,
+        ) -> StdResult {
+            assert_eq!(id, 3);
+            let SwiftValue::Array(values) = accumulator else {
+                panic!("test accumulator must be an array");
+            };
+            let SwiftValue::Int(value) = element else {
+                panic!("test element must be an Int");
+            };
+            let mut updated = values.as_ref().clone();
+            updated.push(SwiftValue::int(value.raw * 10));
+            Ok(array(updated))
+        }
     }
 
     fn ints(xs: &[i128]) -> Vec<SwiftValue> {
@@ -577,6 +638,22 @@ mod tests {
         assert_eq!(
             filter(&mut c, ints(&[1, 2, 3, 4]), vec![clo(1)]).unwrap(),
             array(ints(&[2, 4]))
+        );
+        assert_eq!(
+            reduce(
+                &mut c,
+                ints(&[1, 2, 3]),
+                vec![
+                    Arg {
+                        label: Some("into".into()),
+                        value: array(Vec::new()),
+                        static_ty: None,
+                    },
+                    Arg::positional(SwiftValue::Closure(3)),
+                ],
+            )
+            .unwrap(),
+            array(ints(&[10, 20, 30]))
         );
     }
 

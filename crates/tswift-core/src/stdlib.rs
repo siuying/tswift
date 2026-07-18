@@ -73,6 +73,26 @@ pub trait StdContext {
     /// Call the closure with table id `id`, returning its result.
     fn call_closure(&mut self, id: usize, args: Vec<SwiftValue>) -> StdResult;
 
+    /// Call a two-argument closure whose first parameter is `inout`, returning
+    /// the value after the closure has updated it. This is the narrow callback
+    /// shape needed by `Sequence.reduce(into:_:)`.
+    fn call_closure_inout(
+        &mut self,
+        id: usize,
+        accumulator: SwiftValue,
+        element: SwiftValue,
+    ) -> StdResult {
+        let _ = self.call_closure(id, vec![accumulator.clone(), element])?;
+        Ok(accumulator)
+    }
+
+    /// Materialize a runtime sequence for a generic stdlib operation. The
+    /// default covers builtin value sequences; the interpreter additionally
+    /// drives user-defined `Sequence` conformers through `makeIterator()`.
+    fn sequence_elements(&mut self, value: &SwiftValue) -> Option<Vec<SwiftValue>> {
+        materialize_builtin_sequence(value)
+    }
+
     /// Evaluate the body of closure `id` as a result-builder block, returning an
     /// array of each top-level statement's value. This is the SwiftUI
     /// `@ViewBuilder` shim: `VStack { Text(…); Text(…) }` yields both children.

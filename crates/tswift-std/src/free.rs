@@ -236,7 +236,7 @@ fn fold_extreme(ctx: &mut dyn StdContext, args: Vec<Arg>, want_greater: bool) ->
 // ---- sequence builders -----------------------------------------------------
 
 /// `zip(_:_:)` — pair elements of two sequences into a tuple array (eager).
-fn zip(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+fn zip(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut it = args.into_iter();
     let a = it
         .next()
@@ -244,10 +244,12 @@ fn zip(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let b = it
         .next()
         .ok_or_else(|| type_err("zip expects two sequences".into()))?;
-    let xs =
-        as_sequence(&a.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
-    let ys =
-        as_sequence(&b.value).ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
+    let xs = ctx
+        .sequence_elements(&a.value)
+        .ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
+    let ys = ctx
+        .sequence_elements(&b.value)
+        .ok_or_else(|| type_err("zip argument is not a sequence".into()))?;
     let pairs = xs
         .into_iter()
         .zip(ys)

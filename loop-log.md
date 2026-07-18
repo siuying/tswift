@@ -1467,3 +1467,14 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 ## agent app-scene-entrypoint
 
 - Added host-owned `App → Scene → WindowGroup` entry selection across CLI, wasm, and FFI; one WindowGroup unwraps into the existing render session, including scene-level SwiftData scope. Added counter, list/navigation, and SwiftData todo app goldens; `tswift run` smoke coverage is green. Multi-window, platform scenes, and lifecycle/commands remain explicit unsupported diagnostics/scope.
+
+## agent sequence-collection-protocols
+
+- Added shared Sequence/Collection dispatch for custom `makeIterator()`
+  conformers, including default count/emptiness/end properties, `zip`, and
+  `reduce(into:_:)`; flatten/join now accept any runtime sequence.
+- Added generic SwiftUI-list-shaped golden coverage and unit coverage for
+  inout reduction. Sequence 0/31 → 26/31 implemented (25 verified);
+  Collection 0/23 → 14/23 verified. Finite custom sequences are supported;
+  existing materialization limit remains the honest guard for infinite ones.
+- Commit: `feat(stdlib): add protocol sequence operations`.

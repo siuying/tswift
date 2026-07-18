@@ -5,6 +5,7 @@ stance = "capability-driven stdlib denominator; legacy targeted sections remain 
 
 [coverage]
 sequence_types = [
+  "Sequence",
   "Array",
   "ArraySlice",
   "ContiguousArray",
