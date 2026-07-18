@@ -52,6 +52,8 @@ pub use navigation::{
 pub(crate) use values::type_error;
 pub use values::{child_id, container_value, key_of, token_of, view_type_name, view_value};
 
+use std::collections::HashMap;
+
 use tswift_core::{BuiltinParam, EvalError, Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, Node, NodeKind};
 
@@ -144,6 +146,9 @@ pub const ASYNC_IMAGE_PHASE_FIELD: &str = "_asyncPhaseContent";
 /// Stored separately from `_modifiers` so a custom `View` (which has no
 /// `_modifiers`) can still carry it without looking like a builtin view value.
 pub const ENV_FIELD: &str = "_env";
+/// Field holding keyed `.environment(\\.key, value)` writes. It is private to
+/// the renderer and therefore never serialized into UIIR.
+pub const ENV_VALUES_FIELD: &str = "_environmentValues";
 
 /// Internal field on a `Toggle`: the `Binding<Bool>` its `set` event writes to.
 pub const BINDING_FIELD: &str = "_binding";
@@ -168,22 +173,41 @@ class _StateBox<Value> {
     var value: Value
     init(_ v: Value) { value = v }
 }
-// A two-way connection to a `_StateBox`. Its setter is `nonmutating` because it
-// writes through the shared reference box, so a `let` binding (as stored inside
-// a control) can still drive the source `@State`.
+class _BindingBox<Value> {
+    let getValue: () -> Value
+    let setValue: (Value) -> Void
+    init(get: @escaping () -> Value, set: @escaping (Value) -> Void) {
+        getValue = get
+        setValue = set
+    }
+}
+// A two-way connection whose storage can be a `@State` box or arbitrary
+// getter/setter closures. Its setter is `nonmutating` because it writes through
+// the shared reference box, so controls can retain it immutably.
+@propertyWrapper
 struct Binding<Value> {
-    let box: _StateBox<Value>
+    let box: _BindingBox<Value>
     var wrappedValue: Value {
-        get { box.value }
-        nonmutating set { box.value = newValue }
+        get { box.getValue() }
+        nonmutating set { box.setValue(newValue) }
     }
     // A binding projects to itself, which lets `$binding` be passed through to
     // controls in exactly the same way as `$state`.
     var projectedValue: Binding<Value> { self }
-    // A constant binding deliberately retains a private box. Controls can
-    // write their event payload into it, but no external state is observed.
+    init(get: @escaping () -> Value, set: @escaping (Value) -> Void) {
+        box = _BindingBox(get: get, set: set)
+    }
+    // A constant binding deliberately retains private storage. Controls can
+    // write an event payload into it, but no external state is observed.
     static func constant(_ value: Value) -> Binding<Value> {
-        Binding(box: _StateBox(value))
+        let state = _StateBox(value)
+        return Binding(get: { state.value }, set: { state.value = $0 })
+    }
+    // Unwrap an optional binding while it has a value. A later nil source read
+    // traps in the same way SwiftUI's failable binding no longer has a value.
+    init?(_ base: Binding<Value>) {
+        if base.wrappedValue == nil { return nil }
+        box = base.box
     }
 }
 @propertyWrapper
@@ -194,7 +218,9 @@ struct State<Value> {
         set { box.value = newValue }
     }
     // `$flag` yields a `Binding` onto the same box (two-way data flow).
-    var projectedValue: Binding<Value> { Binding(box: box) }
+    var projectedValue: Binding<Value> {
+        Binding(get: { box.value }, set: { box.value = $0 })
+    }
     init(wrappedValue: Value) { box = _StateBox(wrappedValue) }
 }
 // Observation. The render host re-evaluates `body` after every event, so a
@@ -233,6 +259,16 @@ struct EnvironmentObject<ObjectType> {
     var store: ObjectType?
     var wrappedValue: ObjectType { store! }
     init() { store = nil }
+}
+@propertyWrapper
+struct Environment<Value> {
+    let keyPath: KeyPath<EnvironmentValues, Value>
+    var store: Value?
+    var wrappedValue: Value { store! }
+    init(_ keyPath: KeyPath<EnvironmentValues, Value>) {
+        self.keyPath = keyPath
+        store = nil
+    }
 }
 // `@Namespace var ns` yields a geometry-identity namespace. The runtime is
 // headless (no layout engine to actually match geometry), so a namespace is an
@@ -2310,6 +2346,33 @@ fn environment_objects(view: &SwiftValue) -> Vec<SwiftValue> {
     }
 }
 
+fn environment_values(view: &SwiftValue) -> Vec<(String, SwiftValue)> {
+    let SwiftValue::Struct(obj) = view else {
+        return Vec::new();
+    };
+    let Some(SwiftValue::Array(entries)) = obj.get(ENV_VALUES_FIELD) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let SwiftValue::Struct(entry) = entry else {
+                return None;
+            };
+            let SwiftValue::Str(key) = entry.get("key")? else {
+                return None;
+            };
+            Some((key.clone(), entry.get("value")?.clone()))
+        })
+        .collect()
+}
+
+#[derive(Default)]
+pub(crate) struct EnvironmentContext {
+    objects: Vec<SwiftValue>,
+    values: HashMap<String, SwiftValue>,
+}
+
 /// Inject the accumulated environment into a custom view before its `body` is
 /// evaluated: add the view's own `.environmentObject(_)` provisions, then fill
 /// its `@EnvironmentObject` slots. Returns the (possibly updated) view and the
@@ -2317,15 +2380,17 @@ fn environment_objects(view: &SwiftValue) -> Vec<SwiftValue> {
 fn apply_environment(
     ctx: &mut dyn StdContext,
     view: SwiftValue,
-    env: &[SwiftValue],
-) -> Result<(SwiftValue, Vec<SwiftValue>), StdError> {
-    let mut child_env = env.to_vec();
-    child_env.extend(environment_objects(&view));
-    let injected = if child_env.is_empty() {
-        view
-    } else {
-        ctx.inject_environment_objects(&view, "EnvironmentObject", &child_env)?
+    env: &EnvironmentContext,
+) -> Result<(SwiftValue, EnvironmentContext), StdError> {
+    let mut child_env = EnvironmentContext {
+        objects: env.objects.clone(),
+        values: env.values.clone(),
     };
+    child_env.objects.extend(environment_objects(&view));
+    child_env.values.extend(environment_values(&view));
+    let injected =
+        ctx.inject_environment_objects(&view, "EnvironmentObject", &child_env.objects)?;
+    let injected = ctx.inject_environment_values(&injected, "Environment", &child_env.values)?;
     Ok((injected, child_env))
 }
 
@@ -2342,7 +2407,7 @@ fn expand_into(
     value: SwiftValue,
     out: &mut Vec<SwiftValue>,
     depth: usize,
-    env: &[SwiftValue],
+    env: &EnvironmentContext,
 ) -> Result<(), StdError> {
     match value {
         SwiftValue::Array(items) => {
@@ -2399,7 +2464,7 @@ fn is_custom_view(_ctx: &mut dyn StdContext, value: &SwiftValue) -> bool {
 /// down to the first builtin view value.
 pub fn resolve_root(ctx: &mut dyn StdContext, value: SwiftValue) -> Result<SwiftValue, StdError> {
     let mut current = value;
-    let mut env: Vec<SwiftValue> = Vec::new();
+    let mut env = EnvironmentContext::default();
     let mut depth = 0;
     while is_custom_view(ctx, &current) {
         if depth >= MAX_VIEW_DEPTH {

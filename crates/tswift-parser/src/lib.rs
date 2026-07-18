@@ -83,8 +83,9 @@ struct RawPrecedenceGroup {
 struct DeclMeta {
     /// Modifier keywords in source order (`static`, `mutating`, `weak`, \u2026).
     modifiers: Vec<String>,
-    /// Attributes as `(name_without_at, line, col)`.
-    attributes: Vec<(String, u32, u32)>,
+    /// Attributes plus parsed arguments. Property wrappers retain these
+    /// expressions so their initialization can depend on a key path.
+    attributes: Vec<(String, u32, u32, Vec<NodeId>)>,
 }
 
 impl<'a> Parser<'a> {
@@ -346,7 +347,7 @@ impl<'a> Parser<'a> {
         // Collect declaration modifiers (`static`, `public`, `final`, …) and
         // attributes (`@main`, `@propertyWrapper`, …) that precede a
         // declaration keyword, then attach them to the parsed declaration.
-        let meta = self.collect_decl_meta();
+        let meta = self.collect_decl_meta()?;
         let node = self.parse_statement_body()?;
         self.attach_decl_meta(node, meta);
         Ok(node)
@@ -1221,7 +1222,7 @@ impl<'a> Parser<'a> {
     /// `final`, …) and attributes (`@main`, `@propertyWrapper`, …) that precede
     /// a declaration keyword, consuming them and returning them so the parsed
     /// declaration can be annotated via [`attach_decl_meta`].
-    fn collect_decl_meta(&mut self) -> DeclMeta {
+    fn collect_decl_meta(&mut self) -> Result<DeclMeta, ParseError> {
         // First confirm the run actually precedes a declaration (mirrors the
         // old `skip_modifiers` guard), so a bare `weak`/`@x` used elsewhere is
         // not mistaken for a modifier run.
@@ -1257,16 +1258,39 @@ impl<'a> Parser<'a> {
             || !(is_decl_keyword(self.tokens[i].text)
                 || self.tokens[i].kind == TokenKind::Attribute)
         {
-            return meta;
+            return Ok(meta);
         }
         while self.pos < i {
             let t = self.peek();
             if t.kind == TokenKind::Attribute {
                 let name = t.text.trim_start_matches('@').to_string();
-                meta.attributes.push((name, t.line, t.col));
+                let line = t.line;
+                let col = t.col;
                 self.bump();
                 if self.peek().kind == TokenKind::LParen {
-                    self.skip_balanced_parens();
+                    self.bump();
+                    let mut args = Vec::new();
+                    while self.peek().kind != TokenKind::RParen {
+                        let label = (self.peek().kind == TokenKind::Identifier
+                            && self.tokens[self.pos + 1].kind == TokenKind::Colon)
+                            .then(|| self.bump().text.to_string());
+                        if label.is_some() {
+                            self.bump();
+                        }
+                        let arg = self.parse_expr(0)?;
+                        if let Some(label) = label {
+                            self.ast.set_arg_label(arg, &label);
+                        }
+                        args.push(arg);
+                        if self.peek().kind != TokenKind::Comma {
+                            break;
+                        }
+                        self.bump();
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    meta.attributes.push((name, line, col, args));
+                } else {
+                    meta.attributes.push((name, line, col, Vec::new()));
                 }
             } else {
                 meta.modifiers.push(t.text.to_string());
@@ -1276,7 +1300,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        meta
+        Ok(meta)
     }
 
     /// Attach collected modifiers and attribute child nodes to a parsed
@@ -1285,8 +1309,11 @@ impl<'a> Parser<'a> {
         for m in &meta.modifiers {
             self.ast.add_modifier(node, m);
         }
-        for (name, line, col) in meta.attributes {
+        for (name, line, col, args) in meta.attributes {
             let attr = self.ast.add(NodeKind::Attribute, Some(&name), line, col);
+            for arg in args {
+                self.ast.append_child(attr, arg);
+            }
             self.ast.append_child(node, attr);
         }
     }

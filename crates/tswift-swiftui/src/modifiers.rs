@@ -9,9 +9,9 @@ use tswift_core::{Arg, StdContext, StdResult, StructMethodFn, StructObj, SwiftVa
 
 use crate::navigation::modifier_navigation_destination;
 use crate::{
-    container_value, expand_into, token_of, type_error, ENV_FIELD, HANDLERS_FIELD, HANDLERS_TYPE,
-    MODIFIERS_FIELD, MODIFIER_TYPE, PRESENTATIONS_FIELD, PRESENTATION_TYPE, WATCH_FIELD,
-    WATCH_TYPE,
+    container_value, expand_into, token_of, type_error, ENV_FIELD, ENV_VALUES_FIELD,
+    HANDLERS_FIELD, HANDLERS_TYPE, MODIFIERS_FIELD, MODIFIER_TYPE, PRESENTATIONS_FIELD,
+    PRESENTATION_TYPE, WATCH_FIELD, WATCH_TYPE,
 };
 
 /// Define a view-modifier intrinsic that appends a named `_Modifier` record to
@@ -126,7 +126,69 @@ macro_rules! scoped_value_modifier {
         }
     };
 }
-scoped_value_modifier!(modifier_environment, "environment");
+/// `.environment(\\.key, value)` writes a value for descendant
+/// `@Environment(\\.key)` readers. The write remains private to the render
+/// tree; its visible modifier record preserves the existing UIIR contract.
+pub(crate) fn modifier_environment(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<Arg>,
+) -> StdResult {
+    let mut args = args.into_iter();
+    let key_path = args.next().map(|arg| arg.value);
+    let value = args.next().map(|arg| arg.value);
+    let rendered = value.clone().map_or_else(Vec::new, |value| {
+        vec![Arg {
+            label: None,
+            value,
+            static_ty: None,
+        }]
+    });
+    let recv = match &recv {
+        SwiftValue::Struct(view) if view.get(MODIFIERS_FIELD).is_some() => {
+            append_modifier(recv, make_modifier("environment", rendered))?
+        }
+        _ => recv,
+    };
+    let (Some(key_path), Some(value)) = (key_path, value) else {
+        return Ok(recv);
+    };
+    let Some(key) = ctx
+        .key_path_components(&key_path)
+        .and_then(|parts| parts.last().cloned())
+    else {
+        return Ok(recv);
+    };
+    let SwiftValue::Struct(obj) = &recv else {
+        return Ok(recv);
+    };
+    let mut fields = obj.fields.clone();
+    let slot = fields
+        .iter_mut()
+        .find(|(name, _)| name == ENV_VALUES_FIELD)
+        .map(|(_, value)| value);
+    let mut entries = match slot {
+        Some(SwiftValue::Array(entries)) => (**entries).clone(),
+        _ => Vec::new(),
+    };
+    entries.push(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "_EnvironmentValue".into(),
+        fields: vec![
+            ("key".into(), SwiftValue::Str(key)),
+            ("value".into(), value),
+        ],
+    })));
+    let entries = SwiftValue::Array(Rc::new(entries));
+    if let Some(slot) = slot {
+        *slot = entries;
+    } else {
+        fields.push((ENV_VALUES_FIELD.into(), entries));
+    }
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields,
+    })))
+}
 scoped_value_modifier!(modifier_focused_value, "focusedValue");
 scoped_value_modifier!(modifier_focused_scene_value, "focusedSceneValue");
 scoped_value_modifier!(modifier_container_value, "containerValue");
@@ -694,9 +756,21 @@ fn compose_modifier(
                     match view_or_closure {
                         SwiftValue::Closure(id) => {
                             let block = ctx.eval_block_values(id)?;
-                            expand_into(ctx, block, &mut views, 0, &[])?;
+                            expand_into(
+                                ctx,
+                                block,
+                                &mut views,
+                                0,
+                                &crate::EnvironmentContext::default(),
+                            )?;
                         }
-                        other => expand_into(ctx, other, &mut views, 0, &[])?,
+                        other => expand_into(
+                            ctx,
+                            other,
+                            &mut views,
+                            0,
+                            &crate::EnvironmentContext::default(),
+                        )?,
                     }
                     content = match views.len() {
                         0 => None, // an unsupported/empty content value
@@ -981,9 +1055,21 @@ fn safe_area_inset_modifier(
                 match arg.value {
                     SwiftValue::Closure(id) => {
                         let block = ctx.eval_block_values(id)?;
-                        expand_into(ctx, block, &mut views, 0, &[])?;
+                        expand_into(
+                            ctx,
+                            block,
+                            &mut views,
+                            0,
+                            &crate::EnvironmentContext::default(),
+                        )?;
                     }
-                    other => expand_into(ctx, other, &mut views, 0, &[])?,
+                    other => expand_into(
+                        ctx,
+                        other,
+                        &mut views,
+                        0,
+                        &crate::EnvironmentContext::default(),
+                    )?,
                 }
                 content = match views.len() {
                     0 => None,
@@ -1719,9 +1805,21 @@ fn modifier_tab_item(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>)
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                expand_into(ctx, block, &mut views, 0, &[])?;
+                expand_into(
+                    ctx,
+                    block,
+                    &mut views,
+                    0,
+                    &crate::EnvironmentContext::default(),
+                )?;
             }
-            other => expand_into(ctx, other, &mut views, 0, &[])?,
+            other => expand_into(
+                ctx,
+                other,
+                &mut views,
+                0,
+                &crate::EnvironmentContext::default(),
+            )?,
         }
     }
     // A single label view is stored directly; a `Text` + `Image` pair composes
@@ -1759,9 +1857,21 @@ fn modifier_navigation_bar_items(
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                expand_into(ctx, block, &mut views, 0, &[])?;
+                expand_into(
+                    ctx,
+                    block,
+                    &mut views,
+                    0,
+                    &crate::EnvironmentContext::default(),
+                )?;
             }
-            other => expand_into(ctx, other, &mut views, 0, &[])?,
+            other => expand_into(
+                ctx,
+                other,
+                &mut views,
+                0,
+                &crate::EnvironmentContext::default(),
+            )?,
         }
         let content = match views.len() {
             0 => continue,
@@ -1800,9 +1910,21 @@ pub(crate) fn modifier_container_background(
                     match view_or_closure {
                         SwiftValue::Closure(id) => {
                             let block = ctx.eval_block_values(id)?;
-                            expand_into(ctx, block, &mut views, 0, &[])?;
+                            expand_into(
+                                ctx,
+                                block,
+                                &mut views,
+                                0,
+                                &crate::EnvironmentContext::default(),
+                            )?;
                         }
-                        other => expand_into(ctx, other, &mut views, 0, &[])?,
+                        other => expand_into(
+                            ctx,
+                            other,
+                            &mut views,
+                            0,
+                            &crate::EnvironmentContext::default(),
+                        )?,
                     }
                     content = match views.len() {
                         0 => None,
@@ -1864,9 +1986,21 @@ fn compose_content(
     match value {
         SwiftValue::Closure(id) => {
             let block = ctx.eval_block_values(id)?;
-            expand_into(ctx, block, &mut views, 0, &[])?;
+            expand_into(
+                ctx,
+                block,
+                &mut views,
+                0,
+                &crate::EnvironmentContext::default(),
+            )?;
         }
-        other => expand_into(ctx, other, &mut views, 0, &[])?,
+        other => expand_into(
+            ctx,
+            other,
+            &mut views,
+            0,
+            &crate::EnvironmentContext::default(),
+        )?,
     }
     Ok(match views.len() {
         0 => None,

@@ -133,6 +133,18 @@ pub trait StdContext {
         Ok(view.clone())
     }
 
+    /// Inject key-path environment values into `@Environment` wrapper fields.
+    /// Values are keyed by their final `EnvironmentValues` member name; the
+    /// SwiftUI renderer supplies the nearest ancestor's map.
+    fn inject_environment_values(
+        &mut self,
+        view: &SwiftValue,
+        _wrapper_type: &str,
+        _values: &std::collections::HashMap<String, SwiftValue>,
+    ) -> StdResult {
+        Ok(view.clone())
+    }
+
     /// Enter the render scope of a custom `View` before its `body` is evaluated,
     /// invoking every hook registered via
     /// [`crate::Interpreter::register_view_scope`]. Balanced with

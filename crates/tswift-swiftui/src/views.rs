@@ -129,7 +129,13 @@ pub fn keyed_rows(
         // *every* produced sibling view, not just the last statement.
         let built = ctx.eval_block_values_with_args(content, vec![item])?;
         let mut rows = Vec::new();
-        expand_into(ctx, built, &mut rows, 0, &[])?;
+        expand_into(
+            ctx,
+            built,
+            &mut rows,
+            0,
+            &crate::EnvironmentContext::default(),
+        )?;
         // A single produced view takes the row key directly; multiple views
         // (a `Group`-like body) get an `_<j>` suffix so keys stay unique. The
         // separator is `_`, which `key_string` always escapes, so a suffixed
@@ -576,7 +582,13 @@ fn collect_closure_children(
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                expand_into(ctx, block, &mut out, 0, &[])?;
+                expand_into(
+                    ctx,
+                    block,
+                    &mut out,
+                    0,
+                    &crate::EnvironmentContext::default(),
+                )?;
             }
             // Any non-closure arg (e.g. `Grid(horizontalSpacing:)`/`alignment:`)
             // is a deferred layout option; error explicitly rather than silently
@@ -842,9 +854,21 @@ pub fn collect_children(
         match arg.value {
             SwiftValue::Closure(id) => {
                 let block = ctx.eval_block_values(id)?;
-                expand_into(ctx, block, &mut out, 0, &[])?;
+                expand_into(
+                    ctx,
+                    block,
+                    &mut out,
+                    0,
+                    &crate::EnvironmentContext::default(),
+                )?;
             }
-            other => expand_into(ctx, other, &mut out, 0, &[])?,
+            other => expand_into(
+                ctx,
+                other,
+                &mut out,
+                0,
+                &crate::EnvironmentContext::default(),
+            )?,
         }
     }
     Ok(out)

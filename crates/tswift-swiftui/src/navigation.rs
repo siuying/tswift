@@ -224,16 +224,34 @@ pub fn realize_pushed_screen(
             match (rec.get("destination"), rec.get("value")) {
                 (Some(SwiftValue::Closure(id)), Some(value)) => {
                     let produced = ctx.eval_block_values_with_args(*id, vec![value.clone()])?;
-                    expand_into(ctx, produced, &mut out, 0, &[])?;
+                    expand_into(
+                        ctx,
+                        produced,
+                        &mut out,
+                        0,
+                        &crate::EnvironmentContext::default(),
+                    )?;
                 }
                 _ => return Ok(None),
             }
         }
         SwiftValue::Closure(id) => {
             let block = ctx.eval_block_values(*id)?;
-            expand_into(ctx, block, &mut out, 0, &[])?;
+            expand_into(
+                ctx,
+                block,
+                &mut out,
+                0,
+                &crate::EnvironmentContext::default(),
+            )?;
         }
-        other => expand_into(ctx, other.clone(), &mut out, 0, &[])?,
+        other => expand_into(
+            ctx,
+            other.clone(),
+            &mut out,
+            0,
+            &crate::EnvironmentContext::default(),
+        )?,
     }
     Ok(match out.len() {
         0 => None,

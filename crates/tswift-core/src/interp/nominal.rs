@@ -3,7 +3,7 @@ use tswift_frontend::{Node, NodeKind};
 use super::{
     clone_method, clone_params, expand_directives, field_type_name, generic_param_names, is_expr,
     is_value_node, parse_params, ClassDef, ComputedProp, EnumCaseDef, EnumDef, Interpreter,
-    MethodDef, MethodOverload, RawKind, StoredProp, StructDef, SubscriptDef,
+    MethodDef, MethodOverload, RawKind, StoredProp, StructDef, SubscriptDef, WrapperDef,
 };
 use crate::value::{IntWidth, SwiftValue};
 
@@ -748,12 +748,18 @@ impl<'w> Interpreter<'w> {
                             },
                         );
                     } else {
-                        if let Some(attr) = member
-                            .children()
-                            .find(|c| c.kind() == NodeKind::Attribute)
-                            .and_then(|a| a.text())
+                        if let Some(attr) =
+                            member.children().find(|c| c.kind() == NodeKind::Attribute)
                         {
-                            wrappers.insert(pname.clone(), attr);
+                            if let Some(type_name) = attr.text() {
+                                wrappers.insert(
+                                    pname.clone(),
+                                    WrapperDef {
+                                        type_name,
+                                        args: attr.children().collect(),
+                                    },
+                                );
+                            }
                         }
                         let default = member.children().find(|c| is_value_node(c));
                         let will_set = acc.will_set_body.map(|b| {

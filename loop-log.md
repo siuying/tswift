@@ -1478,3 +1478,7 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   Collection 0/23 → 14/23 verified. Finite custom sequences are supported;
   existing materialization limit remains the honest guard for infinite ones.
 - Commit: `feat(stdlib): add protocol sequence operations`.
+
+## agent binding-observation
+
+- Added closure-backed Binding(get:set:), optional unwrap and child $state projection; keyed @Environment propagation and existing environment-object/observable dispatch now produce UIIR patches. Goldens cover child form input, shared observed counter, and theming. Coverage: Binding 4/13 impl, 2/13 verified to 4/13, 2/13; Environment 0/2, 0/2 to 2/2, 1/2. Collection bindings and transaction/animation semantics remain scoped out.

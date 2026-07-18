@@ -448,8 +448,8 @@ struct StructDef {
     init: Option<MethodDef>,
     /// All custom initializer overloads, selected by argument labels/types.
     init_overloads: Vec<MethodDef>,
-    /// Stored property name → its `@propertyWrapper` type, when wrapped.
-    wrappers: std::collections::HashMap<String, String>,
+    /// Stored property name → its property-wrapper declaration, when wrapped.
+    wrappers: std::collections::HashMap<String, WrapperDef>,
     /// Integer generic parameter names (`struct Buf<let N: Int>`), in
     /// declaration order. A call-site specialization (`Buf<4>()`) binds each
     /// as an immutable stored field on the instance.
@@ -461,6 +461,20 @@ struct StructDef {
     /// `dynamicallyCall(withArguments:)` / `dynamicallyCall(withKeywordArguments:)`.
     dynamic_callable: bool,
 }
+
+#[derive(Clone)]
+struct WrapperDef {
+    type_name: String,
+    args: Vec<Node<'static>>,
+}
+
+type StoredFieldPlan = (
+    String,
+    Option<String>,
+    bool,
+    Option<Node<'static>>,
+    Option<WrapperDef>,
+);
 
 /// One case of an enum.
 struct EnumCaseDef {
@@ -4323,9 +4337,10 @@ impl<'w> Interpreter<'w> {
                         .and_then(|d| d.wrappers.get(&pname))
                         .cloned();
                     let value = match wrapper {
-                        Some(wt) => {
-                            me.instantiate_struct(&wt, &[(Some("wrappedValue".into()), value)])?
-                        }
+                        Some(wrapper) => me.instantiate_struct(
+                            &wrapper.type_name,
+                            &[(Some("wrappedValue".into()), value)],
+                        )?,
                         None => value,
                     };
                     built.push((pname, value));
@@ -4379,13 +4394,21 @@ impl<'w> Interpreter<'w> {
             };
         }
 
-        let plan: Vec<(String, Option<String>, bool, Option<Node<'static>>)> = self
+        let plan: Vec<StoredFieldPlan> = self
             .types
             .struct_def(type_name)
             .map(|d| {
                 d.stored
                     .iter()
-                    .map(|p| (p.name.clone(), p.ty.clone(), p.lazy, p.default))
+                    .map(|p| {
+                        (
+                            p.name.clone(),
+                            p.ty.clone(),
+                            p.lazy,
+                            p.default,
+                            d.wrappers.get(&p.name).cloned(),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -4394,17 +4417,12 @@ impl<'w> Interpreter<'w> {
         let built = self.with_type_values(type_values, |me| {
             let mut built: Vec<(String, SwiftValue)> = Vec::new();
             let mut positional = args.iter().filter(|(l, _)| l.is_none());
-            for (pname, field_ty, lazy, default) in plan {
+            for (pname, field_ty, lazy, default, wrapper) in plan {
                 let labeled = args
                     .iter()
                     .find(|(l, _)| l.as_deref() == Some(pname.as_str()))
                     .map(|(_, v)| v.clone());
                 // The `@propertyWrapper` type backing this field, if any.
-                let wrapper = me
-                    .types
-                    .struct_def(type_name)
-                    .and_then(|d| d.wrappers.get(&pname))
-                    .cloned();
                 let value = if let Some(v) = labeled {
                     coerce_numeric(v, field_ty.as_deref())
                 } else if let Some((_, v)) = positional.next() {
@@ -4414,12 +4432,17 @@ impl<'w> Interpreter<'w> {
                     continue;
                 } else if let Some(def) = default {
                     me.eval(&def)?
-                } else if let Some(wt) = &wrapper {
+                } else if let Some(wrapper) = &wrapper {
                     // A wrapped property with no provided value and no default
                     // (e.g. `@EnvironmentObject var x: T`) is synthesized via
                     // the wrapper's own no-argument `init()` — its value is
                     // injected later (by the environment) rather than here.
-                    let synthesized = me.instantiate_struct(wt, &[])?;
+                    let wrapper_args: Vec<(Option<String>, SwiftValue)> = wrapper
+                        .args
+                        .iter()
+                        .map(|arg| Ok((arg.arg_label(), me.eval(arg)?)))
+                        .collect::<Result<_, Signal>>()?;
+                    let synthesized = me.instantiate_struct(&wrapper.type_name, &wrapper_args)?;
                     built.push((pname, synthesized));
                     continue;
                 } else {
@@ -4430,8 +4453,17 @@ impl<'w> Interpreter<'w> {
                 };
                 // Wrap `@propertyWrapper` fields in their wrapper instance.
                 let value = match &wrapper {
-                    Some(wt) => {
-                        me.instantiate_struct(wt, &[(Some("wrappedValue".into()), value)])?
+                    Some(wrapper)
+                        if wrapper.type_name == "Binding"
+                            && matches!(&value, SwiftValue::Struct(binding) if binding.type_name == "Binding") =>
+                    {
+                        value
+                    }
+                    Some(wrapper) => {
+                        me.instantiate_struct(
+                            &wrapper.type_name,
+                            &[(Some("wrappedValue".into()), value)],
+                        )?
                     }
                     None => value,
                 };
@@ -5988,7 +6020,12 @@ impl StdContext for Interpreter<'_> {
             .map(|d| {
                 d.stored
                     .iter()
-                    .filter(|p| d.wrappers.get(&p.name).map(String::as_str) == Some(wrapper_type))
+                    .filter(|p| {
+                        d.wrappers
+                            .get(&p.name)
+                            .map(|wrapper| wrapper.type_name.as_str())
+                            == Some(wrapper_type)
+                    })
                     .map(|p| (p.name.clone(), p.ty.clone()))
                     .collect()
             })
@@ -6019,6 +6056,64 @@ impl StdContext for Interpreter<'_> {
                     }
                     slot.1 = SwiftValue::Struct(Rc::new(w));
                 }
+            }
+        }
+        Ok(SwiftValue::Struct(Rc::new(updated)))
+    }
+
+    fn inject_environment_values(
+        &mut self,
+        view: &SwiftValue,
+        wrapper_type: &str,
+        values: &std::collections::HashMap<String, SwiftValue>,
+    ) -> crate::stdlib::StdResult {
+        let SwiftValue::Struct(obj) = view else {
+            return Ok(view.clone());
+        };
+        let fields: Vec<String> = self
+            .types
+            .struct_def(&obj.type_name)
+            .map(|d| {
+                d.stored
+                    .iter()
+                    .filter(|p| {
+                        d.wrappers
+                            .get(&p.name)
+                            .map(|wrapper| wrapper.type_name.as_str())
+                            == Some(wrapper_type)
+                    })
+                    .map(|p| p.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if fields.is_empty() {
+            return Ok(view.clone());
+        }
+        let mut updated = (**obj).clone();
+        for field in fields {
+            let Some((_, SwiftValue::Struct(wrapper))) =
+                updated.fields.iter_mut().find(|(name, _)| name == &field)
+            else {
+                continue;
+            };
+            let Some(key_path) = wrapper.get("keyPath") else {
+                continue;
+            };
+            let Some(key) = self
+                .key_path_components(key_path)
+                .and_then(|parts| parts.last().cloned())
+            else {
+                continue;
+            };
+            let Some(value) = values.get(&key) else {
+                continue;
+            };
+            let mut wrapper = (**wrapper).clone();
+            if let Some((_, store)) = wrapper.fields.iter_mut().find(|(name, _)| name == "store") {
+                *store = value.clone();
+            }
+            if let Some((_, slot)) = updated.fields.iter_mut().find(|(name, _)| name == &field) {
+                *slot = SwiftValue::Struct(Rc::new(wrapper));
             }
         }
         Ok(SwiftValue::Struct(Rc::new(updated)))

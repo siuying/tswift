@@ -1465,6 +1465,23 @@ impl<'w> Interpreter<'w> {
 
         let base_value = self.eval(&base)?;
 
+        // A stored closure is callable through member-call syntax
+        // (`box.read()`), just like Swift function-valued properties. This is
+        // used by closure-backed SwiftUI bindings and keeps the dispatch path
+        // consistent with ordinary closures (including `inout` write-back).
+        if let SwiftValue::Struct(object) = &base_value {
+            if let Some(SwiftValue::Closure(id)) = object.get(&method) {
+                let args = self.eval_args(arg_nodes)?;
+                return self.call_closure_with_args(*id, args);
+            }
+        }
+        if let SwiftValue::Object(object) = &base_value {
+            if let Some(SwiftValue::Closure(id)) = object.borrow().get(&method) {
+                let args = self.eval_args(arg_nodes)?;
+                return self.call_closure_with_args(*id, args);
+            }
+        }
+
         // Declared-type-aware `Optional` dispatch (#242): when the receiver's
         // static type is optional, `Optional`'s own mutating members (`take`)
         // win over the wrapped type's. Runs before the Nil short-circuit so

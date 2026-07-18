@@ -190,7 +190,13 @@ fn realize_single_async_child(
     produced: SwiftValue,
 ) -> Result<Option<SwiftValue>, StdError> {
     let mut out = Vec::new();
-    expand_into(ctx, produced, &mut out, 0, &[])?;
+    expand_into(
+        ctx,
+        produced,
+        &mut out,
+        0,
+        &crate::EnvironmentContext::default(),
+    )?;
     Ok(match out.len() {
         0 => None,
         1 => out.into_iter().next(),

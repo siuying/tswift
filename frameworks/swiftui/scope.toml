@@ -29,13 +29,15 @@ App = ["main"]
 # standalone Scene requirement to credit. Scene composition is limited to a
 # single WindowGroup (optionally wrapped in Group/custom Scene values).
 WindowGroup = ["init"]
-# `Binding.constant` uses a private reference box and `projectedValue` returns
-# the binding itself. Collection/key-path forms need generic collection and
-# transaction support not yet exposed by the frontend.
+# `Binding` supports `get:set:`, `constant`, failable optional unwrapping, and
+# `$state` projection into child `@Binding` properties. Collection/subscript
+# bindings (`$items[i]`, `ForEach($items)`) remain out of scope: the headless
+# runtime has no element-identity/writeback contract for mutable collections.
 Binding = ["init", "constant", "projectedValue", "wrappedValue"]
 StateObject = ["init", "wrappedValue"]
 ObservedObject = ["init", "wrappedValue"]
 EnvironmentObject = ["init", "wrappedValue"]
+Environment = ["init", "wrappedValue"]
 NavigationPath = ["init", "append", "removeLast", "count", "isEmpty"]
 AsyncImage = ["init", "init(url:content:placeholder:)", "init(url:transaction:content:)"]
 # Text typography modifiers (Text -> Text) recorded via the shared modifier
@@ -131,6 +133,7 @@ gestures = ["DragGesture", "MagnificationGesture", "RotationGesture", "GestureSt
 graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
 platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
 app_scene_lifecycle = ["Settings", "DocumentGroup", "MenuBarExtra", "Commands", "Window", "ImmersiveSpace", "MenuBarExtraStyle"]
+binding_collections = ["Binding.subscript", "Binding.init(projecting:)", "ForEach.init(_:content:) binding overload"]
 
 # `.toolbar { ... }` records and renders its builder content as a nested UIIR
 # modifier value, but that representation has no host-routable structural ids.
