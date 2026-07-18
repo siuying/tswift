@@ -1268,26 +1268,7 @@ impl<'a> Parser<'a> {
                 let col = t.col;
                 self.bump();
                 if self.peek().kind == TokenKind::LParen {
-                    self.bump();
-                    let mut args = Vec::new();
-                    while self.peek().kind != TokenKind::RParen {
-                        let label = (self.peek().kind == TokenKind::Identifier
-                            && self.tokens[self.pos + 1].kind == TokenKind::Colon)
-                            .then(|| self.bump().text.to_string());
-                        if label.is_some() {
-                            self.bump();
-                        }
-                        let arg = self.parse_expr(0)?;
-                        if let Some(label) = label {
-                            self.ast.set_arg_label(arg, &label);
-                        }
-                        args.push(arg);
-                        if self.peek().kind != TokenKind::Comma {
-                            break;
-                        }
-                        self.bump();
-                    }
-                    self.expect(TokenKind::RParen)?;
+                    let args = self.parse_attribute_args(&name)?;
                     meta.attributes.push((name, line, col, args));
                 } else {
                     meta.attributes.push((name, line, col, Vec::new()));
@@ -1301,6 +1282,39 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(meta)
+    }
+
+    /// Parse arguments for an attribute that was confirmed to precede a
+    /// declaration. Most property-wrapper arguments are expressions, but some
+    /// declaration attributes have their own token grammar. In particular,
+    /// availability versions and the trailing `*` are not Swift expressions.
+    fn parse_attribute_args(&mut self, name: &str) -> Result<Vec<NodeId>, ParseError> {
+        if matches!(name, "available" | "backDeployed" | "_specialize") {
+            self.skip_balanced_parens();
+            return Ok(Vec::new());
+        }
+
+        self.bump(); // '('
+        let mut args = Vec::new();
+        while self.peek().kind != TokenKind::RParen {
+            let label = (self.peek().kind == TokenKind::Identifier
+                && self.tokens[self.pos + 1].kind == TokenKind::Colon)
+                .then(|| self.bump().text.to_string());
+            if label.is_some() {
+                self.bump();
+            }
+            let arg = self.parse_expr(0)?;
+            if let Some(label) = label {
+                self.ast.set_arg_label(arg, &label);
+            }
+            args.push(arg);
+            if self.peek().kind != TokenKind::Comma {
+                break;
+            }
+            self.bump();
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(args)
     }
 
     /// Attach collected modifiers and attribute child nodes to a parsed
@@ -4626,10 +4640,46 @@ mod tests {
     fn attributes_and_private_set_before_declarations() {
         let ast = ast_of("@main struct App { }");
         assert_eq!(first_stmt(&ast).kind(), NodeKind::StructDecl);
-        let ast = ast_of("@available(macOS 10.15, *) func feature() { }");
-        assert_eq!(first_stmt(&ast).kind(), NodeKind::FuncDecl);
+        let ast = ast_of(
+            "@available(iOS 15.0, macOS 12.0, *)\n\
+             @backDeployed(before: iOS 17, macOS 14)\n\
+             func feature() { }",
+        );
+        let feature = first_stmt(&ast);
+        assert_eq!(feature.kind(), NodeKind::FuncDecl);
+        let available = feature
+            .children()
+            .find(|child| child.kind() == NodeKind::Attribute && child.text() == Some("available"))
+            .expect("@available attribute");
+        assert!(available.children().next().is_none());
         let ast = ast_of("private(set) var count = 0");
         assert_eq!(first_stmt(&ast).kind(), NodeKind::VarDecl);
+    }
+
+    #[test]
+    fn environment_attribute_keeps_key_path_argument() {
+        let ast = ast_of("struct ThemeLabel { @Environment(\\.themeName) var themeName: String }");
+        let label = first_stmt(&ast);
+        let theme_name = label
+            .children()
+            .find(|child| {
+                child.kind() == NodeKind::VarDecl
+                    && child.children().any(|grandchild| {
+                        grandchild.kind() == NodeKind::NamePattern
+                            && grandchild.text() == Some("themeName")
+                    })
+            })
+            .expect("themeName property");
+        let environment = theme_name
+            .children()
+            .find(|child| {
+                child.kind() == NodeKind::Attribute && child.text() == Some("Environment")
+            })
+            .expect("@Environment attribute");
+        assert_eq!(
+            environment.children().next().map(|child| child.kind()),
+            Some(NodeKind::KeyPathExpr)
+        );
     }
 
     #[test]
