@@ -2944,7 +2944,7 @@
         {
           "name": "cornerSize",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "corners",
@@ -2974,13 +2974,13 @@
         {
           "name": "style",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
         "implemented": 1,
-        "partial": 0,
-        "missing": 7,
+        "partial": 2,
+        "missing": 5,
         "out_of_scope": 0,
         "total": 8
       }
@@ -3107,12 +3107,12 @@
         {
           "name": "content",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "data",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
@@ -3121,9 +3121,9 @@
         }
       ],
       "counts": {
-        "implemented": 1,
-        "partial": 0,
-        "missing": 3,
+        "implemented": 2,
+        "partial": 1,
+        "missing": 1,
         "out_of_scope": 0,
         "total": 4
       }
@@ -3507,7 +3507,7 @@
         {
           "name": "axes",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "body",
@@ -3527,13 +3527,13 @@
         {
           "name": "showsIndicators",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
         "implemented": 1,
-        "partial": 0,
-        "missing": 4,
+        "partial": 2,
+        "missing": 2,
         "out_of_scope": 0,
         "total": 5
       }
@@ -3629,18 +3629,18 @@
         {
           "name": "content",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         },
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 2,
+        "implemented": 1,
+        "partial": 1,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 2
       }
@@ -3661,17 +3661,17 @@
         {
           "name": "frame",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "safeAreaInsets",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "size",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "subscript",
@@ -3680,9 +3680,9 @@
         }
       ],
       "counts": {
-        "implemented": 0,
+        "implemented": 3,
         "partial": 0,
-        "missing": 6,
+        "missing": 3,
         "out_of_scope": 0,
         "total": 6
       }
@@ -3759,18 +3759,18 @@
         {
           "name": "body",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
+        "implemented": 2,
         "partial": 0,
-        "missing": 2,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 2
       }
@@ -3811,12 +3811,12 @@
         {
           "name": "removeLast",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 4,
-        "partial": 1,
+        "implemented": 5,
+        "partial": 0,
         "missing": 2,
         "out_of_scope": 0,
         "total": 7
@@ -4345,9 +4345,9 @@
     }
   ],
   "totals": {
-    "implemented": 467,
-    "partial": 18,
-    "missing": 207,
+    "implemented": 475,
+    "partial": 23,
+    "missing": 194,
     "out_of_scope": 45,
     "total": 737
   }

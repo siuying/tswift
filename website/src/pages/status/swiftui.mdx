@@ -42,9 +42,11 @@ dedicated parameter type instead of by global uniqueness (`colorScheme`,
 execute through the same event-to-patch path, including state-changing
 gesture, lifecycle, refresh, submit, and change handlers. Closure-backed
 `Binding` transforms, child `$state` projections, and keyed
-`@Environment` propagation are also wired. Async (Tier 6) and
-`GeometryReader` (Tier 7) are not started; navigation has a partial
-single-window `NavigationStack`/`NavigationLink` slice.
+`@Environment` propagation are also wired. Async lifecycle (Tier 6) now
+drains `.task`/`.task(id:)` and `Task { await … }` mutations into the same
+render dispatch; `GeometryReader` (Tier 7) runs against a deterministic
+headless proxy; navigation adds a two/three-column `NavigationSplitView`
+alongside the single-window `NavigationStack`/`NavigationLink` slice.
 
 **Legend:** ✅ Implemented · 🟡 Partial · ⬜ Missing · 🚫 Out of scope.
 The surface count below tracks individual API members across the iOS SDK
@@ -96,9 +98,9 @@ element, and a native iOS SwiftUI applier used for screenshot verification.
 | **Tier 3** | Dynamic collections & identity — `List`/`Section`/`ForEach`, keyed diff with `move`/`insert`/`remove` | ✅ |
 | **Tier 4** | Bindings & input controls — `TextField`/`SecureField`/`Slider`/`Stepper`/`Picker` | ✅ |
 | **Tier 5** | Observation, bindings & environment — `ObservableObject`/`@Published`/`@StateObject`/`@EnvironmentObject`/`@Binding` | 🟡 |
-| **Tier 6** | `Task` & async push channel | ⬜ |
-| **Tier 7** | Layout & geometry — `GeometryReader`, alignment | ⬜ |
-| **Tier 8** | Navigation & presentation — single-window `NavigationStack`/`NavigationLink` slice | 🟡 |
+| **Tier 6** | `Task` & async lifecycle — `.task`/`.task(id:)` + `Task { await … }` drained into the render dispatch | 🟡 |
+| **Tier 7** | Layout & geometry — `GeometryReader` (headless proxy), alignment | 🟡 |
+| **Tier 8** | Navigation & presentation — `NavigationStack`/`NavigationLink` + two/three-column `NavigationSplitView` | 🟡 |
 
 Tier 5 is partial: observation, child binding writeback, and keyed
 `@Environment(\.keyPath)` propagation are implemented; collection bindings,

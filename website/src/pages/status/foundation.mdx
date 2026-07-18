@@ -44,10 +44,22 @@ flowchart LR
 `}
 </Mermaid>
 
+## Host services
+
+`FileManager` and `UserDefaults` are backed by **host services** rather than the
+tracked inventory registry: the CLI exposes a `cwd`/`TSWIFT_FS_ROOT`-sandboxed
+filesystem with portable `/Documents`, `/Library/Caches`, and `/tmp` roots.
+`FileManager` gained basic attributes (size/isDirectory) and directory listing;
+`UserDefaults` gained `Data`/dictionary values and `register(defaults:)`.
+Filesystem failures throw portable `CocoaError { code, message }`. Symlinks,
+permissions, `FileHandle`, `Date` defaults, and full `NSError` metadata remain
+unsupported. Networking uses a deterministic route-table transport in CLI
+goldens; real networking is opt-in via `tswift run --allow-network`.
+
 ## Out of scope
 
 Platform- and device-specific APIs are intentionally excluded (see
-`frameworks/foundation/scope.toml`): `FileManager`, `FileHandle`,
+`frameworks/foundation/scope.toml`): `FileHandle`,
 `NSObject`, `Bundle`, and friends. Remaining unimplemented
 members are largely locale-dependent format styles, `rangeOf*` string-range
 APIs, and resource/bookmark filesystem members.
