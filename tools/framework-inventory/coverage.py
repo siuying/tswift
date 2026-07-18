@@ -308,7 +308,12 @@ class Coverage:
         return "verified" if used else "implemented"
 
     def members(self, section: str) -> set[str]:
-        return self.free_inv if section == FREE_SECTION else self.types_inv.get(section, set())
+        if section == FREE_SECTION:
+            return self.free_inv
+        direct = self.types_inv.get(section, set())
+        inherited_by_type = self.scope.get("coverage", {}).get("inherited_members", {})
+        inherited = set(inherited_by_type.get(section, [])) if isinstance(inherited_by_type, dict) else set()
+        return direct | inherited
 
     def classify(self, section: str) -> dict[str, list[str]]:
         groups = {"verified": [], "implemented": [], "missing": [], "out_of_scope": []}

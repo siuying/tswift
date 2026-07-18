@@ -2175,6 +2175,11 @@
           "status": "implemented"
         },
         {
+          "name": "firstIndex",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
           "name": "hasPrefix",
           "kind": "func",
           "status": "implemented"
@@ -2220,6 +2225,11 @@
           "status": "implemented"
         },
         {
+          "name": "lastIndex",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
           "name": "lowercased",
           "kind": "func",
           "status": "implemented"
@@ -2242,6 +2252,16 @@
         {
           "name": "min",
           "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "prefix",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
+          "name": "range",
+          "kind": "unknown",
           "status": "implemented"
         },
         {
@@ -2287,6 +2307,11 @@
         {
           "name": "subscript",
           "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "suffix",
+          "kind": "unknown",
           "status": "implemented"
         },
         {
@@ -2356,11 +2381,11 @@
         }
       ],
       "counts": {
-        "implemented": 40,
+        "implemented": 45,
         "partial": 0,
         "missing": 13,
         "out_of_scope": 0,
-        "total": 53
+        "total": 58
       }
     },
     {
@@ -2417,6 +2442,11 @@
           "status": "implemented"
         },
         {
+          "name": "firstIndex",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
           "name": "formIndex",
           "kind": "func",
           "status": "implemented"
@@ -2447,6 +2477,11 @@
           "status": "implemented"
         },
         {
+          "name": "lastIndex",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
           "name": "lowercased",
           "kind": "func",
           "status": "implemented"
@@ -2454,6 +2489,16 @@
         {
           "name": "makeContiguousUTF8",
           "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "prefix",
+          "kind": "unknown",
+          "status": "implemented"
+        },
+        {
+          "name": "range",
+          "kind": "unknown",
           "status": "implemented"
         },
         {
@@ -2474,6 +2519,11 @@
         {
           "name": "subscript",
           "kind": "subscript",
+          "status": "implemented"
+        },
+        {
+          "name": "suffix",
+          "kind": "unknown",
           "status": "implemented"
         },
         {
@@ -2533,11 +2583,11 @@
         }
       ],
       "counts": {
-        "implemented": 27,
+        "implemented": 32,
         "partial": 0,
         "missing": 6,
         "out_of_scope": 0,
-        "total": 33
+        "total": 38
       }
     },
     {
@@ -2789,10 +2839,10 @@
     }
   ],
   "totals": {
-    "implemented": 418,
+    "implemented": 428,
     "partial": 0,
     "missing": 96,
     "out_of_scope": 0,
-    "total": 514
+    "total": 524
   }
 }

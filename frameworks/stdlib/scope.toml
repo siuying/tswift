@@ -19,6 +19,15 @@ sequence_types = [
   "ReversedCollection",
 ]
 
+# These StringProtocol/Collection members are inherited rather than repeated in
+# the concrete String and Substring interface sections. Track the concrete
+# runtime capability nevertheless: their result indices must stay in each
+# receiver's String.Index coordinate space, so generic sequence coverage is
+# not sufficient evidence.
+[coverage.inherited_members]
+String = ["firstIndex", "lastIndex", "prefix", "suffix", "range"]
+Substring = ["firstIndex", "lastIndex", "prefix", "suffix", "range"]
+
 # Operators are evaluated directly by the interpreter (tswift-core `ops.rs`),
 # not the method registry. Only the `+`, `+=`, `==` tokens the fixture scanner
 # recognises are listed here, against the types whose `ops.rs` arms implement

@@ -351,6 +351,7 @@ String.description
 String.distance
 String.endIndex
 String.first
+String.firstIndex
 String.firstMatch
 String.flatMap
 String.formIndex
@@ -373,6 +374,7 @@ String.isUppercase
 String.isWhitespace
 String.isWholeNumber
 String.last
+String.lastIndex
 String.lowercased
 String.makeContiguousUTF8
 String.makeIterator
@@ -380,6 +382,7 @@ String.map
 String.matches
 String.prefix
 String.prefixMatch
+String.range
 String.remove
 String.removeAll
 String.removeSubrange
@@ -409,6 +412,7 @@ Substring.description
 Substring.distance
 Substring.endIndex
 Substring.first
+Substring.firstIndex
 Substring.formIndex
 Substring.hasPrefix
 Substring.hasSuffix
@@ -419,10 +423,12 @@ Substring.indices
 Substring.isContiguousUTF8
 Substring.isEmpty
 Substring.last
+Substring.lastIndex
 Substring.lowercased
 Substring.makeContiguousUTF8
 Substring.makeIterator
 Substring.prefix
+Substring.range
 Substring.replaceSubrange
 Substring.split
 Substring.startIndex

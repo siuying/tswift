@@ -200,6 +200,11 @@ pub(super) fn install_shared_text_methods(interp: &mut Interpreter<'_>, s: Built
     pure("contains", contains);
     pure("split", split);
     pure("makeIterator", make_iterator);
+    // These Collection operations need String.Index results rather than the
+    // integer positions produced by the generic Sequence algorithm layer.
+    pure("firstIndex", first_index);
+    pure("lastIndex", last_index);
+    pure("range", range_of);
     // A `String`/`Substring` has no contiguous storage over its `Character`
     // elements (its backing store is UTF-8 bytes), so this always returns nil
     // without invoking the closure — matching Swift's default `Collection`
@@ -301,6 +306,87 @@ pub(super) fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
             other.type_name()
         ))),
     }
+}
+
+/// The backing string and base-relative half-open bounds of a text value.
+/// `String` owns the complete `[0, count)` window; `Substring` preserves the
+/// original base and its coordinates so returned indices interoperate with it.
+fn text_window(recv: &SwiftValue) -> Result<(Rc<String>, usize, usize), StdError> {
+    match recv {
+        SwiftValue::Str(text) => {
+            let base = Rc::new(text.clone());
+            let end = graphemes(base.as_str()).len();
+            Ok((base, 0, end))
+        }
+        SwiftValue::Substring { base, start, end } => Ok((Rc::clone(base), *start, *end)),
+        other => Err(type_err(format!(
+            "expected String or Substring, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+/// Create a Substring view in the receiver's base-index coordinate space.
+pub(super) fn text_slice(
+    recv: &SwiftValue,
+    start: usize,
+    end: usize,
+) -> Result<SwiftValue, StdError> {
+    let (base, lower, upper) = text_window(recv)?;
+    if start < lower || end < start || end > upper {
+        return Err(StdError::Error(EvalError::Trap(format!(
+            "String slice [{start},{end}) out of range [{lower},{upper}]"
+        ))));
+    }
+    Ok(SwiftValue::Substring { base, start, end })
+}
+
+fn ensure_text_index(
+    index: usize,
+    start: usize,
+    end: usize,
+    operation: &str,
+) -> Result<(), StdError> {
+    if (start..=end).contains(&index) {
+        Ok(())
+    } else {
+        Err(StdError::Error(EvalError::Trap(format!(
+            "{operation}: index {index} out of range [{start},{end}]"
+        ))))
+    }
+}
+
+fn nonnegative_count(value: &SwiftValue, operation: &str) -> Result<usize, StdError> {
+    match value {
+        SwiftValue::Int(value) if value.raw >= 0 => Ok(value.raw as usize),
+        SwiftValue::Int(_) => Err(StdError::Error(EvalError::Trap(format!(
+            "{operation}: count must not be negative"
+        )))),
+        _ => Err(type_err(format!(
+            "{operation} expects an Int or String.Index"
+        ))),
+    }
+}
+
+fn character_arg(args: &[SwiftValue], operation: &str) -> Result<String, StdError> {
+    let text = args
+        .first()
+        .ok_or_else(|| type_err(format!("{operation} expects a Character")))
+        .and_then(|value| {
+            str_of(value).map_err(|_| type_err(format!("{operation} expects a Character")))
+        })?;
+    if graphemes(&text).len() == 1 {
+        Ok(text)
+    } else {
+        Err(type_err(format!(
+            "{operation} expects exactly one Character"
+        )))
+    }
+}
+
+fn is_text_range(value: &SwiftValue) -> bool {
+    matches!(value, SwiftValue::Range { .. })
+        || matches!(value, SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange")
 }
 
 fn arg_str(args: &[SwiftValue]) -> Option<String> {
@@ -513,15 +599,114 @@ fn replacing(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -
 }
 
 fn prefix(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
-    let g = graphemes(&str_of(&recv)?);
-    let n = count_arg(&args).unwrap_or(0).min(g.len());
-    val(SwiftValue::Str(g[..n].concat()), recv)
+    let (_, start, end) = text_window(&recv)?;
+    let arg = args
+        .first()
+        .ok_or_else(|| type_err("prefix expects a count or String.Index".into()))?;
+    let slice_end = if let Some(index) = index_offset(arg) {
+        ensure_text_index(index, start, end, "prefix(upTo:)")?;
+        index
+    } else {
+        let count = nonnegative_count(arg, "prefix")?;
+        (start + count).min(end)
+    };
+    val(text_slice(&recv, start, slice_end)?, recv)
 }
 
 fn suffix(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
-    let g = graphemes(&str_of(&recv)?);
-    let n = count_arg(&args).unwrap_or(0).min(g.len());
-    val(SwiftValue::Str(g[g.len() - n..].concat()), recv)
+    let (_, start, end) = text_window(&recv)?;
+    let arg = args
+        .first()
+        .ok_or_else(|| type_err("suffix expects a count or String.Index".into()))?;
+    let slice_start = if let Some(index) = index_offset(arg) {
+        ensure_text_index(index, start, end, "suffix(from:)")?;
+        index
+    } else {
+        let count = nonnegative_count(arg, "suffix")?;
+        end.saturating_sub(count).max(start)
+    };
+    val(text_slice(&recv, slice_start, end)?, recv)
+}
+
+/// `firstIndex(of:)` and `firstIndex(where:)`, returning base-relative
+/// `String.Index` values for both `String` and `Substring` receivers.
+fn first_index(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let (_, start, end) = text_window(&recv)?;
+    let clusters = graphemes(&str_of(&recv)?);
+    let offset = if let Some(SwiftValue::Closure(id)) = args.first() {
+        let mut found = None;
+        for (local, cluster) in clusters.iter().enumerate() {
+            if matches!(
+                ctx.call_closure(*id, vec![SwiftValue::Str(cluster.clone())])?,
+                SwiftValue::Bool(true)
+            ) {
+                found = Some(local);
+                break;
+            }
+        }
+        found
+    } else {
+        let needle = character_arg(&args, "firstIndex(of:)")?;
+        clusters.iter().position(|cluster| *cluster == needle)
+    };
+    let result = offset
+        .map(|local| make_index(start + local))
+        .unwrap_or(SwiftValue::Nil);
+    debug_assert_eq!(start + clusters.len(), end);
+    val(result, recv)
+}
+
+/// `lastIndex(of:)` returns the final base-relative index of one Character.
+fn last_index(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let (_, start, end) = text_window(&recv)?;
+    let clusters = graphemes(&str_of(&recv)?);
+    let offset = if let Some(SwiftValue::Closure(id)) = args.first() {
+        let mut found = None;
+        for (local, cluster) in clusters.iter().enumerate().rev() {
+            if matches!(
+                ctx.call_closure(*id, vec![SwiftValue::Str(cluster.clone())])?,
+                SwiftValue::Bool(true)
+            ) {
+                found = Some(local);
+                break;
+            }
+        }
+        found
+    } else {
+        let needle = character_arg(&args, "lastIndex(of:)")?;
+        clusters.iter().rposition(|cluster| *cluster == needle)
+    };
+    let result = offset
+        .map(|local| make_index(start + local))
+        .unwrap_or(SwiftValue::Nil);
+    debug_assert_eq!(start + clusters.len(), end);
+    val(result, recv)
+}
+
+/// `range(of:)` finds an exact sequence of grapheme clusters and returns a
+/// base-relative `Range<String.Index>` (represented by its offset bounds).
+fn range_of(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
+    let (_, start, end) = text_window(&recv)?;
+    let needle = args
+        .first()
+        .ok_or_else(|| type_err("range(of:) expects a String".into()))
+        .and_then(|value| {
+            str_of(value).map_err(|_| type_err("range(of:) expects a String".into()))
+        })?;
+    let haystack = graphemes(&str_of(&recv)?);
+    let target = graphemes(&needle);
+    let local = if target.is_empty() {
+        Some(0)
+    } else {
+        haystack
+            .windows(target.len())
+            .position(|window| window == target)
+    };
+    let result = local
+        .map(|local| make_index_range(start + local, start + local + target.len()))
+        .unwrap_or(SwiftValue::Nil);
+    debug_assert_eq!(start + haystack.len(), end);
+    val(result, recv)
 }
 
 /// `String.split(separator:)` — split into substrings (here, strings).
@@ -689,6 +874,21 @@ pub(super) fn make_index(offset: usize) -> SwiftValue {
     SwiftValue::Struct(Rc::new(StructObj {
         type_name: "String.Index".into(),
         fields: vec![("_offset".into(), SwiftValue::int(offset as i128))],
+    }))
+}
+
+/// Construct the range returned by `String.range(of:)`. Its public bounds are
+/// `String.Index` values, while the private offsets let collection subscripts
+/// and mutating range operations use the runtime's compact range machinery.
+fn make_index_range(lower: usize, upper: usize) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "String.IndexRange".into(),
+        fields: vec![
+            ("lowerBound".into(), make_index(lower)),
+            ("upperBound".into(), make_index(upper)),
+            ("_lowerOffset".into(), SwiftValue::int(lower as i128)),
+            ("_upperOffset".into(), SwiftValue::int(upper as i128)),
+        ],
     }))
 }
 
@@ -970,7 +1170,7 @@ fn remove_at(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -
 fn remove_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let range = args
         .iter()
-        .find(|a| matches!(a, SwiftValue::Range { .. }))
+        .find(|a| is_text_range(a))
         .ok_or_else(|| type_err("removeSubrange expects a Range".into()))?;
     let mut grapheme_vec = graphemes(&str_of(&recv)?);
     let count = grapheme_vec.len();
@@ -987,7 +1187,7 @@ fn remove_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftVal
 fn replace_subrange(_c: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
     let range = args
         .iter()
-        .find(|a| matches!(a, SwiftValue::Range { .. }))
+        .find(|a| is_text_range(a))
         .ok_or_else(|| type_err("replaceSubrange expects a Range".into()))?;
     let replacement = args
         .iter()
@@ -1067,13 +1267,6 @@ fn labeled(args: &[SwiftValue], _label: &str) -> Option<String> {
 
 fn labeled_bool(args: &[SwiftValue], _label: &str) -> Option<bool> {
     args.iter().find_map(|a| a.as_bool())
-}
-
-fn count_arg(args: &[SwiftValue]) -> Option<usize> {
-    args.iter().find_map(|a| match a {
-        SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-        _ => None,
-    })
 }
 
 #[cfg(test)]
@@ -1178,6 +1371,86 @@ mod tests {
             s("lo")
         );
         assert_eq!(reversed(&mut m, s("abc"), vec![]).unwrap().result, s("cba"));
+    }
+
+    #[test]
+    fn index_search_and_index_slices_keep_grapheme_coordinates() {
+        let mut m = M;
+        let family = "👨\u{200D}👩\u{200D}👧\u{200D}👦";
+        let accent = "e\u{301}";
+        let text = format!("a{family}{accent}b{family}");
+
+        assert_eq!(
+            first_index(&mut m, s(&text), vec![s(family)])
+                .unwrap()
+                .result,
+            idx(1)
+        );
+        assert_eq!(
+            last_index(&mut m, s(&text), vec![s(family)])
+                .unwrap()
+                .result,
+            idx(4)
+        );
+        assert_eq!(
+            range_of(&mut m, s(&text), vec![s(&format!("{accent}b"))])
+                .unwrap()
+                .result,
+            make_index_range(2, 4)
+        );
+
+        let prefix_view = prefix(&mut m, s(&text), vec![idx(2)]).unwrap().result;
+        assert!(matches!(
+            &prefix_view,
+            SwiftValue::Substring {
+                start: 0,
+                end: 2,
+                ..
+            }
+        ));
+        assert_eq!(format!("{prefix_view}"), format!("a{family}"));
+
+        let source = SwiftValue::Substring {
+            base: Rc::new(text),
+            start: 1,
+            end: 4,
+        };
+        assert_eq!(
+            first_index(&mut m, source.clone(), vec![s(accent)])
+                .unwrap()
+                .result,
+            idx(2)
+        );
+        let suffix_view = suffix(&mut m, source, vec![idx(2)]).unwrap().result;
+        assert!(matches!(
+            &suffix_view,
+            SwiftValue::Substring {
+                start: 2,
+                end: 4,
+                ..
+            }
+        ));
+    }
+
+    struct CharacterMatcher;
+    impl StdContext for CharacterMatcher {
+        fn call_closure(&mut self, _id: usize, args: Vec<SwiftValue>) -> StdResult {
+            Ok(SwiftValue::Bool(
+                matches!(args.first(), Some(SwiftValue::Str(value)) if value == "e\u{301}"),
+            ))
+        }
+        fn out(&mut self) -> &mut dyn std::io::Write {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn first_index_where_returns_a_string_index() {
+        let mut m = CharacterMatcher;
+        let result = first_index(&mut m, s("x e\u{301} y"), vec![SwiftValue::Closure(0)])
+            .unwrap()
+            .result;
+        assert_eq!(result, idx(2));
     }
 
     #[test]

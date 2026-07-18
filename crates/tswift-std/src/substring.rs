@@ -23,7 +23,7 @@ use tswift_core::{
     StdContext, StdError, StdResult, SwiftValue,
 };
 
-use crate::string::{index_offset, install_shared_text_methods, make_index, str_of};
+use crate::string::{index_offset, install_shared_text_methods, make_index, str_of, text_slice};
 use tswift_core::graphemes;
 
 /// Register all `Substring` intrinsics.
@@ -199,26 +199,28 @@ fn sub_prefix(
     args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let (_, start, end) = sub_fields(&recv)?;
-    let n = args
-        .iter()
-        .find_map(|a| match a {
-            SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let new_end = (start + n).min(end);
-    let base_rc = match &recv {
-        SwiftValue::Substring { base, .. } => Rc::clone(base),
-        _ => unreachable!(),
+    let arg = args
+        .first()
+        .ok_or_else(|| type_err("prefix expects a count or String.Index".into()))?;
+    let new_end = if let Some(index) = index_offset(arg) {
+        if !(start..=end).contains(&index) {
+            return Err(trap_err(format!(
+                "Substring.prefix(upTo:): index {index} out of slice [{start},{end}]"
+            )));
+        }
+        index
+    } else {
+        match arg {
+            SwiftValue::Int(i) if i.raw >= 0 => (start + i.raw as usize).min(end),
+            SwiftValue::Int(_) => {
+                return Err(trap_err(
+                    "Substring.prefix: count must not be negative".into(),
+                ))
+            }
+            _ => return Err(type_err("prefix expects an Int or String.Index".into())),
+        }
     };
-    val(
-        SwiftValue::Substring {
-            base: base_rc,
-            start,
-            end: new_end,
-        },
-        recv,
-    )
+    val(text_slice(&recv, start, new_end)?, recv)
 }
 
 /// `Substring.suffix(_:)` — returns a Substring view of the last `n` clusters.
@@ -228,26 +230,28 @@ fn sub_suffix(
     args: Vec<SwiftValue>,
 ) -> Result<Outcome, StdError> {
     let (_, start, end) = sub_fields(&recv)?;
-    let n = args
-        .iter()
-        .find_map(|a| match a {
-            SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
-            _ => None,
-        })
-        .unwrap_or(0);
-    let new_start = if n >= end - start { start } else { end - n };
-    let base_rc = match &recv {
-        SwiftValue::Substring { base, .. } => Rc::clone(base),
-        _ => unreachable!(),
+    let arg = args
+        .first()
+        .ok_or_else(|| type_err("suffix expects a count or String.Index".into()))?;
+    let new_start = if let Some(index) = index_offset(arg) {
+        if !(start..=end).contains(&index) {
+            return Err(trap_err(format!(
+                "Substring.suffix(from:): index {index} out of slice [{start},{end}]"
+            )));
+        }
+        index
+    } else {
+        match arg {
+            SwiftValue::Int(i) if i.raw >= 0 => end.saturating_sub(i.raw as usize).max(start),
+            SwiftValue::Int(_) => {
+                return Err(trap_err(
+                    "Substring.suffix: count must not be negative".into(),
+                ))
+            }
+            _ => return Err(type_err("suffix expects an Int or String.Index".into())),
+        }
     };
-    val(
-        SwiftValue::Substring {
-            base: base_rc,
-            start: new_start,
-            end,
-        },
-        recv,
-    )
+    val(text_slice(&recv, new_start, end)?, recv)
 }
 
 // ---- `index` (labeled, base-relative) ----------------------------------------
@@ -416,9 +420,10 @@ fn sub_replace_subrange(
     let (_, sub_start, sub_end) = sub_fields(&recv)?;
     let text = str_of(&recv)?; // materialises graphemes [sub_start..sub_end]
 
-    let range_arg = args
-        .iter()
-        .find(|a| matches!(&a.value, SwiftValue::Range { .. }));
+    let range_arg = args.iter().find(|a| {
+        matches!(&a.value, SwiftValue::Range { .. })
+            || matches!(&a.value, SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange")
+    });
     let range = match range_arg {
         Some(a) => &a.value,
         None => return Ok(None),
@@ -440,7 +445,19 @@ fn sub_replace_subrange(
             hi: hi - sub_start as i128,
             inclusive: *inclusive,
         },
-        other => other.clone(),
+        SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
+            let (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) =
+                (obj.get("_lowerOffset"), obj.get("_upperOffset"))
+            else {
+                return Err(type_err("invalid String.IndexRange".into()));
+            };
+            SwiftValue::Range {
+                lo: lo.raw - sub_start as i128,
+                hi: hi.raw - sub_start as i128,
+                inclusive: false,
+            }
+        }
+        _ => return Err(type_err("replaceSubrange expects a range".into())),
     };
     let slice_count = sub_end - sub_start;
     let (start, end) =

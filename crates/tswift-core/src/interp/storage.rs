@@ -591,66 +591,71 @@ impl<'w> Interpreter<'w> {
         // `base[range]` — slice an array or string by an integer range
         // (two-sided `a..<b`/`a...b` or a one-sided partial range resolved
         // by `eval_subscript` against the collection length).
-        if let [SwiftValue::Range { lo, hi, inclusive }] = indices {
-            let (lo, hi, inclusive) = (*lo, *hi, *inclusive);
-            match base {
-                SwiftValue::Array(items) => {
-                    let range = SwiftValue::Range { lo, hi, inclusive };
-                    let (start, end) = collection_range_bounds(&range, items.len(), "subscript")?;
-                    return Ok(SwiftValue::ArraySlice {
-                        base: Rc::clone(items),
-                        start,
-                        end,
-                    });
-                }
-                SwiftValue::ArraySlice {
-                    base,
-                    start: sl_start,
-                    end: sl_end,
-                } => {
-                    let range = SwiftValue::Range { lo, hi, inclusive };
-                    let (lo_c, hi_c) = collection_range_bounds(&range, base.len(), "subscript")?;
-                    if lo_c < *sl_start || hi_c > *sl_end {
-                        return Err(trap(format!(
+        if let [range] = indices {
+            if let Some((lo, hi, inclusive)) = range_components(range) {
+                match base {
+                    SwiftValue::Array(items) => {
+                        let range = SwiftValue::Range { lo, hi, inclusive };
+                        let (start, end) =
+                            collection_range_bounds(&range, items.len(), "subscript")?;
+                        return Ok(SwiftValue::ArraySlice {
+                            base: Rc::clone(items),
+                            start,
+                            end,
+                        });
+                    }
+                    SwiftValue::ArraySlice {
+                        base,
+                        start: sl_start,
+                        end: sl_end,
+                    } => {
+                        let range = SwiftValue::Range { lo, hi, inclusive };
+                        let (lo_c, hi_c) =
+                            collection_range_bounds(&range, base.len(), "subscript")?;
+                        if lo_c < *sl_start || hi_c > *sl_end {
+                            return Err(trap(format!(
                             "ArraySlice subscript [{lo_c},{hi_c}) out of slice [{sl_start},{sl_end})"
                         )));
+                        }
+                        return Ok(SwiftValue::ArraySlice {
+                            base: Rc::clone(base),
+                            start: lo_c,
+                            end: hi_c,
+                        });
                     }
-                    return Ok(SwiftValue::ArraySlice {
-                        base: Rc::clone(base),
-                        start: lo_c,
-                        end: hi_c,
-                    });
-                }
-                SwiftValue::Str(s) => {
-                    let chars = crate::graphemes(s);
-                    let range = SwiftValue::Range { lo, hi, inclusive };
-                    let (start, end) = collection_range_bounds(&range, chars.len(), "subscript")?;
-                    return Ok(SwiftValue::Substring {
-                        base: Rc::new(s.clone()),
-                        start,
-                        end,
-                    });
-                }
-                SwiftValue::Substring {
-                    base,
-                    start: sub_start,
-                    end: sub_end,
-                } => {
-                    let chars = crate::graphemes(base);
-                    let range = SwiftValue::Range { lo, hi, inclusive };
-                    let (lo_c, hi_c) = collection_range_bounds(&range, chars.len(), "subscript")?;
-                    if lo_c < *sub_start || hi_c > *sub_end {
-                        return Err(trap(format!(
+                    SwiftValue::Str(s) => {
+                        let chars = crate::graphemes(s);
+                        let range = SwiftValue::Range { lo, hi, inclusive };
+                        let (start, end) =
+                            collection_range_bounds(&range, chars.len(), "subscript")?;
+                        return Ok(SwiftValue::Substring {
+                            base: Rc::new(s.clone()),
+                            start,
+                            end,
+                        });
+                    }
+                    SwiftValue::Substring {
+                        base,
+                        start: sub_start,
+                        end: sub_end,
+                    } => {
+                        let chars = crate::graphemes(base);
+                        let range = SwiftValue::Range { lo, hi, inclusive };
+                        let (lo_c, hi_c) =
+                            collection_range_bounds(&range, chars.len(), "subscript")?;
+                        if lo_c < *sub_start || hi_c > *sub_end {
+                            return Err(trap(format!(
                             "Substring subscript [{lo_c},{hi_c}) out of slice [{sub_start},{sub_end})"
                         )));
+                        }
+                        return Ok(SwiftValue::Substring {
+                            base: Rc::clone(base),
+                            start: lo_c,
+                            end: hi_c,
+                        });
                     }
-                    return Ok(SwiftValue::Substring {
-                        base: Rc::clone(base),
-                        start: lo_c,
-                        end: hi_c,
-                    });
+                    _ => {}
                 }
-                _ => {}
             }
         }
         match base {
@@ -2236,6 +2241,24 @@ impl<'w> Interpreter<'w> {
         let sub = self.read_struct_member(&container, head)?;
         let new_sub = self.set_in(sub, rest, value)?;
         self.set_struct_field(container, head, new_sub)
+    }
+}
+
+/// Numeric range bounds accepted by builtin collection subscripts. A
+/// `String.IndexRange` is produced by `String.range(of:)`; unlike the legacy
+/// `SwiftValue::Range`, its public bounds retain `String.Index` identity.
+fn range_components(value: &SwiftValue) -> Option<(i128, i128, bool)> {
+    match value {
+        SwiftValue::Range { lo, hi, inclusive } => Some((*lo, *hi, *inclusive)),
+        SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
+            match (obj.get("_lowerOffset"), obj.get("_upperOffset")) {
+                (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) => {
+                    Some((lo.raw, hi.raw, false))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 

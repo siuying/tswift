@@ -925,26 +925,35 @@ pub fn collection_range_bounds(
     len: usize,
     who: &str,
 ) -> Result<(usize, usize), EvalError> {
-    let SwiftValue::Range { lo, hi, inclusive } = range else {
-        return Err(EvalError::Type(format!("{who} expects a range")));
+    let (lo, hi, inclusive) = match range {
+        SwiftValue::Range { lo, hi, inclusive } => (*lo, *hi, *inclusive),
+        SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
+            let (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) =
+                (obj.get("_lowerOffset"), obj.get("_upperOffset"))
+            else {
+                return Err(EvalError::Type("invalid String.IndexRange".into()));
+            };
+            (lo.raw, hi.raw, false)
+        }
+        _ => return Err(EvalError::Type(format!("{who} expects a range"))),
     };
-    if *lo < 0 || *hi < *lo {
+    if lo < 0 || hi < lo {
         return Err(EvalError::Trap(format!(
             "{who} invalid range {lo}..{}{hi} for collection of length {len}",
-            if *inclusive { "=" } else { "<" }
+            if inclusive { "=" } else { "<" }
         )));
     }
-    let end = if *inclusive {
+    let end = if inclusive {
         hi.checked_add(1)
             .ok_or_else(|| EvalError::Trap(format!("{who} range upperBound overflow")))?
     } else {
-        *hi
+        hi
     };
     if end > len as i128 {
         return Err(EvalError::Trap(format!(
             "{who} range {lo}..{}{hi} out of bounds for collection of length {len}",
-            if *inclusive { "=" } else { "<" }
+            if inclusive { "=" } else { "<" }
         )));
     }
-    Ok((*lo as usize, end as usize))
+    Ok((lo as usize, end as usize))
 }

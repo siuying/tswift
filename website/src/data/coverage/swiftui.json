@@ -17,7 +17,8 @@
         {
           "name": "accessibilityAction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "accessibilityActions",
@@ -37,7 +38,8 @@
         {
           "name": "accessibilityAdjustableAction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "accessibilityChartDescriptor",
@@ -162,7 +164,8 @@
         {
           "name": "accessibilityScrollAction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "accessibilityScrollStatus",
@@ -192,7 +195,8 @@
         {
           "name": "accessibilityZoomAction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "actionSheet",
@@ -282,7 +286,8 @@
         {
           "name": "backgroundPreferenceValue",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "backgroundStyle",
@@ -467,7 +472,8 @@
         {
           "name": "copyable",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "cornerRadius",
@@ -477,7 +483,8 @@
         {
           "name": "cuttable",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "datePickerStyle",
@@ -552,7 +559,8 @@
         {
           "name": "digitalCrownRotation",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "disableAutocorrection",
@@ -572,7 +580,8 @@
         {
           "name": "dismissalConfirmationDialog",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "distortionEffect",
@@ -622,7 +631,8 @@
         {
           "name": "dropDestination",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "dropPreviewsFormation",
@@ -662,7 +672,8 @@
         {
           "name": "exportsItemProviders",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "fileDialogBrowserOptions",
@@ -702,7 +713,8 @@
         {
           "name": "fileExporter",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "fileExporterFilenameLabel",
@@ -712,12 +724,14 @@
         {
           "name": "fileImporter",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "fileMover",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "findDisabled",
@@ -977,7 +991,8 @@
         {
           "name": "importsItemProviders",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "indexViewStyle",
@@ -1017,7 +1032,8 @@
         {
           "name": "itemProvider",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "kerning",
@@ -1352,12 +1368,14 @@
         {
           "name": "onCommand",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onContinueUserActivity",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onContinuousHover",
@@ -1382,7 +1400,7 @@
         {
           "name": "onDisappear",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onDrag",
@@ -1392,17 +1410,20 @@
         {
           "name": "onDragSessionUpdated",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onDrop",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onDropSessionUpdated",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onExitCommand",
@@ -1412,7 +1433,8 @@
         {
           "name": "onGeometryChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onHover",
@@ -1422,27 +1444,31 @@
         {
           "name": "onInteractiveResizeChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onKeyPress",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onLongPressGesture",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "onLongTouchGesture",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onModifierKeysChanged",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onMoveCommand",
@@ -1457,7 +1483,8 @@
         {
           "name": "onPasteCommand",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onPencilDoubleTap",
@@ -1477,7 +1504,8 @@
         {
           "name": "onPreferenceChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onReceive",
@@ -1487,22 +1515,26 @@
         {
           "name": "onScrollGeometryChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onScrollPhaseChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onScrollTargetVisibilityChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onScrollVisibilityChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onSubmit",
@@ -1517,12 +1549,14 @@
         {
           "name": "onVolumeViewpointChange",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "onWorldRecenter",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "opacity",
@@ -1542,7 +1576,8 @@
         {
           "name": "overlayPreferenceValue",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "padding",
@@ -1562,7 +1597,8 @@
         {
           "name": "pasteDestination",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "persistentSystemOverlays",
@@ -1572,7 +1608,8 @@
         {
           "name": "phaseAnimator",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "pickerStyle",
@@ -1717,7 +1754,8 @@
         {
           "name": "renameAction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "replaceDisabled",
@@ -1842,7 +1880,8 @@
         {
           "name": "scrollTransition",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "searchCompletion",
@@ -2082,7 +2121,7 @@
         {
           "name": "task",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "textCase",
@@ -2157,7 +2196,8 @@
         {
           "name": "toolbar",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: toolbar_actions"
         },
         {
           "name": "toolbarBackground",
@@ -2232,7 +2272,8 @@
         {
           "name": "transaction",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "transformAnchorPreference",
@@ -2247,12 +2288,14 @@
         {
           "name": "transformEnvironment",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "transformPreference",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "transition",
@@ -2287,12 +2330,14 @@
         {
           "name": "userActivity",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "visualEffect",
           "kind": "func",
-          "status": "implemented"
+          "status": "out_of_scope",
+          "notes": "out of scope: closure_callback_semantics"
         },
         {
           "name": "windowDismissBehavior",
@@ -2346,10 +2391,10 @@
         }
       ],
       "counts": {
-        "implemented": 403,
-        "partial": 11,
+        "implemented": 361,
+        "partial": 8,
         "missing": 54,
-        "out_of_scope": 0,
+        "out_of_scope": 45,
         "total": 468
       }
     },
@@ -4089,10 +4134,10 @@
     }
   ],
   "totals": {
-    "implemented": 506,
-    "partial": 20,
+    "implemented": 464,
+    "partial": 17,
     "missing": 176,
-    "out_of_scope": 0,
+    "out_of_scope": 45,
     "total": 702
   }
 }

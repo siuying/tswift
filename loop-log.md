@@ -1455,3 +1455,7 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Removed inert closure stashing from callback families without a headless
   event/value source; recorded 44 such callback semantics plus toolbar actions
   as out of scope. Blocker: toolbar builder nodes need routable UIIR ids.
+
+## agent string-index-apis
+
+- Implemented Unicode-grapheme String/Substring index search, typed range bounds, and base-compatible index slicing; presubmit green, no blockers.
