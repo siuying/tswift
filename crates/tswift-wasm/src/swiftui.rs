@@ -24,7 +24,7 @@ use tswift_core::json::{self, Json};
 use tswift_core::{Interpreter, SwiftValue};
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{find_root_view, uiir, PRELUDE};
+use tswift_swiftui::{find_render_entry, uiir, RenderEntry, PRELUDE};
 use wasm_bindgen::prelude::*;
 
 use crate::install_panic_hook;
@@ -157,8 +157,8 @@ fn compile_impl(source: &str, cache_key: String) -> String {
         return compile_error(diagnostics.trim_end());
     }
 
-    let Some(root) = find_root_view(&analysis) else {
-        return compile_error("no `View`-conforming struct found");
+    let Some(entry) = find_render_entry(&analysis) else {
+        return compile_error("no `View`- or `App`-conforming struct found");
     };
 
     // A leaked sink: the session (and its interpreter) outlives this call, and
@@ -194,7 +194,10 @@ fn compile_impl(source: &str, cache_key: String) -> String {
     }
 
     let interp: &'static mut Interpreter<'static> = Box::leak(Box::new(interp));
-    let mut session = match Session::new(interp, &root) {
+    let mut session = match match &entry {
+        RenderEntry::View(root) => Session::new(interp, root),
+        RenderEntry::App(app) => Session::new_app(interp, app),
+    } {
         Ok(session) => session,
         Err(error) => return compile_error(&error.to_string()),
     };
@@ -207,7 +210,7 @@ fn compile_impl(source: &str, cache_key: String) -> String {
 
     format!(
         "{{\"ok\":true,\"root\":\"{}\",\"tree\":{},\"error\":null}}",
-        escape_json(&root),
+        escape_json(entry.type_name()),
         json
     )
 }

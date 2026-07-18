@@ -1463,3 +1463,7 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 ## agent charts-members
 
 - Implemented `Chart.body` and `View.chartGesture` with UIIR-backed semantics, added unit tests and `charts-phase2d` golden coverage, refreshed Charts inventory/website coverage, and documented headless ChartProxy/arbitrary-gesture limits. Blockers: none.
+
+## agent app-scene-entrypoint
+
+- Added host-owned `App → Scene → WindowGroup` entry selection across CLI, wasm, and FFI; one WindowGroup unwraps into the existing render session, including scene-level SwiftData scope. Added counter, list/navigation, and SwiftData todo app goldens; `tswift run` smoke coverage is green. Multi-window, platform scenes, and lifecycle/commands remain explicit unsupported diagnostics/scope.

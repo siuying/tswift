@@ -7,8 +7,10 @@ container concepts the runtime evaluates into a host-neutral UIIR (see
 docs/adr/0006-swiftui-render-host.md and docs/plan/swiftui-support.md). View
 modifiers (.font/.padding/.foregroundColor/…) are measured as members of `View`.
 Tiers mirror the plan roadmap: UI1 = v1 Counter slice, UI2 = the remaining demo
-tabs, UI3–UI8 = the staged tiers, UI9 = animation. Gestures/graphics and
-app/scene lifecycle remain out of scope (deferred to a backlog ADR / never).
+tabs, UI3–UI8 = the staged tiers, UI9 = animation. The headless host supports a
+single App → Scene → WindowGroup entry and evaluates that WindowGroup's one root
+View through the ordinary render session. Window lifecycle, multi-window,
+platform-owned scenes, and commands remain out of scope with diagnostics.
 """
 
 # NavigationPath is a prelude value type (crates/tswift-swiftui PRELUDE): its
@@ -22,6 +24,11 @@ app/scene lifecycle remain out of scope (deferred to a backlog ADR / never).
 # .success/.failure/.empty cases are accessible via .isSuccess/.isFailure/.isEmpty.
 [core_members]
 State = ["init", "projectedValue", "wrappedValue"]
+App = ["main"]
+# `Scene` is a protocol carrier for the host entry; the SDK inventory has no
+# standalone Scene requirement to credit. Scene composition is limited to a
+# single WindowGroup (optionally wrapped in Group/custom Scene values).
+WindowGroup = ["init"]
 # `Binding.constant` uses a private reference box and `projectedValue` returns
 # the binding itself. Collection/key-path forms need generic collection and
 # transaction support not yet exposed by the frontend.
@@ -111,13 +118,19 @@ id = "UI9"
 title = "Animation & transitions"
 types = ["Animation", "AnyTransition"]
 
+# UI10 — host-owned application entry (one headless window)
+[[tier]]
+id = "UI10"
+title = "Headless App / Scene / WindowGroup entry"
+types = ["App", "Scene", "WindowGroup"]
+
 # ── Explicitly excluded (keeps the denominator honest) ────────────────────────
 [out_of_scope]
 animation = ["Namespace", "MatchedGeometryEffect", "PhaseAnimator", "KeyframeAnimator"]
 gestures = ["DragGesture", "MagnificationGesture", "RotationGesture", "GestureState", "SpatialEventGesture"]
 graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
 platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
-app_scene_lifecycle = ["App", "Scene", "WindowGroup", "Settings", "DocumentGroup", "MenuBarExtra", "Commands"]
+app_scene_lifecycle = ["Settings", "DocumentGroup", "MenuBarExtra", "Commands", "Window", "ImmersiveSpace", "MenuBarExtraStyle"]
 
 # `.toolbar { ... }` records and renders its builder content as a nested UIIR
 # modifier value, but that representation has no host-routable structural ids.

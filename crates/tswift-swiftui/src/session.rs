@@ -12,8 +12,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use tswift_core::{EvalError, Interpreter, StructObj, SwiftValue};
+use tswift_core::{EvalError, Interpreter, StdContext, StructObj, SwiftValue};
 
+use crate::views::SCENE_CONTENT_FIELD;
 use crate::{
     BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, HANDLERS_TYPE, MODIFIERS_FIELD,
     NAV_DESTINATIONS_FIELD, NAV_DESTINATION_FIELD, NAV_VALUE_FIELD, PRESENTATIONS_FIELD,
@@ -101,7 +102,7 @@ pub struct Event {
 /// instance is created once and reused, preserving `@State`.
 pub struct Session<'i, 'w> {
     interp: &'i mut Interpreter<'w>,
-    instance: SwiftValue,
+    entry: SessionEntry,
     /// The most recently rendered UIIR tree (for event routing).
     current: Option<SwiftValue>,
     /// Per-node `TabView` selection for tab views *without* a `selection:`
@@ -123,13 +124,131 @@ pub struct Session<'i, 'w> {
     image_phase: HashMap<String, (String, String)>,
 }
 
+/// The retained value a session re-evaluates. App scenes are unwrapped once so
+/// the session keeps the root view instance (and therefore its `@State`) just
+/// like the legacy root-view path.
+enum SessionEntry {
+    View(SwiftValue),
+    App {
+        root: SwiftValue,
+        scopes: Vec<SwiftValue>,
+    },
+}
+
+/// Descend a headless App scene while retaining every wrapper whose render
+/// scope must be restored around the root view on each session render.
+fn extract_scene_root(
+    interp: &mut Interpreter<'_>,
+    scene: SwiftValue,
+    scopes: &mut Vec<SwiftValue>,
+    roots: &mut Vec<(SwiftValue, Vec<SwiftValue>)>,
+) -> Result<(), EvalError> {
+    let SwiftValue::Struct(obj) = &scene else {
+        if let SwiftValue::Array(items) = scene {
+            for item in items.iter() {
+                extract_scene_root(interp, item.clone(), scopes, roots)?;
+            }
+            return Ok(());
+        }
+        return Err(EvalError::Unsupported(format!(
+            "headless SwiftUI App scene must contain WindowGroup, found `{}`",
+            scene.type_name()
+        )));
+    };
+
+    let type_name = obj.type_name.clone();
+    let is_window_group = type_name == "WindowGroup";
+    let is_group = type_name == "Group";
+    let is_builtin_view = obj.fields.iter().any(|(name, _)| name == MODIFIERS_FIELD);
+    scopes.push(scene.clone());
+    interp.view_scope_enter(&scene);
+    let result = (|| -> Result<(), EvalError> {
+        if is_window_group {
+            let content = obj
+                .get(SCENE_CONTENT_FIELD)
+                .cloned()
+                .ok_or_else(|| EvalError::Trap("WindowGroup is missing scene content".into()))?;
+            let SwiftValue::Closure(id) = content else {
+                return Err(EvalError::Trap(
+                    "WindowGroup scene content is not a closure".into(),
+                ));
+            };
+            let built = interp
+                .eval_block_values(id)
+                .map_err(crate::std_error_to_eval)?;
+            let SwiftValue::Array(items) = built else {
+                return Err(EvalError::Trap(
+                    "WindowGroup builder did not produce children".into(),
+                ));
+            };
+            if items.len() != 1 {
+                return Err(EvalError::Unsupported(format!(
+                "headless WindowGroup requires one root View, found {}; multiple root views are unsupported",
+                items.len()
+            )));
+            }
+            roots.push((items[0].clone(), scopes.clone()));
+            Ok(())
+        } else if is_group {
+            let children = obj
+                .get(CHILDREN_FIELD)
+                .cloned()
+                .unwrap_or_else(|| SwiftValue::Array(Rc::new(Vec::new())));
+            extract_scene_root(interp, children, scopes, roots)
+        } else if !is_builtin_view {
+            let body = interp.get_member(&scene, "body")?;
+            extract_scene_root(interp, body, scopes, roots)
+        } else {
+            Err(EvalError::Unsupported(format!(
+                "headless SwiftUI App scene `{type_name}` is unsupported; use WindowGroup"
+            )))
+        }
+    })();
+    interp.view_scope_exit(&scene);
+    scopes.pop();
+    result
+}
+
 impl<'i, 'w> Session<'i, 'w> {
     /// Instantiate `root_type` once and start a session over it.
     pub fn new(interp: &'i mut Interpreter<'w>, root_type: &str) -> Result<Self, EvalError> {
         let instance = interp.make_struct(root_type, &[])?;
         Ok(Session {
             interp,
-            instance,
+            entry: SessionEntry::View(instance),
+            current: None,
+            tab_selection: HashMap::new(),
+            nav_stack: HashMap::new(),
+            image_phase: HashMap::new(),
+        })
+    }
+
+    /// Start a session from a SwiftUI `App`. The host accepts one `WindowGroup`
+    /// (possibly nested in simple `Scene`/`Group` composition) and exposes its
+    /// root `View` to the existing render/session path. Multiple windows and
+    /// platform-owned scenes deliberately fail rather than pretending to have a
+    /// lifecycle the headless host cannot provide.
+    pub fn new_app(interp: &'i mut Interpreter<'w>, app_type: &str) -> Result<Self, EvalError> {
+        let app = interp.make_struct(app_type, &[])?;
+        let scene = interp.get_member(&app, "body")?;
+        let mut roots = Vec::new();
+        extract_scene_root(interp, scene, &mut Vec::new(), &mut roots)?;
+        let [(root, scopes)] = roots.as_slice() else {
+            return Err(EvalError::Unsupported(match roots.len() {
+                0 => format!(
+                    "headless SwiftUI App entry `{app_type}` requires a WindowGroup scene"
+                ),
+                count => format!(
+                    "headless SwiftUI App entry supports one WindowGroup, found {count}; multi-window and platform scenes are unsupported"
+                ),
+            }));
+        };
+        Ok(Session {
+            interp,
+            entry: SessionEntry::App {
+                root: root.clone(),
+                scopes: scopes.clone(),
+            },
             current: None,
             tab_selection: HashMap::new(),
             nav_stack: HashMap::new(),
@@ -150,8 +269,23 @@ impl<'i, 'w> Session<'i, 'w> {
     /// Evaluate the root view's `body` into a fresh UIIR tree, caching it for
     /// event routing.
     pub fn render(&mut self) -> Result<SwiftValue, EvalError> {
-        let body = self.interp.get_member(&self.instance, "body")?;
-        let tree = crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?;
+        let tree = match &self.entry {
+            SessionEntry::View(instance) => {
+                let body = self.interp.get_member(instance, "body")?;
+                crate::resolve_root(self.interp, body).map_err(crate::std_error_to_eval)?
+            }
+            SessionEntry::App { root, scopes } => {
+                for scope in scopes {
+                    self.interp.view_scope_enter(scope);
+                }
+                let tree = crate::resolve_root(self.interp, root.clone())
+                    .map_err(crate::std_error_to_eval);
+                for scope in scopes.iter().rev() {
+                    self.interp.view_scope_exit(scope);
+                }
+                tree?
+            }
+        };
         // Three separate full-tree rewrites, deliberately not merged into one
         // pass: the nav pass appends pushed screens as new children which the
         // tab and image passes must still visit (session tab selection or
@@ -931,6 +1065,56 @@ struct CounterView: View {
         install(&mut interp);
         interp.run(analysis).expect("run");
         interp
+    }
+
+    fn app_interp() -> Interpreter<'static> {
+        let src = format!(
+            "import SwiftUI\n{PRELUDE}\n{}",
+            r#"
+struct CounterView: View {
+    @State var count = 0
+    var body: some View {
+        VStack {
+            Text("\(count)")
+            Button("Increment") { count += 1 }
+        }
+    }
+}
+
+@main struct DemoApp: App {
+    var body: some Scene {
+        Group {
+            WindowGroup { CounterView() }
+        }
+    }
+}
+"#
+        );
+        let analysis = tswift_frontend::Analysis::analyze(&src, "app.swift").expect("analyze");
+        let analysis: &'static tswift_frontend::Analysis = Box::leak(Box::new(analysis));
+        let out: &'static mut std::io::Sink = Box::leak(Box::new(std::io::sink()));
+        let mut interp = Interpreter::new(out);
+        install(&mut interp);
+        interp.run(analysis).expect("run");
+        interp
+    }
+
+    #[test]
+    fn app_session_unwraps_grouped_window_and_preserves_state() {
+        let mut interp = app_interp();
+        let mut session = Session::new_app(&mut interp, "DemoApp").expect("app session");
+
+        let first = session.render().expect("render");
+        assert!(uiir::to_json(&first).contains(r#""verbatim":"0""#));
+
+        let after = session
+            .dispatch(&Event {
+                id: "0.1".into(),
+                event: "tap".into(),
+                value: None,
+            })
+            .expect("dispatch");
+        assert!(uiir::to_json(&after).contains(r#""verbatim":"1""#));
     }
 
     #[test]

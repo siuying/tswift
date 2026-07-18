@@ -29,6 +29,7 @@ use std::process::ExitCode;
 
 use tswift_core::Interpreter;
 use tswift_frontend::{Analysis, AnalyzeError, SourceFile};
+use tswift_swiftui::{find_render_entry, RenderEntry};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -376,6 +377,13 @@ fn run(paths: &[String], allow_network: bool, target: Option<&str>) -> ExitCode 
     }
     if had_error {
         return ExitCode::FAILURE;
+    }
+    // SwiftUI Apps are host-owned entry points: their synthesized `main` is a
+    // trigger for a render session, not a user-defined static method. Route
+    // them through the same session construction as `swiftui render`; ordinary
+    // command-line programs retain the interpreter's existing `@main` path.
+    if matches!(find_render_entry(&analysis), Some(RenderEntry::App(_))) {
+        return swiftui::run_app(&files, path);
     }
     // The interpreter borrows the AST for `'static` (string interpolation leaks
     // small fragment ASTs to match). The process runs one program and exits, so

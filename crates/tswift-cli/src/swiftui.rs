@@ -9,10 +9,10 @@ use std::process::ExitCode;
 
 use tswift_core::json::{self, Json};
 use tswift_core::Interpreter;
-use tswift_frontend::{Analysis, AnalyzeError};
+use tswift_frontend::{Analysis, AnalyzeError, SourceFile};
 use tswift_swiftui::diff::{self, Patch};
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{find_root_view, uiir, PRELUDE};
+use tswift_swiftui::{find_render_entry, uiir, RenderEntry, PRELUDE};
 
 /// Dispatch the `swiftui` subcommand family.
 pub fn run(mut args: impl Iterator<Item = String>) -> ExitCode {
@@ -37,11 +37,38 @@ fn usage_error(message: &str) -> ExitCode {
 
 /// Read `path`, build an interpreter with the SwiftUI runtime installed, run the
 /// (prelude-prefixed) program, and return it plus the root `View` type name.
-fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
+fn prepare(path: &str) -> Result<(Interpreter<'static>, RenderEntry), ExitCode> {
     let user = std::fs::read_to_string(path).map_err(|e| {
         eprintln!("error: cannot read `{path}`: {e}");
         ExitCode::FAILURE
     })?;
+    prepare_source(path, &user)
+}
+
+/// Run an App-shaped program through the same render-session setup as the
+/// SwiftUI subcommands. `tswift run` intentionally emits no UIIR; it verifies
+/// the host-owned entry contract and leaves rendering output to the session
+/// hosts (`swiftui render`, wasm, or FFI).
+pub(crate) fn run_app(files: &[SourceFile], path: &str) -> ExitCode {
+    let user = files
+        .iter()
+        .map(|file| file.source.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (mut interp, entry) = match prepare_source(path, &user) {
+        Ok(prepared) => prepared,
+        Err(code) => return code,
+    };
+    match render_entry(&mut interp, &entry) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn prepare_source(path: &str, user: &str) -> Result<(Interpreter<'static>, RenderEntry), ExitCode> {
     // Prepend the SwiftUI token prelude, the SwiftData `@Query` prelude
     // (ADR-0016 Slice 10b), and the Charts prelude (PlottableValue.value for
     // leading-dot `.value(...)` on mark args).
@@ -55,8 +82,8 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
         ExitCode::FAILURE
     })?;
     let analysis: &'static Analysis = Box::leak(Box::new(analysis));
-    let root_type = find_root_view(analysis).ok_or_else(|| {
-        eprintln!("error: no `View`-conforming struct found in `{path}`");
+    let entry = find_render_entry(analysis).ok_or_else(|| {
+        eprintln!("error: no `View`- or `App`-conforming struct found in `{path}`");
         ExitCode::FAILURE
     })?;
 
@@ -81,15 +108,15 @@ fn prepare(path: &str) -> Result<(Interpreter<'static>, String), ExitCode> {
         eprintln!("error: {e}");
         return Err(ExitCode::FAILURE);
     }
-    Ok((interp, root_type))
+    Ok((interp, entry))
 }
 
 fn render(path: &str) -> ExitCode {
-    let (mut interp, root_type) = match prepare(path) {
+    let (mut interp, entry) = match prepare(path) {
         Ok(v) => v,
         Err(code) => return code,
     };
-    match tswift_swiftui::render_root(&mut interp, &root_type) {
+    match render_entry(&mut interp, &entry) {
         Ok(tree) => {
             println!("{}", uiir::to_json(&tree));
             ExitCode::SUCCESS
@@ -102,7 +129,7 @@ fn render(path: &str) -> ExitCode {
 }
 
 fn dispatch(path: &str, events_path: &str) -> ExitCode {
-    let (mut interp, root_type) = match prepare(path) {
+    let (mut interp, entry) = match prepare(path) {
         Ok(v) => v,
         Err(code) => return code,
     };
@@ -114,7 +141,7 @@ fn dispatch(path: &str, events_path: &str) -> ExitCode {
         }
     };
 
-    let mut session = match Session::new(&mut interp, &root_type) {
+    let mut session = match session_for_entry(&mut interp, &entry) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: {e}");
@@ -154,6 +181,31 @@ fn dispatch(path: &str, events_path: &str) -> ExitCode {
     out.push(']');
     println!("{out}");
     ExitCode::SUCCESS
+}
+
+/// Render one host entry through the same session construction used by
+/// `dispatch`, then discard the transient session after producing its UIIR.
+fn render_entry(
+    interp: &mut Interpreter<'_>,
+    entry: &RenderEntry,
+) -> Result<tswift_core::SwiftValue, tswift_core::EvalError> {
+    match entry {
+        RenderEntry::View(root) => tswift_swiftui::render_root(interp, root),
+        RenderEntry::App(app) => {
+            let mut session = Session::new_app(interp, app)?;
+            session.render()
+        }
+    }
+}
+
+fn session_for_entry<'i, 'w>(
+    interp: &'i mut Interpreter<'w>,
+    entry: &RenderEntry,
+) -> Result<Session<'i, 'w>, tswift_core::EvalError> {
+    match entry {
+        RenderEntry::View(root) => Session::new(interp, root),
+        RenderEntry::App(app) => Session::new_app(interp, app),
+    }
 }
 
 fn analyze(source: &str) -> Result<Analysis, AnalyzeError> {
@@ -198,11 +250,14 @@ fn json_to_value(json: &Json) -> Option<tswift_core::SwiftValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze, find_root_view};
+    use super::{analyze, find_render_entry, RenderEntry};
 
     fn root_of(src: &str) -> Option<String> {
         let analysis = analyze(src).expect("analyze");
-        find_root_view(&analysis)
+        match find_render_entry(&analysis) {
+            Some(RenderEntry::View(root)) => Some(root),
+            _ => None,
+        }
     }
 
     #[test]
@@ -242,5 +297,17 @@ struct Screen: View { var body: some View { Text(\"x\") } }
 let preview = Screen()
 ";
         assert_eq!(root_of(src).as_deref(), Some("Screen"));
+    }
+
+    #[test]
+    fn app_entry_precedes_its_content_view() {
+        let analysis = analyze(
+            "struct Content: View { var body: some View { Text(\"x\") } }\n@main struct Demo: App { var body: some Scene { WindowGroup { Content() } } }",
+        )
+        .expect("analyze");
+        assert_eq!(
+            find_render_entry(&analysis),
+            Some(RenderEntry::App("Demo".into()))
+        );
     }
 }

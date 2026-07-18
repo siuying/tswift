@@ -33,7 +33,7 @@ pub(crate) use views::{
     lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init, picker_init,
     progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init, section_init,
     secure_field_init, slider_init, spacer_init, stepper_init, tabview_init, text_field_init,
-    text_init, toggle_init, vstack_init, zstack_init,
+    text_init, toggle_init, vstack_init, window_group_init, zstack_init,
 };
 
 pub(crate) use async_image::async_image_init;
@@ -158,6 +158,12 @@ pub const BINDING_FIELD: &str = "_binding";
 /// `Color` and a `FontWeight`) is ambiguous without contextual typing; write
 /// the qualified form (`Color.black`) in that case.
 pub const PRELUDE: &str = r#"
+// App startup belongs to the render host. This default only makes Swift's
+// synthesized `App.main()` callable while the host creates the live session.
+protocol App {}
+protocol Scene {}
+extension App { static func main() {} }
+
 class _StateBox<Value> {
     var value: Value
     init(_ v: Value) { value = v }
@@ -1414,6 +1420,10 @@ fn install_inner(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("TabView", tabview_init);
     interp.register_free_fn("NavigationStack", navigation_stack_init);
     interp.register_free_fn("NavigationLink", navigation_link_init);
+    // A WindowGroup captures its content closure. The app entry host evaluates
+    // it under the scene's scope so scene-level environment modifiers apply to
+    // the root view before its body is first read.
+    interp.register_free_fn("WindowGroup", window_group_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
     interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
@@ -2272,7 +2282,7 @@ pub fn registered_keys() -> Vec<String> {
             | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "AsyncImage"
             | "ProgressView" | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form"
             | "LazyVGrid" | "LazyHGrid" | "TabView" | "NavigationStack" | "NavigationLink"
-            | "TapGesture" | "LongPressGesture" => Some(format!("{key}.init")),
+            | "TapGesture" | "LongPressGesture" | "WindowGroup" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -2408,6 +2418,58 @@ pub fn resolve_root(ctx: &mut dyn StdContext, value: SwiftValue) -> Result<Swift
         depth += 1;
     }
     Ok(current)
+}
+
+/// One host-selectable SwiftUI entry point. A [`View`] is rendered directly;
+/// an [`App`] is unwrapped by [`session::Session::new_app`] into its one
+/// headless `WindowGroup` root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderEntry {
+    View(String),
+    App(String),
+}
+
+impl RenderEntry {
+    /// The user-declared nominal type name, suitable for host diagnostics.
+    pub fn type_name(&self) -> &str {
+        match self {
+            Self::View(name) | Self::App(name) => name,
+        }
+    }
+}
+
+/// Find the program's host entry. An `App` takes precedence over the legacy
+/// root-`View` heuristic so an ordinary `@main struct MyApp: App` cannot be
+/// mistaken for one of its content views. `@main` is preferred when multiple
+/// app declarations exist; an unannotated `App` still supports an explicit
+/// top-level `MyApp.main()` call.
+pub fn find_render_entry(analysis: &Analysis) -> Option<RenderEntry> {
+    let mut apps = Vec::new();
+    let mut main_app = None;
+    for node in analysis.root().children() {
+        if node.kind() != NodeKind::StructDecl {
+            continue;
+        }
+        let conforms_app = node.children().any(|child| {
+            child.kind() == NodeKind::TypeRef && child.text().as_deref() == Some("App")
+        });
+        if !conforms_app {
+            continue;
+        }
+        let Some(name) = node.text() else {
+            continue;
+        };
+        if node.children().any(|child| {
+            child.kind() == NodeKind::Attribute && child.text().as_deref() == Some("main")
+        }) {
+            main_app = Some(name.clone());
+        }
+        apps.push(name);
+    }
+    if let Some(name) = main_app.or_else(|| apps.into_iter().next()) {
+        return Some(RenderEntry::App(name));
+    }
+    find_root_view(analysis).map(RenderEntry::View)
 }
 
 /// Find the program's root `View` struct to render: the one no other view
@@ -2953,6 +3015,7 @@ mod tests {
                 "View.writingToolsAffordanceVisibility",
                 "View.writingToolsBehavior",
                 "View.zIndex",
+                "WindowGroup.init",
                 "ZStack.init",
                 "withAnimation",
             ]

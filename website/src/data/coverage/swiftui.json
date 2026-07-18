@@ -4131,13 +4131,224 @@
         "out_of_scope": 0,
         "total": 12
       }
+    },
+    {
+      "name": "App",
+      "members": [
+        {
+          "name": "main",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 1
+      }
+    },
+    {
+      "name": "Scene",
+      "members": [
+        {
+          "name": "backgroundTask",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "commands",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "commandsRemoved",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "commandsReplaced",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultAppStorage",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultLaunchBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultPosition",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultSize",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "defaultWindowPlacement",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogIcon",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogSeverity",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "dialogSuppressionToggle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "documentBrowserContextMenu",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "environment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "environmentObject",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "handlesExternalEvents",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "keyboardShortcut",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "menuBarExtraStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "onChange",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "persistentSystemOverlays",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "restorationBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "transformEnvironment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "volumeWorldAlignment",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowBackgroundDragBehavior",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowIdealPlacement",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowIdealSize",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowLevel",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowManagerRole",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowResizability",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowToolbarLabelStyle",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "windowToolbarStyle",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 0,
+        "partial": 0,
+        "missing": 32,
+        "out_of_scope": 0,
+        "total": 32
+      }
+    },
+    {
+      "name": "WindowGroup",
+      "members": [
+        {
+          "name": "body",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 1,
+        "partial": 0,
+        "missing": 1,
+        "out_of_scope": 0,
+        "total": 2
+      }
     }
   ],
   "totals": {
-    "implemented": 464,
+    "implemented": 466,
     "partial": 17,
-    "missing": 176,
+    "missing": 209,
     "out_of_scope": 45,
-    "total": 702
+    "total": 737
   }
 }

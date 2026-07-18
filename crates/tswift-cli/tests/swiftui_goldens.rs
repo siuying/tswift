@@ -124,3 +124,21 @@ fn patch_goldens_match() {
         check_golden(&golden, &actual, "patch-stream");
     }
 }
+
+#[test]
+fn app_entry_fixtures_run_through_the_cli() {
+    let run: &Path = Path::new("run");
+    for name in ["app-counter", "app-list-navigation", "app-swiftdata-todo"] {
+        let swift = fixtures_dir().join(format!("{name}.swift"));
+        let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+            .args([run, swift.as_path()])
+            .output()
+            .expect("failed to spawn tswift");
+        assert!(
+            output.status.success(),
+            "tswift run failed for {}:\n{}",
+            swift.display(),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}

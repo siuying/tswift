@@ -13,6 +13,11 @@ use crate::{
     BINDING_FIELD, CHILDREN_FIELD, HANDLERS_FIELD, MODIFIERS_FIELD,
 };
 
+/// Hidden field holding a `WindowGroup`'s unevaluated scene-content closure.
+/// The app entry host evaluates it only after installing the WindowGroup's
+/// render scope, which keeps scene-level environment modifiers in force.
+pub(crate) const SCENE_CONTENT_FIELD: &str = "_sceneContent";
+
 /// `Text(_ verbatim: String)` — the leaf text view.
 pub(crate) fn text_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let verbatim = match args.into_iter().next() {
@@ -529,6 +534,23 @@ pub(crate) fn progress_view_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> S
 /// modifiers without adding layout, laying its children out as if inline.
 pub(crate) fn group_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(container_value("Group", collect_children(ctx, args)?))
+}
+
+/// `WindowGroup { ... }` — the one supported headless App scene. Unlike view
+/// containers, its builder must stay deferred: `.modelContainer(for:)` belongs
+/// to the scene and must be active before the root view is constructed.
+pub(crate) fn window_group_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let content = args.into_iter().find_map(|arg| match arg.value {
+        SwiftValue::Closure(_) => Some(arg.value),
+        _ => None,
+    });
+    let Some(content) = content else {
+        return Err(type_error("WindowGroup requires a content closure"));
+    };
+    Ok(view_value(
+        "WindowGroup",
+        vec![(SCENE_CONTENT_FIELD.into(), content)],
+    ))
 }
 
 /// `LazyVStack(spacing:) { ... }` — a vertical stack that renders lazily; for the

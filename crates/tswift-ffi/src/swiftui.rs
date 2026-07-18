@@ -15,7 +15,7 @@ use tswift_core::{Interpreter, SwiftValue};
 use tswift_frontend::{Analysis, Severity};
 use tswift_swiftui::diff;
 use tswift_swiftui::session::{Event, Session};
-use tswift_swiftui::{find_root_view, uiir, PRELUDE};
+use tswift_swiftui::{find_render_entry, uiir, RenderEntry, PRELUDE};
 
 use tswift_core::result_json::escape as escape_json;
 
@@ -192,7 +192,8 @@ fn build(
         return Err(diagnostics.trim_end().to_string());
     }
 
-    let root = find_root_view(&analysis).ok_or("no `View`-conforming struct found")?;
+    let entry =
+        find_render_entry(&analysis).ok_or("no `View`- or `App`-conforming struct found")?;
 
     // From here on, allocations are owned by `bundle`; every early return moves
     // `bundle` out so its `Drop` reclaims them.
@@ -248,7 +249,10 @@ fn build(
     // handed to the session, which is dropped before `interp` is freed.
     let interp_ref: &'static mut Interpreter<'static> = unsafe { &mut *bundle.interp };
 
-    let mut session = match Session::new(interp_ref, &root) {
+    let mut session = match match &entry {
+        RenderEntry::View(root) => Session::new(interp_ref, root),
+        RenderEntry::App(app) => Session::new_app(interp_ref, app),
+    } {
         Ok(session) => session,
         Err(error) => {
             // `interp_ref` was consumed and dropped by the failed `Session::new`.
@@ -274,7 +278,7 @@ fn build(
     };
     let tree_json = uiir::to_json(&tree);
     bundle.session = Some(session);
-    Ok((bundle, tree_json, root))
+    Ok((bundle, tree_json, entry.type_name().to_string()))
 }
 
 /// Route a host event into the live session and return a patch stream:
