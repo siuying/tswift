@@ -425,12 +425,44 @@ host→runtime round-trip we otherwise avoid. Kept in scope but isolated behind 
 own ADR; if it proves too costly it can be declared permanently out of scope
 (many previews never need it).
 
+**Landed (headless tier).** `GeometryReader` is implemented without the layout
+round-trip: its `(GeometryProxy) -> Content` closure runs against a
+*deterministic* proxy whose `size` is a fixed runtime default
+(`GEOMETRY_DEFAULT_WIDTH`/`_HEIGHT` in `crates/tswift-swiftui/src/views.rs`),
+`safeAreaInsets` is zero, and `frame(in:)` returns a rect at the origin sized to
+`size`. The realized children serialize as ordinary children with the proposed
+size recorded as `proposedWidth`/`proposedHeight` args. **Tiers, named honestly:**
+(1) *headless default* — deterministic size, no device parity (what ships now);
+(2) *host-measured* — a host runs a real layout pass and supplies a truer size
+(future; the host→runtime geometry event is the tripwire that reopens the ADR).
+No device-pixel parity is ever claimed. `CGSize`/`CGPoint`/`CGRect`/
+`CoordinateSpace`/`GeometryProxy` are prelude value structs. `ScrollView` now also
+records `axes` and a non-default `showsIndicators: false`; `RoundedRectangle`
+accepts `cornerSize:`/`style:` (`RoundedCornerStyle`).
+
 ### Tier 8 — Navigation & presentation
 `NavigationStack`/`NavigationLink`, `.sheet`, `.alert`, `.confirmationDialog`,
 `.popover`, `TabView`, `.fullScreenCover`. **Unlocks** multiple screens + **out-of-
 tree presentation surfaces** (overlays escape parent/child flow → the patch
 protocol needs a "portal"/detached-root notion). Placed after layout because
 list-/scroll-heavy screens want Tier 7 primitives.
+
+**`NavigationSplitView` (landed, honest scope).** Two/three-column
+`NavigationSplitView { sidebar } content: { … } detail: { … }` renders every
+column eagerly as an ordinary child (sidebar first, detail last), mirroring how
+`NavigationStack` renders each screen (ADR-0013 §1); a `columns` arg records the
+count. Selection-driven detail (a sidebar `List(selection:)` collapsing the
+detail) is **host-driven** — the runtime renders all columns eagerly and does not
+resolve the selection. Value/programmatic navigation (`NavigationLink(value:)`,
+`.navigationDestination(for:)`, `NavigationPath` append/removeLast, path-bound
+push/pop) is already covered by `tests/swiftui-fixtures/navigation-values.*`.
+
+**`ForEach($items)` collection-binding form (blocker).** Not supported: it needs
+a per-element `Binding` synthesized from the collection binding (get/set closures
+capturing the parent binding + index), and the Rust view-init seam cannot
+fabricate interpreter closures. It fails with an explicit diagnostic pointing at
+the plain-array form. Reopens when a Rust-callable binding-synthesis primitive
+exists (or element-binding synthesis moves into the prelude/interpreter).
 
 ### Backlog (deferred indefinitely, own ADR)
 Animation (`withAnimation`, transitions, `matchedGeometryEffect`), gestures
