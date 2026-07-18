@@ -767,18 +767,36 @@ fn input_field_init(ctx: &mut dyn StdContext, args: Vec<Arg>, kind: &str) -> Std
 /// the title string; the trailing closure is the tap action, stored under the
 /// `"tap"` key of the view's [`HANDLERS_FIELD`] map (ADR-0013 §3) which the
 /// dispatch loop invokes on a `tap` event.
-pub(crate) fn button_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+pub(crate) fn button_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut title = String::new();
     let mut action: Option<SwiftValue> = None;
+    // SE-0279 `Button { action } label: { … }`: a `label:` closure builds the
+    // button's view content instead of a plain `title` string.
+    let mut label_closure: Option<SwiftValue> = None;
     for arg in args {
-        match arg.value {
-            SwiftValue::Closure(_) => action = Some(arg.value),
-            SwiftValue::Str(s) if action.is_none() => title = s,
-            other if title.is_empty() && action.is_none() => title = other.to_string(),
-            _ => {}
+        match arg.label.as_deref() {
+            Some("action") => action = Some(arg.value),
+            Some("label") => label_closure = Some(arg.value),
+            _ => match arg.value {
+                SwiftValue::Closure(_) if action.is_none() => action = Some(arg.value),
+                SwiftValue::Str(s) if action.is_none() => title = s,
+                other if title.is_empty() && action.is_none() => title = other.to_string(),
+                _ => {}
+            },
         }
     }
     let mut fields = vec![("title".into(), SwiftValue::Str(title))];
+    if let Some(closure) = label_closure {
+        let children = collect_children(
+            ctx,
+            vec![Arg {
+                label: None,
+                value: closure,
+                static_ty: None,
+            }],
+        )?;
+        fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
+    }
     if let Some(action) = action {
         fields.push((HANDLERS_FIELD.into(), handlers_map(vec![("tap", action)])));
     }

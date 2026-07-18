@@ -3148,14 +3148,32 @@ impl<'a> Parser<'a> {
                         && !is_accessor_kw(self.tokens[self.pos + 1].text) =>
                 {
                     let closure = self.parse_closure()?;
-                    if self.ast.node(expr).kind() == NodeKind::CallExpr {
+                    let call = if self.ast.node(expr).kind() == NodeKind::CallExpr {
                         self.ast.append_child(expr, closure);
+                        expr
                     } else {
                         let line = self.ast.node(closure).line();
                         let call = self.ast.add(NodeKind::CallExpr, None, line, 1);
                         self.ast.append_child(call, expr);
                         self.ast.append_child(call, closure);
                         expr = call;
+                        call
+                    };
+                    // SE-0279 multiple trailing closures: after the first
+                    // (unlabeled) trailing closure, accept further
+                    // `label: { … }` items on the same call and attach each as
+                    // a labeled closure argument. The label must be an
+                    // identifier/keyword immediately followed by `:` then a `{`.
+                    while matches!(self.peek().kind, TokenKind::Identifier | TokenKind::Keyword)
+                        && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                        && self.tokens[self.pos + 2].kind == TokenKind::LBrace
+                        && !is_accessor_kw(self.tokens[self.pos + 2].text)
+                    {
+                        let label = self.bump().text; // label
+                        self.bump(); // ':'
+                        let labeled = self.parse_closure()?;
+                        self.ast.set_arg_label(labeled, label);
+                        self.ast.append_child(call, labeled);
                     }
                 }
                 // A call argument list must begin on the same line as the
@@ -4368,6 +4386,35 @@ mod tests {
             init.children().last().unwrap().kind(),
             NodeKind::ClosureExpr
         );
+    }
+
+    #[test]
+    fn multiple_trailing_closures_become_labeled_call_args() {
+        // SE-0279: `f { … } b: { … }` — the first trailing closure is an
+        // unlabeled argument, subsequent `label: { … }` are labeled closure
+        // arguments of the same call.
+        let ast = ast_of("let r = f { 1 } b: { 2 }");
+        let call = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        let args: Vec<_> = call.children().collect();
+        // callee `f`, unlabeled closure, labeled closure `b:`.
+        assert_eq!(args[0].kind(), NodeKind::IdentExpr);
+        assert_eq!(args[1].kind(), NodeKind::ClosureExpr);
+        assert_eq!(args[1].arg_label(), None);
+        assert_eq!(args[2].kind(), NodeKind::ClosureExpr);
+        assert_eq!(args[2].arg_label(), Some("b"));
+    }
+
+    #[test]
+    fn multiple_trailing_closures_after_paren_args() {
+        // `AsyncImage(url: u) { img in img } placeholder: { … }` — a paren
+        // argument list, then two trailing closures (one labeled).
+        let ast = ast_of("let v = AsyncImage(url: u) { img in img } placeholder: { loading }");
+        let call = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        let labels: Vec<_> = call.children().map(|c| c.arg_label()).collect();
+        // callee, url:, content trailing (unlabeled), placeholder:.
+        assert_eq!(labels, vec![None, Some("url"), None, Some("placeholder")]);
     }
 
     #[test]
