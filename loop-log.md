@@ -1412,3 +1412,21 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   partial ranges need it), matching the stdlib impls.
 - Range/ClosedRange verified 76.2% → 81.0%.
 - presubmit green; coverage JSON regenerated.
+
+## Issue #264 — SE-0279 multiple trailing closures (PHASE 1)
+
+- **Parser** (`crates/tswift-parser`): after a trailing closure, the postfix
+  loop now consumes `label: { … }` items (Identifier/Keyword `:` `{`, skipping
+  accessor kws) and attaches each as a labeled closure arg of the same call.
+  General expression fix, not SwiftUI-specific. Fixes `f { 1 } b: { 2 }` and the
+  paren-args form `AsyncImage(url: u) { } placeholder: { }`.
+- **SwiftUI** (`crates/tswift-swiftui/src/views.rs`): `button_init` reads
+  `label:`/`action:` labels — `label:` closure builds view content (children),
+  `action:` (or first unlabeled closure) becomes the tap handler. NavigationLink
+  and AsyncImage already read arg labels, so they resolve once the parser
+  delivers labeled closures.
+- **Tests**: 2 parser unit tests (`multiple_trailing_closures_*`) +
+  `multiple-trailing-closures` golden fixture — render (Button/NavigationLink
+  labels resolve) and tap dispatch (`Button { count += 1 } label:` action
+  executes → `setText Count: 1`, real runtime dispatch not marker-only).
+- presubmit green; wasm rebuilt. Commits 3dfaa05 (fix) + wasm chore. Closed #264.
