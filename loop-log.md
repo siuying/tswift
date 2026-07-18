@@ -1430,3 +1430,19 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   labels resolve) and tap dispatch (`Button { count += 1 } label:` action
   executes → `setText Count: 1`, real runtime dispatch not marker-only).
 - presubmit green; wasm rebuilt. Commits 3dfaa05 (fix) + wasm chore. Closed #264.
+
+## Coverage iteration — SwiftData #Predicate operators (PHASE 2a)
+
+- Priority (a) query surface: extended the `#Predicate` → SQL compiler
+  (`crates/tswift-swiftdata/src/model.rs`) with two common operators, both
+  compiling eagerly to bound SQL run against real SQLite (not marker-only):
+  - String `.isEmpty` → `(col IS NULL OR col = '')` (TEXT columns only; clear
+    diagnostic otherwise). Works negated (`!obj.note.isEmpty` → `NOT (…)`).
+  - Collection membership `list.contains(obj.prop)` → `prop IN (?, …)`; an
+    empty collection lowers to constant-false `0` (nothing is a member of ∅).
+    Accepts array or set receivers of literal/captured values.
+- Disambiguated from `obj.text.contains("x")` (LIKE) by checking whether the
+  call receiver is the model column.
+- Verified by a new tagged golden fixture `swiftdata_predicate_ops` (in-list,
+  isEmpty, negated isEmpty, empty-collection). Updated scope.toml predicate note.
+- presubmit green. Commit 5998fe1.
