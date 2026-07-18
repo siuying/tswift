@@ -262,6 +262,7 @@ struct HostDemo: View {
         }
     }
 }
+
 "#;
     // Build only what hosts build — see `host_program`.
     assert!(
@@ -287,5 +288,31 @@ struct HostDemo: View {
         };
         assert_eq!(x.type_name, "PlottableValue");
         assert_eq!(x.get("label"), Some(&SwiftValue::Str("Name".into())));
+    });
+}
+
+#[test]
+fn chart_body_materializes_the_existing_chart_uiir() {
+    let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            PointMark(x: .value("X", 1), y: .value("Y", 2))
+        }.body
+    }
+}
+"#;
+    with_interp(src, |interp| {
+        let view = render_root(interp, "Demo").expect("render");
+        assert_eq!(view_type_name(&view), Some("Chart"));
+        let SwiftValue::Struct(chart) = &view else {
+            panic!("expected Chart body");
+        };
+        let Some(SwiftValue::Array(children)) = chart.get(CHILDREN_FIELD) else {
+            panic!("Chart.body lost children: {chart:?}");
+        };
+        assert_eq!(children.len(), 1);
+        assert_eq!(view_type_name(&children[0]), Some("PointMark"));
+        assert_uiir_kinds(&view, &["Chart", "PointMark"]);
     });
 }

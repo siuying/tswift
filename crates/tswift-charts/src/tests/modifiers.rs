@@ -4,7 +4,9 @@ use super::support::{
     assert_has_modifier, chart_modifier, chart_single_mark, mark_modifier, with_interp,
 };
 use tswift_core::SwiftValue;
-use tswift_swiftui::{render_root, uiir, view_type_name, CHILDREN_FIELD, MODIFIERS_FIELD};
+use tswift_swiftui::{
+    render_root, uiir, view_type_name, CHILDREN_FIELD, HANDLERS_FIELD, MODIFIERS_FIELD,
+};
 
 // ── Slice 3: mark modifiers → `_Modifier` records on the mark ───────────
 
@@ -624,5 +626,39 @@ struct Demo: View {
         assert_eq!(xdom.get("length"), Some(&SwiftValue::int(5)));
         let ydom = chart_modifier(chart, "chartYVisibleDomain");
         assert_eq!(ydom.get("length"), Some(&SwiftValue::int(10)));
+    });
+}
+
+#[test]
+fn chart_gesture_evaluates_proxy_builder_and_keeps_handler() {
+    let src = r#"
+struct Demo: View {
+    var body: some View {
+        Chart {
+            PointMark(x: .value("X", 1), y: .value("Y", 2))
+        }
+        .chartGesture { _ in
+            TapGesture(count: 2).onEnded { }
+        }
+    }
+}
+"#;
+    with_interp(src, |interp| {
+        let view = render_root(interp, "Demo").expect("render");
+        let SwiftValue::Struct(chart) = &view else {
+            panic!("expected Chart");
+        };
+        let gesture = chart_modifier(chart, "chartGesture");
+        assert_eq!(gesture.get("kind"), Some(&SwiftValue::Str("tap".into())));
+        assert_eq!(gesture.get("count"), Some(&SwiftValue::int(2)));
+        let Some(SwiftValue::Struct(handlers)) = chart.get(HANDLERS_FIELD) else {
+            panic!("chartGesture did not retain its handler: {chart:?}");
+        };
+        assert!(matches!(handlers.get("tap"), Some(SwiftValue::Closure(_))));
+
+        let json = uiir::to_json(&view);
+        assert!(json.contains(r#""name":"chartGesture""#), "{json}");
+        assert!(json.contains(r#""kind":"tap""#), "{json}");
+        assert!(json.contains(r#""count":2"#), "{json}");
     });
 }

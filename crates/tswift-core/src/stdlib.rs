@@ -689,6 +689,11 @@ impl BuiltinReceiver {
                 BuiltinReceiver::DateFormatStyle
             }
             SwiftValue::Struct(obj) if obj.type_name == "Hasher" => BuiltinReceiver::Hasher,
+            // Framework extension receivers are interned by name at install
+            // time. Keep property/method dispatch open to those receivers so
+            // framework crates can provide computed properties without adding
+            // their type names to core's vocabulary.
+            SwiftValue::Struct(obj) => return BuiltinReceiver::from_type_name(&obj.type_name),
             // Class-backed builtin types (`SwiftValue::Object`) classify by
             // their runtime class name, the same way a struct classifies by
             // `type_name`. Reachable once a builtin constructs Objects; user

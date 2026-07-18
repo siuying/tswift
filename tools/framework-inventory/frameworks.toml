@@ -91,6 +91,7 @@ inventory = "frameworks/charts/inventory.md"
 registry = "frameworks/charts/registered_keys.txt"
 scope = "frameworks/charts/scope.toml"
 fixture_prefix = "charts_"
+fixture_dir = "tests/swiftui-fixtures"
 
 [eventkit]
 display_name = "EventKit"

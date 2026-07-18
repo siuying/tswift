@@ -4,7 +4,7 @@ use tswift_core::{BuiltinParam, BuiltinReceiver, Interpreter};
 
 use crate::axis::{axis_grid_line_init, axis_marks_init, axis_tick_init, axis_value_label_init};
 use crate::marks::{
-    area_mark_init, bar_mark_init, chart_init, line_mark_init, plottable_value_static,
+    area_mark_init, bar_mark_init, chart_body, chart_init, line_mark_init, plottable_value_static,
     point_mark_init, rectangle_mark_init, rule_mark_init, sector_mark_init, xy_plottable_params,
 };
 use crate::modifiers;
@@ -20,6 +20,8 @@ fn install_inner(interp: &mut Interpreter<'_>) {
     // `Chart { … }` — trailing content-builder closure becomes `_children`
     // (same shape as SwiftUI containers).
     interp.register_free_fn("Chart", chart_init);
+    let chart = BuiltinReceiver::register_extension("Chart");
+    interp.register_property(chart, "body", chart_body);
     // Mark constructors — typed so leading-dot `.value(...)` resolves against
     // `PlottableValue` where the arg is plottable (see PRELUDE). Non-plottable
     // args (width/height/innerRadius/angularInset) accept CGFloat/Any generically.
@@ -107,7 +109,7 @@ pub fn registered_keys() -> Vec<String> {
         .filter_map(|key| {
             if INIT_NAMES.contains(&key.as_str()) {
                 Some(format!("{key}.init"))
-            } else if key == "PlottableValue.value" {
+            } else if key == "Chart.body" || key == "PlottableValue.value" {
                 Some(key)
             } else {
                 None

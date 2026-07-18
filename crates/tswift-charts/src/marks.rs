@@ -2,8 +2,28 @@
 
 use std::rc::Rc;
 
-use tswift_core::{Arg, BuiltinParam, StdContext, StdResult, StructObj, SwiftValue};
+use tswift_core::{
+    Arg, BuiltinParam, EvalError, StdContext, StdError, StdResult, StructObj, SwiftValue,
+};
 use tswift_swiftui::{collect_children, container_value, keyed_rows, view_value};
+
+/// `Chart.body` exposes the already-materialized chart UIIR value. Charts is a
+/// render-host framework in this runtime, so the initializer has performed
+/// the result-builder evaluation before the body is read. Returning a fresh
+/// struct keeps the property non-cyclic while preserving the ordered marks
+/// and chart modifiers for callers that explicitly read `.body`.
+pub(crate) fn chart_body(value: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(obj) = value else {
+        return Err(StdError::Error(EvalError::Type(format!(
+            "Chart.body applied to {}",
+            value.type_name()
+        ))));
+    };
+    Ok(SwiftValue::Struct(Rc::new(StructObj {
+        type_name: obj.type_name.clone(),
+        fields: obj.fields.clone(),
+    })))
+}
 
 /// PlottableValue-typed x/y params shared by Bar/Line/Point/Area marks.
 pub(crate) fn xy_plottable_params() -> Vec<BuiltinParam> {

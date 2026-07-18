@@ -7,18 +7,18 @@
         {
           "name": "body",
           "kind": "var",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
-        "missing": 1,
+        "implemented": 2,
+        "partial": 0,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 2
       }
@@ -29,12 +29,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -46,12 +46,12 @@
         {
           "name": "value",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -63,12 +63,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -80,12 +80,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -97,12 +97,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -114,12 +114,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -131,12 +131,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -148,12 +148,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -165,22 +165,22 @@
         {
           "name": "accessibilityHidden",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityIdentifier",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityLabel",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "accessibilityValue",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "alignsMarkStylesWithPlotArea",
@@ -195,12 +195,12 @@
         {
           "name": "blur",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "clipShape",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "compositingLayer",
@@ -210,12 +210,12 @@
         {
           "name": "cornerRadius",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "foregroundStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "interpolationMethod",
@@ -225,32 +225,32 @@
         {
           "name": "lineStyle",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "mask",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "offset",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "opacity",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "position",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "shadow",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "symbol",
@@ -260,17 +260,17 @@
         {
           "name": "symbolSize",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "zIndex",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 21,
+        "implemented": 16,
+        "partial": 5,
         "missing": 0,
         "out_of_scope": 0,
         "total": 21
@@ -315,12 +315,12 @@
         {
           "name": "chartGesture",
           "kind": "func",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "chartLegend",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "chartLineStyleScale",
@@ -365,12 +365,12 @@
         {
           "name": "chartXAxis",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "chartXAxisLabel",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "chartXAxisStyle",
@@ -395,12 +395,12 @@
         {
           "name": "chartYAxis",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "chartYAxisLabel",
           "kind": "func",
-          "status": "partial"
+          "status": "implemented"
         },
         {
           "name": "chartYAxisStyle",
@@ -448,9 +448,9 @@
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 24,
-        "missing": 1,
+        "implemented": 6,
+        "partial": 19,
+        "missing": 0,
         "out_of_scope": 7,
         "total": 32
       }
@@ -461,12 +461,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -478,12 +478,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -495,12 +495,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -512,12 +512,12 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "partial"
+          "status": "implemented"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 1,
+        "implemented": 1,
+        "partial": 0,
         "missing": 0,
         "out_of_scope": 0,
         "total": 1
@@ -525,9 +525,9 @@
     }
   ],
   "totals": {
-    "implemented": 0,
-    "partial": 58,
-    "missing": 2,
+    "implemented": 36,
+    "partial": 24,
+    "missing": 0,
     "out_of_scope": 7,
     "total": 67
   }

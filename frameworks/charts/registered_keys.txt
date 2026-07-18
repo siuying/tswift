@@ -4,6 +4,7 @@ AxisMarks.init
 AxisTick.init
 AxisValueLabel.init
 BarMark.init
+Chart.body
 Chart.init
 ChartContent.accessibilityHidden
 ChartContent.accessibilityIdentifier
@@ -35,6 +36,7 @@ SectorMark.init
 View.chartAngleSelection
 View.chartBackground
 View.chartForegroundStyleScale
+View.chartGesture
 View.chartLegend
 View.chartLineStyleScale
 View.chartOverlay

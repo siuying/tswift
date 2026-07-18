@@ -4,9 +4,9 @@
       "framework": "charts",
       "display_name": "Charts",
       "totals": {
-        "implemented": 0,
-        "partial": 58,
-        "missing": 2,
+        "implemented": 36,
+        "partial": 24,
+        "missing": 0,
         "out_of_scope": 7,
         "total": 67
       }

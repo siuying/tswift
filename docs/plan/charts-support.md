@@ -40,5 +40,8 @@
 - Verify the supported Charts surface against real `swiftc` where available.
 - Improve degraded modifier tiers: iOS axis/legend builder forms,
   `chartXSelection` write-back, unexpandable `chartPlotStyle`, and host mappings
-  for `chartBackground`, `chartOverlay`, and axis-style modifiers; add
-  `chartGesture` with host gesture/`ChartProxy` support.
+  for `chartBackground`, `chartOverlay`, and axis-style modifiers. `Chart.body`
+  now exposes the materialized Chart UIIR; `chartGesture` supports the
+  headless TapGesture/LongPressGesture subset. ChartProxy geometry/value lookup
+  and arbitrary Gesture families remain deferred until hosts provide plot
+  coordinates and gesture payloads.

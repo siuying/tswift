@@ -24,6 +24,7 @@ fn registered_keys_cover_core_marks_and_modifiers() {
         "AxisValueLabel.init",
         "BarMark.init",
         "Chart.init",
+        "Chart.body",
         "ChartContent.accessibilityHidden",
         "ChartContent.accessibilityIdentifier",
         "ChartContent.accessibilityLabel",
@@ -75,6 +76,7 @@ fn registered_keys_cover_core_marks_and_modifiers() {
         "View.chartYScale",
         "View.chartYSelection",
         "View.chartYVisibleDomain",
+        "View.chartGesture",
     ] {
         assert!(
             keys.iter().any(|k| k == expected),

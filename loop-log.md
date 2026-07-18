@@ -1459,3 +1459,7 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 ## agent string-index-apis
 
 - Implemented Unicode-grapheme String/Substring index search, typed range bounds, and base-compatible index slicing; presubmit green, no blockers.
+
+## agent charts-members
+
+- Implemented `Chart.body` and `View.chartGesture` with UIIR-backed semantics, added unit tests and `charts-phase2d` golden coverage, refreshed Charts inventory/website coverage, and documented headless ChartProxy/arbitrary-gesture limits. Blockers: none.

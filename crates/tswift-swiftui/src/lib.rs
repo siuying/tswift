@@ -38,7 +38,7 @@ pub(crate) use views::{
 
 pub(crate) use async_image::async_image_init;
 pub use async_image::{async_image_url_image, has_async_image_closures, realize_async_image_child};
-pub use modifiers::{append_modifier, make_modifier};
+pub use modifiers::{append_modifier, apply_chart_gesture, make_modifier};
 pub(crate) use modifiers::{
     gesture_on_ended, handlers_map, long_press_gesture_init, modifier_animation,
     modifier_aspect_ratio, modifier_background, modifier_frame, modifier_multiline_text_alignment,

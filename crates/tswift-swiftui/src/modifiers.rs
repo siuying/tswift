@@ -2622,6 +2622,34 @@ pub(crate) fn modifier_gesture(
     let Some(SwiftValue::Struct(ref g)) = gesture else {
         return Ok(recv);
     };
+    lower_gesture(recv, g, None)
+}
+
+/// Lower a gesture returned from a framework-owned gesture builder onto a
+/// view. Charts uses this for `chartGesture`, while SwiftUI's `.gesture` keeps
+/// its existing marker names. The handler remains in the shared `_handlers`
+/// map so the render session can dispatch it by event kind.
+pub fn apply_chart_gesture(recv: SwiftValue, gesture: SwiftValue) -> StdResult {
+    let SwiftValue::Struct(g) = gesture else {
+        return Ok(recv);
+    };
+    if !matches!(g.type_name.as_str(), "TapGesture" | "LongPressGesture") {
+        return append_modifier(
+            recv,
+            make_modifier(
+                "chartGesture",
+                vec![Arg {
+                    label: Some("kind".into()),
+                    value: SwiftValue::Str(format!("unsupported: {}", g.type_name)),
+                    static_ty: None,
+                }],
+            ),
+        );
+    }
+    lower_gesture(recv, &g, Some("chartGesture"))
+}
+
+fn lower_gesture(recv: SwiftValue, g: &StructObj, marker_override: Option<&str>) -> StdResult {
     let action = g.get("_action").cloned();
     match g.type_name.as_str() {
         "TapGesture" => {
@@ -2638,7 +2666,19 @@ pub(crate) fn modifier_gesture(
                 }],
                 _ => Vec::new(),
             };
-            attach_event(recv, "onTapGesture", "tap", marker_args, action)
+            let marker = marker_override.unwrap_or("onTapGesture");
+            let marker_args = if marker_override.is_some() {
+                let mut args = vec![Arg {
+                    label: Some("kind".into()),
+                    value: SwiftValue::Str("tap".into()),
+                    static_ty: None,
+                }];
+                args.extend(marker_args);
+                args
+            } else {
+                marker_args
+            };
+            attach_event(recv, marker, "tap", marker_args, action)
         }
         "LongPressGesture" => {
             let mut marker_args = Vec::new();
@@ -2650,7 +2690,19 @@ pub(crate) fn modifier_gesture(
                     static_ty: None,
                 });
             }
-            attach_event(recv, "onLongPressGesture", "longPress", marker_args, action)
+            let marker = marker_override.unwrap_or("onLongPressGesture");
+            let marker_args = if marker_override.is_some() {
+                let mut args = vec![Arg {
+                    label: Some("kind".into()),
+                    value: SwiftValue::Str("longPress".into()),
+                    static_ty: None,
+                }];
+                args.extend(marker_args);
+                args
+            } else {
+                marker_args
+            };
+            attach_event(recv, marker, "longPress", marker_args, action)
         }
         _ => Ok(recv), // Unknown gesture type — silently ignored.
     }

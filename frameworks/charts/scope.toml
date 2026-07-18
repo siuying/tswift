@@ -56,6 +56,10 @@ chart3d = [
 # View.chart3D* / chartZ* — RealityKit/3D charts, not a 2D render-host concern.
 # Public 2D ChartContent modifiers (accessibility*, compositingLayer,
 # alignsMarkStylesWithPlotArea) are implemented as mark `_Modifier` records.
+# `View.chartGesture` is implemented for the headless runtime's TapGesture and
+# LongPressGesture values. ChartProxy geometry/value lookup and arbitrary
+# Gesture families remain out of scope until a host event model can supply
+# plot coordinates and gesture payloads.
 chart3d = [
   "View.chart3DCameraProjection",
   "View.chart3DPose",

@@ -198,6 +198,56 @@ chart_modifier!(
 chart_modifier!(modifier_chart_x_visible_domain, "chartXVisibleDomain");
 chart_modifier!(modifier_chart_y_visible_domain, "chartYVisibleDomain");
 
+/// `.chartGesture { proxy in TapGesture().onEnded { … } }` — evaluate the
+/// ChartProxy builder against a host-neutral proxy and lower the returned
+/// supported gesture into the shared event-handler path. The modifier keeps
+/// a structured unresolved record when the headless runtime cannot materialize
+/// a gesture, rather than retaining an opaque closure.
+fn modifier_chart_gesture(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg>) -> StdResult {
+    let content = args
+        .into_iter()
+        .find_map(|arg| matches!(arg.value, SwiftValue::Closure(_)).then_some(arg.value));
+    let Some(SwiftValue::Closure(id)) = content else {
+        return append_modifier(
+            recv,
+            make_modifier(
+                "chartGesture",
+                vec![Arg {
+                    label: Some("kind".into()),
+                    value: SwiftValue::Str("unresolved".into()),
+                    static_ty: None,
+                }],
+            ),
+        );
+    };
+    let produced = ctx.eval_block_values_with_args(id, vec![chart_proxy_placeholder()]);
+    let gesture = produced.ok().and_then(first_struct_value);
+    match gesture {
+        Some(gesture) => tswift_swiftui::apply_chart_gesture(recv, gesture),
+        None => append_modifier(
+            recv,
+            make_modifier(
+                "chartGesture",
+                vec![Arg {
+                    label: Some("kind".into()),
+                    value: SwiftValue::Str("unresolved".into()),
+                    static_ty: None,
+                }],
+            ),
+        ),
+    }
+}
+
+fn first_struct_value(value: SwiftValue) -> Option<SwiftValue> {
+    match value {
+        SwiftValue::Struct(_) => Some(value),
+        SwiftValue::Array(values) => values
+            .iter()
+            .find_map(|value| first_struct_value(value.clone())),
+        _ => None,
+    }
+}
+
 /// Evaluate trailing builder content (closures / view values) into a single
 /// child (or ZStack of several) and push it as an unlabeled `value` arg.
 fn push_collected_content(
@@ -604,6 +654,7 @@ pub(crate) const CHART_MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ),
     ("chartXVisibleDomain", modifier_chart_x_visible_domain),
     ("chartYVisibleDomain", modifier_chart_y_visible_domain),
+    ("chartGesture", modifier_chart_gesture),
     ("chartXAxisStyle", modifier_chart_x_axis_style),
     ("chartYAxisStyle", modifier_chart_y_axis_style),
 ];

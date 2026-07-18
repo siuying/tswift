@@ -1,0 +1,1 @@
+{"id":"0","kind":"Chart","args":{},"modifiers":[{"name":"chartGesture","value":{"kind":"tap","count":2}}],"children":[{"id":"0.0","kind":"PointMark","args":{"x":{"$":"plottable","label":"Day","value":"Mon"},"y":{"$":"plottable","label":"Count","value":1}},"modifiers":[],"children":[]}]}
