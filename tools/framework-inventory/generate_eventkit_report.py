@@ -42,6 +42,12 @@ def main() -> int:
     done = totals["implemented"] + totals["partial"]
     done_pct = round(done / in_scope * 100) if in_scope else 0
     verified_pct = round(totals["implemented"] / in_scope * 100) if in_scope else 0
+    if totals["partial"]:
+        coverage_note = (
+            "the remaining <b>{}</b> are reachable but not fixture-verified."
+        ).format(totals["partial"])
+    else:
+        coverage_note = "all in-scope members are exercised by the golden fixtures."
 
     rows = []
     for s in data["sections"]:
@@ -137,9 +143,7 @@ def main() -> int:
     <div class="bar"><i style="width:{done_pct}%"></i></div>
     <p class="note" style="margin-top:14px">All <b>{in_scope}</b> in-scope EventKit
     members are implemented and reachable. <b>{verified_pct}%</b> are exercised by a
-    tagged executing golden fixture; the remaining <b>{totals['partial']}</b> are enum
-    <code class="inl">init(rawValue:)</code> keys blocked on shared builtin-enum
-    round-trip support (see <code class="inl">docs/swift-runtime/blocked-features.md</code>).</p>
+    tagged executing golden fixture; {coverage_note}</p>
   </section>
 
   <section>

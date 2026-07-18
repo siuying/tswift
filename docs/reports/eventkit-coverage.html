@@ -69,16 +69,14 @@
     <h2>At a glance</h2>
     <div class="stats">
       <div class="stat green"><div class="n">100%</div><div class="l">In-scope coverage (224/224)</div></div>
-      <div class="stat blue"><div class="n">208<span class="small"> impl</span></div><div class="l">Fixture-verified members</div></div>
-      <div class="stat warn"><div class="n">16<span class="small"> part</span></div><div class="l">Reachable, not fixture-verified</div></div>
+      <div class="stat blue"><div class="n">224<span class="small"> impl</span></div><div class="l">Fixture-verified members</div></div>
+      <div class="stat warn"><div class="n">0<span class="small"> part</span></div><div class="l">Reachable, not fixture-verified</div></div>
       <div class="stat pink"><div class="n">88<span class="small"> oos</span></div><div class="l">Out of scope (documented)</div></div>
     </div>
     <div class="bar"><i style="width:100%"></i></div>
     <p class="note" style="margin-top:14px">All <b>224</b> in-scope EventKit
-    members are implemented and reachable. <b>93%</b> are exercised by a
-    tagged executing golden fixture; the remaining <b>16</b> are enum
-    <code class="inl">init(rawValue:)</code> keys blocked on shared builtin-enum
-    round-trip support (see <code class="inl">docs/swift-runtime/blocked-features.md</code>).</p>
+    members are implemented and reachable. <b>100%</b> are exercised by a
+    tagged executing golden fixture; all in-scope members are exercised by the golden fixtures.</p>
   </section>
 
   <section>
@@ -87,33 +85,33 @@
       <thead><tr><th>Type</th><th class="num">✅ Impl</th><th class="num">🟡 Part</th><th class="num">🚫 OOS</th><th class="num">In scope</th><th>Coverage</th></tr></thead>
       <tbody>
 <tr><td><code>EKEventStore</code></td><td class='num'>24</td><td class='num'>0</td><td class='num'>8</td><td class='num'>24</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKAuthorizationStatus</code></td><td class='num'>6</td><td class='num'>1</td><td class='num'>5</td><td class='num'>7</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKEntityType</code></td><td class='num'>2</td><td class='num'>1</td><td class='num'>5</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKSpan</code></td><td class='num'>2</td><td class='num'>1</td><td class='num'>5</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKAuthorizationStatus</code></td><td class='num'>7</td><td class='num'>0</td><td class='num'>5</td><td class='num'>7</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKEntityType</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>5</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKSpan</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>5</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKCalendarItem</code></td><td class='num'>21</td><td class='num'>0</td><td class='num'>0</td><td class='num'>21</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKEvent</code></td><td class='num'>15</td><td class='num'>0</td><td class='num'>0</td><td class='num'>15</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKReminder</code></td><td class='num'>6</td><td class='num'>0</td><td class='num'>0</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKEventStatus</code></td><td class='num'>4</td><td class='num'>1</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKEventAvailability</code></td><td class='num'>5</td><td class='num'>1</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKReminderPriority</code></td><td class='num'>4</td><td class='num'>1</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKEventStatus</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKEventAvailability</code></td><td class='num'>6</td><td class='num'>0</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKReminderPriority</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKCalendar</code></td><td class='num'>11</td><td class='num'>0</td><td class='num'>0</td><td class='num'>11</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKSource</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>0</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKCalendarType</code></td><td class='num'>5</td><td class='num'>1</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKSourceType</code></td><td class='num'>6</td><td class='num'>1</td><td class='num'>5</td><td class='num'>7</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKCalendarType</code></td><td class='num'>6</td><td class='num'>0</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKSourceType</code></td><td class='num'>7</td><td class='num'>0</td><td class='num'>5</td><td class='num'>7</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKObject</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>0</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKAlarm</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>0</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKAlarmType</code></td><td class='num'>4</td><td class='num'>1</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKAlarmProximity</code></td><td class='num'>3</td><td class='num'>1</td><td class='num'>5</td><td class='num'>4</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKAlarmType</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKAlarmProximity</code></td><td class='num'>4</td><td class='num'>0</td><td class='num'>5</td><td class='num'>4</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKRecurrenceRule</code></td><td class='num'>12</td><td class='num'>0</td><td class='num'>0</td><td class='num'>12</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKRecurrenceFrequency</code></td><td class='num'>4</td><td class='num'>1</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKRecurrenceFrequency</code></td><td class='num'>5</td><td class='num'>0</td><td class='num'>5</td><td class='num'>5</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKRecurrenceEnd</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>0</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKRecurrenceDayOfWeek</code></td><td class='num'>3</td><td class='num'>0</td><td class='num'>0</td><td class='num'>3</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKWeekday</code></td><td class='num'>14</td><td class='num'>1</td><td class='num'>5</td><td class='num'>15</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKWeekday</code></td><td class='num'>15</td><td class='num'>0</td><td class='num'>5</td><td class='num'>15</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKParticipant</code></td><td class='num'>8</td><td class='num'>0</td><td class='num'>0</td><td class='num'>8</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKParticipantRole</code></td><td class='num'>5</td><td class='num'>1</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKParticipantStatus</code></td><td class='num'>8</td><td class='num'>1</td><td class='num'>5</td><td class='num'>9</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKParticipantType</code></td><td class='num'>5</td><td class='num'>1</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
-<tr><td><code>EKParticipantScheduleStatus</code></td><td class='num'>9</td><td class='num'>1</td><td class='num'>5</td><td class='num'>10</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKParticipantRole</code></td><td class='num'>6</td><td class='num'>0</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKParticipantStatus</code></td><td class='num'>9</td><td class='num'>0</td><td class='num'>5</td><td class='num'>9</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKParticipantType</code></td><td class='num'>6</td><td class='num'>0</td><td class='num'>5</td><td class='num'>6</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
+<tr><td><code>EKParticipantScheduleStatus</code></td><td class='num'>10</td><td class='num'>0</td><td class='num'>5</td><td class='num'>10</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
 <tr><td><code>EKStructuredLocation</code></td><td class='num'>4</td><td class='num'>0</td><td class='num'>0</td><td class='num'>4</td><td class='pct'><div class='minibar'><i style='width:100%'></i></div><span>100%</span></td></tr>
       </tbody>
     </table>
