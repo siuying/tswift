@@ -20,8 +20,10 @@ shipped.** `Chart`, its seven common marks, plottable values, mark styling,
 chart modifiers, and axis-content leaves all produce structured UIIR values.
 The web host renders deterministic SVG; the iOS host lowers to native Charts.
 
-The coverage reference calls registered members **partial** until a tagged
-golden fixture exercises them. Phase 2d closes the two remaining scoped gaps:
+The live registry is **60/60 implemented** for this scoped surface, with
+**36/60 verified** by tagged golden fixtures. The coverage reference calls the
+remaining registered-but-unverified members **partial** until a fixture
+exercises them. Phase 2d closes the two remaining implementation gaps:
 `Chart.body` now exposes the materialized chart UIIR, and `View.chartGesture`
 evaluates the headless TapGesture/LongPressGesture subset.
 

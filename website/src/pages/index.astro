@@ -15,7 +15,7 @@ const charts = byFramework.charts.totals;
 const swiftdata = byFramework.swiftdata.totals;
 const eventkit = byFramework.eventkit.totals;
 const languageTiers = parseLanguageTiers();
-const language = sumTiers(languageTiers, 0, 7);
+const language = sumTiers(languageTiers, 0, 9);
 ---
 
 <Base
@@ -105,11 +105,11 @@ const language = sumTiers(languageTiers, 0, 7);
   <section class="section" style="border-top:1px solid var(--border)">
     <h2 class="section-title">Implementation status</h2>
     <p class="section-subtitle">
-      tswift covers 8 tiers of the Swift 6.3 language surface, plus stdlib, Foundation, SwiftUI, Charts, and SwiftData.
+      tswift covers 10 tiers of the Swift 6.3 language surface, plus stdlib, Foundation, SwiftUI, Charts, and SwiftData.
     </p>
 
     <div style="max-width:680px">
-      <CoverageBar label="Language (Tiers 0–7)" implemented={language.implemented} partial={language.partial} total={language.total} href="/status/language" />
+      <CoverageBar label="Language (Tiers 0–9)" implemented={language.implemented} partial={language.partial} total={language.total} href="/status/language" />
       <CoverageBar label="Standard Library" implemented={stdlib.implemented} partial={stdlib.partial} total={stdlib.total} href="/status/stdlib" />
       <CoverageBar label="Foundation" implemented={foundation.implemented} partial={foundation.partial} total={foundation.total} href="/status/foundation" />
       <CoverageBar label="SwiftUI" implemented={swiftui.implemented} partial={swiftui.partial} total={swiftui.total} href="/status/swiftui" />

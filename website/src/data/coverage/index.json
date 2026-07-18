@@ -37,11 +37,11 @@
       "framework": "stdlib",
       "display_name": "Swift stdlib",
       "totals": {
-        "implemented": 428,
-        "partial": 0,
-        "missing": 96,
+        "implemented": 467,
+        "partial": 1,
+        "missing": 110,
         "out_of_scope": 0,
-        "total": 524
+        "total": 578
       }
     },
     {
@@ -59,9 +59,9 @@
       "framework": "swiftui",
       "display_name": "SwiftUI",
       "totals": {
-        "implemented": 466,
-        "partial": 17,
-        "missing": 209,
+        "implemented": 467,
+        "partial": 18,
+        "missing": 207,
         "out_of_scope": 45,
         "total": 737
       }

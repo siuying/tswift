@@ -74,7 +74,8 @@ dispatches them to Rust functions instead of looking them up in the AST.
 |---------|--------|
 | `Equatable`, `Hashable`, `Comparable` | ✅ Done |
 | `Sequence`, `IteratorProtocol` | ✅ Done |
-| `Collection`, `BidirectionalCollection` | 🔴 Todo |
+| `Collection` | 🟡 Partial |
+| `BidirectionalCollection` | 🔴 Todo |
 | `ExpressibleBy*Literal` | ✅ Done |
 | `CustomStringConvertible` | ✅ Done |
 | `Codable` / `Encodable` / `Decodable` | ✅ Done |
@@ -91,6 +92,10 @@ dispatches them to Rust functions instead of looking them up in the AST.
 | `Result<S,F>` | ✅ Done |
 | `MemoryLayout` | ✅ Done |
 | `Unsafe*Pointer` family | 🔴 Todo |
+
+Shared `Sequence`/`Collection` protocol dispatch supports finite custom
+`makeIterator()` conformers and the common map/filter/reduce/count operations;
+the remaining indexing and mutation surface is tracked on the status page.
 
 See the [Standard Library status page →](/status/stdlib) for detailed counts.
 
@@ -157,7 +162,8 @@ See the [Charts status page →](/status/charts) for the scoped API reference.
 
 SwiftData implements a stage-1 subset over a SQLite-backed host service:
 `@Model` classes (discovered structurally, no macro expansion),
-`ModelContainer`/`ModelContext` CRUD, a SQL-compiling `#Predicate` subset, and
+`ModelContainer`/`ModelContext` CRUD, a SQL-compiling `#Predicate` subset
+including `isEmpty` and collection `contains`, and
 `@Query`/`.modelContainer(for:)` SwiftUI integration. Relationships,
 migrations, CloudKit sync, and persistent history tracking are not
 implemented.

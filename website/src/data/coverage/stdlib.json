@@ -525,6 +525,133 @@
       }
     },
     {
+      "name": "Collection",
+      "members": [
+        {
+          "name": "count",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "distance",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "drop",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dropFirst",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dropLast",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "first",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "firstIndex",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "flatMap",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "formIndex",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "index",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "indices",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isEmpty",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "map",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "popFirst",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "prefix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "randomElement",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "removeFirst",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "removingSubranges",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "split",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "subscript",
+          "kind": "subscript",
+          "status": "missing"
+        },
+        {
+          "name": "suffix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "underestimatedCount",
+          "kind": "var",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 14,
+        "partial": 0,
+        "missing": 9,
+        "out_of_scope": 0,
+        "total": 23
+      }
+    },
+    {
       "name": "CollectionOfOne",
       "members": [
         {
@@ -1865,6 +1992,173 @@
       }
     },
     {
+      "name": "Sequence",
+      "members": [
+        {
+          "name": "+",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "allSatisfy",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "compactMap",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "contains",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "count",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "drop",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dropFirst",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "dropLast",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "elementsEqual",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "enumerated",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "filter",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "first",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "flatMap",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "forEach",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "joined",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "lazy",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "lexicographicallyPrecedes",
+          "kind": "func",
+          "status": "missing"
+        },
+        {
+          "name": "makeIterator",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "map",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "max",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "min",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "prefix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reduce",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reversed",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "shuffled",
+          "kind": "func",
+          "status": "partial"
+        },
+        {
+          "name": "sorted",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "split",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "starts",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "suffix",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "underestimatedCount",
+          "kind": "var",
+          "status": "missing"
+        },
+        {
+          "name": "withContiguousStorageIfAvailable",
+          "kind": "func",
+          "status": "missing"
+        }
+      ],
+      "counts": {
+        "implemented": 25,
+        "partial": 1,
+        "missing": 5,
+        "out_of_scope": 0,
+        "total": 31
+      }
+    },
+    {
       "name": "Set",
       "members": [
         {
@@ -2839,10 +3133,10 @@
     }
   ],
   "totals": {
-    "implemented": 428,
-    "partial": 0,
-    "missing": 96,
+    "implemented": 467,
+    "partial": 1,
+    "missing": 110,
     "out_of_scope": 0,
-    "total": 524
+    "total": 578
   }
 }

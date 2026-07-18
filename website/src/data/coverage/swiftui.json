@@ -3441,18 +3441,18 @@
         {
           "name": "init",
           "kind": "init",
-          "status": "missing"
+          "status": "implemented"
         },
         {
           "name": "wrappedValue",
           "kind": "var",
-          "status": "missing"
+          "status": "partial"
         }
       ],
       "counts": {
-        "implemented": 0,
-        "partial": 0,
-        "missing": 2,
+        "implemented": 1,
+        "partial": 1,
+        "missing": 0,
         "out_of_scope": 0,
         "total": 2
       }
@@ -4345,9 +4345,9 @@
     }
   ],
   "totals": {
-    "implemented": 466,
-    "partial": 17,
-    "missing": 209,
+    "implemented": 467,
+    "partial": 18,
+    "missing": 207,
     "out_of_scope": 45,
     "total": 737
   }
