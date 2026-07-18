@@ -29,11 +29,12 @@ pub use views::collect_children;
 pub use views::keyed_rows;
 pub(crate) use views::{
     button_init, capsule_init, circle_init, divider_init, ellipse_init, foreach_init, form_init,
-    grid_init, grid_row_init, group_init, hstack_init, image_init, label_init, lazy_hgrid_init,
-    lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init, picker_init,
-    progress_view_init, rectangle_init, rounded_rectangle_init, scrollview_init, section_init,
-    secure_field_init, slider_init, spacer_init, stepper_init, tabview_init, text_field_init,
-    text_init, toggle_init, vstack_init, window_group_init, zstack_init,
+    geometry_reader_init, grid_init, grid_row_init, group_init, hstack_init, image_init,
+    label_init, lazy_hgrid_init, lazy_hstack_init, lazy_vgrid_init, lazy_vstack_init, list_init,
+    navigation_split_view_init, picker_init, progress_view_init, rectangle_init,
+    rounded_rectangle_init, scrollview_init, section_init, secure_field_init, slider_init,
+    spacer_init, stepper_init, tabview_init, text_field_init, text_init, toggle_init, vstack_init,
+    window_group_init, zstack_init,
 };
 
 pub(crate) use async_image::async_image_init;
@@ -1347,6 +1348,69 @@ struct PresentationDetent {
     static let medium = PresentationDetent(token: "medium")
     static let large = PresentationDetent(token: "large")
 }
+// Core Graphics geometry primitives. `GeometryReader` hands its content a
+// `GeometryProxy` reading these; they also back `.frame`, shape sizing, and
+// `CGSize`/`CGRect` arguments generally. Plain value structs — no host token.
+struct CGSize {
+    var width: Double
+    var height: Double
+    init(width: Double, height: Double) { self.width = width; self.height = height }
+    static let zero = CGSize(width: 0, height: 0)
+}
+struct CGPoint {
+    var x: Double
+    var y: Double
+    init(x: Double, y: Double) { self.x = x; self.y = y }
+    static let zero = CGPoint(x: 0, y: 0)
+}
+struct CGRect {
+    var origin: CGPoint
+    var size: CGSize
+    init(origin: CGPoint, size: CGSize) { self.origin = origin; self.size = size }
+    init(x: Double, y: Double, width: Double, height: Double) {
+        self.origin = CGPoint(x: x, y: y)
+        self.size = CGSize(width: width, height: height)
+    }
+    var width: Double { size.width }
+    var height: Double { size.height }
+    var minX: Double { origin.x }
+    var minY: Double { origin.y }
+    var midX: Double { origin.x + size.width / 2 }
+    var midY: Double { origin.y + size.height / 2 }
+    var maxX: Double { origin.x + size.width }
+    var maxY: Double { origin.y + size.height }
+    static let zero = CGRect(x: 0, y: 0, width: 0, height: 0)
+}
+// `.frame(in:)` coordinate space selector. Headless there is no live layout
+// tree, so `.global`/`.named(_)` resolve to the same local frame as `.local`
+// (origin is (0,0)); the token is recorded honestly for a host that can map it.
+struct CoordinateSpace {
+    let token: String
+    static let local = CoordinateSpace(token: "local")
+    static let global = CoordinateSpace(token: "global")
+    static func named(_ name: AnyHashable) -> CoordinateSpace {
+        CoordinateSpace(token: "named")
+    }
+}
+// `RoundedRectangle(cornerSize:style:)` corner style. Leading-dot token like the
+// other SwiftUI token namespaces; the host maps it to its native corner curve.
+struct RoundedCornerStyle {
+    let token: String
+    static let circular = RoundedCornerStyle(token: "circular")
+    static let continuous = RoundedCornerStyle(token: "continuous")
+}
+// The read-only layout proxy `GeometryReader` passes to its content closure.
+// Headless tier: `size` is the runtime's deterministic proposed size (see
+// `GEOMETRY_DEFAULT_*` in `views.rs`), `safeAreaInsets` defaults to zero, and
+// `frame(in:)` returns a rect at the origin sized to `size`. A host that runs a
+// real layout pass can supply a truer size; no device-pixel parity is claimed.
+struct GeometryProxy {
+    let size: CGSize
+    let safeAreaInsets: EdgeInsets
+    func frame(in coordinateSpace: CoordinateSpace) -> CGRect {
+        CGRect(origin: CGPoint(x: 0, y: 0), size: size)
+    }
+}
 "#;
 
 /// Register every currently-supported SwiftUI view constructor and modifier
@@ -1456,13 +1520,25 @@ fn install_inner(interp: &mut Interpreter<'_>) {
     interp.register_free_fn("TabView", tabview_init);
     interp.register_free_fn("NavigationStack", navigation_stack_init);
     interp.register_free_fn("NavigationLink", navigation_link_init);
+    interp.register_free_fn("NavigationSplitView", navigation_split_view_init);
+    interp.register_free_fn("GeometryReader", geometry_reader_init);
     // A WindowGroup captures its content closure. The app entry host evaluates
     // it under the scene's scope so scene-level environment modifiers apply to
     // the root view before its body is first read.
     interp.register_free_fn("WindowGroup", window_group_init);
     interp.register_free_fn("Circle", circle_init);
     interp.register_free_fn("Rectangle", rectangle_init);
-    interp.register_free_fn("RoundedRectangle", rounded_rectangle_init);
+    // `RoundedRectangle(cornerRadius:style:)` typed so `.continuous`/`.circular`
+    // resolve against `RoundedCornerStyle`.
+    interp.register_free_fn_typed(
+        "RoundedRectangle",
+        rounded_rectangle_init,
+        vec![
+            BuiltinParam::labeled("cornerRadius", "CGFloat"),
+            BuiltinParam::labeled("cornerSize", "CGSize"),
+            BuiltinParam::labeled("style", "RoundedCornerStyle"),
+        ],
+    );
     interp.register_free_fn("Capsule", capsule_init);
     interp.register_free_fn("Ellipse", ellipse_init);
     // Gesture value types — not Views, but their `.onEnded` method needs to be
@@ -1536,6 +1612,14 @@ fn install_inner(interp: &mut Interpreter<'_>) {
         "blendMode",
         modifiers::modifier_blend_mode,
         vec![BuiltinParam::positional("BlendMode")],
+    );
+    // `.progressViewStyle(_:)` typed to `_ControlStyle` so `.circular` resolves
+    // there rather than colliding with `RoundedCornerStyle.circular` (which the
+    // typed `RoundedRectangle(style:)` param owns).
+    interp.register_struct_method_typed(
+        "progressViewStyle",
+        modifiers::modifier_progress_view_style,
+        vec![BuiltinParam::positional("_ControlStyle")],
     );
     // Tier 2 — `aspectRatio(_:contentMode:)` typed so `.fit`/`.fill` resolve
     // against `ContentMode` (issue #203).
@@ -2312,13 +2396,48 @@ pub fn registered_keys() -> Vec<String> {
         .registered_keys()
         .into_iter()
         .filter_map(|key| match key.as_str() {
-            "Text" | "VStack" | "HStack" | "ZStack" | "ForEach" | "List" | "Section" | "Spacer"
-            | "Button" | "Toggle" | "TextField" | "SecureField" | "Slider" | "Stepper"
-            | "Picker" | "Circle" | "Rectangle" | "RoundedRectangle" | "Capsule" | "Ellipse"
-            | "Group" | "Divider" | "ScrollView" | "Label" | "Image" | "AsyncImage"
-            | "ProgressView" | "LazyVStack" | "LazyHStack" | "Grid" | "GridRow" | "Form"
-            | "LazyVGrid" | "LazyHGrid" | "TabView" | "NavigationStack" | "NavigationLink"
-            | "TapGesture" | "LongPressGesture" | "WindowGroup" => Some(format!("{key}.init")),
+            "Text"
+            | "VStack"
+            | "HStack"
+            | "ZStack"
+            | "ForEach"
+            | "List"
+            | "Section"
+            | "Spacer"
+            | "Button"
+            | "Toggle"
+            | "TextField"
+            | "SecureField"
+            | "Slider"
+            | "Stepper"
+            | "Picker"
+            | "Circle"
+            | "Rectangle"
+            | "RoundedRectangle"
+            | "Capsule"
+            | "Ellipse"
+            | "Group"
+            | "Divider"
+            | "ScrollView"
+            | "Label"
+            | "Image"
+            | "AsyncImage"
+            | "ProgressView"
+            | "LazyVStack"
+            | "LazyHStack"
+            | "Grid"
+            | "GridRow"
+            | "Form"
+            | "LazyVGrid"
+            | "LazyHGrid"
+            | "TabView"
+            | "NavigationStack"
+            | "NavigationLink"
+            | "NavigationSplitView"
+            | "GeometryReader"
+            | "TapGesture"
+            | "LongPressGesture"
+            | "WindowGroup" => Some(format!("{key}.init")),
             _ => None,
         })
         .collect();
@@ -2327,6 +2446,22 @@ pub fn registered_keys() -> Vec<String> {
     // Gesture method — not a View modifier, coverage key is per gesture type.
     keys.push("TapGesture.onEnded".into());
     keys.push("LongPressGesture.onEnded".into());
+    // Container members the runtime genuinely realizes but that are not free-fn
+    // registry entries: the keyed `ForEach` data/content, the `GeometryReader`
+    // content closure and the `GeometryProxy` fields it exposes, the
+    // `NavigationSplitView` column body, and the `ScrollView` axis/indicator
+    // args. Listed explicitly so coverage credits the realized behaviour.
+    keys.push("ForEach.data".into());
+    keys.push("ForEach.content".into());
+    keys.push("GeometryReader.content".into());
+    keys.push("GeometryProxy.size".into());
+    keys.push("GeometryProxy.frame".into());
+    keys.push("GeometryProxy.safeAreaInsets".into());
+    keys.push("NavigationSplitView.body".into());
+    keys.push("ScrollView.axes".into());
+    keys.push("ScrollView.showsIndicators".into());
+    keys.push("RoundedRectangle.cornerSize".into());
+    keys.push("RoundedRectangle.style".into());
     // Free functions (no `.` → coverage's free-function section).
     keys.push("withAnimation".into());
     keys.sort();
@@ -2630,8 +2765,15 @@ mod tests {
                 "Circle.init",
                 "Divider.init",
                 "Ellipse.init",
+                "ForEach.content",
+                "ForEach.data",
                 "ForEach.init",
                 "Form.init",
+                "GeometryProxy.frame",
+                "GeometryProxy.safeAreaInsets",
+                "GeometryProxy.size",
+                "GeometryReader.content",
+                "GeometryReader.init",
                 "Grid.init",
                 "GridRow.init",
                 "Group.init",
@@ -2646,12 +2788,18 @@ mod tests {
                 "LongPressGesture.init",
                 "LongPressGesture.onEnded",
                 "NavigationLink.init",
+                "NavigationSplitView.body",
+                "NavigationSplitView.init",
                 "NavigationStack.init",
                 "Picker.init",
                 "ProgressView.init",
                 "Rectangle.init",
+                "RoundedRectangle.cornerSize",
                 "RoundedRectangle.init",
+                "RoundedRectangle.style",
+                "ScrollView.axes",
                 "ScrollView.init",
+                "ScrollView.showsIndicators",
                 "Section.init",
                 "SecureField.init",
                 "Slider.init",

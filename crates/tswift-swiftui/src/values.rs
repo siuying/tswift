@@ -101,6 +101,8 @@ pub fn token_of(value: &SwiftValue) -> Option<(&str, &str)> {
             | "TypesettingLanguage"
             | "MarkStackingMethod"
             | "InterpolationMethod"
+            | "RoundedCornerStyle"
+            | "CoordinateSpace"
     ) {
         return None;
     }

@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use tswift_core::{Arg, StdContext, StdError, StdResult, SwiftValue};
+use tswift_core::{Arg, StdContext, StdError, StdResult, StructObj, SwiftValue};
 
 use crate::values::{key_string, number_f64, range_bounds, sequence_items, with_key};
 use crate::{
@@ -118,6 +118,18 @@ pub fn keyed_rows(
             "{who} requires a data sequence and a content closure"
         )));
     };
+    // The binding-based form `ForEach($items) { $item in … }` is a documented
+    // blocker: it needs a per-element `Binding` synthesized from the collection
+    // binding (closures capturing the parent binding + index), which the Rust
+    // view-init seam cannot fabricate — closures are interpreter-owned. Fail
+    // honestly rather than silently dropping the rows.
+    if matches!(&data, SwiftValue::Struct(o) if o.type_name == "Binding") {
+        return Err(type_error(format!(
+            "{who}($data) collection-binding form is not yet supported: \
+             per-element bindings cannot be synthesized in the view-init seam; \
+             pass a plain array (`{who}(items, id:)`) instead"
+        )));
+    }
     let items = sequence_items(&data)
         .ok_or_else(|| type_error(format!("{who} data is not a sequence (array or range)")))?;
 
@@ -440,19 +452,46 @@ pub(crate) fn rectangle_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdR
     Ok(view_value("Rectangle", Vec::new()))
 }
 
-/// `RoundedRectangle(cornerRadius:)` — a rounded-rectangle shape leaf carrying
-/// its corner radius for the host. Accepts the labelled `cornerRadius:` form or
-/// a single positional radius; an unrelated `style:` argument is ignored.
+/// `RoundedRectangle(cornerRadius:style:)` or `RoundedRectangle(cornerSize:
+/// style:)` — a rounded-rectangle shape leaf. Carries either a uniform
+/// `cornerRadius` (labelled or a single positional radius) or an asymmetric
+/// `cornerSize` (a `CGSize` serialized as `cornerWidth`/`cornerHeight`), plus an
+/// optional `RoundedCornerStyle` (`.circular`/`.continuous`) the host maps to
+/// its native corner curve.
 pub(crate) fn rounded_rectangle_init(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    let radius = args
-        .into_iter()
-        .find(|a| a.label.as_deref() == Some("cornerRadius") || a.label.is_none())
-        .map(|a| a.value)
-        .unwrap_or(SwiftValue::int(0));
-    Ok(view_value(
-        "RoundedRectangle",
-        vec![("cornerRadius".into(), radius)],
-    ))
+    let mut fields: Vec<(String, SwiftValue)> = Vec::new();
+    let mut radius: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("cornerRadius") => radius = Some(arg.value),
+            Some("cornerSize") => {
+                if let SwiftValue::Struct(size) = &arg.value {
+                    if let (Some(w), Some(h)) = (size.get("width"), size.get("height")) {
+                        fields.push(("cornerWidth".into(), w.clone()));
+                        fields.push(("cornerHeight".into(), h.clone()));
+                    }
+                }
+            }
+            Some("style") => {
+                if let Some(("RoundedCornerStyle", token)) = token_of(&arg.value) {
+                    fields.push(("style".into(), SwiftValue::Str(token.to_string())));
+                }
+            }
+            None if radius.is_none()
+                && matches!(arg.value, SwiftValue::Int(_) | SwiftValue::Double(_)) =>
+            {
+                radius = Some(arg.value)
+            }
+            _ => {}
+        }
+    }
+    if fields.iter().all(|(k, _)| k != "cornerWidth") {
+        fields.insert(
+            0,
+            ("cornerRadius".into(), radius.unwrap_or(SwiftValue::int(0))),
+        );
+    }
+    Ok(view_value("RoundedRectangle", fields))
 }
 
 /// `Capsule()` — a capsule (stadium) shape leaf.
@@ -684,15 +723,21 @@ pub(crate) fn divider_init(_ctx: &mut dyn StdContext, _args: Vec<Arg>) -> StdRes
     Ok(view_value("Divider", Vec::new()))
 }
 
-/// `ScrollView(_ axes:) { ... }` — a scrollable container. Captures an optional
-/// leading `Axis` token (`.horizontal`/`.vertical`; default vertical) as the
-/// `axes` field; `showsIndicators:` is parsed-and-dropped.
+/// `ScrollView(_ axes:, showsIndicators:) { ... }` — a scrollable container.
+/// Captures an optional leading `Axis` token (`.horizontal`/`.vertical`; default
+/// vertical) as the `axes` field and the `showsIndicators:` flag (default
+/// `true`) as a serialized arg the host honours when drawing scroll indicators.
 pub(crate) fn scrollview_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     let mut axes: Option<SwiftValue> = None;
+    let mut shows_indicators: Option<bool> = None;
     let mut rest: Vec<Arg> = Vec::new();
     for arg in args {
         match arg.label.as_deref() {
-            Some("showsIndicators") => {} // visual-only; ignored for now
+            Some("showsIndicators") => {
+                if let SwiftValue::Bool(b) = arg.value {
+                    shows_indicators = Some(b);
+                }
+            }
             _ if matches!(token_of(&arg.value), Some(("Axis", _))) => axes = Some(arg.value),
             _ => rest.push(arg),
         }
@@ -702,8 +747,150 @@ pub(crate) fn scrollview_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdRe
     if let Some(axes) = axes {
         fields.push(("axes".into(), axes));
     }
+    // Only serialize a non-default `showsIndicators: false`, so existing goldens
+    // (which never set it) keep their byte-exact args.
+    if shows_indicators == Some(false) {
+        fields.push(("showsIndicators".into(), SwiftValue::Bool(false)));
+    }
     fields.push((CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))));
     Ok(view_value("ScrollView", fields))
+}
+
+/// The deterministic proposed size a headless `GeometryReader` hands its content
+/// (ADR-0006 names `GeometryReader` a droppable host round-trip). There is no
+/// live layout engine measuring available space, so the runtime supplies a fixed
+/// documented default rather than a device-parity size; a host that runs a real
+/// layout pass can override it later. See `docs/plan/swiftui-support.md`.
+pub(crate) const GEOMETRY_DEFAULT_WIDTH: f64 = 320.0;
+pub(crate) const GEOMETRY_DEFAULT_HEIGHT: f64 = 480.0;
+
+/// A `CGSize` value struct (matches the prelude declaration so `.width`/`.height`
+/// reads resolve).
+fn cg_size(width: f64, height: f64) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "CGSize".into(),
+        fields: vec![
+            ("width".into(), SwiftValue::Double(width)),
+            ("height".into(), SwiftValue::Double(height)),
+        ],
+    }))
+}
+
+/// A zeroed `EdgeInsets` value struct (headless safe-area default).
+fn zero_edge_insets() -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "EdgeInsets".into(),
+        fields: vec![
+            ("top".into(), SwiftValue::Double(0.0)),
+            ("leading".into(), SwiftValue::Double(0.0)),
+            ("bottom".into(), SwiftValue::Double(0.0)),
+            ("trailing".into(), SwiftValue::Double(0.0)),
+        ],
+    }))
+}
+
+/// A `GeometryProxy` value carrying the proposed `size` and a zero
+/// `safeAreaInsets`; its `frame(in:)` method (prelude) derives a rect from it.
+fn geometry_proxy(width: f64, height: f64) -> SwiftValue {
+    SwiftValue::Struct(Rc::new(StructObj {
+        type_name: "GeometryProxy".into(),
+        fields: vec![
+            ("size".into(), cg_size(width, height)),
+            ("safeAreaInsets".into(), zero_edge_insets()),
+        ],
+    }))
+}
+
+/// `GeometryReader { proxy in content }` — a container that reads its own
+/// geometry. The `(GeometryProxy) -> Content` closure is evaluated against a
+/// deterministic proxy (the headless tier: `size` is the runtime default
+/// proposed size, `safeAreaInsets` is zero, `frame(in:)` sits at the origin) and
+/// its produced views become the reader's children. The proposed size is
+/// serialized as `proposedWidth`/`proposedHeight` args so a host sees which
+/// geometry drove the content; no device-pixel parity is claimed.
+pub(crate) fn geometry_reader_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let closure = args.into_iter().find_map(|a| match a.value {
+        v @ SwiftValue::Closure(_) => Some(v),
+        _ => None,
+    });
+    let Some(SwiftValue::Closure(closure)) = closure else {
+        return Err(type_error("GeometryReader requires a content closure"));
+    };
+    let proxy = geometry_proxy(GEOMETRY_DEFAULT_WIDTH, GEOMETRY_DEFAULT_HEIGHT);
+    let built = ctx.eval_block_values_with_args(closure, vec![proxy])?;
+    let mut children = Vec::new();
+    expand_into(
+        ctx,
+        built,
+        &mut children,
+        0,
+        &crate::EnvironmentContext::default(),
+    )?;
+    Ok(view_value(
+        "GeometryReader",
+        vec![
+            (
+                "proposedWidth".into(),
+                SwiftValue::Double(GEOMETRY_DEFAULT_WIDTH),
+            ),
+            (
+                "proposedHeight".into(),
+                SwiftValue::Double(GEOMETRY_DEFAULT_HEIGHT),
+            ),
+            (CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))),
+        ],
+    ))
+}
+
+/// `NavigationSplitView { sidebar } detail: { detail }` (two-column) or
+/// `NavigationSplitView { sidebar } content: { content } detail: { detail }`
+/// (three-column) — a multi-column navigation container. Each column is realized
+/// eagerly as an ordinary child (sidebar first, detail last), mirroring how
+/// `NavigationStack` renders every screen as a child (ADR-0013 §1): the host
+/// lays the children out as columns and owns the split behaviour. A `columns`
+/// arg records the count (2 or 3). Selection-driven detail (a sidebar
+/// `List(selection:)` picking the detail) is host-driven — the runtime renders
+/// every column eagerly and does not collapse the detail to a selection.
+pub(crate) fn navigation_split_view_init(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    let mut sidebar: Option<SwiftValue> = None;
+    let mut content: Option<SwiftValue> = None;
+    let mut detail: Option<SwiftValue> = None;
+    for arg in args {
+        match arg.label.as_deref() {
+            Some("sidebar") => sidebar = Some(arg.value),
+            Some("content") => content = Some(arg.value),
+            Some("detail") => detail = Some(arg.value),
+            // The leading trailing-closure (no label) is the sidebar column.
+            None if matches!(arg.value, SwiftValue::Closure(_)) && sidebar.is_none() => {
+                sidebar = Some(arg.value)
+            }
+            _ => {}
+        }
+    }
+    let mut children: Vec<SwiftValue> = Vec::new();
+    let mut columns = 0;
+    for column in [sidebar, content, detail].into_iter().flatten() {
+        let built = collect_children(
+            ctx,
+            vec![Arg {
+                label: None,
+                value: column,
+                static_ty: None,
+            }],
+        )?;
+        children.push(match built.len() {
+            1 => built.into_iter().next().expect("len checked"),
+            _ => container_value("Group", built),
+        });
+        columns += 1;
+    }
+    Ok(view_value(
+        "NavigationSplitView",
+        vec![
+            ("columns".into(), SwiftValue::int(columns)),
+            (CHILDREN_FIELD.into(), SwiftValue::Array(Rc::new(children))),
+        ],
+    ))
 }
 
 /// `Spacer(minLength:)` — flexible empty space with an optional minimum length
