@@ -3,6 +3,8 @@ true
 3.5
 hello
 ["a", "b", "c"]
+true
+true
 false
 0
 0.0
@@ -14,3 +16,4 @@ true
 true
 true
 99
+7

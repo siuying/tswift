@@ -6,7 +6,7 @@ import Foundation
 // directory (see `<name>.isolated_cwd` in `tests/golden.rs`) — never a
 // predictable shared path — so `root` below is a relative path resolved
 // against that fresh cwd, and is guaranteed not to pre-exist.
-struct HostError: Error { let message: String }
+struct CocoaError: Error { let code: Int; let message: String }
 
 let fm = FileManager.default
 let root = "tswift_filemanager_fixture"
@@ -24,6 +24,8 @@ if let data = fm.contents(atPath: filePath) {
     print(String(data: data, encoding: .utf8)!)
 }
 print(fm.contents(atPath: root + "/nope.txt") == nil)
+let attributes = try! fm.attributesOfItem(atPath: filePath)
+print(attributes["size"] != nil)
 
 // contentsOfDirectory lists entry names.
 _ = fm.createFile(atPath: root + "/b.txt", contents: Data("b".utf8))
@@ -49,8 +51,8 @@ print(fm.fileExists(atPath: moveDst))
 // A throwing failure is catchable with a message.
 do {
     try fm.removeItem(atPath: root + "/does-not-exist.txt")
-} catch let e as HostError {
-    print("caught: \(e.message.isEmpty == false)")
+} catch let e as CocoaError {
+    print("caught: \(e.code > 0 && e.message.isEmpty == false)")
 }
 
 // File-URL loading: String(contentsOfFile:), Data(contentsOf:), and the
@@ -66,6 +68,12 @@ print(String(data: urlData, encoding: .utf8)!)
 let dataURL = URL(fileURLWithPath: root + "/via-data-url.txt")
 try! Data("data write(to:)".utf8).write(to: dataURL)
 print(try! String(contentsOf: dataURL))
+
+// Host-provided portable directories map into the same sandbox and persist
+// for this interpreter run.
+let documentsFile = URL.documentsDirectory.appendingPathComponent("session.txt")
+try! "documents persist".write(to: documentsFile, atomically: true, encoding: .utf8)
+print(try! String(contentsOf: documentsFile))
 
 // Clean up.
 try! fm.removeItem(atPath: root)

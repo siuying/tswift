@@ -34,6 +34,10 @@
 //!   see `String.write(to:atomically:encoding:)` below.
 //! - `tswift.fs.copy(from: String, to: String) -> Void` — throws.
 //! - `tswift.fs.move(from: String, to: String) -> Void` — throws.
+//! - `tswift.fs.directory(kind: String) -> String` — the portable virtual
+//!   root (`default`, `documents`, `caches`, or `temporary`).
+//! - `tswift.fs.attributes(path: String) -> String` — JSON text for the
+//!   portable basics: `size` and `isDirectory`; throws.
 //!
 //! Foundation only *declares* these signatures (via
 //! [`tswift_core::Interpreter::register_host_fn`]) when the platform's
@@ -48,12 +52,12 @@
 //! by returning `{"$thrown": "<message>"}` from the host handler — the same
 //! mechanism every host function uses (see `tswift_core::host_bridge`'s
 //! `$thrown` payload and `Interpreter::call_host_fn`'s `HostError` wrapper).
-//! Concretely this surfaces to Swift as a `HostError` struct value with a
-//! `message: String` field; catching it requires the caller to have declared
-//! a matching `struct HostError: Error { let message: String }` (or catch
-//! generically). This is a deliberate simplification of Foundation's
-//! `CocoaError`/`NSError` (`domain`/`code`/`userInfo`) — no error-domain or
-//! numeric-code vocabulary is modelled, only a human-readable message.
+//! Filesystem failures surface as a portable `CocoaError` struct with
+//! `code: Int` and `message: String`; callers can catch a matching
+//! `struct CocoaError: Error { let code: Int; let message: String }`. The
+//! codes cover the portable cases (`4` missing item, `512` write/general
+//! failure); platform `NSError` domains, `userInfo`, permissions metadata,
+//! and Darwin-only codes remain intentionally unsupported.
 //!
 //! ## Deviations from real Foundation
 //!
@@ -79,6 +83,7 @@
 
 use std::rc::Rc;
 
+use tswift_core::json::Json;
 use tswift_core::{
     Arg, BuiltinReceiver, ClassObj, HostService, Interpreter, MethodEntry, Outcome, StdContext,
     StdError, StdResult, SwiftValue,
@@ -140,6 +145,14 @@ pub(crate) fn install(interp: &mut Interpreter<'_>, available: bool) {
             r#"{"name":"tswift.fs.move","params":[{"label":"from","type":"String"},{"label":"to","type":"String"}],"returns":"Void","throws":true}"#,
             None,
         );
+        let _ = interp.register_host_fn(
+            r#"{"name":"tswift.fs.directory","params":[{"label":"kind","type":"String"}],"returns":"String","throws":true}"#,
+            None,
+        );
+        let _ = interp.register_host_fn(
+            r#"{"name":"tswift.fs.attributes","params":[{"label":"path","type":"String"}],"returns":"String","throws":true}"#,
+            None,
+        );
     }
 
     // `register_static`, not `register_static_value` — same
@@ -157,6 +170,7 @@ pub(crate) fn install(interp: &mut Interpreter<'_>, available: bool) {
         ("createFile", fm_create_file),
         ("copyItem", fm_copy_item),
         ("moveItem", fm_move_item),
+        ("attributesOfItem", fm_attributes_of_item),
     ] {
         interp.register_intrinsic(
             receiver(),
@@ -471,6 +485,43 @@ fn fm_move_item(
     })
 }
 
+fn fm_attributes_of_item(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, StdError> {
+    if !ctx.is_host_fn("tswift.fs.attributes") {
+        return Err(unavailable("FileManager"));
+    }
+    let path = require_path(&args, "attributesOfItem(atPath:)")?;
+    let value = ctx.call_host_fn(
+        "tswift.fs.attributes",
+        vec![(Some("path".to_string()), SwiftValue::Str(path))],
+    )?;
+    let SwiftValue::Str(document) = value else {
+        return Err(type_error(
+            "FileManager: host `tswift.fs.attributes` returned non-String",
+        ));
+    };
+    let Json::Object(entries) = tswift_core::json::parse(&document)
+        .map_err(|e| type_error(format!("FileManager: invalid attributes JSON: {e}")))?
+    else {
+        return Err(type_error("FileManager: attributes were not a dictionary"));
+    };
+    let values = entries
+        .into_iter()
+        .filter_map(|(key, value)| match value {
+            Json::Int(value) => Some((SwiftValue::Str(key), SwiftValue::int(i128::from(value)))),
+            Json::Bool(value) => Some((SwiftValue::Str(key), SwiftValue::Bool(value))),
+            _ => None,
+        })
+        .collect();
+    Ok(Outcome {
+        result: SwiftValue::Dict(Rc::new(values)),
+        receiver: recv,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // File-URL-loading helpers
 // ---------------------------------------------------------------------------
@@ -483,7 +534,7 @@ fn fm_move_item(
 /// error and stays a non-catchable [`type_error`]. A well-typed `URL` that
 /// simply isn't a `file:` URL, though, mirrors Foundation's throwing
 /// `contentsOf:`/`write(to:)` initializers — that failure must be a
-/// catchable Swift error, not a trap, so it raises the same [`host_error`]
+/// catchable Swift error, not a trap, so it raises the portable Cocoa error
 /// shape every other host-detected failure in this module uses.
 fn file_url_path(
     ctx: &mut dyn StdContext,
@@ -503,9 +554,10 @@ fn file_url_path(
         )));
     }
     if !url_is_file_flag(value) {
-        return Err(ctx.throw(host_error(&format!(
-            "{who}: only `file:` URLs are supported by this runtime"
-        ))));
+        return Err(ctx.throw(cocoa_error(
+            512,
+            &format!("{who}: only `file:` URLs are supported by this runtime"),
+        )));
     }
     url_path_string(value)
 }
@@ -517,7 +569,8 @@ pub(crate) fn data_contents_of(ctx: &mut dyn StdContext, url: &SwiftValue) -> St
     }
     let path = file_url_path(ctx, url, "Data(contentsOf:)")?;
     match read_base64(ctx, path)? {
-        SwiftValue::Nil => Err(ctx.throw(host_error(
+        SwiftValue::Nil => Err(ctx.throw(cocoa_error(
+            4,
             "The file couldn\u{2019}t be opened because there is no such file.",
         ))),
         data => Ok(data),
@@ -540,14 +593,18 @@ pub(crate) fn string_contents_of(
         _ => unreachable!("string_contents_of called with unexpected label {label}"),
     };
     match read_base64(ctx, path)? {
-        SwiftValue::Nil => Err(ctx.throw(host_error(
+        SwiftValue::Nil => Err(ctx.throw(cocoa_error(
+            4,
             "The file couldn\u{2019}t be opened because there is no such file.",
         ))),
         data => {
             let bytes = data_bytes(&data)?;
-            String::from_utf8(bytes)
-                .map(SwiftValue::Str)
-                .map_err(|_| ctx.throw(host_error("The file couldn\u{2019}t be decoded as UTF-8.")))
+            String::from_utf8(bytes).map(SwiftValue::Str).map_err(|_| {
+                ctx.throw(cocoa_error(
+                    486,
+                    "The file couldn\u{2019}t be decoded as UTF-8.",
+                ))
+            })
         }
     }
 }
@@ -577,7 +634,7 @@ fn data_write_to(
             result: SwiftValue::Void,
             receiver: recv,
         }),
-        _ => Err(ctx.throw(host_error("The file couldn\u{2019}t be written."))),
+        _ => Err(ctx.throw(cocoa_error(512, "The file couldn\u{2019}t be written."))),
     }
 }
 
@@ -636,19 +693,19 @@ fn string_write_to(
             result: SwiftValue::Void,
             receiver: recv,
         }),
-        _ => Err(ctx.throw(host_error("The file couldn\u{2019}t be written."))),
+        _ => Err(ctx.throw(cocoa_error(512, "The file couldn\u{2019}t be written."))),
     }
 }
 
-/// Build a `HostError`-shaped struct value, matching the shape
-/// `Interpreter::call_host_fn` synthesizes for a `$thrown` host reply — used
-/// here for failures this crate detects *after* a successful (non-thrown)
-/// host call (e.g. a `nil`/`false` result signalling "no such file"), so they
-/// are catchable the same way as a host-signalled throw.
-fn host_error(message: &str) -> SwiftValue {
+/// Build the same portable Cocoa-shaped error used by the filesystem host for
+/// failures detected after a non-throwing wire reply (`nil`/`false`).
+fn cocoa_error(code: i128, message: &str) -> SwiftValue {
     SwiftValue::Struct(Rc::new(tswift_core::StructObj {
-        type_name: "HostError".into(),
-        fields: vec![("message".into(), SwiftValue::Str(message.to_string()))],
+        type_name: "CocoaError".into(),
+        fields: vec![
+            ("code".into(), SwiftValue::int(code)),
+            ("message".into(), SwiftValue::Str(message.to_string())),
+        ],
     }))
 }
 

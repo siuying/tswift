@@ -99,11 +99,18 @@ without the framework code branching on it.
 
 | Platform | `tswift.defaults.*` backing | `tswift.fs.*` backing | Tier |
 |---|---|---|---|
-| **native** (CLI) | in-process `HashMap`, optional `TSWIFT_DEFAULTS_FILE` persistence | real, unrooted `std::fs` | full — real storage |
+| **native** (CLI) | in-process `HashMap`, optional `TSWIFT_DEFAULTS_FILE` persistence | `std::fs` rooted at cwd (or `TSWIFT_FS_ROOT`) | full within its explicit sandbox |
 | **iOS** (`tswift-ffi`/`TSwiftCore`) | real `UserDefaults.standard` (or a caller-supplied suite) | real `FileManager.default`, app sandbox container | full — real storage, same trust boundary as a hand-written Swift app |
 | **web** (wasm playground) | `localStorage`, namespaced (`tswift:defaults:<key>`) | virtual flat-namespace fs; `localStorage`-backed when a value fits the quota, else in-memory only for that entry | **degraded** — see below |
 
 The web tier is degraded and is documented as such, not presented as parity:
+
+The CLI filesystem root exposes portable virtual locations: `/` (default),
+`/Documents`, `/Library/Caches`, and `/tmp`. Absolute script paths map below
+that root, `..` traversal is rejected, and symlink components are rejected;
+the CLI does not expose symlink, permission, or `FileHandle` APIs. A
+`URL(fileURLWithPath:)` made from the process cwd is recognized as an in-root
+path so existing relative file URLs preserve their normal round-trip behaviour.
 
 - The playground runs the wasm interpreter on the page's **main thread** (see
   `FullPlayground.astro`'s `initWasm()` — a plain dynamic `import()`, no

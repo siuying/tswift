@@ -3,6 +3,7 @@ false
 true
 Hello, tswift!
 true
+true
 ["a.txt", "b.txt", "hello.txt"]
 true
 true
@@ -13,4 +14,5 @@ caught: true
 written via String
 written via String
 data write(to:)
+documents persist
 false

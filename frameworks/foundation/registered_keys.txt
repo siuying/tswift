@@ -215,6 +215,7 @@ Decimal.signalingNaN
 Decimal.significand
 Decimal.subtract
 Decimal.ulp
+FileManager.attributesOfItem
 FileManager.contents
 FileManager.contentsOfDirectory
 FileManager.copyItem
@@ -523,9 +524,12 @@ UUID.uuid
 UUID.uuidString
 UserDefaults.array
 UserDefaults.bool
+UserDefaults.data
+UserDefaults.dictionary
 UserDefaults.double
 UserDefaults.integer
 UserDefaults.object
+UserDefaults.register
 UserDefaults.removeObject
 UserDefaults.set
 UserDefaults.standard

@@ -1760,10 +1760,10 @@ impl<'w> Interpreter<'w> {
         use crate::host_bridge::HostCallOutcome;
         match self.host_bridge.invoke(name, args) {
             Ok(HostCallOutcome::Value(v)) => Ok(v),
-            Ok(HostCallOutcome::Thrown(message)) => {
+            Ok(HostCallOutcome::Thrown { type_name, fields }) => {
                 Err(Signal::Throw(SwiftValue::Struct(Rc::new(StructObj {
-                    type_name: "HostError".into(),
-                    fields: vec![("message".into(), SwiftValue::Str(message))],
+                    type_name,
+                    fields,
                 }))))
             }
             Err(msg) => Err(EvalError::Type(msg).into()),

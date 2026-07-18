@@ -73,7 +73,7 @@ use tswift_core::{
     SwiftValue,
 };
 
-use crate::type_error;
+use crate::{data_bytes, data_value, type_error};
 
 /// The stable [`BuiltinReceiver`] key for `UserDefaults`, minted once per
 /// process via [`BuiltinReceiver::register_extension`]. Core owns no
@@ -117,6 +117,10 @@ pub(crate) fn install(interp: &mut Interpreter<'_>, available: bool) {
         );
         let _ = interp.register_host_fn(
             r#"{"name":"tswift.defaults.remove","params":[{"label":"key","type":"String"}],"returns":"Void"}"#,
+            None,
+        );
+        let _ = interp.register_host_fn(
+            r#"{"name":"tswift.defaults.register","params":[{"label":"defaults","type":"String"}],"returns":"Void"}"#,
             None,
         );
     }
@@ -192,6 +196,30 @@ pub(crate) fn install(interp: &mut Interpreter<'_>, available: bool) {
         MethodEntry {
             mutating: false,
             func: ud_string_array,
+        },
+    );
+    interp.register_intrinsic(
+        receiver(),
+        "dictionary",
+        MethodEntry {
+            mutating: false,
+            func: ud_dictionary,
+        },
+    );
+    interp.register_intrinsic(
+        receiver(),
+        "data",
+        MethodEntry {
+            mutating: false,
+            func: ud_data,
+        },
+    );
+    interp.register_intrinsic(
+        receiver(),
+        "register",
+        MethodEntry {
+            mutating: false,
+            func: ud_register,
         },
     );
     interp.register_intrinsic(
@@ -330,23 +358,32 @@ fn encode_stored_value(value: &SwiftValue) -> Result<Json, tswift_core::StdError
         SwiftValue::Double(d) => Ok(Json::Double(*d)),
         SwiftValue::Str(s) => Ok(Json::Str(s.clone())),
         SwiftValue::Substring { base, start, end } => Ok(Json::Str(base[*start..*end].to_string())),
+        SwiftValue::Struct(obj) if obj.type_name == "Data" => Ok(Json::Object(vec![(
+            "$tswiftData".to_string(),
+            Json::Str(tswift_core::base64::encode(&data_bytes(value)?)),
+        )])),
         SwiftValue::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for item in items.iter() {
-                match item {
-                    SwiftValue::Str(s) => out.push(Json::Str(s.clone())),
-                    SwiftValue::Substring { base, start, end } => {
-                        out.push(Json::Str(base[*start..*end].to_string()))
-                    }
+                out.push(encode_stored_value(item)?);
+            }
+            Ok(Json::Array(out))
+        }
+        SwiftValue::Dict(pairs) => {
+            let mut out = Vec::with_capacity(pairs.len());
+            for (key, value) in pairs.iter() {
+                let key = match key {
+                    SwiftValue::Str(key) => key.clone(),
                     other => {
                         return Err(type_error(format!(
-                            "UserDefaults.set(_:forKey:) does not support storing an array of {}; only [String] is supported",
+                            "UserDefaults.set(_:forKey:) requires String dictionary keys, got {}",
                             other.type_name()
                         )))
                     }
-                }
+                };
+                out.push((key, encode_stored_value(value)?));
             }
-            Ok(Json::Array(out))
+            Ok(Json::Object(out))
         }
         other => Err(type_error(format!(
             "UserDefaults.set(_:forKey:) does not support storing {}",
@@ -529,6 +566,91 @@ fn ud_object(
     })
 }
 
+fn ud_dictionary(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, tswift_core::StdError> {
+    if !ctx.is_host_fn("tswift.defaults.get") {
+        return Err(unavailable());
+    }
+    let key = require_key(&args, "dictionary(forKey:)")?;
+    let result = match fetch(ctx, key)? {
+        Some(Json::Object(values)) if values.iter().all(|(key, _)| key != "$tswiftData") => {
+            SwiftValue::Dict(Rc::new(
+                values
+                    .iter()
+                    .map(|(key, value)| (SwiftValue::Str(key.clone()), decode_stored_value(value)))
+                    .collect(),
+            ))
+        }
+        _ => SwiftValue::Nil,
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn ud_data(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, tswift_core::StdError> {
+    if !ctx.is_host_fn("tswift.defaults.get") {
+        return Err(unavailable());
+    }
+    let key = require_key(&args, "data(forKey:)")?;
+    let result = match fetch(ctx, key)? {
+        Some(Json::Object(values)) => values
+            .iter()
+            .find(|(key, _)| key == "$tswiftData")
+            .and_then(|(_, value)| match value {
+                Json::Str(value) => tswift_core::base64::decode(value).map(data_value),
+                _ => None,
+            })
+            .unwrap_or(SwiftValue::Nil),
+        _ => SwiftValue::Nil,
+    };
+    Ok(Outcome {
+        result,
+        receiver: recv,
+    })
+}
+
+fn ud_register(
+    ctx: &mut dyn StdContext,
+    recv: SwiftValue,
+    args: Vec<SwiftValue>,
+) -> Result<Outcome, tswift_core::StdError> {
+    if !ctx.is_host_fn("tswift.defaults.register") {
+        return Err(unavailable());
+    }
+    let Some(SwiftValue::Dict(values)) = args.first() else {
+        return Err(type_error("register(defaults:) expects a Dictionary"));
+    };
+    let mut encoded = Vec::with_capacity(values.len());
+    for (key, value) in values.iter() {
+        let SwiftValue::Str(key) = key else {
+            return Err(type_error(
+                "register(defaults:) requires String dictionary keys",
+            ));
+        };
+        encoded.push((key.clone(), encode_stored_value(value)?));
+    }
+    ctx.call_host_fn(
+        "tswift.defaults.register",
+        vec![(
+            Some("defaults".to_string()),
+            SwiftValue::Str(json::to_string(&Json::Object(encoded))),
+        )],
+    )?;
+    Ok(Outcome {
+        result: SwiftValue::Void,
+        receiver: recv,
+    })
+}
+
 fn decode_stored_value(json: &Json) -> SwiftValue {
     match json {
         Json::Null => SwiftValue::Nil,
@@ -539,7 +661,22 @@ fn decode_stored_value(json: &Json) -> SwiftValue {
         Json::Array(items) => {
             SwiftValue::Array(Rc::new(items.iter().map(decode_stored_value).collect()))
         }
-        Json::Object(_) => SwiftValue::Nil,
+        Json::Object(values) => {
+            if let Some(Json::Str(bytes)) = values
+                .iter()
+                .find_map(|(key, value)| (key == "$tswiftData").then_some(value))
+            {
+                return tswift_core::base64::decode(bytes)
+                    .map(data_value)
+                    .unwrap_or(SwiftValue::Nil);
+            }
+            SwiftValue::Dict(Rc::new(
+                values
+                    .iter()
+                    .map(|(key, value)| (SwiftValue::Str(key.clone()), decode_stored_value(value)))
+                    .collect(),
+            ))
+        }
     }
 }
 
@@ -960,11 +1097,19 @@ mod tests {
     }
 
     #[test]
-    fn set_unsupported_type_traps() {
+    fn set_dictionary_round_trips() {
         with_interp(true, |interp| {
-            let dict = SwiftValue::Dict(Rc::new(vec![]));
-            let result = ud_set(interp, standard(), vec![dict, SwiftValue::Str("k".into())]);
-            assert!(result.is_err());
+            let dict = SwiftValue::Dict(Rc::new(vec![(
+                SwiftValue::Str("enabled".into()),
+                SwiftValue::Bool(true),
+            )]));
+            call(interp, ud_set, vec![dict, SwiftValue::Str("k".into())]);
+            let SwiftValue::Dict(values) =
+                call(interp, ud_dictionary, vec![SwiftValue::Str("k".into())])
+            else {
+                panic!("expected dictionary");
+            };
+            assert_eq!(values.len(), 1);
         });
     }
 

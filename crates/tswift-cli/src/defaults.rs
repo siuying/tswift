@@ -27,6 +27,7 @@ use tswift_core::HostCallHandler;
 
 pub struct DefaultsHandler {
     store: Mutex<HashMap<String, String>>,
+    registered: Mutex<HashMap<String, String>>,
     file: Option<PathBuf>,
 }
 
@@ -58,6 +59,7 @@ impl DefaultsHandler {
             .unwrap_or_default();
         Self {
             store: Mutex::new(store),
+            registered: Mutex::new(HashMap::new()),
             file,
         }
     }
@@ -114,7 +116,11 @@ impl HostCallHandler for DefaultsHandler {
                 // `String?`.
                 let key = str_arg(0)?;
                 let store = self.store.lock().map_err(|_| "defaults store poisoned")?;
-                Ok(match store.get(&key) {
+                let registered = self
+                    .registered
+                    .lock()
+                    .map_err(|_| "defaults store poisoned")?;
+                Ok(match store.get(&key).or_else(|| registered.get(&key)) {
                     Some(stored) => json::to_string(&Json::Str(stored.clone())),
                     None => "null".to_string(),
                 })
@@ -124,6 +130,26 @@ impl HostCallHandler for DefaultsHandler {
                 let mut store = self.store.lock().map_err(|_| "defaults store poisoned")?;
                 store.remove(&key);
                 self.persist(&store);
+                Ok("null".to_string())
+            }
+            "tswift.defaults.register" => {
+                let document = str_arg(0)?;
+                let Json::Object(values) = json::parse(&document)
+                    .map_err(|e| format!("tswift.defaults.register: invalid defaults JSON: {e}"))?
+                else {
+                    return Err(
+                        "tswift.defaults.register: defaults must be a JSON object".to_string()
+                    );
+                };
+                let mut registered = self
+                    .registered
+                    .lock()
+                    .map_err(|_| "defaults store poisoned")?;
+                for (key, value) in values {
+                    registered
+                        .entry(key)
+                        .or_insert_with(|| json::to_string(&value));
+                }
                 Ok("null".to_string())
             }
             other => Err(format!("unknown host fn `{other}`")),

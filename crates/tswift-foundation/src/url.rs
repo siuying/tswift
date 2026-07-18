@@ -55,10 +55,9 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
         interp.register_property(BuiltinReceiver::URL, name, f);
     }
 
-    // Well-known filesystem-location statics (`URL.temporaryDirectory`,
-    // `URL.homeDirectory`, …). Each returns a `file://` URL derived from the
-    // process environment (`$HOME`, the OS temp dir), matching Foundation's
-    // search-path semantics for a single-user macOS-style layout.
+    // Well-known filesystem-location statics. The portable directories route
+    // through `tswift.fs.directory`, so they name the host service sandbox
+    // rather than leaking the CLI process's real home or temporary paths.
     for (name, f) in [
         ("temporaryDirectory", url_temporary_directory as StaticFn),
         ("homeDirectory", url_home_directory),
@@ -1761,9 +1760,7 @@ fn no_args(args: &[Arg], name: &str) -> Result<(), StdError> {
 }
 
 fn url_temporary_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    no_args(&args, "temporaryDirectory")?;
-    let tmp = std::env::temp_dir();
-    Ok(dir_url(&tmp.to_string_lossy()))
+    host_directory(_ctx, &args, "temporaryDirectory", "temporary")
 }
 
 fn url_home_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
@@ -1772,13 +1769,28 @@ fn url_home_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
 }
 
 fn url_documents_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    no_args(&args, "documentsDirectory")?;
-    Ok(home_subdir("Documents"))
+    host_directory(_ctx, &args, "documentsDirectory", "documents")
 }
 
 fn url_caches_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
-    no_args(&args, "cachesDirectory")?;
-    Ok(home_subdir("Library/Caches"))
+    host_directory(_ctx, &args, "cachesDirectory", "caches")
+}
+
+fn host_directory(ctx: &mut dyn StdContext, args: &[Arg], api: &str, kind: &str) -> StdResult {
+    no_args(args, api)?;
+    if !ctx.is_host_fn("tswift.fs.directory") {
+        return Err(type_error(format!(
+            "URL.{api} is unavailable on this platform: the host does not provide the 'tswift.fs' service"
+        )));
+    }
+    let value = ctx.call_host_fn(
+        "tswift.fs.directory",
+        vec![(Some("kind".to_string()), SwiftValue::Str(kind.to_string()))],
+    )?;
+    let SwiftValue::Str(path) = value else {
+        return Err(type_error("tswift.fs.directory returned a non-String path"));
+    };
+    Ok(dir_url(&path))
 }
 
 fn url_application_support_directory(_ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {

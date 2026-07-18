@@ -2,30 +2,108 @@
 //! `tswift_foundation::file_manager` for the wire schema — binary content
 //! crosses the wire as base64 `String`).
 //!
-//! The native CLI backs the real filesystem, unrooted: `tswift.fs.*` calls
-//! operate on whatever path the Swift program passes, exactly like real
-//! Foundation's `FileManager` on macOS/Linux. There is no sandbox — a
-//! `tswift run` invocation has the same filesystem access as the process
-//! running it.
+//! The CLI maps the portable filesystem namespace into one sandbox root. The
+//! root is the process working directory by default, or `TSWIFT_FS_ROOT` when
+//! an embedding needs an explicit root. Absolute Swift paths are *virtual*
+//! paths below that root (`/Documents/a` -> `<root>/Documents/a`), never host
+//! absolute paths. Parent traversal and symlink components are rejected.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use tswift_core::json::{self, Json};
 use tswift_core::HostCallHandler;
 
-pub struct FsHandler;
+pub struct FsHandler {
+    root: PathBuf,
+}
 
 impl FsHandler {
     pub fn new() -> Self {
-        Self
+        let root = std::env::var_os("TSWIFT_FS_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let _ = fs::create_dir_all(&root);
+        Self { root }
+    }
+
+    #[cfg(test)]
+    fn with_root(root: PathBuf) -> Self {
+        fs::create_dir_all(&root).unwrap();
+        Self { root }
     }
 
     fn thrown(message: impl Into<String>) -> String {
+        Self::thrown_code(512, message)
+    }
+
+    fn thrown_code(code: i64, message: impl Into<String>) -> String {
         json::to_string(&Json::Object(vec![(
             "$thrown".to_string(),
-            Json::Str(message.into()),
+            Json::Object(vec![
+                ("type".to_string(), Json::Str("CocoaError".to_string())),
+                ("code".to_string(), Json::Int(code)),
+                ("message".to_string(), Json::Str(message.into())),
+            ]),
         )]))
+    }
+
+    fn thrown_io(error: &std::io::Error, message: impl Into<String>) -> String {
+        let code = match error.kind() {
+            std::io::ErrorKind::NotFound => 4,
+            std::io::ErrorKind::PermissionDenied => 513,
+            std::io::ErrorKind::AlreadyExists => 516,
+            _ => 512,
+        };
+        Self::thrown_code(code, message)
+    }
+
+    fn resolve(&self, path: &str) -> Result<PathBuf, String> {
+        let mut relative = PathBuf::new();
+        let input = Path::new(path);
+        // `URL(fileURLWithPath:)` resolves a relative path against the CLI
+        // process cwd. That absolute path is still inside this sandbox, so
+        // recognize it before treating arbitrary absolute paths as virtual.
+        let components = input.strip_prefix(&self.root).unwrap_or(input).components();
+        for component in components {
+            match component {
+                Component::RootDir | Component::CurDir => {}
+                Component::Normal(component) => relative.push(component),
+                Component::ParentDir | Component::Prefix(_) => {
+                    return Err(format!(
+                        "path `{path}` escapes the tswift filesystem sandbox"
+                    ));
+                }
+            }
+        }
+        let candidate = self.root.join(relative);
+        let mut checked = self.root.clone();
+        for component in candidate
+            .strip_prefix(&self.root)
+            .unwrap_or(Path::new(""))
+            .components()
+        {
+            if let Component::Normal(part) = component {
+                checked.push(part);
+                if fs::symlink_metadata(&checked).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                    return Err(format!("path `{path}` uses unsupported symlink component"));
+                }
+            }
+        }
+        Ok(candidate)
+    }
+
+    fn directory(&self, kind: &str) -> Result<String, String> {
+        let virtual_path = match kind {
+            "default" => "/",
+            "documents" => "/Documents",
+            "caches" => "/Library/Caches",
+            "temporary" => "/tmp",
+            _ => return Err(format!("unknown portable directory `{kind}`")),
+        };
+        fs::create_dir_all(self.resolve(virtual_path)?)
+            .map_err(|e| format!("couldn't create {kind} directory: {e}"))?;
+        Ok(virtual_path.to_string())
     }
 }
 
@@ -108,29 +186,68 @@ impl HostCallHandler for FsHandler {
             }
         };
         match name {
+            "tswift.fs.directory" => match self.directory(&str_arg(0)?) {
+                Ok(path) => Ok(json::to_string(&Json::Str(path))),
+                Err(message) => Ok(Self::thrown(message)),
+            },
             "tswift.fs.exists" => {
                 let path = str_arg(0)?;
-                Ok(json::to_string(&Json::Bool(Path::new(&path).exists())))
+                let exists = self.resolve(&path).is_ok_and(|path| path.exists());
+                Ok(json::to_string(&Json::Bool(exists)))
             }
             "tswift.fs.isDirectory" => {
                 let path = str_arg(0)?;
-                Ok(json::to_string(&Json::Bool(Path::new(&path).is_dir())))
+                let is_dir = self.resolve(&path).is_ok_and(|path| path.is_dir());
+                Ok(json::to_string(&Json::Bool(is_dir)))
             }
             "tswift.fs.read" => {
                 let path = str_arg(0)?;
-                Ok(match fs::read(&path) {
+                let Ok(path) = self.resolve(&path) else {
+                    return Ok("null".to_string());
+                };
+                Ok(match fs::read(path) {
                     Ok(bytes) => json::to_string(&Json::Str(tswift_core::base64::encode(&bytes))),
                     Err(_) => "null".to_string(),
                 })
             }
+            "tswift.fs.attributes" => {
+                let raw_path = str_arg(0)?;
+                let path = match self.resolve(&raw_path) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
+                match fs::metadata(&path) {
+                    Ok(meta) => Ok(json::to_string(&Json::Str(json::to_string(&Json::Object(
+                        vec![
+                            (
+                                "size".to_string(),
+                                Json::Int(meta.len().try_into().unwrap_or(i64::MAX)),
+                            ),
+                            ("isDirectory".to_string(), Json::Bool(meta.is_dir())),
+                        ],
+                    ))))),
+                    Err(error) => Ok(Self::thrown_io(
+                        &error,
+                        format!("couldn't read attributes for \u{201c}{raw_path}\u{201d}: {error}"),
+                    )),
+                }
+            }
             "tswift.fs.list" => {
                 let path = str_arg(0)?;
+                let path = match self.resolve(&path) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
                 let entries = match fs::read_dir(&path) {
                     Ok(read) => read,
                     Err(e) => {
-                        return Ok(Self::thrown(format!(
-                            "couldn\u{2019}t list \u{201c}{path}\u{201d}: {e}"
-                        )))
+                        return Ok(Self::thrown_io(
+                            &e,
+                            format!(
+                                "couldn\u{2019}t list \u{201c}{}\u{201d}: {e}",
+                                path.display()
+                            ),
+                        ))
                     }
                 };
                 let mut names = Vec::new();
@@ -147,6 +264,10 @@ impl HostCallHandler for FsHandler {
             }
             "tswift.fs.mkdir" => {
                 let path = str_arg(0)?;
+                let path = match self.resolve(&path) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
                 let intermediate = bool_arg(1)?;
                 let result = if intermediate {
                     fs::create_dir_all(&path)
@@ -155,28 +276,40 @@ impl HostCallHandler for FsHandler {
                 };
                 match result {
                     Ok(()) => Ok("null".to_string()),
-                    Err(e) => Ok(Self::thrown(format!(
-                        "couldn\u{2019}t create directory \u{201c}{path}\u{201d}: {e}"
-                    ))),
+                    Err(e) => Ok(Self::thrown_io(
+                        &e,
+                        format!(
+                            "couldn\u{2019}t create directory \u{201c}{}\u{201d}: {e}",
+                            path.display()
+                        ),
+                    )),
                 }
             }
             "tswift.fs.remove" => {
                 let path = str_arg(0)?;
-                let p = Path::new(&path);
+                let p = match self.resolve(&path) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
                 let result = if p.is_dir() {
-                    fs::remove_dir_all(p)
+                    fs::remove_dir_all(&p)
                 } else {
-                    fs::remove_file(p)
+                    fs::remove_file(&p)
                 };
                 match result {
                     Ok(()) => Ok("null".to_string()),
-                    Err(e) => Ok(Self::thrown(format!(
-                        "couldn\u{2019}t remove \u{201c}{path}\u{201d}: {e}"
-                    ))),
+                    Err(e) => Ok(Self::thrown_io(
+                        &e,
+                        format!("couldn\u{2019}t remove \u{201c}{path}\u{201d}: {e}"),
+                    )),
                 }
             }
             "tswift.fs.write" => {
                 let path = str_arg(0)?;
+                let path = match self.resolve(&path) {
+                    Ok(path) => path,
+                    Err(_) => return Ok(json::to_string(&Json::Bool(false))),
+                };
                 let content = str_arg(1)?;
                 // Third argument (`atomically`) was added alongside
                 // `String.write(to:atomically:encoding:)` — default to
@@ -193,7 +326,7 @@ impl HostCallHandler for FsHandler {
                     None => return Ok(json::to_string(&Json::Bool(false))),
                 };
                 let ok = if atomically {
-                    write_atomic(Path::new(&path), &bytes).is_ok()
+                    write_atomic(&path, &bytes).is_ok()
                 } else {
                     fs::write(&path, bytes).is_ok()
                 };
@@ -202,17 +335,23 @@ impl HostCallHandler for FsHandler {
             "tswift.fs.copy" => {
                 let from = str_arg(0)?;
                 let to = str_arg(1)?;
-                let from_path = Path::new(&from);
-                let to_path = Path::new(&to);
+                let from_path = match self.resolve(&from) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
+                let to_path = match self.resolve(&to) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
                 // Foundation's `copyItem(at:to:)` throws rather than
                 // overwriting an existing destination — see
                 // `destination_exists`'s doc comment for the TOCTOU caveat.
-                if destination_exists(to_path) {
+                if destination_exists(&to_path) {
                     return Ok(Self::thrown(format!(
                         "couldn\u{2019}t copy \u{201c}{from}\u{201d} to \u{201c}{to}\u{201d}: an item with the same name already exists at the destination."
                     )));
                 }
-                match copy_recursive(from_path, to_path) {
+                match copy_recursive(&from_path, &to_path) {
                     Ok(()) => Ok("null".to_string()),
                     Err(e) => Ok(Self::thrown(format!(
                         "couldn\u{2019}t copy \u{201c}{from}\u{201d} to \u{201c}{to}\u{201d}: {e}"
@@ -222,12 +361,18 @@ impl HostCallHandler for FsHandler {
             "tswift.fs.move" => {
                 let from = str_arg(0)?;
                 let to = str_arg(1)?;
-                let from_path = Path::new(&from);
-                let to_path = Path::new(&to);
+                let from_path = match self.resolve(&from) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
+                let to_path = match self.resolve(&to) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown(message)),
+                };
                 // Foundation's `moveItem(at:to:)` throws rather than
                 // overwriting an existing destination (same TOCTOU caveat as
                 // `copyItem` above).
-                if destination_exists(to_path) {
+                if destination_exists(&to_path) {
                     return Ok(Self::thrown(format!(
                         "couldn\u{2019}t move \u{201c}{from}\u{201d} to \u{201c}{to}\u{201d}: an item with the same name already exists at the destination."
                     )));
@@ -243,7 +388,7 @@ impl HostCallHandler for FsHandler {
                 // descendant) must surface as a thrown error, not trigger a
                 // corrupting recursive self-copy.
                 const EXDEV: i32 = 18;
-                match fs::rename(from_path, to_path) {
+                match fs::rename(&from_path, &to_path) {
                     Ok(()) => return Ok("null".to_string()),
                     Err(e) if e.raw_os_error() == Some(EXDEV) => {}
                     Err(e) => {
@@ -252,11 +397,11 @@ impl HostCallHandler for FsHandler {
                         )));
                     }
                 }
-                let result = copy_recursive(from_path, to_path).and_then(|()| {
+                let result = copy_recursive(&from_path, &to_path).and_then(|()| {
                     if from_path.is_dir() {
-                        fs::remove_dir_all(from_path)
+                        fs::remove_dir_all(&from_path)
                     } else {
-                        fs::remove_file(from_path)
+                        fs::remove_file(&from_path)
                     }
                 });
                 match result {
@@ -290,7 +435,7 @@ mod tests {
     fn write_read_exists_remove_round_trip() {
         let dir = tmp_dir("roundtrip");
         let file = dir.join("a.txt");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let content_b64 = tswift_core::base64::encode(b"hello");
         let args = json::to_string(&Json::Array(vec![
             Json::Str(file.to_string_lossy().into_owned()),
@@ -326,10 +471,24 @@ mod tests {
         let path_arg = json::to_string(&Json::Array(vec![Json::Str(
             dir.join("nope").to_string_lossy().into_owned(),
         )]));
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let reply = handler.call("tswift.fs.remove", &path_arg).unwrap();
         let parsed = json::parse(&reply).unwrap();
-        assert!(parsed.get("$thrown").is_some(), "{reply}");
+        let Some(Json::Object(error)) = parsed.get("$thrown") else {
+            panic!("expected thrown CocoaError: {reply}");
+        };
+        assert_eq!(
+            error
+                .iter()
+                .find_map(|(key, value)| (key == "type").then_some(value)),
+            Some(&Json::Str("CocoaError".to_string()))
+        );
+        assert_eq!(
+            error
+                .iter()
+                .find_map(|(key, value)| (key == "code").then_some(value)),
+            Some(&Json::Int(4))
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -337,7 +496,7 @@ mod tests {
     fn mkdir_and_list_directory() {
         let dir = tmp_dir("mkdir-list");
         let sub = dir.join("sub");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let mkdir_args = json::to_string(&Json::Array(vec![
             Json::Str(sub.to_string_lossy().into_owned()),
             Json::Bool(true),
@@ -366,7 +525,7 @@ mod tests {
     fn copy_and_move_item() {
         let dir = tmp_dir("copy-move");
         let src = dir.join("src.txt");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let write_args = json::to_string(&Json::Array(vec![
             Json::Str(src.to_string_lossy().into_owned()),
             Json::Str(tswift_core::base64::encode(b"payload")),
@@ -400,7 +559,7 @@ mod tests {
         let dst = dir.join("dst.txt");
         fs::write(&src, b"new").unwrap();
         fs::write(&dst, b"old").unwrap();
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let copy_args = json::to_string(&Json::Array(vec![
             Json::Str(src.to_string_lossy().into_owned()),
             Json::Str(dst.to_string_lossy().into_owned()),
@@ -423,7 +582,7 @@ mod tests {
         let dst = dir.join("dst.txt");
         fs::write(&src, b"new").unwrap();
         fs::write(&dst, b"old").unwrap();
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let move_args = json::to_string(&Json::Array(vec![
             Json::Str(src.to_string_lossy().into_owned()),
             Json::Str(dst.to_string_lossy().into_owned()),
@@ -449,7 +608,7 @@ mod tests {
         fs::write(src.join("sub/b.txt"), b"b").unwrap();
 
         let dst = dir.join("dst");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let copy_args = json::to_string(&Json::Array(vec![
             Json::Str(src.to_string_lossy().into_owned()),
             Json::Str(dst.to_string_lossy().into_owned()),
@@ -472,7 +631,7 @@ mod tests {
         fs::write(src.join("sub/b.txt"), b"b").unwrap();
 
         let dst = dir.join("dst");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let move_args = json::to_string(&Json::Array(vec![
             Json::Str(src.to_string_lossy().into_owned()),
             Json::Str(dst.to_string_lossy().into_owned()),
@@ -487,7 +646,7 @@ mod tests {
     fn write_atomically_true_leaves_no_temp_file_behind() {
         let dir = tmp_dir("write-atomic");
         let file = dir.join("a.txt");
-        let handler = FsHandler::new();
+        let handler = FsHandler::with_root(dir.clone());
         let args = json::to_string(&Json::Array(vec![
             Json::Str(file.to_string_lossy().into_owned()),
             Json::Str(tswift_core::base64::encode(b"payload")),

@@ -1502,3 +1502,9 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 
 - Render sessions now own executor draining after lifecycle and dispatch closures, before the next UIIR render; `.task` runs on mount, `.task(id:)` re-runs after an id change, and `Task { await ... }` state mutations patch in the same dispatch. CLI SwiftUI goldens use sibling deterministic HTTP route tables; missing transport remains a diagnostic, while CLI real networking stays opt-in through `tswift run --allow-network`.
 - Coverage before → after: Foundation 465/615 verified (75.6%) → 465/615 (75.6%); SwiftUI 467/692 verified (67.5%) → 467/692 (67.5%) — behavior/fixtures changed, not the registry. Commit: `feat(swiftui): drain lifecycle async tasks`. Open blockers: `bytes`/download/publisher APIs and true mid-flight cancellation remain unsupported/degraded as scoped; no wasm/web code changed.
+
+- agent verify-review-async: PASS — independent repros green (.task await+mutate, .task(id:) re-run on change / no-run on unrelated state, Task{} in Button action, URLSession missing-transport diagnostic vs route-table fetch, onAppear+.task coexist, self-mutating task(id:) terminates); scope.toml honest (bytes/download/publishers/cancellation); presubmit green. Verdict: With fixes (minor).
+
+## agent fs-host-services
+
+- Extended the existing `tswift.fs.*`/`tswift.defaults.*` registry: CLI fs is cwd/`TSWIFT_FS_ROOT` sandboxed with portable `/Documents`, `/Library/Caches`, `/tmp`; FileManager gained basic attributes; UserDefaults gained Data/dictionaries/register defaults; filesystem failures now throw portable `CocoaError { code, message }`. Unit + golden coverage and `scripts/presubmit` green. Coverage: FileManager tracked 0/3 → 0/3 (inventory exposes only unrelated APIs); UserDefaults is not a tracked inventory section. Blockers: symlinks, permissions, FileHandle, Date defaults, and full NSError metadata intentionally unsupported.

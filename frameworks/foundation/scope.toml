@@ -86,16 +86,17 @@ URLRequest = ["=="]
 #   (tswift_core::host_services) rather than real Darwin CFPreferences;
 #   availability depends on the embedding (CLI native = in-process store,
 #   opt-in file persistence via TSWIFT_DEFAULTS_FILE; wasm = localStorage;
-#   iOS = real UserDefaults via a host-fn shim). Only Bool/Int/Double/String/
-#   [String] are storable; other property-list shapes (nested containers,
-#   Data, Date) are NOT modelled. dictionaryRepresentation(), register(
-#   defaults:), synchronize(), suites, and KVO/NotificationCenter integration
-#   are NOT implemented. An unavailable host service raises a Swift-catchable
+#   iOS = real UserDefaults via a host-fn shim). Bool/Int/Double/String,
+#   recursive arrays/dictionaries, and Data are storable; `register(defaults:)`
+#   is a non-persistent fallback layer. Date, dictionaryRepresentation(),
+#   synchronize(), suites, and KVO/NotificationCenter integration are NOT
+#   implemented. An unavailable host service raises a Swift-catchable
 #   "unavailable on this platform" diagnostic rather than crashing.
 # - FileManager (F7) is backed by the `tswift.fs` host service
 #   (tswift_core::host_services) rather than real Darwin filesystem APIs
-#   directly; availability depends on the embedding (CLI native = the real,
-#   unrooted filesystem; wasm/iOS host-fn shims land in a later slice).
+#   directly; availability depends on the embedding (CLI native = real storage
+#   rooted at cwd or TSWIFT_FS_ROOT; wasm = localStorage/memory degraded tier;
+#   iOS = app-sandbox FileManager host-fn shim).
 #   Binary content crosses the host wire as base64 String. `.default` is
 #   Object-backed (===, `let` legal, no per-instance state). Implemented:
 #   fileExists(atPath:), contents(atPath:), contentsOfDirectory(atPath:),
@@ -105,13 +106,11 @@ URLRequest = ["=="]
 #   String(contentsOfFile:)/String(contentsOf:), Data(contentsOf:), and
 #   String/Data write(to:)/write(toFile:). NOT implemented:
 #   fileExists(atPath:isDirectory:) (the `inout Bool` overload — this
-#   runtime does not thread `inout` through method calls), file attributes
-#   (`attributes:` arguments are accepted and ignored), symlinks/permissions/
-#   extended attributes, FileHandle, and non-`file:` URL loading (throws
-#   rather than fetching). Thrown errors surface as a simplified `HostError`
-#   struct (`message: String`) rather than `CocoaError`/`NSError`
-#   (domain/code/userInfo are not modelled) — documented in
-#   tswift-foundation::file_manager.
+#   runtime does not thread `inout` through method calls). attributesOfItem
+#   exposes only portable size/isDirectory basics; create attributes,
+#   symlinks/permissions/extended attributes, FileHandle, and non-`file:` URL
+#   loading remain unsupported. Filesystem failures throw portable
+#   `CocoaError { code, message }`, not platform NSError metadata.
 [notes]
 calendar_locale = "Gregorian/UTC only; en_US names; no Locale/TimeZone"
 decimal_precision = "i128 mantissa + i32 exponent; narrower than Darwin's 38-digit Decimal; division keeps up to 30 guard digits"

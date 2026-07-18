@@ -355,8 +355,14 @@ impl HostBridge {
 pub enum HostCallOutcome {
     /// A decoded, validated return value.
     Value(SwiftValue),
-    /// The host raised a catchable Swift error carrying this message.
-    Thrown(String),
+    /// The host raised a catchable Swift error. String payloads use the
+    /// long-standing `HostError { message }` shape; structured payloads let a
+    /// capability expose a portable, typed error without teaching core about
+    /// any particular framework.
+    Thrown {
+        type_name: String,
+        fields: Vec<(String, SwiftValue)>,
+    },
 }
 
 impl HostBridge {
@@ -422,11 +428,42 @@ impl HostBridge {
         // The dollar-prefixed key avoids colliding with a legitimate
         // dictionary result that happens to contain a `"thrown"` key.
         if let Some(thrown) = root.get("$thrown") {
-            let message = match thrown {
-                Json::Str(s) => s.clone(),
-                other => json::to_string(other),
+            let (type_name, fields) = match thrown {
+                Json::Str(message) => (
+                    "HostError".to_string(),
+                    vec![("message".to_string(), SwiftValue::Str(message.clone()))],
+                ),
+                Json::Object(values) => {
+                    let type_name = match thrown.get("type") {
+                        Some(Json::Str(name)) => name.clone(),
+                        _ => "HostError".to_string(),
+                    };
+                    let fields = values
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            if name == "type" {
+                                return None;
+                            }
+                            let value = match value {
+                                Json::Str(value) => SwiftValue::Str(value.clone()),
+                                Json::Int(value) => SwiftValue::int(i128::from(*value)),
+                                Json::Bool(value) => SwiftValue::Bool(*value),
+                                _ => return None,
+                            };
+                            Some((name.clone(), value))
+                        })
+                        .collect();
+                    (type_name, fields)
+                }
+                other => (
+                    "HostError".to_string(),
+                    vec![(
+                        "message".to_string(),
+                        SwiftValue::Str(json::to_string(other)),
+                    )],
+                ),
             };
-            return Ok(HostCallOutcome::Thrown(message));
+            return Ok(HostCallOutcome::Thrown { type_name, fields });
         }
 
         let value = decode_value(&root, &sig.returns)
@@ -675,7 +712,13 @@ mod tests {
             )
             .unwrap();
         match bridge.invoke("risky", &[]).unwrap() {
-            HostCallOutcome::Thrown(m) => assert_eq!(m, "boom"),
+            HostCallOutcome::Thrown { type_name, fields } => {
+                assert_eq!(type_name, "HostError");
+                assert_eq!(
+                    fields,
+                    vec![("message".to_string(), SwiftValue::Str("boom".to_string()))]
+                );
+            }
             _ => panic!("expected thrown"),
         }
     }
