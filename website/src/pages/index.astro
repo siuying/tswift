@@ -13,6 +13,7 @@ const foundation = byFramework.foundation.totals;
 const swiftui = byFramework.swiftui.totals;
 const charts = byFramework.charts.totals;
 const swiftdata = byFramework.swiftdata.totals;
+const eventkit = byFramework.eventkit.totals;
 const languageTiers = parseLanguageTiers();
 const language = sumTiers(languageTiers, 0, 7);
 ---
@@ -114,6 +115,7 @@ const language = sumTiers(languageTiers, 0, 7);
       <CoverageBar label="SwiftUI" implemented={swiftui.implemented} partial={swiftui.partial} total={swiftui.total} href="/status/swiftui" />
       <CoverageBar label="Charts" implemented={charts.implemented} partial={charts.partial} total={charts.total} href="/status/charts" />
       <CoverageBar label="SwiftData" implemented={swiftdata.implemented} partial={swiftdata.partial} total={swiftdata.total} href="/status/swiftdata" />
+      <CoverageBar label="EventKit" implemented={eventkit.implemented} partial={eventkit.partial} total={eventkit.total} href="/status/eventkit" />
     </div>
 
     <div style="margin-top:1.5rem">

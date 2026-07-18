@@ -404,6 +404,9 @@ fn run(paths: &[String], allow_network: bool, target: Option<&str>) -> ExitCode 
         &mut interp,
         caps.contains(tswift_core::HostService::Database),
     );
+    // EventKit — a headless, in-memory Calendar/Reminders store (no host
+    // service needed; Apple-platform-only surface with no web/wasm equivalent).
+    tswift_eventkit::install(&mut interp);
     interp.set_filename(path);
     // Golden fixtures (and any offline caller) script `URLSession` through a
     // deterministic mock transport instead of the real network; the mock wins

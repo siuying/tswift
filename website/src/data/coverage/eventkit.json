@@ -1,0 +1,2008 @@
+{
+  "framework": "EventKit",
+  "sections": [
+    {
+      "name": "EKEventStore",
+      "members": [
+        {
+          "name": "authorizationStatus",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "calendar",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "calendarItem",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "calendarItems",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "calendars",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "cancelFetchRequest",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "commit",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "defaultCalendarForNewEvents",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "defaultCalendarForNewReminders",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "delegateSources",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "enumerateEvents",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "event",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "eventStoreIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "events",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "fetchReminders",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "predicateForCompletedReminders",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "predicateForEvents",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "predicateForIncompleteReminders",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "predicateForReminders",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: predicate_queries"
+        },
+        {
+          "name": "refreshSourcesIfNecessary",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "remove",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeCalendar",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "requestAccess",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "requestFullAccessToEvents",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "requestFullAccessToReminders",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "requestWriteOnlyAccessToEvents",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "save",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "saveCalendar",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "source",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "sources",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 24,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 8,
+        "total": 32
+      }
+    },
+    {
+      "name": "EKAuthorizationStatus",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "authorized",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "denied",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "fullAccess",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "notDetermined",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "restricted",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "writeOnly",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 7,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 12
+      }
+    },
+    {
+      "name": "EKEntityType",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "event",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "reminder",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 3,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 8
+      }
+    },
+    {
+      "name": "EKSpan",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "futureEvents",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "thisEvent",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 3,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 8
+      }
+    },
+    {
+      "name": "EKCalendarItem",
+      "members": [
+        {
+          "name": "addAlarm",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "addRecurrenceRule",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "alarms",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "attendees",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "calendar",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "calendarItemExternalIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "calendarItemIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "creationDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hasAlarms",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hasAttendees",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hasNotes",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "hasRecurrenceRules",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "lastModifiedDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "location",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "notes",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "recurrenceRules",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "removeAlarm",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "removeRecurrenceRule",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "timeZone",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "title",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "url",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 21,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 21
+      }
+    },
+    {
+      "name": "EKEvent",
+      "members": [
+        {
+          "name": "availability",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "birthdayContactIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "birthdayPersonID",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "compareStartDate",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "endDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "eventIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isAllDay",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isDetached",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "occurrenceDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "organizer",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "refresh",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "startDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "status",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "structuredLocation",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 15,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 15
+      }
+    },
+    {
+      "name": "EKReminder",
+      "members": [
+        {
+          "name": "completionDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "dueDateComponents",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isCompleted",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "priority",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "startDateComponents",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 6
+      }
+    },
+    {
+      "name": "EKEventStatus",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "canceled",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "confirmed",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "none",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "tentative",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 10
+      }
+    },
+    {
+      "name": "EKEventAvailability",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "busy",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "free",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "notSupported",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "tentative",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "unavailable",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 11
+      }
+    },
+    {
+      "name": "EKReminderPriority",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "high",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "low",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "medium",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "none",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 10
+      }
+    },
+    {
+      "name": "EKCalendar",
+      "members": [
+        {
+          "name": "allowedEntityTypes",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "allowsContentModifications",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "calendarIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "cgColor",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "isImmutable",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isSubscribed",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "source",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "supportedEventAvailabilities",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "title",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "type",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 11,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 11
+      }
+    },
+    {
+      "name": "EKSource",
+      "members": [
+        {
+          "name": "calendars",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "isDelegate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "sourceIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "sourceType",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "title",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "EKCalendarType",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "birthday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "calDAV",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "exchange",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "local",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "subscription",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 11
+      }
+    },
+    {
+      "name": "EKSourceType",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "birthdays",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "calDAV",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "exchange",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "local",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "mobileMe",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "subscribed",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 7,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 12
+      }
+    },
+    {
+      "name": "EKObject",
+      "members": [
+        {
+          "name": "hasChanges",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isNew",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "refresh",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "reset",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "rollback",
+          "kind": "func",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "EKAlarm",
+      "members": [
+        {
+          "name": "absoluteDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "proximity",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "relativeOffset",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "structuredLocation",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 5
+      }
+    },
+    {
+      "name": "EKAlarmType",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "audio",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "display",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "email",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "procedure",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 10
+      }
+    },
+    {
+      "name": "EKAlarmProximity",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "enter",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "leave",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "none",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        }
+      ],
+      "counts": {
+        "implemented": 4,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 9
+      }
+    },
+    {
+      "name": "EKRecurrenceRule",
+      "members": [
+        {
+          "name": "calendarIdentifier",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "daysOfTheMonth",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "daysOfTheWeek",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "daysOfTheYear",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "firstDayOfTheWeek",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "frequency",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "interval",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "monthsOfTheYear",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "recurrenceEnd",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "setPositions",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "weeksOfTheYear",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 12,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 12
+      }
+    },
+    {
+      "name": "EKRecurrenceFrequency",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "daily",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "monthly",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "weekly",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "yearly",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 5,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 10
+      }
+    },
+    {
+      "name": "EKRecurrenceEnd",
+      "members": [
+        {
+          "name": "endDate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "occurrenceCount",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 3,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "EKRecurrenceDayOfWeek",
+      "members": [
+        {
+          "name": "dayOfTheWeek",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "weekNumber",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 3,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 3
+      }
+    },
+    {
+      "name": "EKWeekday",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "EKFriday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKMonday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKSaturday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKSunday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKThursday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKTuesday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "EKWednesday",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "friday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "monday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "saturday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "sunday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "thursday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "tuesday",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "wednesday",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 15,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 20
+      }
+    },
+    {
+      "name": "EKParticipant",
+      "members": [
+        {
+          "name": "abRecord",
+          "kind": "func",
+          "status": "implemented"
+        },
+        {
+          "name": "contactPredicate",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "isCurrentUser",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "name",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "participantRole",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "participantStatus",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "participantType",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "url",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 8,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 8
+      }
+    },
+    {
+      "name": "EKParticipantRole",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "chair",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "nonParticipant",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "optional",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "required",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "unknown",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 11
+      }
+    },
+    {
+      "name": "EKParticipantStatus",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "accepted",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "completed",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "declined",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "delegated",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "inProcess",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "pending",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "tentative",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "unknown",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 9,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 14
+      }
+    },
+    {
+      "name": "EKParticipantType",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "group",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "person",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "resource",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "room",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "unknown",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 6,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 11
+      }
+    },
+    {
+      "name": "EKParticipantScheduleStatus",
+      "members": [
+        {
+          "name": "!=",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "cannotDeliver",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "delivered",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "deliveryFailed",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "hash",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "hashValue",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "makeFromRawAttachmentValue",
+          "kind": "func",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "noPrivileges",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "none",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "pending",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "rawAttachmentValueRepresentation",
+          "kind": "var",
+          "status": "out_of_scope",
+          "notes": "out of scope: synthesized_conformance"
+        },
+        {
+          "name": "recipientNotAllowed",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "recipientNotRecognized",
+          "kind": "case",
+          "status": "implemented"
+        },
+        {
+          "name": "sent",
+          "kind": "case",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 10,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 5,
+        "total": 15
+      }
+    },
+    {
+      "name": "EKStructuredLocation",
+      "members": [
+        {
+          "name": "geoLocation",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "init",
+          "kind": "init",
+          "status": "implemented"
+        },
+        {
+          "name": "radius",
+          "kind": "var",
+          "status": "implemented"
+        },
+        {
+          "name": "title",
+          "kind": "var",
+          "status": "implemented"
+        }
+      ],
+      "counts": {
+        "implemented": 4,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 0,
+        "total": 4
+      }
+    }
+  ],
+  "totals": {
+    "implemented": 224,
+    "partial": 0,
+    "missing": 0,
+    "out_of_scope": 88,
+    "total": 312
+  }
+}

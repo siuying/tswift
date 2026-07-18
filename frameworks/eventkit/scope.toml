@@ -1,0 +1,137 @@
+[meta]
+framework = "EventKit"
+reference = "swift-symbolgraph-extract EventKit / iPhoneSimulator SDK (Swift-imported ObjC surface)"
+stance = """
+EventKit is an Apple-platform-only, Objective-C framework: on device it reads
+and writes the user's Calendar and Reminders database through the system
+Calendar daemon behind a permission prompt. There is NO web/wasm equivalent
+(no shared calendar store in a browser sandbox), so — like SwiftData's SQLite
+model — tswift-eventkit (crates/tswift-eventkit) implements a headless,
+in-memory model of the store: EKEventStore backed by in-memory arrays of
+EKCalendar / EKEvent / EKReminder value objects, permission requests that
+resolve deterministically (fullAccess granted synchronously — there is no UI to
+prompt), and CRUD (save/remove/commit/reset) against that store. This lets
+Swift programs that create calendars, add events/reminders, set alarms and
+recurrence rules, and read them back run and print exactly as they would on
+device for the value-semantics subset.
+
+Deliberately NOT modelled (see [out_of_scope]): NSPredicate-based fetches
+(events(matching:) / fetchReminders(matching:) — needs an NSPredicate engine),
+virtual-conference provider extensions, change notifications
+(EventStoreChanged / NotificationCenter MainActorMessage), and NSError-domain
+bridging (EKError). The synthesized Equatable/Hashable + AttributedString-
+attachment reflection members the Clang importer stamps onto every NS_ENUM
+(`!=`, `hash`, `hashValue`, `makeFromRawAttachmentValue`,
+`rawAttachmentValueRepresentation`) are conformance boilerplate, not EventKit
+API, and are excluded per-member (see [out_of_scope_members]) so the
+denominator reflects real calendar surface.
+"""
+
+[notes]
+authorization = "requestFullAccessToEvents/Reminders and requestWriteOnlyAccessToEvents resolve to .fullAccess/.writeOnly synchronously (both the completion-handler and async spellings); there is no system prompt in a headless runtime. authorizationStatus(for:) reflects the last granted level per entity type."
+store_model = "EKEventStore holds in-memory arrays of calendars/events/reminders keyed by their EventKit identifiers. save(_:span:)/remove/commit/reset mutate that store; there is no persistence across process runs (mirrors SwiftData's in-memory ModelConfiguration stance)."
+value_objects = "EKEvent/EKReminder/EKCalendar/EKAlarm/EKRecurrenceRule are reference-typed like on device (NSObject subclasses); identity is assigned on save. Dates use Foundation.Date; dueDateComponents/startDateComponents use DateComponents."
+predicates = "The predicateFor*/events(matching:)/fetchReminders(matching:) NSPredicate-driven query surface is out of scope for stage 1: enumerating a calendar's items is done by iterating store arrays, not by compiling an NSPredicate."
+
+# ── EK1 — event store & authorization ─────────────────────────────────────
+[[tier]]
+id = "EK1"
+title = "EKEventStore lifecycle, permissions, CRUD (non-predicate)"
+types = ["EKEventStore", "EKAuthorizationStatus", "EKEntityType", "EKSpan"]
+
+# ── EK2 — calendar items: events & reminders ──────────────────────────────
+[[tier]]
+id = "EK2"
+title = "EKEvent, EKReminder, EKCalendarItem attributes"
+types = ["EKCalendarItem", "EKEvent", "EKReminder", "EKEventStatus", "EKEventAvailability", "EKReminderPriority"]
+
+# ── EK3 — calendars & sources ─────────────────────────────────────────────
+[[tier]]
+id = "EK3"
+title = "EKCalendar, EKSource"
+types = ["EKCalendar", "EKSource", "EKCalendarType", "EKSourceType"]
+
+# ── EK4 — alarms, recurrence, participants, locations ─────────────────────
+[[tier]]
+id = "EK4"
+title = "EKAlarm, EKRecurrenceRule, EKParticipant, EKStructuredLocation"
+types = [
+  "EKObject",
+  "EKAlarm", "EKAlarmType", "EKAlarmProximity",
+  "EKRecurrenceRule", "EKRecurrenceFrequency", "EKRecurrenceEnd", "EKRecurrenceDayOfWeek", "EKWeekday",
+  "EKParticipant", "EKParticipantRole", "EKParticipantStatus", "EKParticipantType", "EKParticipantScheduleStatus",
+  "EKStructuredLocation",
+]
+
+# Synthesized conformance / AttributedString-attachment reflection members the
+# Clang importer stamps onto every NS_ENUM — Equatable `!=`, Hashable `hash`/
+# `hashValue`, and the `makeFromRawAttachmentValue`/
+# `rawAttachmentValueRepresentation` attachment machinery. These are not
+# EventKit API; the enum cases + `init(rawValue:)` are what we model.
+[out_of_scope_members]
+synthesized_conformance = [
+  "EKSpan.!=", "EKSpan.hash", "EKSpan.makeFromRawAttachmentValue", "EKSpan.hashValue",
+  "EKSpan.rawAttachmentValueRepresentation", "EKEventStatus.!=", "EKEventStatus.hash",
+  "EKEventStatus.makeFromRawAttachmentValue", "EKEventStatus.hashValue",
+  "EKEventStatus.rawAttachmentValueRepresentation", "EKEventAvailability.!=",
+  "EKEventAvailability.hash", "EKEventAvailability.makeFromRawAttachmentValue",
+  "EKEventAvailability.hashValue", "EKEventAvailability.rawAttachmentValueRepresentation",
+  "EKReminderPriority.!=", "EKReminderPriority.hash",
+  "EKReminderPriority.makeFromRawAttachmentValue", "EKReminderPriority.hashValue",
+  "EKReminderPriority.rawAttachmentValueRepresentation", "EKWeekday.!=", "EKWeekday.hash",
+  "EKWeekday.makeFromRawAttachmentValue", "EKWeekday.hashValue",
+  "EKWeekday.rawAttachmentValueRepresentation", "EKAuthorizationStatus.!=",
+  "EKAuthorizationStatus.hash", "EKAuthorizationStatus.makeFromRawAttachmentValue",
+  "EKAuthorizationStatus.hashValue", "EKAuthorizationStatus.rawAttachmentValueRepresentation",
+  "EKEntityType.!=", "EKEntityType.hash", "EKEntityType.makeFromRawAttachmentValue",
+  "EKEntityType.hashValue", "EKEntityType.rawAttachmentValueRepresentation",
+  "EKCalendarType.!=", "EKCalendarType.hash", "EKCalendarType.makeFromRawAttachmentValue",
+  "EKCalendarType.hashValue", "EKCalendarType.rawAttachmentValueRepresentation",
+  "EKSourceType.!=", "EKSourceType.hash", "EKSourceType.makeFromRawAttachmentValue",
+  "EKSourceType.hashValue", "EKSourceType.rawAttachmentValueRepresentation", "EKAlarmType.!=",
+  "EKAlarmType.hash", "EKAlarmType.makeFromRawAttachmentValue", "EKAlarmType.hashValue",
+  "EKAlarmType.rawAttachmentValueRepresentation", "EKAlarmProximity.!=",
+  "EKAlarmProximity.hash", "EKAlarmProximity.makeFromRawAttachmentValue",
+  "EKAlarmProximity.hashValue", "EKAlarmProximity.rawAttachmentValueRepresentation",
+  "EKRecurrenceFrequency.!=", "EKRecurrenceFrequency.hash",
+  "EKRecurrenceFrequency.makeFromRawAttachmentValue", "EKRecurrenceFrequency.hashValue",
+  "EKRecurrenceFrequency.rawAttachmentValueRepresentation", "EKParticipantRole.!=",
+  "EKParticipantRole.hash", "EKParticipantRole.makeFromRawAttachmentValue",
+  "EKParticipantRole.hashValue", "EKParticipantRole.rawAttachmentValueRepresentation",
+  "EKParticipantStatus.!=", "EKParticipantStatus.hash",
+  "EKParticipantStatus.makeFromRawAttachmentValue", "EKParticipantStatus.hashValue",
+  "EKParticipantStatus.rawAttachmentValueRepresentation", "EKParticipantType.!=",
+  "EKParticipantType.hash", "EKParticipantType.makeFromRawAttachmentValue",
+  "EKParticipantType.hashValue", "EKParticipantType.rawAttachmentValueRepresentation",
+  "EKParticipantScheduleStatus.!=", "EKParticipantScheduleStatus.hash",
+  "EKParticipantScheduleStatus.makeFromRawAttachmentValue",
+  "EKParticipantScheduleStatus.hashValue",
+  "EKParticipantScheduleStatus.rawAttachmentValueRepresentation",
+]
+
+# EKEventStore's NSPredicate-driven query surface — needs an NSPredicate engine
+# (not modelled in stage 1; enumerate store arrays directly instead).
+predicate_queries = [
+  "EKEventStore.events", "EKEventStore.enumerateEvents", "EKEventStore.fetchReminders",
+  "EKEventStore.cancelFetchRequest", "EKEventStore.predicateForEvents",
+  "EKEventStore.predicateForReminders", "EKEventStore.predicateForIncompleteReminders",
+  "EKEventStore.predicateForCompletedReminders",
+]
+
+[out_of_scope]
+# Provider-extension infrastructure: a virtual-conference provider is a separate
+# app extension registered with the system; no headless equivalent.
+virtual_conference = [
+  "EKVirtualConferenceDescriptor", "EKVirtualConferenceProvider",
+  "EKVirtualConferenceRoomTypeDescriptor", "EKVirtualConferenceURLDescriptor",
+]
+# Change notifications: EventStoreChanged is a NotificationCenter
+# MainActorMessage delivered by the system store daemon — there is no external
+# writer to a headless in-memory store to notify about.
+notifications = ["EventStoreChanged", "MessageIdentifier", "Name"]
+# NSError-domain bridging: EKError/Code is the ObjC error domain surfaced via
+# NSError, not a value type we construct.
+error_bridging = ["EKError", "Code"]
+# Deprecated ObjC option-set masks (OptionSet raw bitmasks): superseded by the
+# per-entity-type APIs above.
+objc_option_masks = ["EKEntityMask", "EKCalendarEventAvailabilityMask"]

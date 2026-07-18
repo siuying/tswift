@@ -12,6 +12,7 @@ members = [
     "crates/tswift-swiftdata",
     "crates/tswift-swiftui",
     "crates/tswift-charts",
+    "crates/tswift-eventkit",
     "crates/tswift-cli",
     "crates/tswift-wasm",
     "crates/tswift-ffi",
@@ -31,4 +32,5 @@ tswift-foundation = { path = "crates/tswift-foundation" }
 tswift-swiftdata = { path = "crates/tswift-swiftdata" }
 tswift-swiftui = { path = "crates/tswift-swiftui" }
 tswift-charts = { path = "crates/tswift-charts" }
+tswift-eventkit = { path = "crates/tswift-eventkit" }
 tswift-wasm = { path = "crates/tswift-wasm" }

@@ -12,10 +12,12 @@ kept for the legacy stdlib-inventory shim.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from collections import defaultdict
 from pathlib import Path
@@ -69,6 +71,113 @@ def sdk_root(sdk_name: str | None = None) -> Path:
         cmd += ["--sdk", sdk_name]
     cmd.append("--show-sdk-path")
     return Path(run(cmd))
+
+
+def find_tool(name: str) -> str:
+    """Locate a Swift toolchain binary (`swift-symbolgraph-extract`).
+
+    `xcrun -f` is blocked in some sandboxes, so probe the default Xcode
+    toolchain directly before falling back to `xcrun`."""
+    candidates = [
+        Path(
+            "/Applications/Xcode-beta.app/Contents/Developer/Toolchains/"
+            f"XcodeDefault.xctoolchain/usr/bin/{name}"
+        ),
+        Path(
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/"
+            f"XcodeDefault.xctoolchain/usr/bin/{name}"
+        ),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    try:
+        return run(["xcrun", "-f", name])
+    except Exception:
+        raise SystemExit(f"cannot find {name!r}")
+
+
+def sdk_ios_version(sdk: Path) -> str:
+    """Extract the iOS version baked into the simulator SDK path
+    (`.../iPhoneSimulator27.0.sdk` -> `27.0`)."""
+    m = re.search(r"iPhoneSimulator([0-9]+(?:\.[0-9]+)?)\.sdk", str(sdk))
+    return m.group(1) if m else "26.0"
+
+
+# Symbol-graph symbol kinds -> the Swift keyword `extract_member`/coverage.py
+# expects to see leading the emitted signature.
+_SG_KIND = {
+    "swift.property": "var",
+    "swift.type.property": "var",
+    "swift.var": "var",
+    "swift.method": "func",
+    "swift.type.method": "func",
+    "swift.func": "func",
+    "swift.func.op": "func",
+    "swift.init": "init",
+    "swift.enum.case": "case",
+    "swift.subscript": "subscript",
+}
+_SG_TYPE_KINDS = {"swift.class", "swift.enum", "swift.struct", "swift.protocol"}
+
+
+def extract_symbolgraph(desc: dict) -> tuple[dict[str, set[str]], set[str], list[str]]:
+    """Extract an ObjC framework's Swift-imported surface via the symbol graph.
+
+    ObjC frameworks (EventKit) ship an almost-empty `.swiftinterface`; the real
+    API is bridged from Clang headers by the importer. `swift-symbolgraph-extract`
+    emits that faithful Swift-imported view (real Swift names, arg labels,
+    omit-needless-words applied) as JSON, which we fold into the same per-type
+    inventory the `.swiftinterface` path produces."""
+    module = desc["module"]
+    sdk = sdk_root(desc.get("sdk"))
+    version = sdk_ios_version(sdk)
+    target = desc.get("target", f"arm64-apple-ios{version}-simulator")
+    tool = find_tool("swift-symbolgraph-extract")
+    with tempfile.TemporaryDirectory() as tmp:
+        run(
+            [
+                tool,
+                "-module-name", module,
+                "-sdk", str(sdk),
+                "-target", target,
+                "-minimum-access-level", "public",
+                "-output-dir", tmp,
+            ]
+        )
+        graphs = sorted(Path(tmp).glob(f"{module}*.symbols.json"))
+        if not graphs:
+            raise SystemExit(f"no symbol graph emitted for {module!r}")
+        members: dict[str, set[str]] = defaultdict(set)
+        free: set[str] = set()
+        types: set[str] = set()
+        for graph in graphs:
+            data = json.loads(graph.read_text(encoding="utf-8"))
+            for sym in data.get("symbols", []):
+                kind = sym["kind"]["identifier"]
+                pc = sym.get("pathComponents", [])
+                if kind in _SG_TYPE_KINDS and len(pc) == 1:
+                    types.add(pc[0])
+                    continue
+                keyword = _SG_KIND.get(kind)
+                if not keyword or not pc:
+                    continue
+                name = pc[-1]
+                if len(pc) == 1:
+                    if keyword == "func":
+                        free.add(f"public func {name}")
+                    continue
+                container = pc[-2]
+                if keyword == "case":
+                    members[container].add(f"case {name}")
+                elif keyword == "init":
+                    members[container].add(f"public {name}")
+                else:
+                    members[container].add(f"public {keyword} {name}")
+    for typ in types:
+        members.setdefault(typ, set())
+    provenance = [f"symbol graph: module {module} / sdk {sdk} / target {target}"]
+    return members, free, provenance
 
 
 def resolve_interfaces(framework: str) -> list[Path]:
@@ -186,16 +295,16 @@ def extract(paths: list[Path], framework: str | None) -> tuple[dict[str, set[str
     return members, free_funcs
 
 
-def emit(paths: list[Path], framework: str | None, members: dict[str, set[str]], free_funcs: set[str]) -> None:
+def emit(sources: list[str], framework: str | None, members: dict[str, set[str]], free_funcs: set[str]) -> None:
     title = framework or "Swift"
     print(f"# {title} API inventory (generated)")
     print()
-    if len(paths) == 1:
-        print(f"Source: `{paths[0]}`")
+    if len(sources) == 1:
+        print(f"Source: `{sources[0]}`")
     else:
         print("Sources:")
-        for path in paths:
-            print(f"- `{path}`")
+        for source in sources:
+            print(f"- `{source}`")
     print()
     print(f"- Types with members: **{len(members)}**")
     print(f"- Free functions: **{len(free_funcs)}**")
@@ -223,15 +332,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.framework:
-        paths = resolve_interfaces(args.framework.lower())
         framework = args.framework.lower()
+        desc = load_manifest().get(framework, {})
+        if desc.get("kind") == "objc-framework":
+            members, free_funcs, sources = extract_symbolgraph(desc)
+            emit(sources, framework, members, free_funcs)
+            return 0
+        paths = resolve_interfaces(framework)
     elif args.path:
         paths = [Path(args.path)]
         framework = None
     else:
         parser.error("pass --framework or a .swiftinterface path")
     members, free_funcs = extract(paths, framework)
-    emit(paths, framework, members, free_funcs)
+    emit([str(p) for p in paths], framework, members, free_funcs)
     return 0
 
 

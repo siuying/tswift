@@ -22,12 +22,14 @@ const foundation = byFramework.foundation.totals;
 const swiftui = byFramework.swiftui.totals;
 const charts = byFramework.charts.totals;
 const swiftdata = byFramework.swiftdata.totals;
+const eventkit = byFramework.eventkit.totals;
 const languagePct = pctInfo(language);
 const stdlibPct = pctInfo(stdlib);
 const foundationPct = pctInfo(foundation);
 const swiftuiPct = pctInfo(swiftui);
 const chartsPct = pctInfo(charts);
 const swiftdataPct = pctInfo(swiftdata);
+const eventkitPct = pctInfo(eventkit);
 // Hand-authored tier prose (kept short/curated), paired positionally with
 // counts parsed from docs/swift-runtime/feature-checklist.md — numbers are
 // never hand-typed, only the label text is.
@@ -50,7 +52,7 @@ const tierLabels = [
   <h1>Implementation Status</h1>
   <p class="lead">
     tswift targets the full Swift 6.3 surface area. This dashboard tracks
-    progress across language features, the standard library, Foundation, SwiftUI, and Charts.
+    progress across language features, the standard library, Foundation, SwiftUI, Charts, SwiftData, and EventKit.
   </p>
 
   <h2>At a glance</h2>
@@ -81,12 +83,6 @@ const tierLabels = [
       <a href="/status/swiftui" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
     <div class="status-card">
-      <h3>Charts</h3>
-      <div class={`pct-big ${chartsPct.tier}`}>{chartsPct.label}</div>
-      <p style="font-size:.85rem">2D render-host surface · {charts.implemented} implemented · {charts.partial} partial · {charts.missing} missing (of {charts.total})</p>
-      <a href="/status/charts" style="font-size:.85rem;font-weight:700">View details →</a>
-    </div>
-    <div class="status-card">
       <h3>SwiftData</h3>
       <div class={`pct-big ${swiftdataPct.tier}`}>{swiftdataPct.label}</div>
       <p style="font-size:.85rem">@Model, ModelContainer/Context, #Predicate subset · {swiftdata.implemented} implemented · {swiftdata.partial} partial · {swiftdata.missing} missing (of {swiftdata.total})</p>
@@ -97,6 +93,12 @@ const tierLabels = [
       <div class={`pct-big ${chartsPct.tier}`}>{chartsPct.label}</div>
       <p style="font-size:.85rem">Chart container + Bar/Line/Point/Area/Rule/Rectangle/Sector marks · {charts.implemented} implemented · {charts.partial} partial · {charts.missing} missing (of {charts.total})</p>
       <a href="/status/charts" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>EventKit</h3>
+      <div class={`pct-big ${eventkitPct.tier}`}>{eventkitPct.label}</div>
+      <p style="font-size:.85rem">EKEventStore, events, reminders, calendars, permissions · {eventkit.implemented} implemented · {eventkit.partial} partial · {eventkit.missing} missing (of {eventkit.total})</p>
+      <a href="/status/eventkit" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
   </div>
 

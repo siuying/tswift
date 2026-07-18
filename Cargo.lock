@@ -557,6 +557,7 @@ dependencies = [
  "criterion",
  "tswift-charts",
  "tswift-core",
+ "tswift-eventkit",
  "tswift-foundation",
  "tswift-frontend",
  "tswift-std",
@@ -570,6 +571,14 @@ name = "tswift-core"
 version = "0.0.0"
 dependencies = [
  "corosensei",
+ "tswift-frontend",
+]
+
+[[package]]
+name = "tswift-eventkit"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
  "tswift-frontend",
 ]
 

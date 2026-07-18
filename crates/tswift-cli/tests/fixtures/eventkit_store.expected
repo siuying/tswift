@@ -1,0 +1,23 @@
+events granted: true
+events authorization: full
+reminders granted: true
+reminders authorization: fullAccess
+sources: 1
+delegate sources: 0
+default calendar mutable: true
+default source: Local
+calendars after save: 2
+found calendar: Work
+source calendars: 0
+calendar type: local
+calendar immutable: false, subscribed: false
+calendar color set: false
+entity mask: 3, availabilities: 0
+source: local, id set: true, delegate: false
+write-only granted: true
+legacy access granted: true
+reminder calendar mutable: true
+no such calendar item: true
+external items: 0
+calendars after remove: 1
+store id present: true

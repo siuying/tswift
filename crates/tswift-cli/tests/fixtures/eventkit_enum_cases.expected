@@ -1,0 +1,17 @@
+authorization statuses: 6
+entity types: 2
+spans: 2
+event statuses: 4
+availabilities: 5
+priorities: 4
+calendar types: 5
+source types: 6
+alarm types: 4
+proximities: 3
+frequencies: 4
+participant roles: 5
+participant statuses: 8
+participant types: 5
+schedule statuses: 9
+weekdays: 7
+legacy weekdays: 7

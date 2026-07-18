@@ -1221,6 +1221,41 @@ impl<'w> Interpreter<'w> {
             return Ok(None);
         };
         let tn = reference.name;
+        // A framework enum is often a nested type (`URLRequest.CachePolicy`)
+        // while the frontend represents its construction as `URLRequest`
+        // qualified by the `CachePolicy` member. Resolve that nested enum
+        // before the ordinary static-member and nested-user-type paths.
+        let nested_enum = format!("{tn}.{method}");
+        if self.types.is_enum(&nested_enum)
+            && arg_nodes
+                .iter()
+                .any(|arg| arg.arg_label().as_deref() == Some("rawValue"))
+        {
+            let args = self.eval_args(arg_nodes)?;
+            if let Some(raw) = args
+                .iter()
+                .find(|arg| arg.label.as_deref() == Some("rawValue"))
+                .map(|arg| arg.value.clone())
+            {
+                self.gate_type_name(&nested_enum)?;
+                let Some(enum_def) = self.types.enum_def(&nested_enum) else {
+                    return Ok(None);
+                };
+                let case = enum_def
+                    .cases
+                    .iter()
+                    .find(|case| case.raw.as_ref() == Some(&raw))
+                    .map(|case| case.name.clone());
+                return Ok(Some(match case {
+                    Some(case) => SwiftValue::Enum(Rc::new(EnumObj {
+                        type_name: nested_enum,
+                        case,
+                        payload: Vec::new(),
+                    })),
+                    None => SwiftValue::Nil,
+                }));
+            }
+        }
         // Builtin static methods, e.g. `Bool.random()`. A user type shadowing a
         // builtin name (`struct Bool { … }`) wins, so only fall back to the
         // builtin when no user type matches.

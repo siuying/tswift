@@ -46,9 +46,15 @@ const WEEKDAY_NAMES: &[&str] = &[
 ];
 
 pub fn install(interp: &mut Interpreter<'_>) {
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "DateFormatter.Style",
-        &["none", "short", "medium", "long", "full"],
+        &[
+            ("none", 0),
+            ("short", 1),
+            ("medium", 2),
+            ("long", 3),
+            ("full", 4),
+        ],
     );
 
     interp.register_free_fn("DateFormatter", date_formatter_init);

@@ -1,0 +1,11 @@
+[package]
+name = "tswift-eventkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tswift EventKit substrate: a headless, in-memory model of the Calendar/Reminders store (EKEventStore, EKEvent, EKReminder, EKCalendar, permissions). Apple-platform-only; no web/wasm equivalent."
+
+[dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true

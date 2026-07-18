@@ -53,9 +53,13 @@ pub fn install(interp: &mut Interpreter<'_>) {
         ],
     );
     interp.register_builtin_enum("Calendar.SearchDirection", &["forward", "backward"]);
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "ComparisonResult",
-        &["orderedAscending", "orderedSame", "orderedDescending"],
+        &[
+            ("orderedAscending", -1),
+            ("orderedSame", 0),
+            ("orderedDescending", 1),
+        ],
     );
 
     interp.register_free_fn("Calendar", calendar_init);

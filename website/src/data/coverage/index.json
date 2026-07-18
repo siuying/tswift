@@ -12,6 +12,17 @@
       }
     },
     {
+      "framework": "eventkit",
+      "display_name": "EventKit",
+      "totals": {
+        "implemented": 224,
+        "partial": 0,
+        "missing": 0,
+        "out_of_scope": 88,
+        "total": 312
+      }
+    },
+    {
       "framework": "foundation",
       "display_name": "Foundation",
       "totals": {

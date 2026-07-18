@@ -129,32 +129,33 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     // `.reloadIgnoringLocalCacheData` on the right-hand side of an assignment
     // needs the field's declared type to resolve; the generic struct-field
     // setter (no coercion) already handles the write itself.
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "URLRequest.CachePolicy",
         &[
-            "useProtocolCachePolicy",
-            "reloadIgnoringLocalCacheData",
-            "returnCacheDataElseLoad",
-            "returnCacheDataDontLoad",
-            "reloadIgnoringLocalAndRemoteCacheData",
-            "reloadRevalidatingCacheData",
+            ("useProtocolCachePolicy", 0),
+            ("reloadIgnoringLocalCacheData", 1),
+            ("returnCacheDataElseLoad", 2),
+            ("returnCacheDataDontLoad", 3),
+            ("reloadIgnoringLocalAndRemoteCacheData", 4),
+            ("reloadRevalidatingCacheData", 5),
         ],
     );
-    interp.register_builtin_enum(
+    interp.register_builtin_enum_with_raw(
         "URLRequest.NetworkServiceType",
         &[
-            "default",
-            "voip",
-            "video",
-            "background",
-            "voice",
-            "responsiveData",
-            "avStreaming",
-            "responsiveAV",
-            "callSignaling",
+            ("default", 0),
+            ("voip", 1),
+            ("video", 2),
+            ("background", 3),
+            ("voice", 4),
+            ("responsiveData", 6),
+            ("avStreaming", 8),
+            ("responsiveAV", 9),
+            ("callSignaling", 11),
         ],
     );
-    interp.register_builtin_enum("URLRequest.Attribution", &["developer", "user"]);
+    interp
+        .register_builtin_enum_with_raw("URLRequest.Attribution", &[("developer", 0), ("user", 1)]);
     interp.register_intrinsic(
         BuiltinReceiver::URLRequest,
         "==",
@@ -236,13 +237,7 @@ pub(crate) fn install(interp: &mut tswift_core::Interpreter<'_>) {
     );
 
     // ---- URLError ----
-    interp.register_builtin_enum(
-        "URLError.Code",
-        &URL_ERROR_CODES
-            .iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>(),
-    );
+    interp.register_builtin_enum_with_raw("URLError.Code", URL_ERROR_CODES);
     interp.register_free_fn("URLError", url_error_init);
     for (name, f) in [
         ("code", url_error_code as fn(SwiftValue) -> StdResult),
