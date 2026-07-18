@@ -1455,18 +1455,27 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Removed inert closure stashing from callback families without a headless
   event/value source; recorded 44 such callback semantics plus toolbar actions
   as out of scope. Blocker: toolbar builder nodes need routable UIIR ids.
+- agent verify-modifier-closures: PASS — official and independently authored runtime dispatch repros showed observable state patches for long press, drag, refresh, lifecycle/task, onSubmit, and onChange; scope exclusions are explicit; scripts/presubmit green.
 
 ## agent string-index-apis
 
 - Implemented Unicode-grapheme String/Substring index search, typed range bounds, and base-compatible index slicing; presubmit green, no blockers.
+- agent verify-string-index: PASS — independent Swift repro matches Swift 6.3.2 for grapheme/index APIs; coverage checks and scripts/presubmit green.
+- agent review-phase2bc: With fixes (no blockers) — closures now genuinely dispatch and String index APIs match grapheme semantics; both slices sound. Minor: String.IndexRange offset-extraction duplicated across 3 crates; range(of: "") returns empty range vs Foundation nil; redundant grapheme recompute.
 
 ## agent charts-members
 
 - Implemented `Chart.body` and `View.chartGesture` with UIIR-backed semantics, added unit tests and `charts-phase2d` golden coverage, refreshed Charts inventory/website coverage, and documented headless ChartProxy/arbitrary-gesture limits. Blockers: none.
+- agent verify-review-charts: PASS — independent Chart+chartGesture repro drives real handlers (@State mutates through longPress/tap → setArgs patches, not inert markers); Chart.body materializes UIIR; unsupported gestures degrade honestly; Charts coverage 60/60 impl, 36/60 verified with gaps documented in scope.toml; scripts/presubmit green (exit 0). Review verdict: Ready to merge (minor nits only).
+
+- agent phase3-gap-survey: surveyed live stdlib/Foundation/SwiftUI/SwiftData/Charts/EventKit coverage, smoke-tested three app-shaped SwiftUI programs via `tswift run`, and wrote `docs/research/phase3-coverage-gaps.md`; no code changes.
 
 ## agent app-scene-entrypoint
 
 - Added host-owned `App → Scene → WindowGroup` entry selection across CLI, wasm, and FFI; one WindowGroup unwraps into the existing render session, including scene-level SwiftData scope. Added counter, list/navigation, and SwiftData todo app goldens; `tswift run` smoke coverage is green. Multi-window, platform scenes, and lifecycle/commands remain explicit unsupported diagnostics/scope.
+
+- agent verify-review-app-entry: PASS (with-fixes) — own repros (counter state 5→6 via dispatch, NavigationStack list, scene-level .modelContainer todo data observable, explicit MyApp.main()+computed prop) all run; root-view fixtures behavior-preserving; validate web + presubmit both green. Issue: two top-level WindowGroups silently render only the last window instead of the documented "deliberately fail" (session.rs multi-window Array guard is dead for idiomatic scene bodies). Verdict: merge With fixes.
+- agent fix-multiwindow-guard: PASS — deterministic multiple-window diagnostic; single-window behavior preserved.
 
 ## agent sequence-collection-protocols
 
@@ -1479,8 +1488,12 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
   existing materialization limit remains the honest guard for infinite ones.
 - Commit: `feat(stdlib): add protocol sequence operations`.
 
+- agent verify-review-sequence: PASS — repros (chained filter/map→ForEach, reduce(into:), zip+enumerated, sorted(by:>), prefix/drop(while:), joined nested, split, custom Sequence map/contains/count/first, Dict/Set/String seq) match Swift; coverage Sequence 26/31 impl 25/31 verified, Collection 14/23 verified confirmed; presubmit green. Verdict: With fixes (minor: dropFirst(-1)→[2,3] & prefix(-1)→[] clamp vs Swift trap, pre-existing; String.map/filter return-type quirk; Array(customSequence) unsupported). Ready to merge.
+
 ## agent binding-observation
 
-- Added closure-backed Binding(get:set:), optional unwrap and child $state projection; keyed @Environment propagation and existing environment-object/observable dispatch now produce UIIR patches. Goldens cover child form input, shared observed counter, and theming. Coverage: Binding 4/13 impl, 2/13 verified to 4/13, 2/13; Environment 0/2, 0/2 to 2/2, 1/2. Collection bindings and transaction/animation semantics remain scoped out.
+- Added closure-backed `Binding(get:set:)`, optional unwrap and child `$state` projection; keyed `@Environment` propagation and existing environment-object/observable dispatch now produce UIIR patches. Goldens cover child form input, shared observed counter, and theming. Coverage: Binding 4/13 impl, 2/13 verified → 4/13, 2/13; Environment 0/2, 0/2 → 2/2, 1/2. Collection bindings and transaction/animation semantics remain scoped out.
+- agent verify-review-binding: FAIL — features work in scope (Binding get/set transform, optional unwrap+nil, $state child/grandchild writeback, @Environment on reader node, @ObservedObject/@Published sibling re-render all produce correct UIIR patches; scoped-out claims documented). BUT presubmit RED: parser change in collect_decl_meta unconditionally `parse_expr`s attribute args, breaking `@available(iOS 15.0, macOS 12.0, *)` — golden_fixtures_match fails on back_deployed_specialize.swift (regression vs e74d468). Also: @Environment/@EnvironmentObject don't propagate through builtin containers (pre-existing); unset @Environment key traps instead of default. Verdict: No — Critical parser regression must be fixed.
 - agent fix-attr-parse-regression: parsed expression-style wrapper arguments while consuming availability and specialization grammars opaquely; verified @available and @Environment key-path coverage.
+- agent reverify-binding-fix: PASS — presubmit green; @available variants, @Environment key path render, and child binding writeback all passed independently.
 - agent website-sync: PASS — refreshed live coverage data and status prose for SE-0279, SwiftData predicates, SwiftUI closures/bindings/environment/app entry, String/Substring indexes, Sequence/Collection protocols, and Charts phase 2d; rebuilt WASM; scripts/validate web green.
