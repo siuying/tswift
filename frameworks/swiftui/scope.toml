@@ -118,3 +118,30 @@ gestures = ["DragGesture", "MagnificationGesture", "RotationGesture", "GestureSt
 graphics = ["Canvas", "Path", "GraphicsContext", "Gradient", "LinearGradient", "RadialGradient", "AngularGradient", "Image", "Shadow"]
 platform_interop = ["UIViewRepresentable", "NSViewRepresentable", "UIViewControllerRepresentable", "UIHostingController", "NSHostingController"]
 app_scene_lifecycle = ["App", "Scene", "WindowGroup", "Settings", "DocumentGroup", "MenuBarExtra", "Commands"]
+
+# `.toolbar { ... }` records and renders its builder content as a nested UIIR
+# modifier value, but that representation has no host-routable structural ids.
+# Toolbar button actions are therefore explicitly unsupported until toolbar
+# content becomes an event-addressable UIIR subtree.
+[out_of_scope_members]
+toolbar_actions = ["View.toolbar"]
+closure_callback_semantics = [
+  "View.transaction", "View.visualEffect", "View.transformEnvironment",
+  "View.scrollTransition", "View.onGeometryChange", "View.onScrollGeometryChange",
+  "View.onScrollPhaseChange", "View.onScrollVisibilityChange",
+  "View.onPreferenceChange", "View.onModifierKeysChanged",
+  "View.transformPreference", "View.phaseAnimator", "View.onCommand",
+  "View.onPasteCommand", "View.renameAction", "View.onKeyPress",
+  "View.onContinueUserActivity", "View.onScrollTargetVisibilityChange",
+  "View.onDrop", "View.onDragSessionUpdated", "View.onDropSessionUpdated",
+  "View.onInteractiveResizeChange", "View.onLongTouchGesture",
+  "View.onVolumeViewpointChange", "View.onWorldRecenter",
+  "View.accessibilityAction", "View.accessibilityAdjustableAction",
+  "View.accessibilityScrollAction", "View.accessibilityZoomAction",
+  "View.dropDestination", "View.copyable", "View.cuttable",
+  "View.pasteDestination", "View.itemProvider", "View.userActivity",
+  "View.exportsItemProviders", "View.importsItemProviders",
+  "View.fileExporter", "View.fileImporter", "View.fileMover",
+  "View.dismissalConfirmationDialog", "View.digitalCrownRotation",
+  "View.backgroundPreferenceValue", "View.overlayPreferenceValue",
+]

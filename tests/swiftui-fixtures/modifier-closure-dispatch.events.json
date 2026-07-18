@@ -1,0 +1,10 @@
+[
+  { "id": "0.1", "event": "longPress" },
+  { "id": "0.2", "event": "drag" },
+  { "id": "0.3", "event": "refresh" },
+  { "id": "0.4", "event": "appear" },
+  { "id": "0.4", "event": "task" },
+  { "id": "0.4", "event": "disappear" },
+  { "id": "0.5", "event": "set", "value": "Ada" },
+  { "id": "0.5", "event": "submit" }
+]

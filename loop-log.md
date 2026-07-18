@@ -1446,3 +1446,12 @@ oracle for SwiftData semantics; no shortcuts — weigh perf + structural impact.
 - Verified by a new tagged golden fixture `swiftdata_predicate_ops` (in-list,
   isEmpty, negated isEmpty, empty-collection). Updated scope.toml predicate note.
 - presubmit green. Commit 5998fe1.
+
+## swiftui-modifier-closures
+
+- Routed scalar/array host event payloads into executable modifier handlers and
+  added a patch golden covering long press, drag, refresh, lifecycle, task,
+  submit, and `onChange(old:new)` state mutations.
+- Removed inert closure stashing from callback families without a headless
+  event/value source; recorded 44 such callback semantics plus toolbar actions
+  as out of scope. Blocker: toolbar builder nodes need routable UIIR ids.

@@ -1444,8 +1444,8 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("task", modifier_task),
     ("onDisappear", modifier_on_disappear),
     ("onChange", modifier_on_change),
-    // Closure-driven layout / effect / scroll / event modifiers (recorded-only:
-    // bare marker + stashed closure, body not invoked in a headless runtime).
+    // Closure-driven layout / effect / scroll modifiers (recorded-only: bare
+    // marker; callback semantics are excluded from the coverage scope).
     ("transaction", modifier_transaction),
     ("visualEffect", modifier_visual_effect),
     ("transformEnvironment", modifier_transform_environment),
@@ -1472,7 +1472,7 @@ pub(crate) const MODIFIER_FNS: &[(&str, StructMethodFn)] = &[
     ("glassEffectID", modifier_glass_effect_id),
     ("glassEffectUnion", modifier_glass_effect_union),
     ("renameAction", modifier_rename_action),
-    // Event-listener modifiers (recorded-only: bare marker + stashed closure).
+    // Event-listener modifiers that need platform payloads (recorded-only).
     ("onKeyPress", modifier_on_key_press),
     ("onContinueUserActivity", modifier_on_continue_user_activity),
     (
@@ -2310,123 +2310,107 @@ fn modifier_on_change(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<Arg
     }
 }
 
-/// Record a closure-driven View modifier at the **recorded-only** fidelity
-/// tier: append a bare `$swift_name` marker so hosts know the listener/effect
-/// is present, and stash the trailing closure under the same event key (never
-/// serialized — cf. `attach_event`). The closure's argument (`Transaction`,
-/// `GeometryProxy`, `ScrollTransitionPhase`, a preference value, …) is not
-/// synthesized by this headless runtime, so the body is not invoked; only the
-/// marker crosses the UIIR boundary. Non-closure arguments (metatypes,
-/// key paths, tokens) are intentionally dropped from the marker.
-macro_rules! closure_modifier {
+/// Record an unsupported closure-driven View modifier as a bare UIIR marker.
+/// Its callback is deliberately dropped: the headless runtime has no source
+/// event or value to give it, and retaining an inert closure would falsely
+/// imply runtime behavior. The exclusions live in `frameworks/swiftui/scope.toml`.
+macro_rules! recorded_only_closure_modifier {
     ($fn_name:ident, $swift_name:literal) => {
         pub(crate) fn $fn_name(
             _ctx: &mut dyn StdContext,
             recv: SwiftValue,
-            args: Vec<Arg>,
+            _args: Vec<Arg>,
         ) -> StdResult {
-            let action = args
-                .into_iter()
-                .rev()
-                .find_map(|a| matches!(a.value, SwiftValue::Closure(_)).then_some(a.value));
-            attach_event(recv, $swift_name, $swift_name, Vec::new(), action)
+            append_modifier(recv, make_modifier($swift_name, Vec::new()))
         }
     };
 }
 
 // Closure-driven layout / effect / scroll / event modifiers (recorded-only).
-closure_modifier!(modifier_transaction, "transaction");
-closure_modifier!(modifier_visual_effect, "visualEffect");
-closure_modifier!(modifier_transform_environment, "transformEnvironment");
-closure_modifier!(modifier_scroll_transition, "scrollTransition");
-closure_modifier!(modifier_on_geometry_change, "onGeometryChange");
-closure_modifier!(modifier_on_scroll_geometry_change, "onScrollGeometryChange");
-closure_modifier!(modifier_on_scroll_phase_change, "onScrollPhaseChange");
-closure_modifier!(
+recorded_only_closure_modifier!(modifier_transaction, "transaction");
+recorded_only_closure_modifier!(modifier_visual_effect, "visualEffect");
+recorded_only_closure_modifier!(modifier_transform_environment, "transformEnvironment");
+recorded_only_closure_modifier!(modifier_scroll_transition, "scrollTransition");
+recorded_only_closure_modifier!(modifier_on_geometry_change, "onGeometryChange");
+recorded_only_closure_modifier!(modifier_on_scroll_geometry_change, "onScrollGeometryChange");
+recorded_only_closure_modifier!(modifier_on_scroll_phase_change, "onScrollPhaseChange");
+recorded_only_closure_modifier!(
     modifier_on_scroll_visibility_change,
     "onScrollVisibilityChange"
 );
-closure_modifier!(modifier_on_preference_change, "onPreferenceChange");
-closure_modifier!(modifier_on_modifier_keys_changed, "onModifierKeysChanged");
+recorded_only_closure_modifier!(modifier_on_preference_change, "onPreferenceChange");
+recorded_only_closure_modifier!(modifier_on_modifier_keys_changed, "onModifierKeysChanged");
 // Preference transform, phase animation, and command event handlers, all
-// recorded-only (bare marker + stashed closure).
-closure_modifier!(modifier_transform_preference, "transformPreference");
-closure_modifier!(modifier_phase_animator, "phaseAnimator");
-closure_modifier!(modifier_on_command, "onCommand");
-closure_modifier!(modifier_on_paste_command, "onPasteCommand");
-closure_modifier!(modifier_rename_action, "renameAction");
-// Event-listener modifiers (recorded-only: bare marker + stashed closure). Each
-// records that the listener is present; the callback argument (KeyPress,
-// NSUserActivity, drop providers, resize/viewpoint/recenter payloads) is not
-// synthesized by a headless runtime, so non-closure arguments (activity types,
-// UTType lists, id metatypes, thresholds) are dropped from the marker.
-closure_modifier!(modifier_on_key_press, "onKeyPress");
-closure_modifier!(modifier_on_continue_user_activity, "onContinueUserActivity");
-closure_modifier!(
+// recorded-only (bare marker; callbacks are dropped).
+recorded_only_closure_modifier!(modifier_transform_preference, "transformPreference");
+recorded_only_closure_modifier!(modifier_phase_animator, "phaseAnimator");
+recorded_only_closure_modifier!(modifier_on_command, "onCommand");
+recorded_only_closure_modifier!(modifier_on_paste_command, "onPasteCommand");
+recorded_only_closure_modifier!(modifier_rename_action, "renameAction");
+// Event-listener modifiers whose source event requires a platform payload
+// (KeyPress, NSUserActivity, drag provider, resize/viewpoint/recenter, …).
+recorded_only_closure_modifier!(modifier_on_key_press, "onKeyPress");
+recorded_only_closure_modifier!(modifier_on_continue_user_activity, "onContinueUserActivity");
+recorded_only_closure_modifier!(
     modifier_on_scroll_target_visibility_change,
     "onScrollTargetVisibilityChange"
 );
-closure_modifier!(modifier_on_drop, "onDrop");
-closure_modifier!(modifier_on_drag_session_updated, "onDragSessionUpdated");
-closure_modifier!(modifier_on_drop_session_updated, "onDropSessionUpdated");
-closure_modifier!(
+recorded_only_closure_modifier!(modifier_on_drop, "onDrop");
+recorded_only_closure_modifier!(modifier_on_drag_session_updated, "onDragSessionUpdated");
+recorded_only_closure_modifier!(modifier_on_drop_session_updated, "onDropSessionUpdated");
+recorded_only_closure_modifier!(
     modifier_on_interactive_resize_change,
     "onInteractiveResizeChange"
 );
-closure_modifier!(modifier_on_long_touch_gesture, "onLongTouchGesture");
-closure_modifier!(
+recorded_only_closure_modifier!(modifier_on_long_touch_gesture, "onLongTouchGesture");
+recorded_only_closure_modifier!(
     modifier_on_volume_viewpoint_change,
     "onVolumeViewpointChange"
 );
-closure_modifier!(modifier_on_world_recenter, "onWorldRecenter");
+recorded_only_closure_modifier!(modifier_on_world_recenter, "onWorldRecenter");
 // Closure-driven accessibility actions and typed drop destination
-// (recorded-only: bare marker + stashed handler closure). The handler argument
-// (adjustment direction, scroll edge, zoom action, dropped items) is not
-// synthesized by a headless runtime, so the body is not invoked; non-closure
-// args (action kind, item metatype) are dropped.
-closure_modifier!(modifier_accessibility_action, "accessibilityAction");
-closure_modifier!(
+// (recorded-only): platform input and semantic return values are unsupported.
+recorded_only_closure_modifier!(modifier_accessibility_action, "accessibilityAction");
+recorded_only_closure_modifier!(
     modifier_accessibility_adjustable_action,
     "accessibilityAdjustableAction"
 );
-closure_modifier!(
+recorded_only_closure_modifier!(
     modifier_accessibility_scroll_action,
     "accessibilityScrollAction"
 );
-closure_modifier!(
+recorded_only_closure_modifier!(
     modifier_accessibility_zoom_action,
     "accessibilityZoomAction"
 );
-closure_modifier!(modifier_drop_destination, "dropDestination");
-// Data-transfer / item-provider modifiers (recorded-only: bare marker + stashed
-// closure). Copy/cut/paste/drag payloads and item providers are not produced by
-// a headless runtime, so the closure body is not invoked; non-closure args
-// (payload metatype, content-type lists, activity type) are dropped.
-closure_modifier!(modifier_copyable, "copyable");
-closure_modifier!(modifier_cuttable, "cuttable");
-closure_modifier!(modifier_paste_destination, "pasteDestination");
-closure_modifier!(modifier_item_provider, "itemProvider");
-closure_modifier!(modifier_user_activity, "userActivity");
-closure_modifier!(modifier_exports_item_providers, "exportsItemProviders");
-closure_modifier!(modifier_imports_item_providers, "importsItemProviders");
+recorded_only_closure_modifier!(modifier_drop_destination, "dropDestination");
+// Data-transfer / item-provider modifiers (recorded-only): the headless host
+// cannot produce their provider or item payloads.
+recorded_only_closure_modifier!(modifier_copyable, "copyable");
+recorded_only_closure_modifier!(modifier_cuttable, "cuttable");
+recorded_only_closure_modifier!(modifier_paste_destination, "pasteDestination");
+recorded_only_closure_modifier!(modifier_item_provider, "itemProvider");
+recorded_only_closure_modifier!(modifier_user_activity, "userActivity");
+recorded_only_closure_modifier!(modifier_exports_item_providers, "exportsItemProviders");
+recorded_only_closure_modifier!(modifier_imports_item_providers, "importsItemProviders");
 // File / document / digital-crown modifiers (recorded-only closures).
-closure_modifier!(modifier_file_exporter, "fileExporter");
-closure_modifier!(modifier_file_importer, "fileImporter");
-closure_modifier!(modifier_file_mover, "fileMover");
-closure_modifier!(
+recorded_only_closure_modifier!(modifier_file_exporter, "fileExporter");
+recorded_only_closure_modifier!(modifier_file_importer, "fileImporter");
+recorded_only_closure_modifier!(modifier_file_mover, "fileMover");
+recorded_only_closure_modifier!(
     modifier_dismissal_confirmation_dialog,
     "dismissalConfirmationDialog"
 );
-closure_modifier!(modifier_digital_crown_rotation, "digitalCrownRotation");
+recorded_only_closure_modifier!(modifier_digital_crown_rotation, "digitalCrownRotation");
 // `background/overlayPreferenceValue(_:_:)` take a `(Value) -> View` transform,
 // not a plain `@ViewBuilder`: the preference `Value` is not computed by a
 // headless runtime, so the transform cannot be realized — record a bare marker
-// and stash the closure (recorded-only), rather than fake empty content.
-closure_modifier!(
+// rather than fake empty content.
+recorded_only_closure_modifier!(
     modifier_background_preference_value,
     "backgroundPreferenceValue"
 );
-closure_modifier!(modifier_overlay_preference_value, "overlayPreferenceValue");
+recorded_only_closure_modifier!(modifier_overlay_preference_value, "overlayPreferenceValue");
 
 /// Record a `@ViewBuilder`-content View modifier: lower the trailing closure to
 /// a nested child subtree (like `tabItem`/`searchSuggestions`) and attach it

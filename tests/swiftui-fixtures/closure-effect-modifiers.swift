@@ -1,10 +1,10 @@
 import SwiftUI
 
 // Closure-driven layout / effect / scroll / event modifiers (recorded-only).
-// Each records a bare marker; the trailing closure is stashed under the same
-// event key and never serialized (a headless runtime synthesizes no
-// Transaction/GeometryProxy/ScrollGeometry/preference value to feed it). This
-// verifies the markers reach the UIIR in order without carrying closure noise.
+// Each records a bare marker and drops its unsupported callback (a headless
+// runtime synthesizes no Transaction/GeometryProxy/ScrollGeometry/preference
+// value to feed it). This verifies the markers reach the UIIR in order without
+// carrying closure noise.
 struct WidthKey: PreferenceKey {
     static var defaultValue: Double = 0
     static func reduce(value: inout Double, nextValue: () -> Double) {}

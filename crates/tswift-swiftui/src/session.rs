@@ -618,7 +618,8 @@ impl<'i, 'w> Session<'i, 'w> {
                         }
                     }
                 } else if let Some(closure_id) = find_handler(&tree, &event.id, name) {
-                    self.interp.invoke_closure(closure_id, Vec::new())?;
+                    self.interp
+                        .invoke_closure(closure_id, event_arguments(event.value.as_ref()))?;
                 }
                 // Alert/confirmationDialog actions always dismiss (SwiftUI
                 // semantics): tapping any button inside an `alert`/
@@ -712,6 +713,18 @@ impl<'i, 'w> Session<'i, 'w> {
             tree = self.render()?;
         }
         Ok(tree)
+    }
+}
+
+/// Convert an optional host event payload into closure arguments. A scalar is
+/// one argument; an array represents the positional arguments of callbacks
+/// such as `onScrollPhaseChange`. No payload preserves the zero-argument
+/// action convention used by buttons, gestures, and lifecycle modifiers.
+fn event_arguments(value: Option<&SwiftValue>) -> Vec<SwiftValue> {
+    match value {
+        Some(SwiftValue::Array(values)) => values.iter().cloned().collect(),
+        Some(value) => vec![value.clone()],
+        None => Vec::new(),
     }
 }
 
@@ -1428,6 +1441,34 @@ struct LifecycleView: View {
         };
         let after = session.dispatch(&submit).expect("dispatch");
         assert!(uiir::to_json(&after).contains("submit"), "onSubmit fired");
+    }
+
+    #[test]
+    fn dispatch_forwards_scalar_payload_to_event_handler_closure() {
+        let mut interp = events_interp(
+            r#"
+struct HoverView: View {
+    @State private var status = "idle"
+    var body: some View {
+        Text(status)
+            .onHover { hovering in status = hovering ? "hovered" : "left" }
+    }
+}
+"#,
+        );
+        let mut session = Session::new(&mut interp, "HoverView").expect("session");
+        session.render().expect("render");
+        let hover = Event {
+            id: "0".into(),
+            event: "hover".into(),
+            value: Some(SwiftValue::Bool(true)),
+        };
+        let after = session.dispatch(&hover).expect("dispatch");
+        assert!(
+            uiir::to_json(&after).contains("hovered"),
+            "event payload reached onHover closure: {}",
+            uiir::to_json(&after)
+        );
     }
 
     #[test]
