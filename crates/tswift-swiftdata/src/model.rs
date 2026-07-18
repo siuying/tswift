@@ -1562,6 +1562,32 @@ impl<'s> PredicateCompiler<'_, '_, 's> {
                     params: frag.params,
                 })
             }
+            // A String property's `.isEmpty` (`obj.title.isEmpty`) lowers to a
+            // zero-length test. `param_column` on the receiver identifies the
+            // column; a non-String column is rejected.
+            NodeKind::MemberExpr if node.text().as_deref() == Some("isEmpty") => {
+                let receiver = node
+                    .children()
+                    .next()
+                    .ok_or_else(|| predicate_error("`isEmpty` without a receiver"))?;
+                let column = param_column(&receiver, self.param).ok_or_else(|| {
+                    predicate_error("`isEmpty` may only be used on a stored String property")
+                })?;
+                if let Some(col) = self.column(&column)? {
+                    if col.sql_type != SqlType::Text {
+                        return Err(predicate_error(format!(
+                            "'{column}' is not a String; `isEmpty` may only be used on a \
+                             String property"
+                        )));
+                    }
+                }
+                let ident = quote_ident(&column);
+                Ok(Fragment {
+                    // An optional empty column may be NULL or ''; both are empty.
+                    sql: format!("({ident} IS NULL OR {ident} = '')"),
+                    params: vec![],
+                })
+            }
             // A bare boolean stored property (`obj.watched`) used in boolean
             // position lowers to `\"watched\" = 1`.
             NodeKind::MemberExpr => {
@@ -1685,6 +1711,13 @@ impl<'s> PredicateCompiler<'_, '_, 's> {
             .children()
             .next()
             .ok_or_else(|| predicate_error("method call without a receiver"))?;
+        // Collection membership `collection.contains(obj.prop)` — the receiver
+        // is a captured/literal array and the argument is the model column —
+        // lowers to `prop IN (?, …)`. (Distinct from `obj.text.contains("x")`,
+        // where the receiver is the column; handled below.)
+        if method == "contains" && param_column(&receiver, self.param).is_none() {
+            return self.compile_collection_contains(node, &receiver);
+        }
         let column = param_column(&receiver, self.param).ok_or_else(|| {
             predicate_error("string predicate must call the method on a stored property")
         })?;
@@ -1727,6 +1760,60 @@ impl<'s> PredicateCompiler<'_, '_, 's> {
         Ok(Fragment {
             sql: format!("{} LIKE ? ESCAPE '\\'", quote_ident(&column)),
             params: vec![DbValue::Text(pattern)],
+        })
+    }
+
+    /// `collection.contains(obj.prop)` → `prop IN (?, …)`. The receiver is a
+    /// captured/literal collection (evaluated eagerly to its elements); the sole
+    /// argument must be a stored property of the model object. An empty
+    /// collection yields a constant-false fragment (`IN ()` is a syntax error in
+    /// SQL, and nothing is a member of the empty set).
+    fn compile_collection_contains(
+        &mut self,
+        node: &Node<'static>,
+        receiver: &Node<'static>,
+    ) -> Result<Fragment, StdError> {
+        let mut kids = node.children();
+        kids.next(); // callee (already inspected)
+        let arg = kids
+            .next()
+            .ok_or_else(|| predicate_error("`contains` requires one argument"))?;
+        if kids.next().is_some() {
+            return Err(predicate_error("`contains` takes exactly one argument"));
+        }
+        let column = param_column(&arg, self.param).ok_or_else(|| {
+            predicate_error(
+                "collection `contains` must test a stored property of the model object \
+                 (`list.contains(obj.prop)`)",
+            )
+        })?;
+        // Validate the column exists (when a schema is known).
+        self.column(&column)?;
+        let value = self.ctx.eval_node(receiver)?;
+        let elements = match &value {
+            SwiftValue::Array(items) => items.as_ref().clone(),
+            SwiftValue::Set(items) => items.iter().cloned().collect(),
+            _ => {
+                return Err(predicate_error(
+                    "collection `contains` requires an array or set of literal/captured values",
+                ))
+            }
+        };
+        if elements.is_empty() {
+            // Nothing is a member of the empty set.
+            return Ok(Fragment {
+                sql: "0".to_string(),
+                params: vec![],
+            });
+        }
+        let mut params = Vec::with_capacity(elements.len());
+        for element in &elements {
+            params.push(swift_to_db_value(element)?);
+        }
+        let placeholders = vec!["?"; params.len()].join(", ");
+        Ok(Fragment {
+            sql: format!("{} IN ({placeholders})", quote_ident(&column)),
+            params,
         })
     }
 }
