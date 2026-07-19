@@ -618,23 +618,43 @@ program and run an explicit subset, without a bespoke integration per host.
 **Status (landed):**
 
 - **Library seam** (`tswift-testing`, single source of truth):
-  - `list_tests(files) -> Vec<TestDescriptor>` — discovery **without running**
-    (id, display name, suite path, file/line, tags, parameterized case count,
-    static `.disabled` skip status/reason). A `.enabled(if:)` condition needs
-    the program run, so it is *not* reflected in a descriptor's `skipped`
-    field — documented.
+  - `list_tests(files) -> Result<Vec<TestDescriptor>, CompileError>` —
+    discovery **without running** (id, display name, suite path, file/line,
+    tags, parameterized case count *and* each case's own selectable id
+    (`cases: Vec<String>`), static `.disabled` skip status/reason, and — set
+    by a multi-unit host — the owning test-target's `target`). A `.enabled(if:)`
+    condition needs the program run, so it is *not* reflected in a
+    descriptor's `skipped` field — documented. `Err` on a compile error
+    (never a silently empty list — a caller must be able to tell "no tests"
+    apart from "doesn't compile"), matching `run_tests`'s own
+    `compile_error` handling.
   - `RunOptions` gains `ids: Option<Vec<String>>`: exact canonical-id
     selection, distinct from the substring/tag `filter`. A base test id runs
     all of a parameterized test's cases; an exact case id (`p() - 2`, argument
     value suffixed — the base id carries no parameter labels) runs one. An id
-    matching no discovered test is an error listing the unknown ids, never a
-    silent zero-tests success. `ids` takes precedence over `filter`.
-  - `wire.rs` serializes descriptors + `RunReport` to JSON and parses run
-    options, using the hand-rolled `tswift_core::json` layer (the workspace
-    avoids `serde` for offline builds — the plan's "serde" note is superseded).
+    matching no discovered test *anywhere* is an error listing the unknown
+    ids, never a silent zero-tests success. `ids` takes precedence over
+    `filter`. (Resolving an id selection *across* several test-target units —
+    each id need only match in one of them — is the CLI's job; see below.)
+  - `wire.rs` derives `serde::Serialize`/`Deserialize` on `TestDescriptor` /
+    `RunReport` (hand-written, since its `ok`/`passed`/… fields are computed,
+    not stored) / `TestResult` / `Issue` / `RunOptions` and uses `serde_json`
+    for (de)serialization, rather than the hand-rolled `tswift_core::json`
+    layer. `serde`/`serde_json` are pinned exceptions for this crate only (see
+    `docs/agents/environment.md`); `tswift_core::json` remains the shared
+    layer elsewhere. Two distinct `"ok":false` shapes exist — `compileError`
+    (the program didn't compile) vs. `error` (the request itself was
+    malformed) — documented in `wire.rs`'s module docs.
 - **CLI:** `tswift test <inputs> --list [--json]` prints the list (human table
-  or JSON); `tswift test <inputs> --test <id>` (repeatable) runs exactly those
-  ids. `--test` and `--filter` are mutually exclusive (usage error on both).
+  — each parameterized case's own id printed under its test — or JSON); a
+  compile error during `--list` renders the same way `run`'s does and exits
+  nonzero (`ok:false`+`compileError` in `--json`), never a silent empty list.
+  `tswift test <inputs> --test <id>` (repeatable) runs exactly those ids;
+  over a multi-`.testTarget` package, each id is resolved against whichever
+  unit(s) actually have it (an id need only match *one* unit; a unit with
+  none of the requested ids is skipped from the run, not treated as an
+  error). `--test`/`--filter` are mutually exclusive, and either is a usage
+  error combined with `--list`.
 - **Wasm:** `listTests(filesJson)` / `runTests(filesJson, optionsJson)`.
 - **FFI:** `tswift_list_tests(module_json)` /
   `tswift_run_tests(module_json, options_json)` (stateless, following the

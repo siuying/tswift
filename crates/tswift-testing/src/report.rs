@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 use tswift_frontend::Diagnostic;
 
 /// Why analysis/loading failed before any test could run.
@@ -50,7 +52,7 @@ impl std::fmt::Display for CompileError {
 /// A single recorded failure during a test (`#expect`/`#require` failure, an
 /// uncaught throw, or a runtime trap). Location is remapped to the originating
 /// source file (multi-file concatenation aware).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Issue {
     /// Human-readable failure detail (expression spelling + operand values).
     pub message: String,
@@ -64,7 +66,8 @@ pub struct Issue {
 }
 
 /// The outcome of running one test.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TestStatus {
     Passed,
     Failed,
@@ -73,7 +76,8 @@ pub enum TestStatus {
 }
 
 /// The result of running one discovered `@Test`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TestResult {
     /// Fully-qualified id (`"free()"`, `"MathSuite/pass()"`).
     pub id: String,
@@ -81,6 +85,10 @@ pub struct TestResult {
     pub display_name: Option<String>,
     pub status: TestStatus,
     pub issues: Vec<Issue>,
+    /// Wire field is `durationMs`, milliseconds (`Duration` has no direct
+    /// serde impl; `duration_ms` renders it the same way the old hand-rolled
+    /// `result_json` did).
+    #[serde(rename = "durationMs", serialize_with = "duration_ms")]
     pub duration: Duration,
     /// Source file the test is declared in.
     pub file: Option<String>,
@@ -91,6 +99,10 @@ pub struct TestResult {
     pub skip_reason: Option<String>,
     /// `.bug(…)` references on the test, surfaced on failure.
     pub bugs: Vec<String>,
+}
+
+fn duration_ms<S: Serializer>(d: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(d.as_millis() as i64)
 }
 
 impl TestResult {
@@ -108,6 +120,31 @@ pub struct RunReport {
     /// Set when analysis failed before any test could run. A run with a
     /// compile error is never a success.
     pub compile_error: Option<CompileError>,
+}
+
+/// Hand-written rather than `#[derive(Serialize)]`: the wire shape's `ok`,
+/// `passed`, `failed`, `skipped`, and `issueCount` fields are computed from
+/// `self` (via [`RunReport::is_success`] etc.), not stored fields serde's
+/// derive can read off directly, and `compileError` renders
+/// [`CompileError`]'s `Display` string rather than its enum shape (see
+/// `wire`'s module docs for how this `ok:false` shape compares to the
+/// `list_tests`/malformed-request one).
+impl Serialize for RunReport {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("RunReport", 8)?;
+        state.serialize_field("ok", &self.is_success())?;
+        state.serialize_field("passed", &self.passed())?;
+        state.serialize_field("failed", &self.failed())?;
+        state.serialize_field("skipped", &self.skipped())?;
+        state.serialize_field("issueCount", &self.issue_count())?;
+        state.serialize_field("durationMs", &(self.duration.as_millis() as i64))?;
+        state.serialize_field(
+            "compileError",
+            &self.compile_error.as_ref().map(|e| e.to_string()),
+        )?;
+        state.serialize_field("tests", &self.tests)?;
+        state.end()
+    }
 }
 
 impl RunReport {

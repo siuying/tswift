@@ -15,11 +15,13 @@ use tswift_frontend::{Analysis, SourceFile};
 
 use crate::discover;
 use crate::params::{self, Expansion};
+use crate::report::CompileError;
 use crate::traits::Trait;
 
 /// A single discovered test, described for a host to render/select — the result
 /// of discovery *without* running.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TestDescriptor {
     /// Canonical id (`"free()"`, `"MathSuite/pass()"`), the exact string a
     /// host passes back in [`crate::RunOptions::ids`] to select this test.
@@ -40,23 +42,40 @@ pub struct TestDescriptor {
     /// `arguments:` collection; `None` for a non-parameterized test or an
     /// `arguments:` shape that can't be expanded structurally.
     pub case_count: Option<usize>,
+    /// The exact selectable id of every parameterized case (e.g. `"p() - 2"`),
+    /// in case order — the same ids [`crate::run_tests`] assigns, so a host
+    /// can pass one straight back in `RunOptions::ids`. Empty when
+    /// [`case_count`](Self::case_count) is `None`.
+    pub cases: Vec<String>,
     /// Statically skipped by a `.disabled(...)` trait (a `.enabled(if:)`
     /// condition is not evaluated during listing, so it never sets this).
     pub skipped: bool,
     /// The `.disabled("reason")` reason, when [`skipped`](Self::skipped).
     pub skip_reason: Option<String>,
+    /// The owning test-target unit's name, set by a multi-target host (the
+    /// `tswift test --list` CLI over a `Package.swift` with more than one
+    /// `.testTarget`); `None` for a single-unit listing (a plain file/dir, or
+    /// the wasm/FFI `listTests` seam, which never see multiple units).
+    pub target: Option<String>,
 }
 
 /// Analyze `files` and describe every discovered `@Test` without running any.
 ///
-/// Returns an empty list on a compile error (a host that needs the diagnostics
-/// should analyze/run separately); discovery itself never evaluates code.
-pub fn list_tests(files: &[SourceFile]) -> Vec<TestDescriptor> {
-    let Ok(analysis) = Analysis::analyze_program(files) else {
-        return Vec::new();
-    };
+/// `Err` on a compile error (never a silently empty list — a caller must be
+/// able to tell "no tests" apart from "the program doesn't compile" and
+/// render/report the failure accordingly, same as [`crate::run_tests`]);
+/// discovery itself never evaluates code.
+pub fn list_tests(files: &[SourceFile]) -> Result<Vec<TestDescriptor>, CompileError> {
+    let analysis =
+        Analysis::analyze_program(files).map_err(|err| CompileError::Message(err.to_string()))?;
     if !analysis.is_ok() {
-        return Vec::new();
+        let diags: Vec<_> = analysis
+            .diagnostics()
+            .iter()
+            .filter(|d| d.is_error())
+            .cloned()
+            .collect();
+        return Err(CompileError::Diagnostics(diags));
     }
     // Retain the analysis for `Node<'static>` cursor lifetimes without a
     // permanent leak (dropped when this throwaway interpreter drops).
@@ -64,11 +83,22 @@ pub fn list_tests(files: &[SourceFile]) -> Vec<TestDescriptor> {
     let mut interp = Interpreter::new(&mut sink);
     let analysis: &'static Analysis = interp.retain_analysis(Rc::new(analysis));
 
-    discover::discover(analysis.root())
+    let tests = discover::discover(analysis.root())
         .iter()
         .map(|case| {
             let (file, line) = analysis.locate(case.line);
             let (skipped, skip_reason) = disabled_reason(case);
+            let (case_count, cases) = match params::expand(&case.node) {
+                Expansion::Cases(rows) => {
+                    let suffixes = params::case_id_suffixes(&rows);
+                    let ids = suffixes
+                        .iter()
+                        .map(|suffix| format!("{}{suffix}", case.id()))
+                        .collect();
+                    (Some(rows.len()), ids)
+                }
+                Expansion::None | Expansion::Unsupported(_) => (None, Vec::new()),
+            };
             TestDescriptor {
                 id: case.id(),
                 display_name: case.display_name.clone(),
@@ -76,15 +106,15 @@ pub fn list_tests(files: &[SourceFile]) -> Vec<TestDescriptor> {
                 file,
                 line,
                 tags: case.tags(),
-                case_count: match params::expand(&case.node) {
-                    Expansion::Cases(rows) => Some(rows.len()),
-                    Expansion::None | Expansion::Unsupported(_) => None,
-                },
+                case_count,
+                cases,
                 skipped,
                 skip_reason,
+                target: None,
             }
         })
-        .collect()
+        .collect();
+    Ok(tests)
 }
 
 /// The `.disabled(...)` skip status of a test, read statically (no evaluation).
@@ -102,7 +132,7 @@ mod tests {
     use super::*;
 
     fn list(src: &str) -> Vec<TestDescriptor> {
-        list_tests(&[SourceFile::new("Tests.swift", src)])
+        list_tests(&[SourceFile::new("Tests.swift", src)]).expect("compiles")
     }
 
     #[test]
@@ -157,8 +187,45 @@ mod tests {
     }
 
     #[test]
-    fn compile_error_yields_no_tests() {
-        let tests = list("@Test func broken( {}\n");
-        assert!(tests.is_empty());
+    fn compile_error_is_surfaced_not_silently_empty() {
+        // A listing that can't compile must say so — never a silently empty
+        // (indistinguishable-from-"no tests") list.
+        let err = list_tests(&[SourceFile::new("Tests.swift", "@Test func broken( {}\n")])
+            .expect_err("compile error must surface");
+        assert!(err.to_string().contains("Tests.swift"), "{err}");
+    }
+
+    #[test]
+    fn reports_parameterized_case_ids() {
+        let tests = list("@Test(arguments: [1, 2, 3]) func p(x: Int) {}\n");
+        assert_eq!(
+            tests[0].cases,
+            vec![
+                "p() - 1".to_string(),
+                "p() - 2".to_string(),
+                "p() - 3".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn non_parameterized_has_no_case_ids() {
+        let tests = list("@Test func t() {}\n");
+        assert!(tests[0].cases.is_empty());
+    }
+
+    #[test]
+    fn duplicate_argument_case_ids_are_disambiguated() {
+        let tests = list("@Test(arguments: [1, 1]) func p(x: Int) {}\n");
+        assert_eq!(
+            tests[0].cases,
+            vec!["p() - 1 (#1)".to_string(), "p() - 1 (#2)".to_string()]
+        );
+    }
+
+    #[test]
+    fn target_defaults_to_none() {
+        let tests = list("@Test func t() {}\n");
+        assert!(tests[0].target.is_none());
     }
 }

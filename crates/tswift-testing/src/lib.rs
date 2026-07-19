@@ -33,14 +33,23 @@ use traits::Trait;
 pub use descriptor::{list_tests, TestDescriptor};
 pub use discover::TestCase;
 pub use report::{CompileError, Issue, RunReport, TestResult, TestStatus};
-pub use wire::{descriptors_to_json, error_json, parse_run_options, report_to_json};
+pub use wire::{
+    descriptors_to_json, error_json, list_result_to_json, list_units_to_json, parse_run_options,
+    report_to_json,
+};
 
 /// Options controlling a test run.
-#[derive(Debug, Clone, Default)]
+///
+/// [`serde::Deserialize`] decodes the wasm/FFI `runTests` options document
+/// (`{"filter":…,"ids":[…]}`) via [`wire::parse_run_options`]; both fields
+/// are `#[serde(default)]` so a missing/absent key leaves the corresponding
+/// option unset rather than failing to parse.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct RunOptions {
     /// Case-sensitive substring filter on a test's id / display name; `None`
     /// runs every test. Ignored when [`ids`](Self::ids) is set (exact
     /// selection takes precedence over the substring filter).
+    #[serde(default)]
     pub filter: Option<String>,
     /// Exact canonical-id selection (distinct from the substring `filter`):
     /// `Some(["MathSuite/pass()", "p() - 2"])` runs only the listed tests.
@@ -49,6 +58,7 @@ pub struct RunOptions {
     /// `"p() - 2"`, argument value suffixed) selects just that case. An id
     /// matching no discovered test is an error (the run reports the unknown
     /// ids, never a silent zero-tests success). `None` selects everything.
+    #[serde(default)]
     pub ids: Option<Vec<String>>,
 }
 

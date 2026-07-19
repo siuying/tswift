@@ -281,15 +281,17 @@ fn list_symbols_impl(files_json: &str) -> String {
 /// `files_json` is `{"files":[{"path":"…","contents":"…"},…]}` (the same wire
 /// shape [`run_swift_module`] takes). Response:
 /// `{"ok":bool,"tests":[{"id","displayName","suitePath","file","line","tags",
-/// "caseCount","skipped","skipReason"},…]}` — `ok` is false only when
-/// `files_json` itself fails to parse.
+/// "caseCount","cases","skipped","skipReason","target"},…],"error"?:string,
+/// "compileError"?:string}` — `ok` is false when `files_json` itself fails to
+/// parse (`error`) *or* when the module compiles but fails analysis
+/// (`compileError`; unlike a parse failure, that means the module *did*
+/// parse, it just doesn't type-check/build).
 #[wasm_bindgen(js_name = listTests)]
 pub fn list_tests(files_json: &str) -> String {
     install_panic_hook();
     match parse_module(files_json) {
         Ok(module) => {
-            let tests = tswift_testing::list_tests(&module.source_files());
-            tswift_testing::descriptors_to_json(&tests)
+            tswift_testing::list_result_to_json(&tswift_testing::list_tests(&module.source_files()))
         }
         Err(e) => tswift_testing::error_json(&e),
     }

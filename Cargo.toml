@@ -36,3 +36,7 @@ tswift-charts = { path = "crates/tswift-charts" }
 tswift-eventkit = { path = "crates/tswift-eventkit" }
 tswift-testing = { path = "crates/tswift-testing" }
 tswift-wasm = { path = "crates/tswift-wasm" }
+# Already vendored transitively (via `criterion`, a dev-dependency); approved
+# for direct use in `tswift-testing`'s wire module (see docs/agents/environment.md).
+serde = { version = "=1.0.228", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "=1.0.150", default-features = false, features = ["std"] }

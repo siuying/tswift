@@ -302,13 +302,14 @@ pub(crate) fn run_module_impl(
 
 /// Discover every `@Test` in a `{"files":[…]}` module and return descriptor
 /// JSON, without running any test. Shape:
-/// `{"ok":bool,"tests":[…],"error"?:string}` — `ok` is false only when
-/// `module_json` itself fails to parse.
+/// `{"ok":bool,"tests":[…],"error"?:string,"compileError"?:string}` — `ok`
+/// is false when `module_json` itself fails to parse (`error`) *or* when the
+/// module compiles but fails analysis (`compileError`; the module parsed
+/// fine, so there is a real program to point diagnostics at).
 pub(crate) fn list_tests_impl(module_json: &str) -> String {
     match parse_module(module_json) {
         Ok(module) => {
-            let tests = tswift_testing::list_tests(&module.source_files());
-            tswift_testing::descriptors_to_json(&tests)
+            tswift_testing::list_result_to_json(&tswift_testing::list_tests(&module.source_files()))
         }
         Err(e) => tswift_testing::error_json(&e),
     }

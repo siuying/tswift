@@ -207,8 +207,10 @@ char *tswift_list_symbols(const char *module_json);
  * JSON, without running any test. Stateless (no context). Same `module_json`
  * shape as the module functions above. Response shape:
  *   {"ok":bool,"tests":[{"id","displayName","suitePath","file","line",
- *   "tags","caseCount","skipped","skipReason"},...],"error"?:string}
- * `ok` is false only when `module_json` itself fails to parse. */
+ *   "tags","caseCount","cases","skipped","skipReason","target"},...],
+ *   "error"?:string,"compileError"?:string}
+ * `ok` is false when `module_json` itself fails to parse (`error`) or when
+ * the module compiles but fails analysis (`compileError`). */
 char *tswift_list_tests(const char *module_json);
 
 /* Run a multi-file module's @Test's under `options_json` and return owned
