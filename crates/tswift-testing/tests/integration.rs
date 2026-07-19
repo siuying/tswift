@@ -505,3 +505,128 @@ fn compile_error_yields_no_tests() {
     assert!(!report.is_success());
     assert!(report.tests.is_empty());
 }
+
+// ---- Slice F: tags, withKnownIssue, .bug, .timeLimit ----
+
+fn run_filtered(src: &str, filter: &str) -> tswift_testing::RunReport {
+    run_tests(
+        &[SourceFile::new("Tests.swift", src)],
+        &RunOptions {
+            filter: Some(filter.to_string()),
+        },
+    )
+}
+
+#[test]
+fn tag_filter_selects_only_tagged_tests() {
+    let src = "\
+@Test(.tags(.fast)) func a() { #expect(true) }
+@Test(.tags(.slow)) func b() { #expect(true) }
+@Test func c() { #expect(true) }
+";
+    let report = run_filtered(src, "tag:fast");
+    assert_eq!(report.tests.len(), 1);
+    assert_eq!(report.tests[0].id, "a()");
+}
+
+#[test]
+fn suite_tags_are_inherited_by_members() {
+    let src = "\
+@Suite(.tags(.integration)) struct S {
+  @Test func a() { #expect(true) }
+}
+@Test func b() { #expect(true) }
+";
+    let report = run_filtered(src, "tag:integration");
+    assert_eq!(report.tests.len(), 1);
+    assert_eq!(report.tests[0].id, "S/a()");
+}
+
+#[test]
+fn with_known_issue_expected_failure_does_not_fail_run() {
+    let src = "\
+@Test func t() {
+  withKnownIssue(\"not fixed yet\") { #expect(1 == 2) }
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 0, "known issue must not fail the run");
+    assert_eq!(report.passed(), 1);
+    assert!(report.is_success());
+    assert!(
+        report.tests[0].issues.iter().all(|i| i.known),
+        "the recorded issue must be marked known"
+    );
+}
+
+#[test]
+fn with_known_issue_thrown_error_is_expected() {
+    let src = "\
+struct Boom: Error {}
+func go() throws { throw Boom() }
+@Test func t() {
+  withKnownIssue { try go() }
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 0);
+    assert!(report.is_success());
+}
+
+#[test]
+fn with_known_issue_unexpected_pass_is_a_failure() {
+    let src = "\
+@Test func t() {
+  withKnownIssue(\"should still be broken\") { #expect(true) }
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1, "a passing known-issue body must fail");
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("Known issue was not recorded"), "{msg}");
+    assert!(!report.tests[0].issues[0].known);
+}
+
+#[test]
+fn bug_reference_surfaces_on_failure() {
+    let src = "\
+@Test(.bug(\"https://example.com/99\")) func t() { #expect(1 == 2) }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    assert_eq!(
+        report.tests[0].bugs,
+        vec!["https://example.com/99".to_string()]
+    );
+}
+
+#[test]
+fn time_limit_not_exceeded_passes() {
+    // A trivially fast test under a generous limit must pass unmarked.
+    let src = "@Test(.timeLimit(.minutes(1))) func t() { #expect(true) }\n";
+    let report = run(src);
+    assert_eq!(report.passed(), 1);
+    assert!(report.tests[0].issues.is_empty());
+}
+
+#[test]
+fn class_suite_runs_deinit_after_each_test() {
+    // Each test gets a fresh class instance; its deinit must run
+    // deterministically before the next test, incrementing the shared counter.
+    let src = "\
+var teardowns = 0
+final class Fixture {
+  deinit { teardowns += 1 }
+  @Test func a() { #expect(teardowns == 0) }
+  @Test func b() { #expect(teardowns == 1) }
+}
+";
+    let report = run(src);
+    assert_eq!(
+        report.failed(),
+        0,
+        "deinit must run deterministically between tests: {:?}",
+        report.tests
+    );
+    assert_eq!(report.passed(), 2);
+}

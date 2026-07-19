@@ -46,6 +46,7 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.module("Testing", |interp| {
         interp.register_macro("expect", expect::expect_macro);
         interp.register_macro("require", expect::require_macro);
+        interp.register_free_fn("withKnownIssue", expect::with_known_issue);
         let issue = tswift_core::BuiltinReceiver::register_extension("Issue");
         interp.register_static(issue, "record", expect::issue_record);
     });
@@ -261,11 +262,22 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
 }
 
 /// The `try await`-wrapped driver statement that invokes `case` with `args`
-/// (a comma-separated argument source, empty for a no-argument test). A suite
-/// test constructs a fresh instance first (`Suite().method(args)`).
+/// (a comma-separated argument source, empty for a no-argument test).
+///
+/// A suite test binds a fresh instance to a mutable local inside a `do` block
+/// (`do { var __suite = Suite(); try await __suite.method(args) }`) rather than
+/// calling on a bare temporary (`Suite().method()`): the local is released when
+/// the block ends, so a `class` suite's `deinit` runs deterministically after
+/// each test (expression temporaries are not ARC-released by the interpreter,
+/// so the bare-temporary form would never fire `deinit`). It is bound `var` so
+/// a `struct` suite's mutating test method can update `self`; a `struct` suite
+/// has no `deinit`, so the block form is otherwise a harmless no-op for it.
 fn driver_line(case: &TestCase, args: &str) -> String {
     match &case.suite_type {
-        Some(suite) => format!("try await {suite}().{}({args})", case.func_name),
+        Some(suite) => format!(
+            "do {{ var __suite = try await {suite}(); try await __suite.{}({args}) }}",
+            case.func_name
+        ),
         None => format!("try await {}({args})", case.func_name),
     }
 }
@@ -288,6 +300,8 @@ enum SkipDecision {
 fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> SkipDecision {
     for trait_ in &case.traits {
         match trait_ {
+            // Annotation-only traits never affect the skip decision.
+            Trait::Tags(_) | Trait::Bug(_) | Trait::TimeLimit(_) => {}
             Trait::Disabled(reason) => return SkipDecision::Skip(reason.clone()),
             Trait::EnabledIf(cond) => {
                 let outcome = {
@@ -341,6 +355,7 @@ fn skipped_result(
         file,
         line,
         skip_reason: reason,
+        bugs: case.bugs(),
     }
 }
 
@@ -357,11 +372,13 @@ fn failed_result(analysis: &'static Analysis, case: &TestCase, message: String) 
             message,
             file: file.clone(),
             line,
+            known: false,
         }],
         duration: std::time::Duration::ZERO,
         file,
         line,
         skip_reason: None,
+        bugs: case.bugs(),
     }
 }
 
@@ -397,9 +414,29 @@ fn run_one(
                 message: raw.message,
                 file,
                 line,
+                known: raw.known,
             }
         })
         .collect();
+
+    // Soft time-limit check (plan §1.2): the runner never hard-kills a test, it
+    // measures the elapsed time and records a real (non-known) issue when a
+    // `.timeLimit(…)` was exceeded.
+    if let Some(limit) = case.time_limit() {
+        if duration > limit {
+            let (file, line) = analysis.locate(case.line);
+            issues.push(Issue {
+                message: format!(
+                    "Time limit exceeded: test took {:.3}s, limit was {:.3}s",
+                    duration.as_secs_f64(),
+                    limit.as_secs_f64()
+                ),
+                file,
+                line,
+                known: false,
+            });
+        }
+    }
 
     // An uncaught throw or a runtime trap that is *not* a `#require` abort is
     // itself a test failure.
@@ -413,14 +450,17 @@ fn run_one(
                 },
                 file,
                 line,
+                known: false,
             });
         }
     }
 
-    let status = if issues.is_empty() {
-        TestStatus::Passed
-    } else {
+    // Only non-known issues fail a test; a test whose sole issues are known
+    // (from `withKnownIssue`) still passes, with those issues reported.
+    let status = if issues.iter().any(|i| !i.known) {
         TestStatus::Failed
+    } else {
+        TestStatus::Passed
     };
     let (file, line) = analysis.locate(case.line);
     TestResult {
@@ -432,6 +472,7 @@ fn run_one(
         file,
         line,
         skip_reason: None,
+        bugs: case.bugs(),
     }
 }
 

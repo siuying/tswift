@@ -185,6 +185,16 @@ fn render_report(report: &RunReport) -> String {
     out.push_str("Test run started.\n");
     for test in &report.tests {
         let secs = test.duration.as_secs_f64();
+        // Known issues (from `withKnownIssue`) are reported for both passing
+        // and failing tests, but never fail the run — mark them distinctly.
+        for issue in test.issues.iter().filter(|i| i.known) {
+            out.push_str(&format!(
+                "\u{25c7} Test {} recorded a known issue at {}: {}\n",
+                test.label(),
+                issue_loc(issue),
+                issue.message
+            ));
+        }
         match test.status {
             TestStatus::Passed => {
                 out.push_str(&format!(
@@ -200,22 +210,24 @@ fn render_report(report: &RunReport) -> String {
                 None => out.push_str(&format!("\u{21b7} Test {} skipped.\n", test.label())),
             },
             TestStatus::Failed => {
-                for issue in &test.issues {
-                    let loc = match &issue.file {
-                        Some(file) => format!("{file}:{}", issue.line),
-                        None => format!("<unknown>:{}", issue.line),
-                    };
+                let failing: Vec<_> = test.issues.iter().filter(|i| !i.known).collect();
+                for issue in &failing {
                     out.push_str(&format!(
-                        "\u{2718} Test {} recorded an issue at {loc}: {}\n",
+                        "\u{2718} Test {} recorded an issue at {}: {}\n",
                         test.label(),
+                        issue_loc(issue),
                         issue.message
                     ));
+                }
+                // Surface any `.bug(…)` references on a failing test (plan §1.2).
+                for bug in &test.bugs {
+                    out.push_str(&format!("  bug: {bug}\n"));
                 }
                 out.push_str(&format!(
                     "\u{2718} Test {} failed after {secs:.3} seconds with {} issue{}.\n",
                     test.label(),
-                    test.issues.len(),
-                    plural(test.issues.len())
+                    failing.len(),
+                    plural(failing.len())
                 ));
             }
         }
@@ -229,6 +241,15 @@ fn render_report(report: &RunReport) -> String {
     ));
     out.push('\n');
     out
+}
+
+/// A `file:line` location for an issue, or `<unknown>:line` when the file is
+/// not known.
+fn issue_loc(issue: &tswift_testing::Issue) -> String {
+    match &issue.file {
+        Some(file) => format!("{file}:{}", issue.line),
+        None => format!("<unknown>:{}", issue.line),
+    }
 }
 
 /// The final `Test run with N tests …` summary line (also used to combine
@@ -289,6 +310,7 @@ mod tests {
             file: Some("t.swift".to_string()),
             line: 1,
             skip_reason: None,
+            bugs: Vec::new(),
         }
     }
 
@@ -301,11 +323,13 @@ mod tests {
                 message: "Expectation failed: 1 == 2 \u{2192} false".to_string(),
                 file: Some("t.swift".to_string()),
                 line: 3,
+                known: false,
             }],
             duration: Duration::from_millis(1),
             file: Some("t.swift".to_string()),
             line: 1,
             skip_reason: None,
+            bugs: Vec::new(),
         }
     }
 

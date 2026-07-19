@@ -6,6 +6,8 @@
 //! the two skip-affecting traits; every other trait (`.tags`, `.bug`,
 //! `.serialized`, …) is recognised-but-ignored so it never breaks discovery.
 
+use std::time::Duration;
+
 use tswift_frontend::{Node, NodeKind};
 
 /// A trait that can skip a test.
@@ -21,6 +23,18 @@ pub enum Trait {
     /// multiple times, once per test in the suite, not once for the suite as
     /// a whole.
     EnabledIf(Node<'static>),
+    /// `.tags(.fast, .slow)` — associate the test with one or more tag names.
+    /// Tag identity is by name (`.fast` → `"fast"`, `Tag.custom` → `"custom"`);
+    /// the runtime has no `Tag` value, so this is a structural read of the
+    /// attribute (plan §1.2). Inherited by suite members like every trait.
+    Tags(Vec<String>),
+    /// `.bug("url-or-id"[, "title"])` — a report-only annotation surfaced on
+    /// failure. Carries the first argument's spelling (URL or identifier).
+    Bug(String),
+    /// `.timeLimit(.minutes(n))` — a *soft* limit: the runner measures the
+    /// test's duration and records an issue when it is exceeded, but never
+    /// hard-kills the test (tswift has no host timer policy; plan §1.2).
+    TimeLimit(Duration),
 }
 
 /// Extract the skip-affecting traits from attribute `name` (`Test`/`Suite`) on
@@ -54,6 +68,52 @@ fn parse_trait(arg: Node<'static>) -> Option<Trait> {
             Some(Trait::Disabled(reason))
         }
         Some("enabled") => children.next().map(Trait::EnabledIf),
+        Some("tags") => Some(Trait::Tags(children.filter_map(|n| tag_name(&n)).collect())),
+        Some("bug") => children.next().map(|n| Trait::Bug(bug_reference(&n))),
+        Some("timeLimit") => children
+            .next()
+            .and_then(|n| time_limit(&n))
+            .map(Trait::TimeLimit),
+        _ => None,
+    }
+}
+
+/// The tag name of a `.tags(...)` argument: a leading-dot member (`.fast`) or a
+/// `Tag.custom` reference both reduce to their final component (`"fast"`,
+/// `"custom"`).
+fn tag_name(node: &Node<'_>) -> Option<String> {
+    if node.kind() != NodeKind::MemberExpr {
+        return None;
+    }
+    node.text().map(|t| t.to_string())
+}
+
+/// The reference string of a `.bug(...)` argument — a string literal's contents
+/// (`"url"`), or the source spelling of a non-string first argument (an id).
+fn bug_reference(node: &Node<'_>) -> String {
+    if let Some(s) = string_value(node) {
+        return s;
+    }
+    node.text().map(|t| t.to_string()).unwrap_or_default()
+}
+
+/// Parse a `.timeLimit(...)` duration argument. Only the `.minutes(n)` and
+/// `.seconds(n)` unit forms are recognised (matching Swift Testing's
+/// `Duration` factory members most tests use); anything else yields `None`
+/// and the trait is ignored.
+fn time_limit(node: &Node<'_>) -> Option<Duration> {
+    if node.kind() != NodeKind::CallExpr {
+        return None;
+    }
+    let mut children = node.children();
+    let callee = children.next()?;
+    if callee.kind() != NodeKind::MemberExpr || callee.first_child().is_some() {
+        return None;
+    }
+    let amount: u64 = children.next()?.text()?.parse().ok()?;
+    match callee.text().as_deref() {
+        Some("minutes") => Some(Duration::from_secs(amount * 60)),
+        Some("seconds") => Some(Duration::from_secs(amount)),
         _ => None,
     }
 }
@@ -100,8 +160,31 @@ mod tests {
     }
 
     #[test]
-    fn ignores_unknown_trait() {
-        let traits = traits_src("@Test(.tags(.fast)) func t() {}\n");
+    fn parses_tags() {
+        let traits = traits_src("@Test(.tags(.fast, .slow)) func t() {}\n");
+        assert_eq!(traits.len(), 1);
+        assert!(
+            matches!(&traits[0], Trait::Tags(names) if names == &["fast".to_string(), "slow".to_string()])
+        );
+    }
+
+    #[test]
+    fn parses_bug_reference() {
+        let traits = traits_src("@Test(.bug(\"https://example.com/42\")) func t() {}\n");
+        assert!(matches!(&traits[0], Trait::Bug(r) if r == "https://example.com/42"));
+    }
+
+    #[test]
+    fn parses_time_limit_minutes() {
+        let traits = traits_src("@Test(.timeLimit(.minutes(2))) func t() {}\n");
+        assert!(
+            matches!(&traits[0], Trait::TimeLimit(d) if *d == std::time::Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn ignores_truly_unknown_trait() {
+        let traits = traits_src("@Test(.serialized) func t() {}\n");
         assert!(traits.is_empty());
     }
 }

@@ -56,9 +56,14 @@ impl TestCase {
         }
     }
 
-    /// Whether `needle` matches this test by id or display name (case-sensitive
-    /// substring — the v1 `--filter` contract, plan §4.2).
+    /// Whether `needle` matches this test. A `tag:<name>` needle selects by an
+    /// exact tag name (`--filter tag:fast`); any other needle is a
+    /// case-sensitive substring match on the id / display name / suite type
+    /// (the v1 `--filter` contract, plan §4.2).
     pub fn matches_filter(&self, needle: &str) -> bool {
+        if let Some(tag) = needle.strip_prefix("tag:") {
+            return self.tags().iter().any(|t| t == tag);
+        }
         self.id().contains(needle)
             || self
                 .display_name
@@ -68,6 +73,42 @@ impl TestCase {
                 .suite_type
                 .as_deref()
                 .is_some_and(|s| s.contains(needle))
+    }
+
+    /// Every tag name attached to this test (its own `.tags(...)` plus any
+    /// inherited from its suite), in source order.
+    pub fn tags(&self) -> Vec<String> {
+        self.traits
+            .iter()
+            .filter_map(|t| match t {
+                Trait::Tags(names) => Some(names.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// Every `.bug(...)` reference on this test, for report annotation.
+    pub fn bugs(&self) -> Vec<String> {
+        self.traits
+            .iter()
+            .filter_map(|t| match t {
+                Trait::Bug(r) => Some(r.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The tightest `.timeLimit(...)` on this test (the smallest, if several),
+    /// or `None` when unconstrained.
+    pub fn time_limit(&self) -> Option<std::time::Duration> {
+        self.traits
+            .iter()
+            .filter_map(|t| match t {
+                Trait::TimeLimit(d) => Some(*d),
+                _ => None,
+            })
+            .min()
     }
 }
 
