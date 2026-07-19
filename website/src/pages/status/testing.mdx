@@ -82,6 +82,13 @@ tswift test … [--filter <substring>]
 its function name, `Suite/test` path, or display name string. `--filter
 tag:<name>` instead selects tests carrying a matching `.tags(…)` name.
 
+**Divergence**: real Swift Testing's `Tag` has true nominal identity, so
+`Tag.fast` and `MyTags.fast` are distinct tags even though both are spelled
+`fast`. tswift has no `Tag` value and reads tags structurally by their
+unqualified final name component, so differently-typed tags with the same
+name collide — `.tags(Tag.fast)` and `.tags(MyTags.fast)` are indistinguishable
+and both match `--filter tag:fast`.
+
 ### Example
 
 ```swift

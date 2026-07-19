@@ -24,9 +24,11 @@ pub enum Trait {
     /// a whole.
     EnabledIf(Node<'static>),
     /// `.tags(.fast, .slow)` — associate the test with one or more tag names.
-    /// Tag identity is by name (`.fast` → `"fast"`, `Tag.custom` → `"custom"`);
-    /// the runtime has no `Tag` value, so this is a structural read of the
-    /// attribute (plan §1.2). Inherited by suite members like every trait.
+    /// Tag identity is by unqualified name (`.fast` → `"fast"`, `Tag.custom` →
+    /// `"custom"`, and `MyTags.custom` also → `"custom"`); the runtime has no
+    /// `Tag` value, so this is a structural read of the attribute (plan §1.2)
+    /// and differently-typed tags sharing a final component collide — see
+    /// [`tag_name`]. Inherited by suite members like every trait.
     Tags(Vec<String>),
     /// `.bug("url-or-id"[, "title"])` — a report-only annotation surfaced on
     /// failure. Carries the first argument's spelling (URL or identifier).
@@ -81,6 +83,14 @@ fn parse_trait(arg: Node<'static>) -> Option<Trait> {
 /// The tag name of a `.tags(...)` argument: a leading-dot member (`.fast`) or a
 /// `Tag.custom` reference both reduce to their final component (`"fast"`,
 /// `"custom"`).
+///
+/// **Divergence from real Swift Testing**: Apple's `Tag` has true nominal
+/// identity (`Tag.fast` and `MyTags.fast` are distinct static members even
+/// with the same name). tswift has no `Tag` value at all — tags are a
+/// structural read of the attribute's unqualified final component, so
+/// `Tag.fast` and `MyTags.fast` collide into the same `"fast"` name and
+/// `--filter tag:fast` matches both. Documented rather than silently
+/// diverging; see `website/src/pages/status/testing.mdx`.
 fn tag_name(node: &Node<'_>) -> Option<String> {
     if node.kind() != NodeKind::MemberExpr {
         return None;
@@ -185,6 +195,17 @@ mod tests {
         let traits = traits_src("@Test(.timeLimit(.minutes(2))) func t() {}\n");
         assert!(
             matches!(&traits[0], Trait::TimeLimit(d) if *d == std::time::Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn tag_identity_collides_by_unqualified_name() {
+        // Documented divergence: `Tag.fast` and `MyTags.fast` have distinct
+        // nominal identity in real Swift Testing but reduce to the same
+        // `"fast"` name here, since tswift has no `Tag` value.
+        let traits = traits_src("@Test(.tags(Tag.fast, MyTags.fast)) func t() {}\n");
+        assert!(
+            matches!(&traits[0], Trait::Tags(names) if names == &["fast".to_string(), "fast".to_string()])
         );
     }
 
