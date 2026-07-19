@@ -378,6 +378,148 @@ fn test_and_filter_together_is_a_usage_error() {
     assert!(err.contains("mutually exclusive"), "{err}");
 }
 
+/// `--list` over a program that fails to compile surfaces the diagnostic the
+/// same way `run`'s does (same render path, `error:` + caret) and exits
+/// nonzero, never a silent `ok:true`/empty list.
+#[test]
+fn list_surfaces_compile_error_and_exits_nonzero() {
+    let file = fixtures_dir().join("compile_error.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list"]);
+    assert!(!output.status.success(), "expected a compile failure");
+    let combined = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(combined.contains("compile_error.swift"), "{combined}");
+    assert!(combined.contains(": error:"), "{combined}");
+    assert!(combined.contains('^'), "{combined}");
+    assert!(!combined.contains("Test run"), "{combined}");
+}
+
+/// `--list --json` over a program that fails to compile is a structured
+/// `{"ok":false,"compileError":…}` document, not a silent `{"ok":true,
+/// "tests":[]}`, and still exits nonzero.
+#[test]
+fn list_json_surfaces_compile_error() {
+    let file = fixtures_dir().join("compile_error.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list", "--json"]);
+    assert!(!output.status.success(), "expected a compile failure");
+    let out = stdout(&output);
+    assert!(out.contains("\"ok\":false"), "stdout: {out}");
+    assert!(out.contains("\"compileError\":"), "stdout: {out}");
+    assert!(out.contains("\"tests\":[]"), "stdout: {out}");
+}
+
+/// `--list` combined with `--test`/`--filter` is a usage error — listing
+/// never runs anything, so a selection flag on it would otherwise silently
+/// do nothing.
+#[test]
+fn list_with_test_or_filter_is_a_usage_error() {
+    let file = fixtures_dir().join("list.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list", "--test", "addition()"]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("--list"), "{err}");
+
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list", "--filter", "add"]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("--list"), "{err}");
+}
+
+/// A parameterized test's descriptor lists each case's own selectable id
+/// (`cases`) and the console table prints each one indented under the test,
+/// in the same id form `--test` accepts — not just an opaque `[N cases]`
+/// count.
+#[test]
+fn list_shows_per_case_selectable_ids() {
+    let file = fixtures_dir().join("list.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list"]);
+    let out = stdout(&output);
+    assert!(output.status.success(), "stdout:\n{out}");
+    assert!(out.contains("even() - 2"), "stdout: {out}");
+    assert!(out.contains("even() - 4"), "stdout: {out}");
+    assert!(out.contains("even() - 6"), "stdout: {out}");
+
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list", "--json"]);
+    let out = stdout(&output);
+    assert!(output.status.success(), "stdout:\n{out}");
+    assert!(
+        out.contains("\"cases\":[\"even() - 2\",\"even() - 4\",\"even() - 6\"]"),
+        "stdout: {out}"
+    );
+}
+
+/// `--list --json` over a multi-`.testTarget` package attributes each
+/// descriptor to its owning `target`.
+#[test]
+fn list_json_multi_target_carries_target_attribution() {
+    let dir = fixtures_dir().join("two_targets");
+    let output = run_test_cmd(&[dir.to_str().unwrap(), "--list", "--json"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("\"target\":\"CoreTests\""), "stdout: {out}");
+    assert!(out.contains("\"target\":\"ExtraTests\""), "stdout: {out}");
+}
+
+/// `--test <id>` over a multi-`.testTarget` package selects the id from
+/// whichever unit actually has it, running only that unit — it must not fail
+/// the whole run just because the *other* unit doesn't have the id.
+#[test]
+fn test_flag_selects_across_multiple_targets() {
+    let dir = fixtures_dir().join("two_targets");
+    let output = run_test_cmd(&[dir.to_str().unwrap(), "--test", "addition()"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("addition()"), "stdout: {out}");
+    assert!(!out.contains("subtraction()"), "stdout: {out}");
+    // The unit with no selected ids (ExtraTests) is skipped from the run
+    // output entirely — no header, no summary line for it.
+    assert!(!out.contains("Test target ExtraTests:"), "stdout: {out}");
+    assert!(out.contains("Test target CoreTests:"), "stdout: {out}");
+}
+
+/// `--test <id1> --test <id2>` naming one id per target runs both units, each
+/// with just its own id.
+#[test]
+fn test_flag_selects_one_id_per_target_runs_both() {
+    let dir = fixtures_dir().join("two_targets");
+    let output = run_test_cmd(&[
+        dir.to_str().unwrap(),
+        "--test",
+        "addition()",
+        "--test",
+        "subtraction()",
+    ]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("Test target CoreTests:"), "stdout: {out}");
+    assert!(out.contains("Test target ExtraTests:"), "stdout: {out}");
+    assert!(out.contains("addition()"), "stdout: {out}");
+    assert!(out.contains("subtraction()"), "stdout: {out}");
+}
+
+/// `--test <id>` over a multi-`.testTarget` package where the id matches no
+/// unit at all is still a hard error naming the unknown id.
+#[test]
+fn test_flag_unknown_id_across_targets_is_an_error() {
+    let dir = fixtures_dir().join("two_targets");
+    let output = run_test_cmd(&[dir.to_str().unwrap(), "--test", "nope()"]);
+    assert!(!output.status.success(), "expected a failure");
+    let combined = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(combined.contains("nope()"), "{combined}");
+    assert!(combined.contains("unknown test id"), "{combined}");
+}
+
 /// A `withKnownIssue` body's failure is reported as a known issue and does not
 /// fail the run; the `.bug(…)` reference does not surface (the test passed).
 #[test]

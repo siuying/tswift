@@ -16,6 +16,7 @@
 //! silently going CI-green on a *broken* run (which is still caught: a
 //! compile error or any failing test is always nonzero).
 
+use std::collections::HashSet;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -84,6 +85,12 @@ pub fn parse_test_args(rest: &[String]) -> Result<TestArgs, String> {
     if !out.tests.is_empty() && out.filter.is_some() {
         return Err("`--test` and `--filter` are mutually exclusive".to_string());
     }
+    // `--list` only discovers tests; `--test`/`--filter` only make sense for
+    // a run. Combining them is a usage error, not a silently-ignored
+    // selection (which would read as if the flag were honored).
+    if out.list && (!out.tests.is_empty() || out.filter.is_some()) {
+        return Err("`--list` cannot be combined with `--test`/`--filter`".to_string());
+    }
     Ok(out)
 }
 
@@ -105,14 +112,30 @@ pub fn run(args: &TestArgs) -> ExitCode {
     }
 
     let filter = args.filter.as_deref();
-    let options = RunOptions {
-        filter: args.filter.clone(),
-        ids: if args.tests.is_empty() {
-            None
-        } else {
-            Some(args.tests.clone())
-        },
+
+    // `--test <id>` selection is resolved *across* units before any unit
+    // runs (only meaningful with more than one unit): each requested id must
+    // match in at least one unit (a true unknown-everywhere id is still a
+    // hard error), but a unit that doesn't happen to have a given id is not
+    // an error for that unit — it just runs the subset of requested ids it
+    // does have, or is skipped entirely if it has none of them. A single-unit
+    // run keeps the simple original behavior (every requested id passed
+    // straight through; an id unknown to that one unit is `run_tests`'s own
+    // "unknown test id(s)" error).
+    let per_unit_ids: Vec<Option<Vec<String>>> = if args.tests.is_empty() {
+        vec![None; units.len()]
+    } else if units.len() <= 1 {
+        vec![Some(args.tests.clone())]
+    } else {
+        match resolve_ids_across_units(&units, &args.tests) {
+            Ok(per_unit) => per_unit,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     };
+
     let mut all_ok = true;
     let mut total_tests = 0usize;
     let mut total_failed = 0usize;
@@ -120,10 +143,23 @@ pub fn run(args: &TestArgs) -> ExitCode {
     let mut total_issues = 0usize;
     let mut total_duration = Duration::ZERO;
 
-    for (name, files) in &units {
+    for ((name, files), ids) in units.iter().zip(per_unit_ids) {
+        // An id selection that resolved to "none of the requested ids belong
+        // to this unit" skips the unit entirely — no header, no run, not
+        // counted — rather than running it unfiltered or erroring on ids it
+        // was never asked to have.
+        if let Some(selected) = &ids {
+            if selected.is_empty() {
+                continue;
+            }
+        }
         if units.len() > 1 {
             println!("Test target {name}:");
         }
+        let options = RunOptions {
+            filter: args.filter.clone(),
+            ids,
+        };
         let report = tswift_testing::run_tests(files, &options);
         if let Some(err) = &report.compile_error {
             render_compile_error(err, files, name);
@@ -166,28 +202,125 @@ pub fn run(args: &TestArgs) -> ExitCode {
     }
 }
 
-/// Print the discovered tests across every unit without running them. With
-/// `json`, emit one combined `{"ok":true,"tests":[…]}` document (the same wire
-/// shape the wasm `listTests` / FFI `tswift_list_tests` seams return); else a
-/// human table, one test per line, grouped by unit when there is more than one.
-fn list(units: &[(String, Vec<SourceFile>)], json: bool) -> ExitCode {
-    let mut all: Vec<TestDescriptor> = Vec::new();
-    for (name, files) in units {
-        let mut tests = tswift_testing::list_tests(files);
-        if !json && units.len() > 1 {
-            println!("Test target {name}:");
+/// For each unit, the known selectable ids (a test's own id, plus every one
+/// of its parameterized case ids), when the unit can be listed at all. A unit
+/// that fails to list (compile error) yields `None`: its selection can't be
+/// resolved, so [`resolve_ids_across_units`] always includes it unfiltered,
+/// letting the unit's own compile error surface when it actually runs rather
+/// than being silently skipped for "having none of the requested ids".
+fn known_ids_per_unit(units: &[(String, Vec<SourceFile>)]) -> Vec<Option<HashSet<String>>> {
+    units
+        .iter()
+        .map(|(_, files)| {
+            tswift_testing::list_tests(files).ok().map(|descriptors| {
+                let mut ids = HashSet::new();
+                for d in &descriptors {
+                    ids.insert(d.id.clone());
+                    ids.extend(d.cases.iter().cloned());
+                }
+                ids
+            })
+        })
+        .collect()
+}
+
+/// Resolve a `--test <id>` selection across every unit in a multi-unit run:
+/// each requested id must match in at least one unit (an id matching *no*
+/// unit is a hard error, naming the unknown id — never a silent zero-tests
+/// success); a unit that doesn't have a given id is not an error for that
+/// unit. Returns one `Option<Vec<String>>` per unit, aligned with `units`:
+/// `None` for a unit that couldn't be listed (always run unfiltered, so its
+/// own compile error surfaces); `Some(ids)` — possibly empty, meaning "skip
+/// this unit" — for a unit that could.
+fn resolve_ids_across_units(
+    units: &[(String, Vec<SourceFile>)],
+    requested: &[String],
+) -> Result<Vec<Option<Vec<String>>>, String> {
+    let known = known_ids_per_unit(units);
+
+    // A requested id is truly unknown only if every listable unit lacks it;
+    // a unit that couldn't be listed (`None`) means we can't rule the id out,
+    // so its presence there is deferred to that unit's own run.
+    let any_unlistable = known.iter().any(Option::is_none);
+    if !any_unlistable {
+        let unknown: Vec<&String> = requested
+            .iter()
+            .filter(|id| {
+                !known
+                    .iter()
+                    .any(|set| set.as_ref().unwrap().contains(id.as_str()))
+            })
+            .collect();
+        if !unknown.is_empty() {
+            let names: Vec<&str> = unknown.iter().map(|s| s.as_str()).collect();
+            return Err(format!("unknown test id(s): {}", names.join(", ")));
         }
-        if !json {
-            for t in &tests {
-                println!("{}", list_line(t));
+    }
+
+    Ok(known
+        .iter()
+        .map(|set| {
+            set.as_ref().map(|set| {
+                requested
+                    .iter()
+                    .filter(|id| set.contains(id.as_str()))
+                    .cloned()
+                    .collect()
+            })
+        })
+        .collect())
+}
+
+/// Print the discovered tests across every unit without running them. With
+/// `json`, emit one combined document (the same wire shape the wasm
+/// `listTests` / FFI `tswift_list_tests` seams return; see
+/// [`tswift_testing::list_units_to_json`]) — `ok:false` and a `compileError`
+/// when any unit fails to list, never a silent empty/partial success; else a
+/// human table, one test per line (plus one line per parameterized case's own
+/// selectable id), grouped by unit when there is more than one. A compile
+/// error is rendered the same way `run` renders one and makes the whole
+/// command exit nonzero.
+fn list(units: &[(String, Vec<SourceFile>)], json: bool) -> ExitCode {
+    let mut named: Vec<(String, Result<Vec<TestDescriptor>, CompileError>)> = Vec::new();
+    let mut any_error = false;
+    for (name, files) in units {
+        let mut result = tswift_testing::list_tests(files);
+        if let Ok(tests) = &mut result {
+            if units.len() > 1 {
+                for t in tests.iter_mut() {
+                    t.target = Some(name.clone());
+                }
             }
         }
-        all.append(&mut tests);
+        match &result {
+            Ok(tests) => {
+                if !json {
+                    if units.len() > 1 {
+                        println!("Test target {name}:");
+                    }
+                    for t in tests {
+                        println!("{}", list_line(t));
+                        for case_id in &t.cases {
+                            println!("  {case_id}");
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                any_error = true;
+                render_compile_error(err, files, name);
+            }
+        }
+        named.push((name.clone(), result));
     }
     if json {
-        println!("{}", tswift_testing::descriptors_to_json(&all));
+        println!("{}", tswift_testing::list_units_to_json(&named));
     }
-    ExitCode::SUCCESS
+    if any_error {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// One human-readable line for a discovered test: id, a `[N cases]` badge for a
