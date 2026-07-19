@@ -42,7 +42,7 @@ See "Not yet supported" below.
 | ✅ | `@Test(arguments:)` parameterized tests | One test case per element; multiple collections expand as a cartesian product; `zip(_:_:)` pairs element-wise |
 | ✅ | `Issue.record("…")` | Soft failure from inside test/helper code, without an `#expect` |
 | 🟡 | Exit codes | `0` all pass (skips only); `1` on any failure, issue, or compile error. Discovering zero tests is **not** an error (exits `0` with an explicit "0 tests" summary) |
-| ⬜ | `#expect(throws:)` / `throws: Never.self` | Closure-form throwing matchers |
+| ✅ | `#expect(throws:)` / `throws: Never.self` | Closure-form throwing matchers: match a thrown error's type (`E.self`), require no throw (`Never.self`), or equal a specific error instance. `try #require(throws:)` hard-aborts on mismatch and returns the thrown error. Works with async closures |
 | ⬜ | `.tags(…)` + tag-based filtering | Needs a `Tag` type and `--filter` tag syntax |
 | ⬜ | `.bug(…)` | Report-only annotation |
 | ⬜ | `.timeLimit(…)` | Needs a host timer policy for a hard kill |
@@ -115,6 +115,15 @@ struct MathSuite {
 @Test(arguments: [1, 2, 3])
 func isPositive(n: Int) {
     #expect(n > 0)
+}
+
+struct DivideByZero: Error {}
+
+@Test func throwingMatchers() throws {
+    #expect(throws: DivideByZero.self) { try divide(1, by: 0) }
+    #expect(throws: Never.self) { try divide(6, by: 2) }
+    let error = try #require(throws: DivideByZero.self) { try divide(1, by: 0) }
+    #expect(error is DivideByZero)
 }
 ```
 

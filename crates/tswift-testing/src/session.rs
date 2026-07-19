@@ -62,6 +62,13 @@ pub fn record_issue(message: String, line: u32) {
 }
 
 /// Mark the current test as aborted by a hard `#require` failure.
+///
+/// `record_issue` for the failing `#require` always runs first, so even if
+/// user code wraps the `#require` in a `do`/`catch` that swallows the
+/// `StdError::Throw` sentinel this unwind carries, the issue is already on
+/// the session and `run_one` still reports the test as failed — the
+/// `aborted` flag only distinguishes this unwind from a genuine uncaught
+/// throw, it does not gate pass/fail.
 pub fn mark_aborted() {
     SESSION.with(|s| {
         if let Some(session) = s.borrow_mut().as_mut() {

@@ -1510,14 +1510,54 @@ impl<'a> Parser<'a> {
             return Ok(node);
         }
         if self.peek().kind == TokenKind::LParen {
-            self.bump();
-            if self.peek().kind != TokenKind::RParen {
-                let arg = self.parse_expr(0)?;
-                self.ast.append_child(node, arg);
-            }
-            self.expect(TokenKind::RParen)?;
+            self.parse_macro_arguments(node)?;
         }
         Ok(node)
+    }
+
+    /// Parse a freestanding-macro argument list `( args )` plus an optional
+    /// same-line trailing closure, attaching each argument (with its label,
+    /// which may be a keyword such as `throws:`) and the closure as children
+    /// of `node`. Assumes the cursor is at `(`. Mirrors ordinary call-argument
+    /// parsing so `#expect(throws: E.self) { … }` reaches the macro handler.
+    fn parse_macro_arguments(&mut self, node: NodeId) -> Result<(), ParseError> {
+        self.bump(); // `(`
+        let saved = self.no_trailing_closure;
+        self.no_trailing_closure = false;
+        if self.peek().kind != TokenKind::RParen {
+            loop {
+                let label =
+                    if matches!(self.peek().kind, TokenKind::Identifier | TokenKind::Keyword)
+                        && self.tokens[self.pos + 1].kind == TokenKind::Colon
+                    {
+                        let name = self.bump().text;
+                        self.bump(); // ':'
+                        Some(name)
+                    } else {
+                        None
+                    };
+                let arg = self.parse_expr(0)?;
+                if let Some(label) = label {
+                    self.ast.set_arg_label(arg, label);
+                }
+                self.ast.append_child(node, arg);
+                if self.peek().kind == TokenKind::Comma {
+                    self.bump();
+                    continue;
+                }
+                break;
+            }
+        }
+        self.no_trailing_closure = saved;
+        self.expect(TokenKind::RParen)?;
+        if self.peek().kind == TokenKind::LBrace
+            && !self.no_trailing_closure
+            && !self.peek().leading_newline
+        {
+            let closure = self.parse_closure()?;
+            self.ast.append_child(node, closure);
+        }
+        Ok(())
     }
 
     /// `#if cond ... [#elseif cond ...] [#else ...] #endif`. Only the first
@@ -2856,30 +2896,11 @@ impl<'a> Parser<'a> {
                     ) {
                         self.skip_balanced_parens();
                     } else {
-                        self.bump(); // `(`
-                        if self.peek().kind != TokenKind::RParen {
-                            let arg = self.parse_expr(0)?;
-                            self.ast.append_child(node, arg);
-                        }
-                        // Discard any remaining (labelled) arguments — the
-                        // leading operand is all v1 macros need. Depth-count so
-                        // a nested `)` in a later argument is not mistaken for
-                        // the macro's closing paren.
-                        let mut depth = 1u32;
-                        while depth > 0 && !self.at_eof() {
-                            match self.peek().kind {
-                                TokenKind::LParen => depth += 1,
-                                TokenKind::RParen => {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
-                                }
-                                _ => {}
-                            }
-                            self.bump();
-                        }
-                        self.expect(TokenKind::RParen)?;
+                        // Keep every argument (with its label, which may be a
+                        // keyword such as `throws:`) plus a trailing closure as
+                        // children, so a macro handler sees the whole call —
+                        // e.g. `try #require(throws: E.self) { … }`.
+                        self.parse_macro_arguments(node)?;
                     }
                 }
                 node
@@ -5073,6 +5094,51 @@ mod tests {
         assert_eq!(args[0].arg_label(), Some("x"));
         assert_eq!(args[1].arg_label(), None);
         assert_eq!(args[2].arg_label(), Some("y"));
+    }
+
+    #[test]
+    fn keyword_call_argument_labels_are_recorded() {
+        // Call-site labels may be almost any keyword (`throws`, `for`, `in`,
+        // `is`, `as`, `do`), as Swift allows.
+        for (src, idx, label) in [
+            ("expect(throws: E.self)", 1, "throws"),
+            ("wait(for: 1)", 1, "for"),
+            ("clamp(v, in: r)", 2, "in"),
+            ("check(is: x)", 1, "is"),
+            ("convert(as: y)", 1, "as"),
+        ] {
+            let ast = ast_of(src);
+            let call = first_stmt(&ast).children().next().unwrap();
+            assert_eq!(call.kind(), NodeKind::CallExpr, "in {src:?}");
+            let arg = call.children().nth(idx).unwrap();
+            assert_eq!(arg.arg_label(), Some(label), "in {src:?}");
+        }
+    }
+
+    #[test]
+    fn directive_macro_keyword_label_and_trailing_closure() {
+        // `#expect(throws: E.self) { ... }` — the parser must accept the
+        // `throws:` keyword label and attach the trailing closure as a child.
+        let ast = ast_of("#expect(throws: E.self) { try g() }");
+        let dir = first_stmt(&ast);
+        assert_eq!(dir.kind(), NodeKind::CompilerDirective);
+        let children: Vec<_> = dir.children().collect();
+        assert_eq!(children[0].arg_label(), Some("throws"));
+        assert_eq!(children[0].kind(), NodeKind::MemberExpr);
+        assert_eq!(children[1].kind(), NodeKind::ClosureExpr);
+    }
+
+    #[test]
+    fn directive_macro_keyword_label_in_expression_position() {
+        // `try #require(throws: E.self) { ... }` in expression position.
+        let ast = ast_of("let e = try #require(throws: E.self) { try g() }");
+        let decl = first_stmt(&ast);
+        let try_expr = decl.children().nth(1).unwrap();
+        let dir = try_expr.children().next().unwrap();
+        assert_eq!(dir.kind(), NodeKind::CompilerDirective);
+        let children: Vec<_> = dir.children().collect();
+        assert_eq!(children[0].arg_label(), Some("throws"));
+        assert_eq!(children[1].kind(), NodeKind::ClosureExpr);
     }
 
     #[test]

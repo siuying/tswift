@@ -55,7 +55,7 @@ Grounded in real-world usage (WWDC24 Swift Testing, Apple docs, migration playbo
 | `@Test(arguments:)` parameterized | High | **Landed (slice C)** — one case per element; cartesian multi-collection; `zip` |
 | `Issue.record(…)` / `Issue.record(Comment, …)` | Medium | **Landed (slice C)** — `Issue.record(_: String)` soft failure |
 | Traits: `.tags(…)` + filter by tag | Medium | Needs `Tag` type + CLI `--filter` tag syntax |
-| `#expect(throws:)` / `throws: Never.self` | Medium | Closure-form overloads |
+| `#expect(throws:)` / `throws: Never.self` | Medium | **Landed (slice E)** — closure-form overloads: type match, `Never.self`, and error-instance equality; `try #require(throws:)` returns the thrown error |
 | Traits: `.bug(…)` | Low | Annotation only in reports |
 | Traits: `.serialized` | Low | Serial is **default** in tswift v1 anyway |
 | Traits: `.timeLimit` | Low | Soft timeout warning first; hard kill needs host timer policy |
@@ -511,13 +511,19 @@ TDD each slice: **write a failing test first**, then implement.
 - CLI renders skip lines with reason + a skip count, and one line per
   parameterized case.
 
-**Deferred out of Slice C:**
+**Deferred out of Slice C — now landed in Slice E:**
 
-- `#expect(throws:)` closure form: the frontend parser rejects the `throws:`
-  argument label (it collides with the `throws` keyword — `dump` reports
-  "expected an expression, found Keyword"), so the closure-form overload is
-  not reachable without parser work. Deferred until the parser accepts
-  `throws:` as a call-argument label.
+- `#expect(throws:)` closure form: **landed (slice E)**. The parser now accepts
+  keyword argument labels (`throws:`, `for:`, `in:`, …) and a trailing closure
+  on a freestanding-macro directive, so `#expect(throws: E.self) { … }` reaches
+  the macro handler. Implemented forms: `throws: E.self` (thrown type match),
+  `throws: Never.self` (must not throw), `throws: instance` (error equality),
+  and `try #require(throws:)` (hard-abort on mismatch, returns the thrown error
+  on success). Works with async closures. A trap inside the closure is not a
+  throw and still fails the test.
+
+**Still deferred out of Slice C:**
+
 - Argument values in parameterized labels are the source spelling of each
   element node (not an evaluated `CustomTestStringConvertible` rendering);
   fine for the common literal case.
