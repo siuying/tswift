@@ -593,6 +593,7 @@ dependencies = [
  "tswift-std",
  "tswift-swiftdata",
  "tswift-swiftui",
+ "tswift-testing",
 ]
 
 [[package]]
@@ -661,6 +662,8 @@ dependencies = [
 name = "tswift-testing"
 version = "0.0.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tswift-core",
  "tswift-foundation",
  "tswift-frontend",
@@ -678,6 +681,7 @@ dependencies = [
  "tswift-std",
  "tswift-swiftdata",
  "tswift-swiftui",
+ "tswift-testing",
  "wasm-bindgen",
 ]
 

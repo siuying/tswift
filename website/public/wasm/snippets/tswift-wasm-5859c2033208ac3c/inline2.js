@@ -1,14 +1,12 @@
 
-        export function tswift_http_call(requestJson) {
-            const hook = globalThis.tswiftHttp;
+        export function tswift_host_call(name, argsJson) {
+            const hook = globalThis.tswiftHost;
             if (typeof hook !== "function") return null;
             try {
-                return String(hook(requestJson));
+                const result = hook(name, argsJson);
+                return result == null ? "null" : String(result);
             } catch (e) {
-                return JSON.stringify({
-                    error: "cannotConnectToHost",
-                    message: String(e),
-                });
+                return JSON.stringify({ "$hostError": String(e) });
             }
         }
     

@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const wasmDir = new URL('../src/wasm/', import.meta.url);
-const { initSync, runSwift, runSwiftModule, listSymbols, registerHostFunction, clearHostFunctions } = await import(new URL('tswift_wasm.js', wasmDir));
+const { initSync, runSwift, runSwiftModule, listSymbols, listTests, runTests, registerHostFunction, clearHostFunctions } = await import(new URL('tswift_wasm.js', wasmDir));
 initSync({ module: readFileSync(new URL('tswift_wasm_bg.wasm', wasmDir)) });
 
 let failures = 0;
@@ -118,6 +118,37 @@ check('listSymbols lists declarations across files', () => {
   assert(names.includes('run'), `expected run in ${JSON.stringify(r.symbols)}`);
   const x = r.symbols.find((s) => s.name === 'x');
   assert(x.container === 'Point', `expected x's container to be Point, got ${JSON.stringify(x)}`);
+});
+
+// 4e. listTests discovers @Test declarations without running them, and
+//     runTests runs a selected subset via the ids option.
+check('listTests + runTests drive the testing seam', () => {
+  const module = JSON.stringify({
+    files: [
+      {
+        path: 'Tests.swift',
+        contents:
+          '@Test func passes() { #expect(1 + 1 == 2) }\n' +
+          '@Test func fails() { #expect(1 == 2) }\n',
+      },
+    ],
+  });
+  const listed = JSON.parse(listTests(module));
+  assert(listed.ok === true, `expected ok=true, got ${JSON.stringify(listed)}`);
+  const ids = listed.tests.map((t) => t.id);
+  assert(ids.includes('passes()'), `expected passes() in ${JSON.stringify(ids)}`);
+  assert(ids.includes('fails()'), `expected fails() in ${JSON.stringify(ids)}`);
+
+  // Select only the passing test by exact id.
+  const report = JSON.parse(runTests(module, JSON.stringify({ ids: ['passes()'] })));
+  assert(report.ok === true, `expected ok=true, got ${JSON.stringify(report)}`);
+  assert(report.passed === 1, `expected 1 passed, got ${JSON.stringify(report)}`);
+  assert(report.tests.length === 1, `expected 1 test, got ${JSON.stringify(report.tests)}`);
+
+  // Running everything surfaces the failure in the structured report.
+  const all = JSON.parse(runTests(module, '{}'));
+  assert(all.ok === false, `expected ok=false, got ${JSON.stringify(all)}`);
+  assert(all.failed === 1, `expected 1 failed, got ${JSON.stringify(all)}`);
 });
 
 // 5. tswiftHost hook — host-native function bridge (issue #249).

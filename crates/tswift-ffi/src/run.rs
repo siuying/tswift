@@ -300,6 +300,34 @@ pub(crate) fn run_module_impl(
     run_program_impl_files(&files, http, stream_http, host_fns, caps)
 }
 
+/// Discover every `@Test` in a `{"files":[…]}` module and return descriptor
+/// JSON, without running any test. Shape:
+/// `{"ok":bool,"tests":[…],"error"?:string,"compileError"?:string}` — `ok`
+/// is false when `module_json` itself fails to parse (`error`) *or* when the
+/// module compiles but fails analysis (`compileError`; the module parsed
+/// fine, so there is a real program to point diagnostics at).
+pub(crate) fn list_tests_impl(module_json: &str) -> String {
+    match parse_module(module_json) {
+        Ok(module) => {
+            tswift_testing::list_result_to_json(&tswift_testing::list_tests(&module.source_files()))
+        }
+        Err(e) => tswift_testing::error_json(&e),
+    }
+}
+
+/// Run a `{"files":[…]}` module's `@Test`s under `options_json`
+/// (`{"filter":…,"ids":[…]}`) and return the report JSON. A malformed module
+/// is a structured error envelope, not a panic.
+pub(crate) fn run_tests_impl(module_json: &str, options_json: &str) -> String {
+    let module = match parse_module(module_json) {
+        Ok(m) => m,
+        Err(e) => return tswift_testing::error_json(&e),
+    };
+    let options = tswift_testing::parse_run_options(options_json);
+    let report = tswift_testing::run_tests(&module.source_files(), &options);
+    tswift_testing::report_to_json(&report)
+}
+
 /// List every declaration symbol (name/kind/file/line/container/signature)
 /// across a `{"files":[{"path":"…","contents":"…"},…]}` module, as JSON.
 /// Shape: `{"ok":bool,"symbols":[…],"error"?:string}` — `ok` is false only

@@ -79,6 +79,38 @@ pub fn signature(func_decl: &Node<'_>, name: &str) -> String {
     format!("{name}({labels})")
 }
 
+/// The disambiguated ` - <args>` id/label suffix for each row of expanded
+/// arguments, index-aligned with `rows`: duplicate-argument rows get a
+/// trailing ` (#n)` occurrence tag so no two suffixes collide. Shared by the
+/// runner ([`crate::plan_case`]'s per-case id/label) and
+/// [`crate::descriptor::list_tests`]'s listed case ids, so both compute the
+/// exact same selectable id a host passes back in `RunOptions::ids`.
+pub fn case_id_suffixes(rows: &[Vec<Node<'static>>]) -> Vec<String> {
+    let rendered: Vec<String> = rows
+        .iter()
+        .map(|row| row.iter().map(render::expr).collect::<Vec<_>>().join(", "))
+        .collect();
+    let mut total_occurrences: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for args in &rendered {
+        *total_occurrences.entry(args.as_str()).or_insert(0) += 1;
+    }
+    let mut seen_so_far: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    rendered
+        .iter()
+        .map(|args| {
+            let suffix = if total_occurrences[args.as_str()] > 1 {
+                let n = seen_so_far.entry(args.as_str()).or_insert(0);
+                *n += 1;
+                format!(" (#{n})")
+            } else {
+                String::new()
+            };
+            format!(" - {args}{suffix}")
+        })
+        .collect()
+}
+
 /// The element nodes of an array-literal collection, else `None`.
 fn elements(collection: &Node<'static>) -> Option<Vec<Node<'static>>> {
     if collection.kind() != NodeKind::ArrayLiteral {
@@ -205,6 +237,23 @@ mod tests {
             "@Test(arguments: someNamedCollection) func p(x: Int) {}\n",
         ));
         assert!(matches!(outcome, Expansion::Unsupported(_)));
+    }
+
+    #[test]
+    fn case_id_suffixes_disambiguate_duplicate_args() {
+        let rows = cases_of(&func("@Test(arguments: [1, 1]) func p(x: Int) {}\n"));
+        let suffixes = case_id_suffixes(&rows);
+        assert_eq!(
+            suffixes,
+            vec![" - 1 (#1)".to_string(), " - 1 (#2)".to_string()]
+        );
+    }
+
+    #[test]
+    fn case_id_suffixes_no_suffix_when_unique() {
+        let rows = cases_of(&func("@Test(arguments: [1, 2]) func p(x: Int) {}\n"));
+        let suffixes = case_id_suffixes(&rows);
+        assert_eq!(suffixes, vec![" - 1".to_string(), " - 2".to_string()]);
     }
 
     #[test]

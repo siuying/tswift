@@ -26,14 +26,26 @@ all cost time to rediscover.
   Adding a dependency that isn't already in `Cargo.lock` may fail to fetch —
   test with a `--dry-run` `cargo add` (or a `static.crates.io` download)
   before relying on it.
-  - Example: `serde_json` is *not* available in offline sessions — the
-    `Codable` JSON layer is the hand-written `crates/tswift-core/src/json.rs`
-    for this reason.
+  - Example: an arbitrary/unpinned `serde_json` version is *not* guaranteed
+    available in offline sessions (only whatever's already resolved in
+    `Cargo.lock`'s dependency graph is cached locally) — the `Codable` JSON
+    layer is the hand-written `crates/tswift-core/src/json.rs` for most of the
+    workspace for this reason. `tswift-testing` is the sanctioned exception
+    (see below): its exact locked `serde`/`serde_json` versions are already
+    vendored transitively and pinned in the workspace manifest.
 - Prefer a small self-contained module over a new dependency. If a crate is
   genuinely required, confirm it's already vendored / in the lockfile first,
   and keep it out of `tswift-core`/`tswift-ffi`/`tswift-wasm`.
   - Sanctioned exception: `ureq` (rustls HTTPS) in **tswift-cli only**, backing
     `--allow-network` (ADR-0010).
+  - Sanctioned exception: `serde`/`serde_json`, in **tswift-testing only**
+    (its `wire.rs` JSON layer), pinned to the exact versions already vendored
+    transitively (via `criterion`, a dev-dependency) in `Cargo.lock`. `serde`
+    itself isn't banned — it just wasn't a *direct* dependency of anything
+    before; `tswift_core::json` remains the hand-rolled layer for everywhere
+    else (`tswift-frontend::symbols`, etc.), since a genuinely new/unvendored
+    `serde` pull (e.g. a different major version) is still subject to the
+    no-network-access rule above.
 
 ## Tooling notes
 

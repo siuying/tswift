@@ -18,3 +18,4 @@ tswift-std.workspace = true
 tswift-foundation.workspace = true
 tswift-swiftdata.workspace = true
 tswift-swiftui.workspace = true
+tswift-testing.workspace = true
