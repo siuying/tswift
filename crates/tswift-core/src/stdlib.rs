@@ -957,6 +957,24 @@ pub fn materialize_builtin_sequence(value: &SwiftValue) -> Option<Vec<SwiftValue
     }
 }
 
+/// Extract the private grapheme-offset bounds of a `String.IndexRange`
+/// (produced by `String.range(of:)`) as half-open `[lower, upper)`, if `value`
+/// is one. Returns `None` for any other value. Callers that build a range from
+/// these offsets treat them as exclusive (`inclusive = false`). This is the one
+/// place the `String.IndexRange` field layout is decoded, shared by the
+/// collection-subscript, range-bounds, and slice-mutation paths.
+pub fn index_range_offsets(value: &SwiftValue) -> Option<(i128, i128)> {
+    match value {
+        SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
+            match (obj.get("_lowerOffset"), obj.get("_upperOffset")) {
+                (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) => Some((lo.raw, hi.raw)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub fn collection_range_bounds(
     range: &SwiftValue,
     len: usize,
@@ -965,12 +983,9 @@ pub fn collection_range_bounds(
     let (lo, hi, inclusive) = match range {
         SwiftValue::Range { lo, hi, inclusive } => (*lo, *hi, *inclusive),
         SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
-            let (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) =
-                (obj.get("_lowerOffset"), obj.get("_upperOffset"))
-            else {
-                return Err(EvalError::Type("invalid String.IndexRange".into()));
-            };
-            (lo.raw, hi.raw, false)
+            let (lo, hi) = index_range_offsets(range)
+                .ok_or_else(|| EvalError::Type("invalid String.IndexRange".into()))?;
+            (lo, hi, false)
         }
         _ => return Err(EvalError::Type(format!("{who} expects a range"))),
     };

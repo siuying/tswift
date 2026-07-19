@@ -2352,15 +2352,7 @@ impl<'w> Interpreter<'w> {
 fn range_components(value: &SwiftValue) -> Option<(i128, i128, bool)> {
     match value {
         SwiftValue::Range { lo, hi, inclusive } => Some((*lo, *hi, *inclusive)),
-        SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
-            match (obj.get("_lowerOffset"), obj.get("_upperOffset")) {
-                (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) => {
-                    Some((lo.raw, hi.raw, false))
-                }
-                _ => None,
-            }
-        }
-        _ => None,
+        _ => crate::stdlib::index_range_offsets(value).map(|(lo, hi)| (lo, hi, false)),
     }
 }
 

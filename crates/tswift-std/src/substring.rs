@@ -446,14 +446,11 @@ fn sub_replace_subrange(
             inclusive: *inclusive,
         },
         SwiftValue::Struct(obj) if obj.type_name == "String.IndexRange" => {
-            let (Some(SwiftValue::Int(lo)), Some(SwiftValue::Int(hi))) =
-                (obj.get("_lowerOffset"), obj.get("_upperOffset"))
-            else {
-                return Err(type_err("invalid String.IndexRange".into()));
-            };
+            let (lo, hi) = tswift_core::index_range_offsets(range)
+                .ok_or_else(|| type_err("invalid String.IndexRange".into()))?;
             SwiftValue::Range {
-                lo: lo.raw - sub_start as i128,
-                hi: hi.raw - sub_start as i128,
+                lo: lo - sub_start as i128,
+                hi: hi - sub_start as i128,
                 inclusive: false,
             }
         }

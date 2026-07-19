@@ -38,8 +38,8 @@ pub use http::{
 pub use interp::{BuiltinParam, EvalError, Interpreter, ModuleId, NativeFn};
 pub use regex::{Captures, Regex};
 pub use stdlib::{
-    collection_range_bounds, materialize_builtin_sequence, scalar_less_than, AlgoFn, Arg,
-    BuiltinReceiver, ContextualPropertyFn, FreeFn, IntrinsicFn, LabeledIntrinsicFn,
+    collection_range_bounds, index_range_offsets, materialize_builtin_sequence, scalar_less_than,
+    AlgoFn, Arg, BuiltinReceiver, ContextualPropertyFn, FreeFn, IntrinsicFn, LabeledIntrinsicFn,
     LabeledMethodEntry, MethodEntry, NominalProperty, NominalTypeInfo, Outcome, PropertyFn,
     PropertySetterFn, StaticFn, StdContext, StdError, StdResult, StructMethodFn, TypedPropertyFn,
 };
