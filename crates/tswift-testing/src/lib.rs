@@ -16,12 +16,15 @@ mod expect;
 mod render;
 mod report;
 mod session;
+mod traits;
 
 use std::rc::Rc;
 use std::time::Instant;
 
-use tswift_core::{Interpreter, StdContext, StdError};
+use tswift_core::{Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, SourceFile};
+
+use traits::Trait;
 
 pub use discover::TestCase;
 pub use report::{CompileError, Issue, RunReport, TestResult, TestStatus};
@@ -97,10 +100,22 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         cases.retain(|c| c.matches_filter(filter));
     }
 
-    // Build one synthetic driver holding a call per test, retained (not leaked)
-    // for the interpreter's lifetime; index i maps to cases[i]. A driver that
-    // fails to build must fail the whole run — never silently pass tests.
-    let driver_nodes = match build_drivers(&mut interp, &cases) {
+    // Resolve each test's skip decision up front (evaluating `.enabled(if:)`
+    // conditions against the loaded program) so only the tests that actually
+    // run need a synthetic driver call.
+    let skips: Vec<Option<Option<String>>> =
+        cases.iter().map(|c| skip_reason(&mut interp, c)).collect();
+    let live: Vec<&TestCase> = cases
+        .iter()
+        .zip(&skips)
+        .filter(|(_, skip)| skip.is_none())
+        .map(|(c, _)| c)
+        .collect();
+
+    // Build one synthetic driver holding a call per live (non-skipped) test,
+    // retained (not leaked) for the interpreter's lifetime. A driver that fails
+    // to build must fail the whole run — never silently pass tests.
+    let driver_nodes = match build_drivers(&mut interp, &live) {
         Ok(nodes) => nodes,
         Err(err) => {
             return RunReport {
@@ -112,13 +127,63 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
 
     let run_start = Instant::now();
     let mut results = Vec::with_capacity(cases.len());
-    for (case, node) in cases.iter().zip(driver_nodes) {
-        results.push(run_one(&mut interp, analysis, case, node));
+    let mut driver_nodes = driver_nodes.into_iter();
+    for (case, skip) in cases.iter().zip(&skips) {
+        match skip {
+            Some(reason) => results.push(skipped_result(analysis, case, reason.clone())),
+            None => {
+                let node = driver_nodes
+                    .next()
+                    .expect("one driver node per live test");
+                results.push(run_one(&mut interp, analysis, case, node));
+            }
+        }
     }
     RunReport {
         tests: results,
         duration: run_start.elapsed(),
         compile_error: None,
+    }
+}
+
+/// Decide whether `case` is skipped by a trait, returning `Some(reason)` to skip
+/// (`reason` = the `.disabled` text, `None` for a `.enabled(if:)` skip) or
+/// `None` to run it. The first skip-causing trait in source order wins; an
+/// `.enabled(if:)` condition that fails to evaluate to `true` skips the test.
+fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> Option<Option<String>> {
+    for trait_ in &case.traits {
+        match trait_ {
+            Trait::Disabled(reason) => return Some(reason.clone()),
+            Trait::EnabledIf(cond) => {
+                let enabled = {
+                    let ctx: &mut dyn StdContext = interp;
+                    matches!(ctx.eval_node(cond), Ok(SwiftValue::Bool(true)))
+                };
+                if !enabled {
+                    return Some(None);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Build the [`TestResult`] for a test skipped by a trait (never a failure).
+fn skipped_result(
+    analysis: &'static Analysis,
+    case: &TestCase,
+    reason: Option<String>,
+) -> TestResult {
+    let (file, line) = analysis.locate(case.line);
+    TestResult {
+        id: case.id(),
+        display_name: case.display_name.clone(),
+        status: TestStatus::Skipped,
+        issues: Vec::new(),
+        duration: std::time::Duration::ZERO,
+        file,
+        line,
+        skip_reason: reason,
     }
 }
 
@@ -182,6 +247,7 @@ fn run_one(
         duration,
         file,
         line,
+        skip_reason: None,
     }
 }
 
@@ -195,7 +261,7 @@ fn run_one(
 /// program and we evaluate each statement node directly.
 fn build_drivers(
     interp: &mut Interpreter<'_>,
-    cases: &[TestCase],
+    cases: &[&TestCase],
 ) -> Result<Vec<tswift_frontend::Node<'static>>, String> {
     let mut source = String::new();
     for case in cases {

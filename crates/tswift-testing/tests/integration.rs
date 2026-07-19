@@ -126,6 +126,44 @@ struct Counter {
 }
 
 #[test]
+fn disabled_trait_skips_with_reason() {
+    let src = "@Test(.disabled(\"flaky\")) func t() { #expect(false) }\n";
+    let report = run(src);
+    assert_eq!(report.skipped(), 1);
+    assert_eq!(report.failed(), 0);
+    assert!(report.is_success(), "a skip is not a failure");
+    let t = &report.tests[0];
+    assert_eq!(t.status, TestStatus::Skipped);
+    assert_eq!(t.skip_reason.as_deref(), Some("flaky"));
+}
+
+#[test]
+fn enabled_if_false_skips_and_true_runs() {
+    let off = run("@Test(.enabled(if: 1 > 2)) func t() { #expect(false) }\n");
+    assert_eq!(off.skipped(), 1, "tests: {:?}", off.tests);
+    assert_eq!(off.failed(), 0);
+
+    let on = run("@Test(.enabled(if: 2 > 1)) func t() { #expect(true) }\n");
+    assert_eq!(on.passed(), 1, "tests: {:?}", on.tests);
+    assert_eq!(on.skipped(), 0);
+}
+
+#[test]
+fn suite_level_disabled_applies_to_all_members() {
+    let src = "\
+@Suite(.disabled(\"whole suite\"))
+struct S {
+  @Test func a() { #expect(false) }
+  @Test func b() { #expect(false) }
+}
+";
+    let report = run(src);
+    assert_eq!(report.skipped(), 2, "tests: {:?}", report.tests);
+    assert_eq!(report.failed(), 0);
+    assert!(report.tests.iter().all(|t| t.skip_reason.as_deref() == Some("whole suite")));
+}
+
+#[test]
 fn nested_suite_types_are_discovered() {
     let src = "\
 struct Outer {

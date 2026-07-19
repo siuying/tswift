@@ -83,6 +83,7 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
     let mut all_ok = true;
     let mut total_tests = 0usize;
     let mut total_failed = 0usize;
+    let mut total_skipped = 0usize;
     let mut total_issues = 0usize;
     let mut total_duration = Duration::ZERO;
 
@@ -100,6 +101,7 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
         all_ok &= report.is_success();
         total_tests += report.tests.len();
         total_failed += report.failed();
+        total_skipped += report.skipped();
         total_issues += report.issue_count();
         total_duration += report.duration;
     }
@@ -111,9 +113,15 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
         // "Test run with…" line.
         println!(
             "Overall: {}",
-            overall_summary(total_tests, total_failed, total_issues, total_duration)
-                .strip_prefix("Test run with ")
-                .expect("overall_summary always starts with \"Test run with \"")
+            overall_summary(
+                total_tests,
+                total_failed,
+                total_skipped,
+                total_issues,
+                total_duration
+            )
+            .strip_prefix("Test run with ")
+            .expect("overall_summary always starts with \"Test run with \"")
         );
     }
 
@@ -184,9 +192,13 @@ fn render_report(report: &RunReport) -> String {
                     test.label()
                 ));
             }
-            TestStatus::Skipped => {
-                out.push_str(&format!("\u{21b7} Test {} skipped.\n", test.label()));
-            }
+            TestStatus::Skipped => match &test.skip_reason {
+                Some(reason) => out.push_str(&format!(
+                    "\u{21b7} Test {} skipped: \"{reason}\".\n",
+                    test.label()
+                )),
+                None => out.push_str(&format!("\u{21b7} Test {} skipped.\n", test.label())),
+            },
             TestStatus::Failed => {
                 for issue in &test.issues {
                     let loc = match &issue.file {
@@ -211,6 +223,7 @@ fn render_report(report: &RunReport) -> String {
     out.push_str(&overall_summary(
         report.tests.len(),
         report.failed(),
+        report.skipped(),
         report.issue_count(),
         report.duration,
     ));
@@ -220,18 +233,29 @@ fn render_report(report: &RunReport) -> String {
 
 /// The final `Test run with N tests …` summary line (also used to combine
 /// totals across multiple test-target units).
-fn overall_summary(tests: usize, failed: usize, issues: usize, duration: Duration) -> String {
+fn overall_summary(
+    tests: usize,
+    failed: usize,
+    skipped: usize,
+    issues: usize,
+    duration: Duration,
+) -> String {
     let secs = duration.as_secs_f64();
+    let skips = if skipped == 0 {
+        String::new()
+    } else {
+        format!(" ({skipped} skipped)")
+    };
     if tests == 0 {
         format!("Test run with 0 tests (nothing matched) after {secs:.3} seconds.")
     } else if failed == 0 {
         format!(
-            "Test run with {tests} test{} passed after {secs:.3} seconds.",
+            "Test run with {tests} test{} passed after {secs:.3} seconds{skips}.",
             plural(tests)
         )
     } else {
         format!(
-            "Test run with {tests} test{} failed after {secs:.3} seconds with {issues} issue{}.",
+            "Test run with {tests} test{} failed after {secs:.3} seconds with {issues} issue{}{skips}.",
             plural(tests),
             plural(issues)
         )
@@ -260,6 +284,7 @@ mod tests {
             duration: Duration::from_millis(1),
             file: Some("t.swift".to_string()),
             line: 1,
+            skip_reason: None,
         }
     }
 
@@ -276,6 +301,7 @@ mod tests {
             duration: Duration::from_millis(1),
             file: Some("t.swift".to_string()),
             line: 1,
+            skip_reason: None,
         }
     }
 

@@ -4,6 +4,8 @@
 
 use tswift_frontend::{Node, NodeKind};
 
+use crate::traits::{traits_of, Trait};
+
 /// One discovered test: a free `@Test` function or a `@Test` method on a type.
 #[derive(Clone)]
 pub struct TestCase {
@@ -20,6 +22,9 @@ pub struct TestCase {
     /// 1-based combined-source line of the declaration (for stable ordering and
     /// location remapping).
     pub line: u32,
+    /// The test's own traits followed by any inherited from its suite
+    /// (suite-level traits apply to every member, plan §1.2).
+    pub traits: Vec<Trait>,
 }
 
 impl TestCase {
@@ -54,17 +59,19 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
     for decl in root.children() {
         match decl.kind() {
             NodeKind::FuncDecl if has_attribute(&decl, "Test") => {
+                let traits = traits_of(&decl, "Test");
                 cases.push(TestCase {
                     suite_type: None,
                     suite_display: None,
                     func_name: decl.decl_name().unwrap_or_default(),
                     display_name: attribute_display_name(&decl, "Test"),
-                    node: decl,
                     line: decl.line(),
+                    node: decl,
+                    traits,
                 });
             }
             NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
-                collect_suite(&decl, None, &mut cases);
+                collect_suite(&decl, None, &[], &mut cases);
             }
             _ => {}
         }
@@ -78,7 +85,12 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
 /// matching Apple). `parent` is the dot-joined construction path of the
 /// enclosing suite, so a nested `Inner` under `Outer` is constructed as
 /// `Outer.Inner()`.
-fn collect_suite(type_decl: &Node<'static>, parent: Option<&str>, cases: &mut Vec<TestCase>) {
+fn collect_suite(
+    type_decl: &Node<'static>,
+    parent: Option<&str>,
+    inherited: &[Trait],
+    cases: &mut Vec<TestCase>,
+) {
     let Some(name) = type_decl.decl_name() else {
         return;
     };
@@ -87,20 +99,27 @@ fn collect_suite(type_decl: &Node<'static>, parent: Option<&str>, cases: &mut Ve
         None => name,
     };
     let suite_display = attribute_display_name(type_decl, "Suite");
+    // A nested suite inherits its enclosing suite's traits plus its own
+    // `@Suite` traits; every `@Test` member inherits that combined set.
+    let mut suite_traits = inherited.to_vec();
+    suite_traits.extend(traits_of(type_decl, "Suite"));
     for member in type_decl.children() {
         match member.kind() {
             NodeKind::FuncDecl if has_attribute(&member, "Test") => {
+                let mut traits = traits_of(&member, "Test");
+                traits.extend(suite_traits.iter().cloned());
                 cases.push(TestCase {
                     suite_type: Some(suite_type.clone()),
                     suite_display: suite_display.clone(),
                     func_name: member.decl_name().unwrap_or_default(),
                     display_name: attribute_display_name(&member, "Test"),
-                    node: member,
                     line: member.line(),
+                    node: member,
+                    traits,
                 });
             }
             NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
-                collect_suite(&member, Some(&suite_type), cases);
+                collect_suite(&member, Some(&suite_type), &suite_traits, cases);
             }
             _ => {}
         }
