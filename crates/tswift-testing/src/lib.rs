@@ -46,6 +46,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.module("Testing", |interp| {
         interp.register_macro("expect", expect::expect_macro);
         interp.register_macro("require", expect::require_macro);
+        let issue = tswift_core::BuiltinReceiver::register_extension("Issue");
+        interp.register_static(issue, "record", expect::issue_record);
     });
 }
 
@@ -273,7 +275,11 @@ fn run_one(
     let mut issues: Vec<Issue> = raw_issues
         .into_iter()
         .map(|raw| {
-            let (file, line) = analysis.locate(raw.line);
+            // A raw line of 0 means "no source location" (e.g. `Issue.record`,
+            // which is a static call with no node); attribute it to the test's
+            // own declaration line rather than remapping the invalid line 0.
+            let source_line = if raw.line == 0 { case.line } else { raw.line };
+            let (file, line) = analysis.locate(source_line);
             Issue {
                 message: raw.message,
                 file,

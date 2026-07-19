@@ -126,6 +126,24 @@ struct Counter {
 }
 
 #[test]
+fn issue_record_soft_fails_the_test() {
+    let src = "@Test func t() { Issue.record(\"boom\") }\n";
+    let report = run(src);
+    assert_eq!(report.failed(), 1, "tests: {:?}", report.tests);
+    assert!(report.tests[0].issues[0].message.contains("boom"));
+}
+
+#[test]
+fn issue_record_continues_the_body() {
+    // A recorded issue is soft: the body runs on, so a later #expect also
+    // records, yielding two issues on one failed test.
+    let src = "@Test func t() { Issue.record(\"first\")\n#expect(false) }\n";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    assert_eq!(report.tests[0].issues.len(), 2, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
 fn parameterized_expands_one_case_per_argument() {
     let src = "@Test(arguments: [1, 2, 3]) func positive(x: Int) { #expect(x > 0) }\n";
     let report = run(src);

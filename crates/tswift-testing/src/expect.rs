@@ -5,7 +5,7 @@
 //! inspects the `CompilerDirective` node's operand, evaluates it, and records
 //! against the current [`crate::session`] (plan §3).
 
-use tswift_core::{ops, EvalError, StdContext, StdError, StdResult, SwiftValue};
+use tswift_core::{ops, Arg, EvalError, StdContext, StdError, StdResult, SwiftValue};
 use tswift_frontend::{Node, NodeKind};
 
 use crate::render;
@@ -166,6 +166,22 @@ fn bool_detail(operand: &Node<'static>) -> String {
         NodeKind::IdentExpr | NodeKind::MemberExpr => format!("{spelling} → false"),
         _ => spelling,
     }
+}
+
+/// `Issue.record(_: String)` — record a manual soft failure. Like a failing
+/// `#expect`, it records against the current session and returns normally so
+/// the test body continues. No source location is available at this static
+/// call, so the issue is remapped to line 0 (`<unknown>` in reports).
+pub fn issue_record(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !session::is_active() {
+        return Err(trap("Issue.record used outside a test"));
+    }
+    let message = args
+        .first()
+        .map(|arg| ctx.display(&arg.value))
+        .unwrap_or_default();
+    session::record_issue(format!("Issue recorded: {message}"), 0);
+    Ok(SwiftValue::Void)
 }
 
 fn trap(message: &str) -> StdError {
