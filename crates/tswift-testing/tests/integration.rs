@@ -273,6 +273,132 @@ fn filter_selects_matching_tests() {
 }
 
 #[test]
+fn expect_throws_type_passes_when_matching_error_thrown() {
+    let src = "\
+struct Boom: Error {}
+func go() throws { throw Boom() }
+@Test func t() { #expect(throws: Boom.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 1, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
+fn expect_throws_type_fails_on_wrong_type() {
+    let src = "\
+struct Boom: Error {}
+struct Other: Error {}
+func go() throws { throw Other() }
+@Test func t() { #expect(throws: Boom.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("Boom"), "{msg}");
+    assert!(msg.contains("Other"), "{msg}");
+}
+
+#[test]
+fn expect_throws_type_fails_when_nothing_thrown() {
+    let src = "\
+struct Boom: Error {}
+func go() throws {}
+@Test func t() { #expect(throws: Boom.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(
+        msg.to_lowercase().contains("no error") || msg.contains("did not throw"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn expect_throws_never_passes_when_no_error() {
+    let src = "\
+func go() throws {}
+@Test func t() { #expect(throws: Never.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 1, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
+fn expect_throws_never_fails_when_error_thrown() {
+    let src = "\
+struct Boom: Error {}
+func go() throws { throw Boom() }
+@Test func t() { #expect(throws: Never.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("Boom"), "{msg}");
+}
+
+#[test]
+fn expect_throws_instance_equality() {
+    let src = "\
+enum MyError: Error { case bad, worse }
+func go() throws { throw MyError.bad }
+@Test func ok() { #expect(throws: MyError.bad) { try go() } }
+@Test func no() { #expect(throws: MyError.worse) { try go() } }
+";
+    let report = run(src);
+    let ok = report.tests.iter().find(|t| t.id == "ok()").unwrap();
+    assert_eq!(ok.status, TestStatus::Passed, "issues: {:?}", ok.issues);
+    let no = report.tests.iter().find(|t| t.id == "no()").unwrap();
+    assert_eq!(no.status, TestStatus::Failed);
+}
+
+#[test]
+fn require_throws_returns_error_and_aborts_on_mismatch() {
+    let src = "\
+enum MyError: Error { case bad }
+func go() throws { throw MyError.bad }
+@Test func caught() throws {
+  let e = try #require(throws: MyError.self) { try go() }
+  #expect(e is MyError)
+}
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 1, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
+fn require_throws_aborts_when_no_error() {
+    let src = "\
+struct Boom: Error {}
+func go() throws {}
+@Test func t() throws {
+  let _ = try #require(throws: Boom.self) { try go() }
+  #expect(false)
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    // The trailing #expect(false) never runs: exactly one issue (the require).
+    assert_eq!(
+        report.tests[0].issues.len(),
+        1,
+        "issues: {:?}",
+        report.tests[0].issues
+    );
+}
+
+#[test]
+fn expect_throws_async_closure() {
+    let src = "\
+struct Boom: Error {}
+func go() async throws { throw Boom() }
+@Test func t() async { #expect(throws: Boom.self) { try await go() } }
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 1, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
 fn compile_error_yields_no_tests() {
     let report = run("@Test func t() { let x = }\n");
     assert!(report.compile_error.is_some());
