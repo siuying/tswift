@@ -23,6 +23,7 @@ mod httpmock;
 mod nethttp;
 mod sqlite_ffi;
 mod swiftui;
+mod test_cmd;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -65,6 +66,39 @@ fn main() -> ExitCode {
                 run(&paths, allow_network, target.as_deref())
             }
         }
+        Some("test") => {
+            let rest: Vec<String> = args.collect();
+            let filter = rest
+                .iter()
+                .position(|a| a == "--filter")
+                .and_then(|i| rest.get(i + 1))
+                .cloned();
+            let target = rest
+                .iter()
+                .position(|a| a == "--target")
+                .and_then(|i| rest.get(i + 1))
+                .cloned();
+            let paths: Vec<String> = {
+                let mut it = rest.into_iter().peekable();
+                let mut out = Vec::new();
+                while let Some(a) = it.next() {
+                    if a == "--filter" || a == "--target" {
+                        it.next(); // consume the value
+                    } else if !a.starts_with("--") {
+                        out.push(a);
+                    }
+                }
+                out
+            };
+            if paths.is_empty() {
+                eprintln!(
+                    "error: `test` requires a file, directory, or package path\n\nusage: tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>"
+                );
+                ExitCode::FAILURE
+            } else {
+                test_cmd::run(&paths, filter.as_deref(), target.as_deref())
+            }
+        }
         Some("dump") => {
             let rest: Vec<String> = args.collect();
             let json = rest.iter().any(|a| a == "--json");
@@ -93,13 +127,13 @@ fn main() -> ExitCode {
         Some("swiftui") => swiftui::run(args),
         Some(other) => {
             eprintln!(
-                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift dump [--json] <file.swift> | tswift symbols <file.swift|dir> | tswift swiftui render|dispatch <file.swift> [events.json]"
+                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir> | tswift dump [--json] <file.swift> | tswift symbols <file.swift|dir> | tswift swiftui render|dispatch <file.swift> [events.json]"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!(
-                "usage: tswift run <file.swift> [more.swift ...]\n       tswift run <dir>\n       tswift dump [--json] <file.swift>\n       tswift symbols <file.swift|dir>"
+                "usage: tswift run <file.swift> [more.swift ...]\n       tswift run <dir>\n       tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>\n       tswift dump [--json] <file.swift>\n       tswift symbols <file.swift|dir>"
             );
             ExitCode::FAILURE
         }
