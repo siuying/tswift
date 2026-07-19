@@ -22,6 +22,50 @@ use std::time::Duration;
 use tswift_frontend::SourceFile;
 use tswift_testing::{CompileError, RunOptions, RunReport, TestStatus};
 
+/// The parsed `tswift test` argument list: `--filter`/`--target` values plus
+/// the positional path arguments, in order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TestArgs {
+    pub filter: Option<String>,
+    pub target: Option<String>,
+    pub paths: Vec<String>,
+}
+
+/// Parse `tswift test`'s argument list.
+///
+/// `--filter <substring>` and `--target <name>` each consume the following
+/// argument as their value; every other `--`-prefixed argument is an unknown
+/// flag (`Err`), never silently dropped. `--filter`/`--target` as the final
+/// argument (no following value) is also `Err`, never a silent `None`.
+/// Anything else is a positional path argument.
+pub fn parse_test_args(rest: &[String]) -> Result<TestArgs, String> {
+    let mut out = TestArgs::default();
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--filter" => {
+                out.filter = Some(
+                    it.next()
+                        .ok_or_else(|| "`--filter` requires a value".to_string())?
+                        .clone(),
+                );
+            }
+            "--target" => {
+                out.target = Some(
+                    it.next()
+                        .ok_or_else(|| "`--target` requires a value".to_string())?
+                        .clone(),
+                );
+            }
+            flag if flag.starts_with("--") => {
+                return Err(format!("unknown flag `{flag}`"));
+            }
+            path => out.paths.push(path.to_string()),
+        }
+    }
+    Ok(out)
+}
+
 /// Run `tswift test` over `paths`, printing console output and returning the
 /// process exit code.
 pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> ExitCode {
@@ -258,6 +302,42 @@ mod tests {
         assert!(out.contains("t.swift:3"), "{out}");
         assert!(out.contains("1 == 2"), "{out}");
         assert!(out.contains("with 1 issue"), "{out}");
+    }
+
+    #[test]
+    fn parse_args_reads_filter_target_and_paths() {
+        let rest = vec![
+            "--filter".to_string(),
+            "alpha".to_string(),
+            "--target".to_string(),
+            "CoreTests".to_string(),
+            "dir".to_string(),
+        ];
+        let parsed = parse_test_args(&rest).unwrap();
+        assert_eq!(parsed.filter.as_deref(), Some("alpha"));
+        assert_eq!(parsed.target.as_deref(), Some("CoreTests"));
+        assert_eq!(parsed.paths, vec!["dir".to_string()]);
+    }
+
+    #[test]
+    fn parse_args_rejects_unknown_flag() {
+        let rest = vec!["--bogus".to_string(), "dir".to_string()];
+        let err = parse_test_args(&rest).unwrap_err();
+        assert!(err.contains("--bogus"), "{err}");
+    }
+
+    #[test]
+    fn parse_args_rejects_filter_with_no_value() {
+        let rest = vec!["dir".to_string(), "--filter".to_string()];
+        let err = parse_test_args(&rest).unwrap_err();
+        assert!(err.contains("--filter"), "{err}");
+    }
+
+    #[test]
+    fn parse_args_rejects_target_with_no_value() {
+        let rest = vec!["dir".to_string(), "--target".to_string()];
+        let err = parse_test_args(&rest).unwrap_err();
+        assert!(err.contains("--target"), "{err}");
     }
 
     #[test]

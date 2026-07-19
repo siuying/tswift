@@ -141,6 +141,38 @@ fn two_test_targets_print_per_unit_and_labeled_overall_summary() {
     assert!(out.contains("Overall: 2 tests passed"), "stdout: {out}");
 }
 
+/// An unrecognized `--flag` is a usage error, not silently ignored.
+#[test]
+fn unknown_flag_is_a_usage_error() {
+    let file = fixtures_dir().join("passing.swift");
+    let output = run_test_cmd(&["--bogus", file.to_str().unwrap()]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("--bogus"), "{err}");
+    assert!(err.contains("usage:"), "{err}");
+}
+
+/// `--filter` with no following value is a usage error, not a silent `None`
+/// (which would otherwise run every test unfiltered).
+#[test]
+fn filter_with_no_value_is_a_usage_error() {
+    let file = fixtures_dir().join("passing.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--filter"]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("--filter"), "{err}");
+}
+
+/// `--target` with no following value is a usage error, not a silent `None`.
+#[test]
+fn target_with_no_value_is_a_usage_error() {
+    let file = fixtures_dir().join("passing.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--target"]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("--target"), "{err}");
+}
+
 /// Zero discovered tests is not an error (documented CLI policy, plan §2.5 /
 /// R3): exit 0 with a clear "0 tests" message, not a silent false-green.
 #[test]

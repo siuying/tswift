@@ -68,35 +68,23 @@ fn main() -> ExitCode {
         }
         Some("test") => {
             let rest: Vec<String> = args.collect();
-            let filter = rest
-                .iter()
-                .position(|a| a == "--filter")
-                .and_then(|i| rest.get(i + 1))
-                .cloned();
-            let target = rest
-                .iter()
-                .position(|a| a == "--target")
-                .and_then(|i| rest.get(i + 1))
-                .cloned();
-            let paths: Vec<String> = {
-                let mut it = rest.into_iter().peekable();
-                let mut out = Vec::new();
-                while let Some(a) = it.next() {
-                    if a == "--filter" || a == "--target" {
-                        it.next(); // consume the value
-                    } else if !a.starts_with("--") {
-                        out.push(a);
-                    }
+            let usage = "usage: tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>";
+            let parsed = match test_cmd::parse_test_args(&rest) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: {e}\n\n{usage}");
+                    return ExitCode::FAILURE;
                 }
-                out
             };
-            if paths.is_empty() {
-                eprintln!(
-                    "error: `test` requires a file, directory, or package path\n\nusage: tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>"
-                );
+            if parsed.paths.is_empty() {
+                eprintln!("error: `test` requires a file, directory, or package path\n\n{usage}");
                 ExitCode::FAILURE
             } else {
-                test_cmd::run(&paths, filter.as_deref(), target.as_deref())
+                test_cmd::run(
+                    &parsed.paths,
+                    parsed.filter.as_deref(),
+                    parsed.target.as_deref(),
+                )
             }
         }
         Some("dump") => {
