@@ -14,7 +14,12 @@ pub enum Trait {
     /// `.disabled("reason")` — always skip, carrying an optional reason.
     Disabled(Option<String>),
     /// `.enabled(if: cond)` — skip unless `cond` evaluates to `true`; the
-    /// condition node is evaluated once at run start against the loaded program.
+    /// condition node is evaluated once at run start against the loaded
+    /// program. A suite-level `@Suite(.enabled(if: cond))` is inherited by
+    /// every `@Test` member (`discover::collect_suite`), so its condition is
+    /// re-evaluated once *per member* — a side-effecting condition runs
+    /// multiple times, once per test in the suite, not once for the suite as
+    /// a whole.
     EnabledIf(Node<'static>),
 }
 
