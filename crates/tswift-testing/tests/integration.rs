@@ -266,6 +266,7 @@ fn filter_selects_matching_tests() {
         &[SourceFile::new("Tests.swift", src)],
         &RunOptions {
             filter: Some("alpha".to_string()),
+            ids: None,
         },
     );
     assert_eq!(report.tests.len(), 1);
@@ -513,6 +514,7 @@ fn run_filtered(src: &str, filter: &str) -> tswift_testing::RunReport {
         &[SourceFile::new("Tests.swift", src)],
         &RunOptions {
             filter: Some(filter.to_string()),
+            ids: None,
         },
     )
 }

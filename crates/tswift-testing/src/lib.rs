@@ -11,6 +11,7 @@
 //!   it analyzes a program, installs the standard stack, discovers tests, and
 //!   runs each in a fresh suite instance, returning a [`RunReport`].
 
+mod descriptor;
 mod discover;
 mod expect;
 mod params;
@@ -18,7 +19,9 @@ mod render;
 mod report;
 mod session;
 mod traits;
+mod wire;
 
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -27,15 +30,26 @@ use tswift_frontend::{Analysis, SourceFile};
 
 use traits::Trait;
 
+pub use descriptor::{list_tests, TestDescriptor};
 pub use discover::TestCase;
 pub use report::{CompileError, Issue, RunReport, TestResult, TestStatus};
+pub use wire::{descriptors_to_json, error_json, parse_run_options, report_to_json};
 
 /// Options controlling a test run.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     /// Case-sensitive substring filter on a test's id / display name; `None`
-    /// runs every test.
+    /// runs every test. Ignored when [`ids`](Self::ids) is set (exact
+    /// selection takes precedence over the substring filter).
     pub filter: Option<String>,
+    /// Exact canonical-id selection (distinct from the substring `filter`):
+    /// `Some(["MathSuite/pass()", "p() - 2"])` runs only the listed tests.
+    /// A base test id (`"p()"` — the base id carries no parameter labels)
+    /// selects every one of its parameterized cases; an exact case id (e.g.
+    /// `"p() - 2"`, argument value suffixed) selects just that case. An id
+    /// matching no discovered test is an error (the run reports the unknown
+    /// ids, never a silent zero-tests success). `None` selects everything.
+    pub ids: Option<Vec<String>>,
 }
 
 /// Register the `Testing` module surface (`#expect`, `#require`) on `interp`.
@@ -100,18 +114,52 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     }
 
     let mut cases = discover::discover(analysis.root());
-    if let Some(filter) = &options.filter {
-        cases.retain(|c| c.matches_filter(filter));
+    // Exact-id selection (`ids`) takes precedence over the substring `filter`;
+    // the filter only applies when no explicit id selection is given.
+    if options.ids.is_none() {
+        if let Some(filter) = &options.filter {
+            cases.retain(|c| c.matches_filter(filter));
+        }
     }
 
     // Resolve each test into a flat list of plans — a skip, or one run per
     // parameterized case (a single run for an ordinary test). Only runs need a
     // synthetic driver call, so `.enabled(if:)` conditions are evaluated here
     // (against the loaded program) before any driver is built.
-    let plans: Vec<Plan> = cases
+    let mut plans: Vec<Plan> = cases
         .iter()
         .flat_map(|c| plan_case(&mut interp, c))
         .collect();
+
+    // Apply exact-id selection. An id may name a whole test (`case.id()`, which
+    // selects all its parameterized cases) or one expanded case (a plan's own
+    // id). Any selection id matching neither is an error listing the unknowns —
+    // never a silent zero-tests success.
+    if let Some(ids) = &options.ids {
+        let mut known: HashSet<String> = cases.iter().map(|c| c.id()).collect();
+        for plan in &plans {
+            known.insert(plan.selection_id());
+        }
+        let unknown: Vec<String> = ids
+            .iter()
+            .filter(|id| !known.contains(id.as_str()))
+            .cloned()
+            .collect();
+        if !unknown.is_empty() {
+            return RunReport {
+                compile_error: Some(CompileError::Message(format!(
+                    "unknown test id(s): {}",
+                    unknown.join(", ")
+                ))),
+                ..RunReport::default()
+            };
+        }
+        let selection: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        plans.retain(|plan| {
+            selection.contains(plan.case().id().as_str())
+                || selection.contains(plan.selection_id().as_str())
+        });
+    }
     let driver_lines: Vec<String> = plans
         .iter()
         .filter_map(|p| match p {
@@ -185,6 +233,24 @@ enum Plan<'a> {
         label: Option<String>,
         driver: String,
     },
+}
+
+impl<'a> Plan<'a> {
+    /// The discovered test this plan belongs to.
+    fn case(&self) -> &'a TestCase {
+        match self {
+            Plan::Skip { case, .. } | Plan::Fail { case, .. } | Plan::Run { case, .. } => case,
+        }
+    }
+
+    /// The most specific id a host can select this plan by: a run's per-case id
+    /// (`"p(x:) - 2"`), or the whole test's id for a skip/fail plan.
+    fn selection_id(&self) -> String {
+        match self {
+            Plan::Run { id, .. } => id.clone(),
+            Plan::Skip { case, .. } | Plan::Fail { case, .. } => case.id(),
+        }
+    }
 }
 
 /// Turn one discovered `case` into its plans: a single skip, or one run per
@@ -536,6 +602,70 @@ mod tests {
             &[SourceFile::new("Tests.swift", src)],
             &RunOptions::default(),
         )
+    }
+
+    fn run_ids(src: &str, ids: &[&str]) -> RunReport {
+        run_tests(
+            &[SourceFile::new("Tests.swift", src)],
+            &RunOptions {
+                filter: None,
+                ids: Some(ids.iter().map(|s| s.to_string()).collect()),
+            },
+        )
+    }
+
+    #[test]
+    fn ids_selection_runs_only_named_tests() {
+        let report = run_ids(
+            "@Test func a() { #expect(true) }\n@Test func b() { #expect(true) }\n",
+            &["a()"],
+        );
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.tests[0].id, "a()");
+    }
+
+    #[test]
+    fn ids_selection_of_parameterized_base_runs_all_cases() {
+        let report = run_ids(
+            "@Test(arguments: [1, 2, 3]) func p(x: Int) { #expect(x > 0) }\n",
+            &["p()"],
+        );
+        assert_eq!(report.tests.len(), 3);
+    }
+
+    #[test]
+    fn ids_selection_of_exact_case_runs_one_case() {
+        let report = run_ids(
+            "@Test(arguments: [1, 2, 3]) func p(x: Int) { #expect(x > 0) }\n",
+            &["p() - 2"],
+        );
+        assert_eq!(report.tests.len(), 1);
+        assert!(report.tests[0].id.contains("- 2"), "{}", report.tests[0].id);
+    }
+
+    #[test]
+    fn unknown_id_is_an_error_not_silent_zero() {
+        let report = run_ids("@Test func a() {}\n", &["a()", "missing()"]);
+        assert!(!report.is_success());
+        let err = report.compile_error.expect("unknown id must error");
+        assert!(err.to_string().contains("missing()"), "{err}");
+        assert!(report.tests.is_empty(), "no tests run on unknown id");
+    }
+
+    #[test]
+    fn ids_selection_takes_precedence_over_filter() {
+        let report = run_tests(
+            &[SourceFile::new(
+                "Tests.swift",
+                "@Test func alpha() { #expect(true) }\n@Test func beta() { #expect(true) }\n",
+            )],
+            &RunOptions {
+                filter: Some("beta".into()),
+                ids: Some(vec!["alpha()".into()]),
+            },
+        );
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.tests[0].id, "alpha()");
     }
 
     #[test]
