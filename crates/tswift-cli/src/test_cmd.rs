@@ -249,8 +249,12 @@ fn overall_summary(
     if tests == 0 {
         format!("Test run with 0 tests (nothing matched) after {secs:.3} seconds.")
     } else if failed == 0 {
+        // `tests` includes any skipped tests; "N tests, M passed" must count
+        // only the ones that actually ran and passed, with skips called out
+        // separately (`skips`), not folded into the passed count.
+        let passed = tests - skipped;
         format!(
-            "Test run with {tests} test{} passed after {secs:.3} seconds{skips}.",
+            "Test run with {tests} test{}, {passed} passed after {secs:.3} seconds{skips}.",
             plural(tests)
         )
     } else {
@@ -314,7 +318,7 @@ mod tests {
         };
         let out = render_report(&report);
         assert!(out.contains("Test a() passed"), "{out}");
-        assert!(out.contains("Test run with 1 test passed"), "{out}");
+        assert!(out.contains("Test run with 1 test, 1 passed"), "{out}");
     }
 
     #[test]
@@ -364,6 +368,22 @@ mod tests {
         let rest = vec!["dir".to_string(), "--target".to_string()];
         let err = parse_test_args(&rest).unwrap_err();
         assert!(err.contains("--target"), "{err}");
+    }
+
+    #[test]
+    fn skipped_tests_are_not_counted_as_passed_in_summary() {
+        // A run with a pass and a skip (no failures) must not word its summary
+        // as "N tests passed" when only some of them actually ran and passed.
+        let mut skipped = passing("b()");
+        skipped.status = TestStatus::Skipped;
+        skipped.skip_reason = Some("flaky".to_string());
+        let report = RunReport {
+            tests: vec![passing("a()"), skipped],
+            duration: Duration::from_millis(2),
+            compile_error: None,
+        };
+        let out = render_report(&report);
+        assert!(out.contains("Test run with 2 tests, 1 passed"), "{out}");
     }
 
     #[test]

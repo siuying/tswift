@@ -136,9 +136,9 @@ fn two_test_targets_print_per_unit_and_labeled_overall_summary() {
     );
     assert!(out.contains("Test target CoreTests:"), "stdout: {out}");
     assert!(out.contains("Test target ExtraTests:"), "stdout: {out}");
-    let per_unit_summaries = out.matches("Test run with 1 test passed").count();
+    let per_unit_summaries = out.matches("Test run with 1 test, 1 passed").count();
     assert_eq!(per_unit_summaries, 2, "stdout: {out}");
-    assert!(out.contains("Overall: 2 tests passed"), "stdout: {out}");
+    assert!(out.contains("Overall: 2 tests, 2 passed"), "stdout: {out}");
 }
 
 /// A `@Test(arguments:)` runs one case per element, each labelled with its
