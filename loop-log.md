@@ -1559,3 +1559,21 @@ What works: multi-file compile+run (files/dir/Package.swift) as one module with 
 Follow-ups: (1) wire ADR-0018 warm cache into FFI `Context` if a native host resubmits identical input; (2) session/runtime reuse path in FFI (Option D) if a host needs "keep warm"; (3) sema name-resolution pass so "cannot find 'x' in scope" becomes a located compile diagnostic (own slice); (4) parser multi-error recovery (currently first-fail).
 
 - agent verify-review-multifile: PASS — independently reproduced multi-file compile+run (file-list, flat-dir, Package.swift) as one cross-file module; lexer/parser/sema errors attribute to correct file with hand-verified col + swiftc caret (tab-preserving, codepoint columns); nonzero exit; documented limits (undefined-var runtime error, parser first-fail) hold; frontend ~5ms vs exec ~2.24s corroborates <5% doc claim; 21 golden green; presubmit green. Verdict: SHIP.
+
+- agent testing-research: plan Swift Testing support (tswift test); see docs/plan/swift-testing-support.md
+
+## Swift Testing — Slice A (core runner)
+
+Branch `swift-testing-a`. Library-level Swift Testing runner (no CLI/traits/params).
+Commits (conventional, --no-gpg-sign):
+- 862f792 fix(parser): retain freestanding-macro args in expression position (`try #require(opt)` kept its operand; was dropped via skip_balanced_parens in expr position; `#available`/literals still skip).
+- c8023ba feat(core): add `Interpreter::retain_analysis` + `load` (hoist-only, no @main/teardown) generic seams.
+- 744fb67 feat(frontend): `Analysis::locate(line) -> (file, local_line)` FileSpan remap (stored spans).
+- 447df1a feat(testing): new `crates/tswift-testing` — discovery (@Test free + implicit suites, display names, stable line order), #expect/#require macros (soft/hard, operand capture, require-abort via thread-local session), fresh-suite-per-test serial runner, RunReport{tests,issues(file,line),durations,counts}. `install()` under module "Testing"; `run_tests(files, opts)` public API.
+
+Design: macros push to a thread-local session (tswift-core stays Testing-agnostic, R1). Per-test invocation via a synthetic `try await Suite().m()` driver node evaluated through StdContext::eval_node; require-abort distinguished from user throw by session `aborted` flag. Suite freshness = fresh instance per driver eval.
+
+Tests: parser/frontend/core unit tests + 10 integration fixtures (pass, failing #expect w/ operand detail, #require abort+continue, try #require unwrap, throwing, async, suite freshness, filter, compile-error). ~573 src LOC.
+scripts/presubmit GREEN (fmt+clippy+`test --workspace --all-targets`+wasm smoke, EXIT=0).
+
+Deferred to slice C: @Suite display/nesting traits, `.disabled`/`.enabled(if:)`, `@Test(arguments:)` parameterized, `Issue.record`, `#expect(throws:)`, multi-arg #expect messages, tags. (Slice B = CLI `tswift test` + package/.testTarget loading, per plan.)
