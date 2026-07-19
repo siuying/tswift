@@ -52,6 +52,14 @@ pub struct PackageTarget {
     /// Ignored when `sources:` is also present (SwiftPM applies `exclude:`
     /// only to the directory-scan default, not to an explicit list).
     pub exclude: Vec<String>,
+    /// Names of other targets this target depends on, from a literal
+    /// `dependencies: ["Name", ...]` array of string literals (SwiftPM also
+    /// accepts `.target(name:)`/`.product(name:package:)` entries and
+    /// package-external products; those are silently dropped from this list
+    /// rather than erroring, since `tswift test`'s only use for this field is
+    /// concatenating a **local** dependency target's sources into a test
+    /// unit — see [`crate::project::load_test_program`]).
+    pub dependencies: Vec<String>,
 }
 
 /// The subset of a `Package.swift` manifest this reader extracts: the
@@ -235,6 +243,7 @@ fn parse_target_entry(elt: &crate::Node<'_>) -> Result<PackageTarget, ManifestEr
     let mut path = None;
     let mut sources = Vec::new();
     let mut exclude = Vec::new();
+    let mut dependencies = Vec::new();
     for arg in elt.children().skip(1) {
         match arg.arg_label().as_deref() {
             Some("name") => name = string_literal_value(&arg),
@@ -253,6 +262,7 @@ fn parse_target_entry(elt: &crate::Node<'_>) -> Result<PackageTarget, ManifestEr
                     ))
                 })?;
             }
+            Some("dependencies") => dependencies = dependency_names_value(&arg),
             _ => {}
         }
     }
@@ -266,7 +276,40 @@ fn parse_target_entry(elt: &crate::Node<'_>) -> Result<PackageTarget, ManifestEr
         kind,
         sources,
         exclude,
+        dependencies,
     })
+}
+
+/// Extract target-local dependency names from a `dependencies:` array.
+/// Recognizes bare string literals (`"Core"`) and `.target(name: "Core")`
+/// entries; anything else (`.product(name:package:)`, a variable, string
+/// interpolation) names a target this reader cannot resolve locally and is
+/// silently dropped — see [`PackageTarget::dependencies`]'s doc for why that's
+/// safe here (it only ever widens a test unit's source set, never narrows the
+/// requested target itself).
+fn dependency_names_value(value: &crate::Node<'_>) -> Vec<String> {
+    if value.kind() != crate::NodeKind::ArrayLiteral {
+        return Vec::new();
+    }
+    value
+        .children()
+        .filter_map(|elt| match elt.kind() {
+            crate::NodeKind::StringLiteral => string_literal_value(&elt),
+            crate::NodeKind::CallExpr => {
+                let callee = elt.first_child()?;
+                if callee.kind() != crate::NodeKind::MemberExpr
+                    || callee.text().as_deref() != Some("target")
+                {
+                    return None;
+                }
+                elt.children()
+                    .skip(1)
+                    .find(|a| a.arg_label().as_deref() == Some("name"))
+                    .and_then(|a| string_literal_value(&a))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The unescaped values of a literal `ArrayLiteral` of `StringLiteral`
@@ -423,17 +466,37 @@ fn load_manifest_program(
         });
     }
 
-    let dir = chosen
+    let mut out = target_source_files(files, chosen)?;
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(out)
+}
+
+/// The ordered (unsorted) `.swift` files that make up `target`'s own source
+/// set — `sources:`-listed files if given, else every `.swift` file under its
+/// directory (`path:`, or the `Sources/<name>/` convention), minus
+/// `exclude:`. Shared by [`load_manifest_program`] (one runnable target) and
+/// [`load_test_program`] (a test target plus its local dependencies).
+fn target_source_files(
+    files: &[SourceFile],
+    target: &PackageTarget,
+) -> Result<Vec<SourceFile>, ProjectError> {
+    // SwiftPM's own convention default differs by kind: library/executable
+    // targets live under `Sources/<name>/`, test targets under `Tests/<name>/`.
+    let convention_root = match &target.kind {
+        TargetKind::Other(c) if c == "testTarget" => "Tests",
+        _ => "Sources",
+    };
+    let dir = target
         .path
         .clone()
-        .unwrap_or_else(|| format!("Sources/{}", chosen.name));
+        .unwrap_or_else(|| format!("{convention_root}/{}", target.name));
     let prefix = format!("{}/", dir.trim_end_matches('/'));
 
-    let mut out: Vec<SourceFile> = if !chosen.sources.is_empty() {
+    let out: Vec<SourceFile> = if !target.sources.is_empty() {
         // Explicit `sources:` list: the exact source set, each entry a path
         // relative to `dir`. No directory recursion, no `exclude:` (SwiftPM
         // applies `exclude:` only to the directory-scan default).
-        chosen
+        target
             .sources
             .iter()
             .map(|rel| {
@@ -443,7 +506,7 @@ fn load_manifest_program(
                     .find(|f| f.path == full)
                     .cloned()
                     .ok_or_else(|| ProjectError::MissingSourceFile {
-                        target: chosen.name.clone(),
+                        target: target.name.clone(),
                         path: full.clone(),
                     })
             })
@@ -452,18 +515,101 @@ fn load_manifest_program(
         files
             .iter()
             .filter(|f| f.path.starts_with(&prefix) && f.path.ends_with(".swift"))
-            .filter(|f| !is_excluded(&f.path, &prefix, &chosen.exclude))
+            .filter(|f| !is_excluded(&f.path, &prefix, &target.exclude))
             .cloned()
             .collect()
     };
     if out.is_empty() {
         return Err(ProjectError::NoSourceFiles {
-            target: chosen.name.clone(),
+            target: target.name.clone(),
             dir,
         });
     }
-    out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
+}
+
+/// One test target's derived program input: its own sources plus every
+/// locally-resolvable `dependencies:` target's sources, concatenated into one
+/// flat compilation unit (plan §2.2 — tswift has no link step, so a test
+/// target and the library it tests are analyzed together, same as multi-file
+/// `run`). Files are de-duplicated by path (a dependency and the test target
+/// itself never overlap in practice, but a dependency named twice must not
+/// duplicate its sources) and sorted for determinism.
+#[derive(Debug, Clone)]
+pub struct TestProgram {
+    /// The `.testTarget`'s name.
+    pub target: String,
+    pub files: Vec<SourceFile>,
+}
+
+/// Derive one [`TestProgram`] per selected `.testTarget` out of a project's
+/// full file listing (see [`load_program`] for the `files` shape).
+///
+/// * `target = Some(name)` selects exactly that target, which must be a
+///   `.testTarget`, or [`ProjectError::UnsupportedTargetKind`] (a *library* or
+///   *executable* target named this way is a load-bearing user mistake, not a
+///   silent fallback — same policy as [`load_program`]'s `UnsupportedTargetKind`,
+///   mirrored the other direction).
+/// * `target = None` selects every `.testTarget` the manifest declares, in
+///   manifest order; declaring none is [`ProjectError::NoExecutableTarget`]
+///   (reused: "no runnable target found" reads the same for either target
+///   kind this loader wants).
+pub fn load_test_program(
+    files: &[SourceFile],
+    target: Option<&str>,
+) -> Result<Vec<TestProgram>, ProjectError> {
+    let manifest_file = files
+        .iter()
+        .find(|f| f.path == "Package.swift")
+        .ok_or(ProjectError::NoSwiftFiles)?;
+    let manifest = parse_manifest(&manifest_file.source).map_err(ProjectError::Manifest)?;
+
+    let is_test_target =
+        |t: &&PackageTarget| matches!(&t.kind, TargetKind::Other(c) if c == "testTarget");
+    let chosen: Vec<&PackageTarget> = match target {
+        Some(name) => {
+            let t = manifest
+                .target(name)
+                .ok_or_else(|| ProjectError::TargetNotFound(name.to_string()))?;
+            if !is_test_target(&t) {
+                let ctor = match &t.kind {
+                    TargetKind::Executable => "executableTarget".to_string(),
+                    TargetKind::Library => "target".to_string(),
+                    TargetKind::Other(c) => c.clone(),
+                };
+                return Err(ProjectError::UnsupportedTargetKind {
+                    name: t.name.clone(),
+                    ctor,
+                });
+            }
+            vec![t]
+        }
+        None => {
+            let ts: Vec<&PackageTarget> = manifest.targets.iter().filter(is_test_target).collect();
+            if ts.is_empty() {
+                return Err(ProjectError::NoExecutableTarget);
+            }
+            ts
+        }
+    };
+
+    chosen
+        .into_iter()
+        .map(|t| {
+            let mut unit = target_source_files(files, t)?;
+            for dep_name in &t.dependencies {
+                if let Some(dep) = manifest.target(dep_name) {
+                    unit.extend(target_source_files(files, dep)?);
+                }
+            }
+            unit.sort_by(|a, b| a.path.cmp(&b.path));
+            unit.dedup_by(|a, b| a.path == b.path);
+            Ok(TestProgram {
+                target: t.name.clone(),
+                files: unit,
+            })
+        })
+        .collect()
 }
 
 /// Whether `path` (a project-root-relative file path already known to start
@@ -701,6 +847,81 @@ mod tests {
                 path: "Sources/App/Missing.swift".to_string()
             }
         );
+    }
+
+    #[test]
+    fn parses_target_dependencies() {
+        let src = "let package = Package(\n    name: \"Foo\",\n    targets: [\n        .executableTarget(name: \"App\", dependencies: [\"Core\", .target(name: \"Utils\")]),\n    ]\n)\n";
+        let m = parse_manifest(src).unwrap();
+        assert_eq!(
+            m.targets[0].dependencies,
+            vec!["Core".to_string(), "Utils".to_string()]
+        );
+    }
+
+    fn test_project() -> Vec<SourceFile> {
+        let src = "let package = Package(\n    name: \"Foo\",\n    targets: [\n        .executableTarget(name: \"App\", dependencies: [\"Core\"]),\n        .target(name: \"Core\"),\n        .testTarget(name: \"AppTests\", dependencies: [\"Core\"]),\n    ]\n)\n";
+        vec![
+            sf("Package.swift", src),
+            sf("Sources/App/main.swift", "print(1)\n"),
+            sf("Sources/Core/lib.swift", "func h() -> Int { 1 }\n"),
+            sf(
+                "Tests/AppTests/T.swift",
+                "@Test func t() { #expect(h() == 1) }\n",
+            ),
+        ]
+    }
+
+    #[test]
+    fn load_test_program_selects_all_test_targets_by_default() {
+        let files = test_project();
+        let programs = load_test_program(&files, None).unwrap();
+        assert_eq!(programs.len(), 1);
+        assert_eq!(programs[0].target, "AppTests");
+    }
+
+    #[test]
+    fn load_test_program_concatenates_dependency_sources() {
+        let files = test_project();
+        let programs = load_test_program(&files, None).unwrap();
+        let paths: Vec<&str> = programs[0].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["Sources/Core/lib.swift", "Tests/AppTests/T.swift"]
+        );
+    }
+
+    #[test]
+    fn load_test_program_selects_named_target() {
+        let files = test_project();
+        let programs = load_test_program(&files, Some("AppTests")).unwrap();
+        assert_eq!(programs.len(), 1);
+        assert_eq!(programs[0].target, "AppTests");
+    }
+
+    #[test]
+    fn load_test_program_rejects_non_test_target_by_name() {
+        let files = test_project();
+        let err = load_test_program(&files, Some("App")).unwrap_err();
+        assert_eq!(
+            err,
+            ProjectError::UnsupportedTargetKind {
+                name: "App".to_string(),
+                ctor: "executableTarget".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn load_test_program_reports_no_test_targets() {
+        let src =
+            "let package = Package(name: \"Foo\", targets: [.executableTarget(name: \"App\")])\n";
+        let files = [
+            sf("Package.swift", src),
+            sf("Sources/App/main.swift", "print(1)\n"),
+        ];
+        let err = load_test_program(&files, None).unwrap_err();
+        assert_eq!(err, ProjectError::NoExecutableTarget);
     }
 
     #[test]
