@@ -529,6 +529,58 @@ pub unsafe extern "C" fn tswift_list_symbols(module_json: *const c_char) -> *mut
     into_json_ptr(run::symbols_impl(module_json))
 }
 
+/// Discover every `@Test` in a multi-file module and return owned descriptor
+/// JSON, without running any test. Stateless: takes no context. Release with
+/// [`tswift_string_free`].
+///
+/// `module_json` is a NUL-terminated JSON string:
+/// `{"files":[{"path":"…","contents":"…"},…]}`. Response shape:
+/// `{"ok":bool,"tests":[{"id","displayName","suitePath","file","line","tags",
+/// "caseCount","skipped","skipReason"},…],"error"?:string}` — `ok` is false
+/// only when `module_json` itself fails to parse.
+///
+/// # Safety
+/// `module_json` must be null or a valid NUL-terminated C string. The returned
+/// pointer is owned by the caller and must be freed once with
+/// [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_list_tests(module_json: *const c_char) -> *mut c_char {
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(tswift_testing::error_json(
+            "module_json is null or not valid UTF-8",
+        ));
+    };
+    into_json_ptr(run::list_tests_impl(module_json))
+}
+
+/// Run a multi-file module's `@Test`s under `options_json` and return owned
+/// report JSON. Stateless: takes no context. Release with
+/// [`tswift_string_free`].
+///
+/// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`;
+/// `options_json` is `{"filter":"…","ids":["…",…]}` (both optional — a null
+/// or empty options string runs everything). Response shape:
+/// `{"ok":bool,"passed","failed","skipped","issueCount","durationMs",
+/// "compileError","tests":[…]}`.
+///
+/// # Safety
+/// `module_json` and `options_json` must each be null or a valid
+/// NUL-terminated C string. The returned pointer is owned by the caller and
+/// must be freed once with [`tswift_string_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tswift_run_tests(
+    module_json: *const c_char,
+    options_json: *const c_char,
+) -> *mut c_char {
+    let Some(module_json) = borrow_str(module_json) else {
+        return into_json_ptr(tswift_testing::error_json(
+            "module_json is null or not valid UTF-8",
+        ));
+    };
+    let options_json = borrow_str(options_json).unwrap_or("{}");
+    into_json_ptr(run::run_tests_impl(module_json, options_json))
+}
+
 /// Compile a multi-file SwiftUI module through `ctx` and start a live render
 /// session. Returns owned UIIR JSON (same envelope as
 /// [`tswift_swiftui_compile`]); release with [`tswift_string_free`].
@@ -604,6 +656,10 @@ mod tests {
             tswift_swiftui_compile_module;
         // Symbol listing (Slice 12/13)
         let _list_symbols: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_list_symbols;
+        // Swift Testing discovery/run seam (slice G)
+        let _list_tests: unsafe extern "C" fn(*const c_char) -> *mut c_char = tswift_list_tests;
+        let _run_tests: unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_char =
+            tswift_run_tests;
         // Host-native function registration (Epic #246)
         let _register_host_fn: unsafe extern "C" fn(
             *mut Context,
@@ -769,6 +825,50 @@ mod tests {
     #[test]
     fn list_symbols_null_json_is_structured_error() {
         let out = unsafe { tswift_list_symbols(std::ptr::null()) };
+        let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(out) };
+        assert!(json.contains("\"ok\":false"), "{json}");
+    }
+
+    /// `tswift_list_tests` discovers `@Test`s across a module without running
+    /// them, and `tswift_run_tests` runs a selected subset via the ids option.
+    #[test]
+    fn list_and_run_tests_round_trip() {
+        let module = CString::new(
+            r#"{"files":[{"path":"Tests.swift","contents":"@Test func passes() { #expect(1 + 1 == 2) }
+@Test func fails() { #expect(1 == 2) }
+"}]}"#,
+        )
+        .unwrap();
+        let listed = unsafe { tswift_list_tests(module.as_ptr()) };
+        let list_json = unsafe { CStr::from_ptr(listed) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(listed) };
+        assert!(list_json.contains("\"ok\":true"), "{list_json}");
+        assert!(list_json.contains("\"id\":\"passes()\""), "{list_json}");
+        assert!(list_json.contains("\"id\":\"fails()\""), "{list_json}");
+
+        // Select only the passing test by exact id.
+        let opts = CString::new(r#"{"ids":["passes()"]}"#).unwrap();
+        let report = unsafe { tswift_run_tests(module.as_ptr(), opts.as_ptr()) };
+        let report_json = unsafe { CStr::from_ptr(report) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(report) };
+        assert!(report_json.contains("\"ok\":true"), "{report_json}");
+        assert!(report_json.contains("\"passed\":1"), "{report_json}");
+
+        // Running everything (null options) surfaces the failure.
+        let all = unsafe { tswift_run_tests(module.as_ptr(), std::ptr::null()) };
+        let all_json = unsafe { CStr::from_ptr(all) }.to_str().unwrap().to_string();
+        unsafe { tswift_string_free(all) };
+        assert!(all_json.contains("\"ok\":false"), "{all_json}");
+        assert!(all_json.contains("\"failed\":1"), "{all_json}");
+    }
+
+    /// A malformed module JSON is a structured error envelope, not a panic.
+    #[test]
+    fn run_tests_malformed_module_is_structured_error() {
+        let bad = CString::new("not json").unwrap();
+        let opts = CString::new("{}").unwrap();
+        let out = unsafe { tswift_run_tests(bad.as_ptr(), opts.as_ptr()) };
         let json = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
         unsafe { tswift_string_free(out) };
         assert!(json.contains("\"ok\":false"), "{json}");

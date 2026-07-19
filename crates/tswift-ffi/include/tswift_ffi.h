@@ -201,6 +201,24 @@ char *tswift_swiftui_compile_module(TSwiftContext *ctx, const char *module_json)
  * `ok` is false only when `module_json` itself fails to parse. */
 char *tswift_list_symbols(const char *module_json);
 
+/* ---- Swift Testing discovery / run seam -------------------------------- */
+
+/* Discover every @Test in a multi-file module and return owned descriptor
+ * JSON, without running any test. Stateless (no context). Same `module_json`
+ * shape as the module functions above. Response shape:
+ *   {"ok":bool,"tests":[{"id","displayName","suitePath","file","line",
+ *   "tags","caseCount","skipped","skipReason"},...],"error"?:string}
+ * `ok` is false only when `module_json` itself fails to parse. */
+char *tswift_list_tests(const char *module_json);
+
+/* Run a multi-file module's @Test's under `options_json` and return owned
+ * report JSON. Stateless (no context). `module_json` is the usual
+ * {"files":[...]} shape; `options_json` is {"filter":"...","ids":[...]} (both
+ * optional -- a NULL or empty options string runs everything). Response shape:
+ *   {"ok":bool,"passed","failed","skipped","issueCount","durationMs",
+ *   "compileError","tests":[...]} */
+char *tswift_run_tests(const char *module_json, const char *options_json);
+
 /* ---- String release ---------------------------------------------------- */
 
 /* Release a string returned by any function above. NULL is ignored. */
