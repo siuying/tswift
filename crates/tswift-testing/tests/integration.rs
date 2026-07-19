@@ -126,6 +126,25 @@ struct Counter {
 }
 
 #[test]
+fn nested_suite_types_are_discovered() {
+    let src = "\
+struct Outer {
+  @Test func a() { #expect(true) }
+  struct Inner {
+    @Test func b() { #expect(true) }
+  }
+}
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 2, "issues: {:?}", report.tests);
+    assert!(
+        report.tests.iter().any(|t| t.id == "Outer/Inner/b()"),
+        "ids: {:?}",
+        report.tests.iter().map(|t| &t.id).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn filter_selects_matching_tests() {
     let src = "@Test func alpha() { #expect(true) }\n@Test func beta() { #expect(true) }\n";
     let report = run_tests(

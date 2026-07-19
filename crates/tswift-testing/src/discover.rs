@@ -23,10 +23,12 @@ pub struct TestCase {
 }
 
 impl TestCase {
-    /// The fully-qualified id: `"free()"` or `"MathSuite/pass()"`.
+    /// The fully-qualified id: `"free()"`, `"MathSuite/pass()"`, or a nested
+    /// `"Outer/Inner/b()"`. The suite path is stored dot-joined for runtime
+    /// construction (`Outer.Inner()`); the id shows it slash-separated.
     pub fn id(&self) -> String {
         match &self.suite_type {
-            Some(suite) => format!("{suite}/{}()", self.func_name),
+            Some(suite) => format!("{}/{}()", suite.replace('.', "/"), self.func_name),
             None => format!("{}()", self.func_name),
         }
     }
@@ -62,7 +64,7 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
                 });
             }
             NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
-                collect_suite(&decl, &mut cases);
+                collect_suite(&decl, None, &mut cases);
             }
             _ => {}
         }
@@ -71,24 +73,36 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
     cases
 }
 
-/// Collect `@Test` methods of a type. A type with any `@Test` method is a suite
-/// even without `@Suite` (implicit suites, matching Apple).
-fn collect_suite(type_decl: &Node<'static>, cases: &mut Vec<TestCase>) {
-    let suite_type = type_decl.decl_name();
-    let Some(suite_type) = suite_type else {
+/// Collect `@Test` methods of a type, recursing into nested suite types. A type
+/// with any `@Test` method is a suite even without `@Suite` (implicit suites,
+/// matching Apple). `parent` is the dot-joined construction path of the
+/// enclosing suite, so a nested `Inner` under `Outer` is constructed as
+/// `Outer.Inner()`.
+fn collect_suite(type_decl: &Node<'static>, parent: Option<&str>, cases: &mut Vec<TestCase>) {
+    let Some(name) = type_decl.decl_name() else {
         return;
+    };
+    let suite_type = match parent {
+        Some(prefix) => format!("{prefix}.{name}"),
+        None => name,
     };
     let suite_display = attribute_display_name(type_decl, "Suite");
     for member in type_decl.children() {
-        if member.kind() == NodeKind::FuncDecl && has_attribute(&member, "Test") {
-            cases.push(TestCase {
-                suite_type: Some(suite_type.clone()),
-                suite_display: suite_display.clone(),
-                func_name: member.decl_name().unwrap_or_default(),
-                display_name: attribute_display_name(&member, "Test"),
-                node: member,
-                line: member.line(),
-            });
+        match member.kind() {
+            NodeKind::FuncDecl if has_attribute(&member, "Test") => {
+                cases.push(TestCase {
+                    suite_type: Some(suite_type.clone()),
+                    suite_display: suite_display.clone(),
+                    func_name: member.decl_name().unwrap_or_default(),
+                    display_name: attribute_display_name(&member, "Test"),
+                    node: member,
+                    line: member.line(),
+                });
+            }
+            NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                collect_suite(&member, Some(&suite_type), cases);
+            }
+            _ => {}
         }
     }
 }
@@ -157,6 +171,15 @@ mod tests {
         let cases = discover_src(src);
         let ids: Vec<String> = cases.iter().map(|c| c.id()).collect();
         assert_eq!(ids, vec!["b()", "a()"]);
+    }
+
+    #[test]
+    fn discovers_nested_suite_with_dotted_path() {
+        let src =
+            "struct Outer {\n  struct Inner {\n    @Test func b() {}\n  }\n}\n";
+        let cases = discover_src(src);
+        assert_eq!(cases[0].id(), "Outer/Inner/b()");
+        assert_eq!(cases[0].suite_type.as_deref(), Some("Outer.Inner"));
     }
 
     #[test]
