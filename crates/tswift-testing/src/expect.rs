@@ -171,7 +171,9 @@ fn bool_detail(operand: &Node<'static>) -> String {
 /// `Issue.record(_: String)` — record a manual soft failure. Like a failing
 /// `#expect`, it records against the current session and returns normally so
 /// the test body continues. No source location is available at this static
-/// call, so the issue is remapped to line 0 (`<unknown>` in reports).
+/// call, so the issue is recorded at line 0; the runner (`run_one`) detects
+/// that sentinel and attributes it to the test's own declaration line instead
+/// of showing a bogus `<unknown>` location.
 pub fn issue_record(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     if !session::is_active() {
         return Err(trap("Issue.record used outside a test"));
