@@ -275,6 +275,47 @@ fn list_symbols_impl(files_json: &str) -> String {
     )
 }
 
+/// Discover every `@Test` in a multi-file module and return descriptor JSON,
+/// **without** running any test — the web playground's "list tests" seam.
+///
+/// `files_json` is `{"files":[{"path":"…","contents":"…"},…]}` (the same wire
+/// shape [`run_swift_module`] takes). Response:
+/// `{"ok":bool,"tests":[{"id","displayName","suitePath","file","line","tags",
+/// "caseCount","skipped","skipReason"},…]}` — `ok` is false only when
+/// `files_json` itself fails to parse.
+#[wasm_bindgen(js_name = listTests)]
+pub fn list_tests(files_json: &str) -> String {
+    install_panic_hook();
+    match parse_module(files_json) {
+        Ok(module) => {
+            let tests = tswift_testing::list_tests(&module.source_files());
+            tswift_testing::descriptors_to_json(&tests)
+        }
+        Err(e) => tswift_testing::error_json(&e),
+    }
+}
+
+/// Run a multi-file module's `@Test`s and return the structured report as JSON.
+///
+/// `files_json` is `{"files":[{"path":"…","contents":"…"},…]}`. `options_json`
+/// is `{"filter":"…","ids":["…",…]}` (both optional; an empty string or `null`
+/// runs everything). Response:
+/// `{"ok":bool,"passed","failed","skipped","issueCount","durationMs",
+/// "compileError","tests":[…]}`. Analysis/compile errors surface in
+/// `compileError` with `ok:false`; there is no wasm-only side effect (the
+/// runner captures stdout to a sink).
+#[wasm_bindgen(js_name = runTests)]
+pub fn run_tests(files_json: &str, options_json: &str) -> String {
+    install_panic_hook();
+    let module = match parse_module(files_json) {
+        Ok(m) => m,
+        Err(e) => return tswift_testing::error_json(&e),
+    };
+    let options = tswift_testing::parse_run_options(options_json);
+    let report = tswift_testing::run_tests(&module.source_files(), &options);
+    tswift_testing::report_to_json(&report)
+}
+
 /// Lint a multi-file Swift module and return diagnostics JSON.
 ///
 /// `module_json` is `{"files":[{"path":"…","contents":"…"},…]}`.

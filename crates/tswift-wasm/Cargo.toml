@@ -18,4 +18,5 @@ tswift-foundation.workspace = true
 tswift-swiftdata.workspace = true
 tswift-swiftui.workspace = true
 tswift-charts.workspace = true
+tswift-testing.workspace = true
 wasm-bindgen = "0.2.126"
