@@ -36,6 +36,27 @@ Coverage states are `missing`, `implemented`, and `verified`. Verified means the
 member is registered and mentioned by a tagged executing CLI golden fixture
 (e.g. `crates/tswift-cli/tests/fixtures/foundation_*.swift`).
 
+### Known limitation: token-based verification is not type-scoped
+
+`implemented` is gated by the registry, whose keys *are* type-scoped
+(`Type.member`). `verified`, however, is decided by scanning fixture **source
+tokens**: a member counts as verified when its bare name appears as a
+member-access (`.name`), call (`name(`), or operator token in any in-scope
+fixture. Those tokens carry no receiver type, so a generic member name
+(`init`, `body`, `map`, `description`, `count`, `hash`, …) can be credited to
+*every* registered type that declares it as soon as **any** unrelated type
+exercises that name in a fixture. `init` is partially guarded (it also accepts
+the owning type name appearing in a fixture), but the bare-token path still
+applies.
+
+Consequently `verified` counts for common members are optimistic: they prove
+the runtime executes *a* call spelled that way, not that the specific type was
+exercised. Tightening this would require type-inferring each fixture token back
+to a receiver type (so `verified` could demand a type-scoped match like the
+registry provides) — deferred because it destabilizes the calibrated per-slice
+baselines many fixtures were tuned against. Treat generic-member `verified`
+numbers as an upper bound; `implemented` (registry-gated) is exact.
+
 `tools/stdlib-inventory/{extract,coverage}.py` remain as compatibility shims.
 
 ## Emit machine-readable coverage JSON

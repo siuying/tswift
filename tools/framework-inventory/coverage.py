@@ -304,6 +304,14 @@ class Coverage:
             )
         if not registered:
             return "missing"
+        # KNOWN LIMITATION (see README "token-based verification"): fixture
+        # tokens are not type-scoped, so a generic member name (init/body/map/
+        # description/count/...) is credited "verified" as soon as ANY type
+        # exercises that name in a fixture, not necessarily `section`. `init`
+        # is partially guarded by also requiring the owning type name; the
+        # bare-token path is an upper bound, whereas registry-gated
+        # "implemented" is exact. Type-inferring tokens back to receivers would
+        # tighten this but destabilizes calibrated baselines — deferred.
         used = member in self.used or (member == "init" and section in self.used)
         return "verified" if used else "implemented"
 
