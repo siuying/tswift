@@ -1557,3 +1557,5 @@ Commits:
 What works: multi-file compile+run (files/dir/Package.swift) as one module with cross-file resolution; swiftc-style `file:line:col: error:` + caret across lexer/parser/sema, correct file in multi-file builds; nonzero exit on error; 21 golden tests green; presubmit green.
 
 Follow-ups: (1) wire ADR-0018 warm cache into FFI `Context` if a native host resubmits identical input; (2) session/runtime reuse path in FFI (Option D) if a host needs "keep warm"; (3) sema name-resolution pass so "cannot find 'x' in scope" becomes a located compile diagnostic (own slice); (4) parser multi-error recovery (currently first-fail).
+
+- agent verify-review-multifile: PASS — independently reproduced multi-file compile+run (file-list, flat-dir, Package.swift) as one cross-file module; lexer/parser/sema errors attribute to correct file with hand-verified col + swiftc caret (tab-preserving, codepoint columns); nonzero exit; documented limits (undefined-var runtime error, parser first-fail) hold; frontend ~5ms vs exec ~2.24s corroborates <5% doc claim; 21 golden green; presubmit green. Verdict: SHIP.
