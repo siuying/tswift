@@ -77,7 +77,7 @@ fn zip_cases(node: &Node<'static>) -> Option<Vec<Vec<Node<'static>>>> {
     let rows = lists.iter().map(Vec::len).min().unwrap_or(0);
     Some(
         (0..rows)
-            .map(|i| lists.iter().map(|l| l[i].clone()).collect())
+            .map(|i| lists.iter().map(|l| l[i]).collect())
             .collect(),
     )
 }
@@ -91,7 +91,7 @@ fn cartesian(lists: &[Vec<Node<'static>>]) -> Vec<Vec<Node<'static>>> {
         for prefix in &rows {
             for elem in list {
                 let mut row = prefix.clone();
-                row.push(elem.clone());
+                row.push(*elem);
                 next.push(row);
             }
         }
@@ -106,7 +106,8 @@ mod tests {
     use tswift_frontend::Analysis;
 
     fn func(src: &str) -> Node<'static> {
-        let analysis: &'static Analysis = Box::leak(Box::new(Analysis::analyze(src, "t.swift").unwrap()));
+        let analysis: &'static Analysis =
+            Box::leak(Box::new(Analysis::analyze(src, "t.swift").unwrap()));
         analysis.root().children().next().unwrap()
     }
 
@@ -119,8 +120,10 @@ mod tests {
 
     #[test]
     fn two_arrays_are_cartesian() {
-        let cases =
-            expand(&func("@Test(arguments: [1, 2], [3, 4]) func p(x: Int, y: Int) {}\n")).unwrap();
+        let cases = expand(&func(
+            "@Test(arguments: [1, 2], [3, 4]) func p(x: Int, y: Int) {}\n",
+        ))
+        .unwrap();
         assert_eq!(cases.len(), 4);
         assert!(cases.iter().all(|row| row.len() == 2));
     }
@@ -142,6 +145,9 @@ mod tests {
 
     #[test]
     fn signature_shows_parameter_labels() {
-        assert_eq!(signature(&func("@Test func div(x: Int) {}\n"), "div"), "div(x:)");
+        assert_eq!(
+            signature(&func("@Test func div(x: Int) {}\n"), "div"),
+            "div(x:)"
+        );
     }
 }

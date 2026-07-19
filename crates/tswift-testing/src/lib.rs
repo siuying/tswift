@@ -107,7 +107,10 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     // parameterized case (a single run for an ordinary test). Only runs need a
     // synthetic driver call, so `.enabled(if:)` conditions are evaluated here
     // (against the loaded program) before any driver is built.
-    let plans: Vec<Plan> = cases.iter().flat_map(|c| plan_case(&mut interp, c)).collect();
+    let plans: Vec<Plan> = cases
+        .iter()
+        .flat_map(|c| plan_case(&mut interp, c))
+        .collect();
     let driver_lines: Vec<String> = plans
         .iter()
         .filter_map(|p| match p {
@@ -141,7 +144,14 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
                 case, id, label, ..
             } => {
                 let node = driver_nodes.next().expect("one driver node per run");
-                results.push(run_one(&mut interp, analysis, case, id, label.clone(), node));
+                results.push(run_one(
+                    &mut interp,
+                    analysis,
+                    case,
+                    id,
+                    label.clone(),
+                    node,
+                ));
             }
         }
     }

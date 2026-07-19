@@ -212,8 +212,7 @@ mod tests {
 
     #[test]
     fn discovers_nested_suite_with_dotted_path() {
-        let src =
-            "struct Outer {\n  struct Inner {\n    @Test func b() {}\n  }\n}\n";
+        let src = "struct Outer {\n  struct Inner {\n    @Test func b() {}\n  }\n}\n";
         let cases = discover_src(src);
         assert_eq!(cases[0].id(), "Outer/Inner/b()");
         assert_eq!(cases[0].suite_type.as_deref(), Some("Outer.Inner"));

@@ -140,7 +140,12 @@ fn issue_record_continues_the_body() {
     let src = "@Test func t() { Issue.record(\"first\")\n#expect(false) }\n";
     let report = run(src);
     assert_eq!(report.failed(), 1);
-    assert_eq!(report.tests[0].issues.len(), 2, "issues: {:?}", report.tests[0].issues);
+    assert_eq!(
+        report.tests[0].issues.len(),
+        2,
+        "issues: {:?}",
+        report.tests[0].issues
+    );
 }
 
 #[test]
@@ -157,7 +162,11 @@ fn parameterized_failure_is_isolated_to_its_case() {
     let report = run(src);
     assert_eq!(report.passed(), 2, "tests: {:?}", report.tests);
     assert_eq!(report.failed(), 1);
-    let failed = report.tests.iter().find(|t| t.status == TestStatus::Failed).unwrap();
+    let failed = report
+        .tests
+        .iter()
+        .find(|t| t.status == TestStatus::Failed)
+        .unwrap();
     assert!(failed.label().contains("-1"), "label: {}", failed.label());
 }
 
@@ -212,7 +221,10 @@ struct S {
     let report = run(src);
     assert_eq!(report.skipped(), 2, "tests: {:?}", report.tests);
     assert_eq!(report.failed(), 0);
-    assert!(report.tests.iter().all(|t| t.skip_reason.as_deref() == Some("whole suite")));
+    assert!(report
+        .tests
+        .iter()
+        .all(|t| t.skip_reason.as_deref() == Some("whole suite")));
 }
 
 #[test]

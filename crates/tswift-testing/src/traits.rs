@@ -74,7 +74,8 @@ mod tests {
     use tswift_frontend::Analysis;
 
     fn traits_src(src: &str) -> Vec<Trait> {
-        let analysis: &'static Analysis = Box::leak(Box::new(Analysis::analyze(src, "t.swift").unwrap()));
+        let analysis: &'static Analysis =
+            Box::leak(Box::new(Analysis::analyze(src, "t.swift").unwrap()));
         let func = analysis.root().children().next().unwrap();
         traits_of(&func, "Test")
     }
