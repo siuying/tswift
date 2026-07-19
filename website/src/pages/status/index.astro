@@ -52,7 +52,7 @@ const tierLabels = [
   <h1>Implementation Status</h1>
   <p class="lead">
     tswift targets the full Swift 6.3 surface area. This dashboard tracks
-    progress across language features, the standard library, Foundation, SwiftUI, Charts, SwiftData, and EventKit.
+    progress across language features, the standard library, Foundation, SwiftUI, Charts, SwiftData, EventKit, and Swift Testing.
   </p>
 
   <h2>At a glance</h2>
@@ -99,6 +99,12 @@ const tierLabels = [
       <div class={`pct-big ${eventkitPct.tier}`}>{eventkitPct.label}</div>
       <p style="font-size:.85rem">EKEventStore, events, reminders, calendars, permissions · {eventkit.implemented} implemented · {eventkit.partial} partial · {eventkit.missing} missing (of {eventkit.total})</p>
       <a href="/status/eventkit" style="font-size:.85rem;font-weight:700">View details →</a>
+    </div>
+    <div class="status-card">
+      <h3>Swift Testing</h3>
+      <div class="pct-big mid">15/24</div>
+      <p style="font-size:.85rem">@Test, #expect/#require, @Suite, traits, arguments · CLI-only (`tswift test`) · hand-counted from the surface table</p>
+      <a href="/status/testing" style="font-size:.85rem;font-weight:700">View details →</a>
     </div>
   </div>
 
