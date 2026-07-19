@@ -115,7 +115,7 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         .iter()
         .filter_map(|p| match p {
             Plan::Run { driver, .. } => Some(driver.clone()),
-            Plan::Skip { .. } => None,
+            Plan::Skip { .. } | Plan::Fail { .. } => None,
         })
         .collect();
 
@@ -140,6 +140,9 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
             Plan::Skip { case, reason } => {
                 results.push(skipped_result(analysis, case, reason.clone()))
             }
+            Plan::Fail { case, message } => {
+                results.push(failed_result(analysis, case, message.clone()))
+            }
             Plan::Run {
                 case, id, label, ..
             } => {
@@ -162,13 +165,18 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     }
 }
 
-/// A single unit of work for the runner: either a trait-driven skip or a
-/// concrete run (an ordinary test, or one parameterized case) carrying its
-/// display id/label and the driver source line that invokes it.
+/// A single unit of work for the runner: a trait-driven skip, a hard failure
+/// discovered before any driver runs (a broken `.enabled(if:)` predicate),
+/// or a concrete run (an ordinary test, or one parameterized case) carrying
+/// its display id/label and the driver source line that invokes it.
 enum Plan<'a> {
     Skip {
         case: &'a TestCase,
         reason: Option<String>,
+    },
+    Fail {
+        case: &'a TestCase,
+        message: String,
     },
     Run {
         case: &'a TestCase,
@@ -181,8 +189,10 @@ enum Plan<'a> {
 /// Turn one discovered `case` into its plans: a single skip, or one run per
 /// parameterized argument case (a single run for an ordinary test).
 fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'a>> {
-    if let Some(reason) = skip_reason(interp, case) {
-        return vec![Plan::Skip { case, reason }];
+    match skip_reason(interp, case) {
+        SkipDecision::Skip(reason) => return vec![Plan::Skip { case, reason }],
+        SkipDecision::Fail(message) => return vec![Plan::Fail { case, message }],
+        SkipDecision::Run => {}
     }
     match params::expand(&case.node) {
         Some(rows) => rows
@@ -225,26 +235,59 @@ fn driver_line(case: &TestCase, args: &str) -> String {
     }
 }
 
-/// Decide whether `case` is skipped by a trait, returning `Some(reason)` to skip
-/// (`reason` = the `.disabled` text, `None` for a `.enabled(if:)` skip) or
-/// `None` to run it. The first skip-causing trait in source order wins; an
-/// `.enabled(if:)` condition that fails to evaluate to `true` skips the test.
-fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> Option<Option<String>> {
+/// The result of consulting `case`'s traits before building a driver.
+enum SkipDecision {
+    /// No skip-causing trait triggered; build a driver and run the test.
+    Run,
+    /// `.disabled("…")`, or a `.enabled(if:)` condition that evaluated to
+    /// `false` (reason `None`) — not a failure.
+    Skip(Option<String>),
+    /// A `.enabled(if:)` condition that trapped, threw, or evaluated to a
+    /// non-`Bool` value. A broken predicate must fail the test with a clear
+    /// issue, never silently skip it (a skip stays CI-green).
+    Fail(String),
+}
+
+/// Decide whether `case` is skipped/failed by a trait, or should run. The
+/// first skip/fail-causing trait in source order wins.
+fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> SkipDecision {
     for trait_ in &case.traits {
         match trait_ {
-            Trait::Disabled(reason) => return Some(reason.clone()),
+            Trait::Disabled(reason) => return SkipDecision::Skip(reason.clone()),
             Trait::EnabledIf(cond) => {
-                let enabled = {
+                let outcome = {
                     let ctx: &mut dyn StdContext = interp;
-                    matches!(ctx.eval_node(cond), Ok(SwiftValue::Bool(true)))
+                    ctx.eval_node(cond)
                 };
-                if !enabled {
-                    return Some(None);
+                match outcome {
+                    Ok(SwiftValue::Bool(true)) => {}
+                    Ok(SwiftValue::Bool(false)) => return SkipDecision::Skip(None),
+                    Ok(other) => {
+                        return SkipDecision::Fail(format!(
+                            "failed to evaluate .enabled(if:) condition: expected Bool, got {}",
+                            other.type_name()
+                        ))
+                    }
+                    Err(err) => {
+                        return SkipDecision::Fail(format!(
+                            "failed to evaluate .enabled(if:) condition: {}",
+                            describe_error(&err)
+                        ))
+                    }
                 }
             }
         }
     }
-    None
+    SkipDecision::Run
+}
+
+/// A human-readable rendering of a `StdError` for use in a runner-authored
+/// issue message (mirrors `run_one`'s outcome-to-issue mapping).
+fn describe_error(err: &StdError) -> String {
+    match err {
+        StdError::Throw(value) => format!("condition threw an error: {value}"),
+        StdError::Error(e) => e.to_string(),
+    }
 }
 
 /// Build the [`TestResult`] for a test skipped by a trait (never a failure).
@@ -263,6 +306,27 @@ fn skipped_result(
         file,
         line,
         skip_reason: reason,
+    }
+}
+
+/// Build the [`TestResult`] for a test that failed before any driver ran (a
+/// broken `.enabled(if:)` predicate) — carries a single synthetic [`Issue`]
+/// with `message`, never a silent skip.
+fn failed_result(analysis: &'static Analysis, case: &TestCase, message: String) -> TestResult {
+    let (file, line) = analysis.locate(case.line);
+    TestResult {
+        id: case.id(),
+        display_name: Some(case.label_base()),
+        status: TestStatus::Failed,
+        issues: vec![Issue {
+            message,
+            file: file.clone(),
+            line,
+        }],
+        duration: std::time::Duration::ZERO,
+        file,
+        line,
+        skip_reason: None,
     }
 }
 
@@ -458,6 +522,50 @@ mod tests {
             message.contains("bump() → 1"),
             "expected single evaluation, got: {message}"
         );
+    }
+
+    #[test]
+    fn enabled_if_non_bool_condition_fails_not_skips() {
+        // A broken predicate must FAIL the test with a clear issue, never
+        // silently skip it (a skip stays CI-green).
+        let report = run("@Test(.enabled(if: 1)) func t() {}\n");
+        assert_eq!(report.passed(), 0);
+        assert_eq!(report.skipped(), 0);
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(
+            message.contains("failed to evaluate .enabled(if:) condition"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn enabled_if_throwing_condition_fails_not_skips() {
+        let report = run(concat!(
+            "func explode() -> Bool { fatalError(\"boom\") }\n",
+            "@Test(.enabled(if: explode())) func t() {}\n",
+        ));
+        assert_eq!(report.passed(), 0);
+        assert_eq!(report.skipped(), 0);
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(
+            message.contains("failed to evaluate .enabled(if:) condition"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn enabled_if_true_condition_still_runs() {
+        let report = run("@Test(.enabled(if: 1 > 0)) func t() { #expect(true) }\n");
+        assert_eq!(report.passed(), 1);
+    }
+
+    #[test]
+    fn enabled_if_false_condition_still_skips() {
+        let report = run("@Test(.enabled(if: 1 > 2)) func t() { #expect(true) }\n");
+        assert_eq!(report.skipped(), 1);
+        assert_eq!(report.failed(), 0);
     }
 
     #[test]
