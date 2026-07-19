@@ -13,6 +13,7 @@
 
 mod discover;
 mod expect;
+mod params;
 mod render;
 mod report;
 mod session;
@@ -100,22 +101,23 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         cases.retain(|c| c.matches_filter(filter));
     }
 
-    // Resolve each test's skip decision up front (evaluating `.enabled(if:)`
-    // conditions against the loaded program) so only the tests that actually
-    // run need a synthetic driver call.
-    let skips: Vec<Option<Option<String>>> =
-        cases.iter().map(|c| skip_reason(&mut interp, c)).collect();
-    let live: Vec<&TestCase> = cases
+    // Resolve each test into a flat list of plans — a skip, or one run per
+    // parameterized case (a single run for an ordinary test). Only runs need a
+    // synthetic driver call, so `.enabled(if:)` conditions are evaluated here
+    // (against the loaded program) before any driver is built.
+    let plans: Vec<Plan> = cases.iter().flat_map(|c| plan_case(&mut interp, c)).collect();
+    let driver_lines: Vec<String> = plans
         .iter()
-        .zip(&skips)
-        .filter(|(_, skip)| skip.is_none())
-        .map(|(c, _)| c)
+        .filter_map(|p| match p {
+            Plan::Run { driver, .. } => Some(driver.clone()),
+            Plan::Skip { .. } => None,
+        })
         .collect();
 
-    // Build one synthetic driver holding a call per live (non-skipped) test,
-    // retained (not leaked) for the interpreter's lifetime. A driver that fails
-    // to build must fail the whole run — never silently pass tests.
-    let driver_nodes = match build_drivers(&mut interp, &live) {
+    // Build one synthetic driver holding a call per run, retained (not leaked)
+    // for the interpreter's lifetime. A driver that fails to build must fail
+    // the whole run — never silently pass tests.
+    let driver_nodes = match build_drivers(&mut interp, &driver_lines) {
         Ok(nodes) => nodes,
         Err(err) => {
             return RunReport {
@@ -126,16 +128,18 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     };
 
     let run_start = Instant::now();
-    let mut results = Vec::with_capacity(cases.len());
+    let mut results = Vec::with_capacity(plans.len());
     let mut driver_nodes = driver_nodes.into_iter();
-    for (case, skip) in cases.iter().zip(&skips) {
-        match skip {
-            Some(reason) => results.push(skipped_result(analysis, case, reason.clone())),
-            None => {
-                let node = driver_nodes
-                    .next()
-                    .expect("one driver node per live test");
-                results.push(run_one(&mut interp, analysis, case, node));
+    for plan in &plans {
+        match plan {
+            Plan::Skip { case, reason } => {
+                results.push(skipped_result(analysis, case, reason.clone()))
+            }
+            Plan::Run {
+                case, id, label, ..
+            } => {
+                let node = driver_nodes.next().expect("one driver node per run");
+                results.push(run_one(&mut interp, analysis, case, id, label.clone(), node));
             }
         }
     }
@@ -143,6 +147,65 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         tests: results,
         duration: run_start.elapsed(),
         compile_error: None,
+    }
+}
+
+/// A single unit of work for the runner: either a trait-driven skip or a
+/// concrete run (an ordinary test, or one parameterized case) carrying its
+/// display id/label and the driver source line that invokes it.
+enum Plan<'a> {
+    Skip {
+        case: &'a TestCase,
+        reason: Option<String>,
+    },
+    Run {
+        case: &'a TestCase,
+        id: String,
+        label: Option<String>,
+        driver: String,
+    },
+}
+
+/// Turn one discovered `case` into its plans: a single skip, or one run per
+/// parameterized argument case (a single run for an ordinary test).
+fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'a>> {
+    if let Some(reason) = skip_reason(interp, case) {
+        return vec![Plan::Skip { case, reason }];
+    }
+    match params::expand(&case.node) {
+        Some(rows) => rows
+            .iter()
+            .map(|row| {
+                let args: Vec<String> = row.iter().map(|n| render::expr(n)).collect();
+                let args = args.join(", ");
+                let base = case
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| params::signature(&case.node, &case.func_name));
+                Plan::Run {
+                    case,
+                    id: format!("{} - {args}", case.id()),
+                    label: Some(format!("{base} - {args}")),
+                    driver: driver_line(case, &args),
+                }
+            })
+            .collect(),
+        None => vec![Plan::Run {
+            case,
+            id: case.id(),
+            label: case.display_name.clone(),
+            driver: driver_line(case, ""),
+        }],
+    }
+}
+
+/// The `try await`-wrapped driver statement that invokes `case` with `args`
+/// (a comma-separated argument source, empty for a no-argument test). A suite
+/// test constructs a fresh instance first (`Suite().method(args)`).
+fn driver_line(case: &TestCase, args: &str) -> String {
+    match &case.suite_type {
+        Some(suite) => format!("try await {suite}().{}({args})", case.func_name),
+        None => format!("try await {}({args})", case.func_name),
     }
 }
 
@@ -194,6 +257,8 @@ fn run_one(
     interp: &mut Interpreter<'_>,
     analysis: &'static Analysis,
     case: &TestCase,
+    id: &str,
+    label: Option<String>,
     call: tswift_frontend::Node<'static>,
 ) -> TestResult {
     session::begin();
@@ -240,8 +305,8 @@ fn run_one(
     };
     let (file, line) = analysis.locate(case.line);
     TestResult {
-        id: case.id(),
-        display_name: case.display_name.clone(),
+        id: id.to_string(),
+        display_name: label,
         status,
         issues,
         duration,
@@ -251,8 +316,8 @@ fn run_one(
     }
 }
 
-/// Parse one synthetic driver statement per test into a single retained
-/// analysis, returning the per-test call node (index-aligned with `cases`).
+/// Parse one synthetic driver statement per run into a single retained
+/// analysis, returning the per-run call node (index-aligned with `lines`).
 ///
 /// Every call is wrapped in `try await` so throwing and async tests run through
 /// the same node without per-test codegen (both are transparent for
@@ -261,19 +326,17 @@ fn run_one(
 /// program and we evaluate each statement node directly.
 fn build_drivers(
     interp: &mut Interpreter<'_>,
-    cases: &[&TestCase],
+    lines: &[String],
 ) -> Result<Vec<tswift_frontend::Node<'static>>, String> {
     let mut source = String::new();
-    for case in cases {
-        match &case.suite_type {
-            Some(suite) => source.push_str(&format!("try await {suite}().{}()\n", case.func_name)),
-            None => source.push_str(&format!("try await {}()\n", case.func_name)),
-        }
+    for line in lines {
+        source.push_str(line);
+        source.push('\n');
     }
     let driver = Analysis::analyze(&source, "<test-driver>")
         .map_err(|e| format!("failed to build test driver: {e}"))?;
     let driver: &'static Analysis = interp.retain_analysis(Rc::new(driver));
-    drivers_from(driver, cases.len())
+    drivers_from(driver, lines.len())
 }
 
 /// Validate a parsed driver against the expected test count and return one call

@@ -141,6 +141,24 @@ fn two_test_targets_print_per_unit_and_labeled_overall_summary() {
     assert!(out.contains("Overall: 2 tests passed"), "stdout: {out}");
 }
 
+/// A `@Test(arguments:)` runs one case per element, each labelled with its
+/// argument value in the console output.
+#[test]
+fn parameterized_reports_one_case_per_argument() {
+    let file = fixtures_dir().join("parameterized.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("divisible(x:) - 4"), "stdout: {out}");
+    assert!(out.contains("divisible(x:) - 8"), "stdout: {out}");
+    assert!(out.contains("divisible(x:) - 12"), "stdout: {out}");
+    assert!(out.contains("3 tests"), "stdout: {out}");
+}
+
 /// A `.disabled("reason")` test is skipped (reason shown) and does not fail
 /// the run: exit 0, a skip line carrying the reason, and a passing summary
 /// that notes the skip count.

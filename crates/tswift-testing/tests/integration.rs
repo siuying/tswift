@@ -126,6 +126,40 @@ struct Counter {
 }
 
 #[test]
+fn parameterized_expands_one_case_per_argument() {
+    let src = "@Test(arguments: [1, 2, 3]) func positive(x: Int) { #expect(x > 0) }\n";
+    let report = run(src);
+    assert_eq!(report.passed(), 3, "tests: {:?}", report.tests);
+    assert_eq!(report.tests.len(), 3);
+}
+
+#[test]
+fn parameterized_failure_is_isolated_to_its_case() {
+    let src = "@Test(arguments: [4, -1, 8]) func positive(x: Int) { #expect(x > 0) }\n";
+    let report = run(src);
+    assert_eq!(report.passed(), 2, "tests: {:?}", report.tests);
+    assert_eq!(report.failed(), 1);
+    let failed = report.tests.iter().find(|t| t.status == TestStatus::Failed).unwrap();
+    assert!(failed.label().contains("-1"), "label: {}", failed.label());
+}
+
+#[test]
+fn parameterized_cartesian_product() {
+    let src = "@Test(arguments: [1, 2], [10, 20]) func pair(x: Int, y: Int) { #expect(x < y) }\n";
+    let report = run(src);
+    assert_eq!(report.tests.len(), 4, "cartesian: {:?}", report.tests);
+    assert_eq!(report.passed(), 4);
+}
+
+#[test]
+fn parameterized_zip_pairs_arguments() {
+    let src = "@Test(arguments: zip([1, 2], [1, 2])) func eq(a: Int, b: Int) { #expect(a == b) }\n";
+    let report = run(src);
+    assert_eq!(report.tests.len(), 2, "zip: {:?}", report.tests);
+    assert_eq!(report.passed(), 2);
+}
+
+#[test]
 fn disabled_trait_skips_with_reason() {
     let src = "@Test(.disabled(\"flaky\")) func t() { #expect(false) }\n";
     let report = run(src);
