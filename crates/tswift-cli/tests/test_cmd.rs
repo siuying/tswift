@@ -177,6 +177,26 @@ fn disabled_test_skips_with_reason_and_exits_zero() {
     assert!(out.contains("1 skipped"), "stdout: {out}");
 }
 
+/// `#expect(throws:)` closure matchers: a matching type and `Never.self`
+/// pass, while a wrong thrown type fails with both the expected and actual
+/// type named in the issue detail.
+#[test]
+fn expect_throws_matchers_pass_and_report_wrong_type() {
+    let file = fixtures_dir().join("throws.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        !output.status.success(),
+        "expected a failure:\nstdout:\n{out}"
+    );
+    assert!(out.contains("catchesExpectedType()"), "stdout: {out}");
+    assert!(out.contains("neverThrows()"), "stdout: {out}");
+    // The wrong-type case names both the expected and the actual type.
+    assert!(out.contains("Boom"), "stdout: {out}");
+    assert!(out.contains("Other"), "stdout: {out}");
+    assert!(out.contains("1 issue"), "stdout: {out}");
+}
+
 /// An unrecognized `--flag` is a usage error, not silently ignored.
 #[test]
 fn unknown_flag_is_a_usage_error() {
