@@ -2222,13 +2222,21 @@ impl<'w> Interpreter<'w> {
     /// functions, globals) into this interpreter **without** invoking `@main`
     /// or running end-of-program teardown.
     ///
-    /// This is the discovery-only entry point [`run`](Interpreter::run) is not:
-    /// a driver that will call individual functions afterwards (the Swift
+    /// This is the discovery-friendly entry point [`run`](Interpreter::run) is
+    /// not: a driver that will call individual functions afterwards (the Swift
     /// Testing runner constructs suites and calls `@Test` methods one at a
-    /// time) needs the declarations live but must not trigger executable
-    /// top-level effects. Top-level statements in the program are still
-    /// evaluated (Swift script semantics); test programs are expected to carry
-    /// none.
+    /// time) needs the declarations live but must skip the program's `@main`
+    /// entry point and end-of-program teardown.
+    ///
+    /// Semantics are **script, not hoist-only**: this evaluates the program
+    /// root, so hoisted declarations *and* any top-level executable statements
+    /// run (in source order), exactly as Swift script mode would — it simply
+    /// stops short of dispatching `@main`/teardown. A well-formed test program
+    /// carries no top-level statements; when it does, they execute here once,
+    /// before any test session is open, so a top-level `#expect`/`#require`
+    /// traps ("used outside a test"). Surfacing that as a user-facing runner
+    /// diagnostic is deferred to the `tswift test` CLI (slice B), which owns
+    /// program-shape reporting.
     pub fn load(&mut self, analysis: &'static Analysis) -> Result<(), EvalError> {
         if !analysis.is_ok() {
             let diags = analysis
