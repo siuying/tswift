@@ -2200,6 +2200,64 @@ impl<'w> Interpreter<'w> {
         self.run(static_ref)
     }
 
+    /// Retain `analysis` for this interpreter's lifetime and hand back a
+    /// `&'static` borrow of it.
+    ///
+    /// Same safety model as [`Interpreter::run_retaining`]: the borrow lives as
+    /// long as the `Rc` this pushes onto `self.retained_analyses`, which drops
+    /// only when the interpreter drops. Use this when an out-of-core driver
+    /// (e.g. the Swift Testing runner) needs to hold `Node<'static>` cursors
+    /// into a program it will evaluate piecewise, without a permanent
+    /// `Box::leak`.
+    pub fn retain_analysis(&mut self, analysis: Rc<Analysis>) -> &'static Analysis {
+        // SAFETY: see `run_retaining` — `Rc` never moves its pointee, the
+        // retained `Rc` is never removed before drop, and `Node` cursors carry
+        // no `Drop`.
+        let static_ref: &'static Analysis = unsafe { &*Rc::as_ptr(&analysis) };
+        self.retained_analyses.push(analysis);
+        static_ref
+    }
+
+    /// Hoist and register a program's top-level declarations (types, free
+    /// functions, globals) into this interpreter **without** invoking `@main`
+    /// or running end-of-program teardown.
+    ///
+    /// This is the discovery-friendly entry point [`run`](Interpreter::run) is
+    /// not: a driver that will call individual functions afterwards (the Swift
+    /// Testing runner constructs suites and calls `@Test` methods one at a
+    /// time) needs the declarations live but must skip the program's `@main`
+    /// entry point and end-of-program teardown.
+    ///
+    /// Semantics are **script, not hoist-only**: this evaluates the program
+    /// root, so hoisted declarations *and* any top-level executable statements
+    /// run (in source order), exactly as Swift script mode would — it simply
+    /// stops short of dispatching `@main`/teardown. A well-formed test program
+    /// carries no top-level statements; when it does, they execute here once,
+    /// before any test session is open, so a top-level `#expect`/`#require`
+    /// traps ("used outside a test"). Surfacing that as a user-facing runner
+    /// diagnostic is deferred to the `tswift test` CLI (slice B), which owns
+    /// program-shape reporting.
+    pub fn load(&mut self, analysis: &'static Analysis) -> Result<(), EvalError> {
+        if !analysis.is_ok() {
+            let diags = analysis
+                .diagnostics()
+                .iter()
+                .map(|d| format!("  {}:{}: {}", d.line, d.col, d.message))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(EvalError::Analysis(diags));
+        }
+        self.register_builtin_result();
+        match self.eval(&analysis.root()) {
+            Ok(_) | Err(Signal::Return(_)) => Ok(()),
+            Err(Signal::Error(e)) => Err(e),
+            Err(Signal::Throw(v)) => Err(EvalError::Trap(format!("uncaught error: {v}"))),
+            Err(other) => Err(EvalError::Unsupported(format!(
+                "stray control flow: {other:?}"
+            ))),
+        }
+    }
+
     /// Evaluate a fully-analyzed program.
     pub fn run(&mut self, analysis: &'static Analysis) -> Result<(), EvalError> {
         if !analysis.is_ok() {
@@ -7302,6 +7360,29 @@ mod tests {
         interp2.run(a2).expect("run");
         assert!(interp2.is_module_imported("Foundation"));
         assert!(!interp2.is_module_imported("Foundation.Data"));
+    }
+
+    #[test]
+    fn load_hoists_declarations_without_running_main() {
+        // A program with an `@main` type: `run` would invoke `main` (printing
+        // "ran"); `load` must only hoist so a driver can call functions itself.
+        let src = "@main struct App { static func main() { print(\"ran\") } }\nfunc helper() -> Int { 7 }\n";
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut interp = Interpreter::new(&mut buf);
+            let analysis = Analysis::analyze(src, "test.swift").expect("analyze");
+            let analysis = interp.retain_analysis(std::rc::Rc::new(analysis));
+            interp.load(analysis).expect("load");
+            // `helper` is registered (callable) after load.
+            assert!(matches!(
+                interp.env.get("helper"),
+                Some(SwiftValue::Function(_))
+            ));
+        }
+        assert!(
+            !String::from_utf8_lossy(&buf).contains("ran"),
+            "load must not invoke @main"
+        );
     }
 
     /// Host-prepended PRELUDE has no imports; only user `import`s are recorded.

@@ -51,6 +51,10 @@ impl SourceFile {
 pub struct Analysis {
     ast: tswift_ast::Ast,
     diagnostics: Vec<Diagnostic>,
+    /// Where each input file starts in the combined source (multi-file model).
+    /// A single-file [`analyze`](Analysis::analyze) records one span for its
+    /// `filename`; empty only for the parse-error fallback.
+    spans: Vec<FileSpan>,
 }
 
 impl Analysis {
@@ -92,7 +96,15 @@ impl Analysis {
                 }],
             ),
         };
-        Ok(Analysis { ast, diagnostics })
+        let spans = vec![FileSpan {
+            start_line: 1,
+            path: filename.to_string(),
+        }];
+        Ok(Analysis {
+            ast,
+            diagnostics,
+            spans,
+        })
     }
 
     /// Analyze a multi-file Swift program as one compilation unit.
@@ -159,7 +171,19 @@ impl Analysis {
         // Enforce Swift's top-level-code rule across files.
         analysis.enforce_top_level_rule(files, &spans);
 
+        analysis.spans = spans;
         Ok(analysis)
+    }
+
+    /// Map a combined-source 1-based `line` back to its originating
+    /// `(file, local_line)` (the [`FileSpan`] remap that keeps `#expect`
+    /// issue locations pointing at the real file after multi-file
+    /// concatenation). Falls back to `(None, line)` when no span matches.
+    pub fn locate(&self, line: u32) -> (Option<String>, u32) {
+        match FileSpan::containing(&self.spans, line) {
+            Some(span) => (Some(span.path.clone()), line - span.start_line + 1),
+            None => (None, line),
+        }
     }
 
     /// Append an error diagnostic for every top-level executable statement that
@@ -826,6 +850,21 @@ mod tests {
             .expect("an error diagnostic");
         assert_eq!(err.file.as_deref(), Some("main.swift"));
         assert_eq!(err.line, 2, "should be file-local line, not combined");
+    }
+
+    #[test]
+    fn locate_maps_combined_line_to_originating_file() {
+        let files = [
+            SourceFile::new("a.swift", "struct A {}\nstruct B {}\n"),
+            SourceFile::new("main.swift", "let ok = 1\nlet two = 2\n"),
+        ];
+        let a = Analysis::analyze_program(&files).unwrap();
+        // Combined line 4 is the 2nd line of the 2nd file.
+        assert_eq!(a.locate(4), (Some("main.swift".to_string()), 2));
+        assert_eq!(a.locate(1), (Some("a.swift".to_string()), 1));
+        // A single-file analysis records one span for its filename.
+        let s = Analysis::analyze("let x = 1\nlet y = 2\n", "solo.swift").unwrap();
+        assert_eq!(s.locate(2), (Some("solo.swift".to_string()), 2));
     }
 
     /// Top-level executable code outside `main.swift` is rejected with a clear

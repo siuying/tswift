@@ -2839,7 +2839,48 @@ impl<'a> Parser<'a> {
                         self.ast.append_child(node, closure);
                     }
                 } else if self.peek().kind == TokenKind::LParen {
-                    self.skip_balanced_parens();
+                    // `#available(iOS 15, *)` / literal directives carry a
+                    // non-expression argument list, consumed verbatim. Every
+                    // other freestanding macro (`#require`, `#expect`, …) used
+                    // in expression position keeps its operand as a child —
+                    // mirroring `parse_directive_stmt` — so a macro handler can
+                    // evaluate it (e.g. `let x = try #require(opt)`).
+                    if matches!(
+                        t.text,
+                        "#available"
+                            | "#unavailable"
+                            | "#colorLiteral"
+                            | "#imageLiteral"
+                            | "#fileLiteral"
+                            | "#sourceLocation"
+                    ) {
+                        self.skip_balanced_parens();
+                    } else {
+                        self.bump(); // `(`
+                        if self.peek().kind != TokenKind::RParen {
+                            let arg = self.parse_expr(0)?;
+                            self.ast.append_child(node, arg);
+                        }
+                        // Discard any remaining (labelled) arguments — the
+                        // leading operand is all v1 macros need. Depth-count so
+                        // a nested `)` in a later argument is not mistaken for
+                        // the macro's closing paren.
+                        let mut depth = 1u32;
+                        while depth > 0 && !self.at_eof() {
+                            match self.peek().kind {
+                                TokenKind::LParen => depth += 1,
+                                TokenKind::RParen => {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            self.bump();
+                        }
+                        self.expect(TokenKind::RParen)?;
+                    }
                 }
                 node
             }
@@ -4706,6 +4747,27 @@ mod tests {
         let init = first_stmt(&ast).children().nth(1).unwrap();
         assert_eq!(init.kind(), NodeKind::CompilerDirective);
         assert_eq!(init.text(), Some("#file"));
+    }
+
+    #[test]
+    fn freestanding_macro_expression_retains_argument() {
+        // `#require` used as an expression keeps its operand as a child so a
+        // macro handler can evaluate it (the statement form already does).
+        let ast = ast_of("let a = try #require(maybe)");
+        let try_expr = first_stmt(&ast).children().nth(1).unwrap();
+        let dir = try_expr.children().next().unwrap();
+        assert_eq!(dir.kind(), NodeKind::CompilerDirective);
+        assert_eq!(dir.text(), Some("#require"));
+        let arg = dir.children().next().expect("operand retained");
+        assert_eq!(arg.kind(), NodeKind::IdentExpr);
+        assert_eq!(arg.text(), Some("maybe"));
+
+        // `#available` in expression position still discards its
+        // non-expression argument list.
+        let ast = ast_of("let ok = #available(iOS 15, *)");
+        let avail = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(avail.text(), Some("#available"));
+        assert_eq!(avail.children().count(), 0);
     }
 
     #[test]

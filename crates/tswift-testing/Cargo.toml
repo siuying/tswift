@@ -1,0 +1,13 @@
+[package]
+name = "tswift-testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "tswift Swift Testing runner: discovery of @Test functions/suites, the #expect/#require freestanding-macro builtins, and a serial runner producing a structured RunReport. Installed under the `Testing` module."
+
+[dependencies]
+tswift-core.workspace = true
+tswift-frontend.workspace = true
+tswift-std.workspace = true
+tswift-foundation.workspace = true
