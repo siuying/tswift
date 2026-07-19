@@ -59,6 +59,11 @@ pub struct PackageTarget {
     /// rather than erroring, since `tswift test`'s only use for this field is
     /// concatenating a **local** dependency target's sources into a test
     /// unit — see [`crate::project::load_test_program`]).
+    ///
+    /// This is only the *direct* edge list; `load_test_program` walks it
+    /// transitively (BFS, cycle-guarded via `transitive_dependencies`), so a
+    /// chain like `testTarget -> Core -> Base` pulls in `Base`'s sources too,
+    /// not just `Core`'s.
     pub dependencies: Vec<String>,
 }
 
@@ -597,10 +602,8 @@ pub fn load_test_program(
         .into_iter()
         .map(|t| {
             let mut unit = target_source_files(files, t)?;
-            for dep_name in &t.dependencies {
-                if let Some(dep) = manifest.target(dep_name) {
-                    unit.extend(target_source_files(files, dep)?);
-                }
+            for dep in transitive_dependencies(&manifest, t) {
+                unit.extend(target_source_files(files, dep)?);
             }
             unit.sort_by(|a, b| a.path.cmp(&b.path));
             unit.dedup_by(|a, b| a.path == b.path);
@@ -610,6 +613,35 @@ pub fn load_test_program(
             })
         })
         .collect()
+}
+
+/// Every target `root` transitively depends on (BFS over `dependencies:`,
+/// `root` itself excluded), in discovery order. A name with no matching
+/// manifest target is silently skipped — same policy as
+/// [`PackageTarget::dependencies`]'s doc (a package-external product or an
+/// unresolvable name is dropped, not an error, since this loader only wants
+/// *local* target sources). A cycle (direct or indirect) is guarded by a
+/// visited-set: each target is queued at most once, so `A -> B -> A` still
+/// terminates and includes both exactly once.
+fn transitive_dependencies<'a>(
+    manifest: &'a PackageManifest,
+    root: &PackageTarget,
+) -> Vec<&'a PackageTarget> {
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    visited.insert(root.name.as_str());
+    let mut queue: std::collections::VecDeque<&str> =
+        root.dependencies.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    while let Some(name) = queue.pop_front() {
+        if !visited.insert(name) {
+            continue;
+        }
+        if let Some(dep) = manifest.target(name) {
+            out.push(dep);
+            queue.extend(dep.dependencies.iter().map(String::as_str));
+        }
+    }
+    out
 }
 
 /// Whether `path` (a project-root-relative file path already known to start
@@ -922,6 +954,58 @@ mod tests {
         ];
         let err = load_test_program(&files, None).unwrap_err();
         assert_eq!(err, ProjectError::NoExecutableTarget);
+    }
+
+    /// A test target's dependency chain is resolved transitively: `AppTests`
+    /// depends on `Core`, `Core` depends on `Base` (not on `AppTests`
+    /// directly) — `Base`'s sources must still land in the test unit (BFS/DFS
+    /// over the dependency graph, not a single hop).
+    #[test]
+    fn load_test_program_resolves_transitive_dependencies() {
+        let src = "let package = Package(\n    name: \"Foo\",\n    targets: [\n        .target(name: \"Base\"),\n        .target(name: \"Core\", dependencies: [\"Base\"]),\n        .testTarget(name: \"AppTests\", dependencies: [\"Core\"]),\n    ]\n)\n";
+        let files = [
+            sf("Package.swift", src),
+            sf("Sources/Base/base.swift", "func base() -> Int { 1 }\n"),
+            sf("Sources/Core/core.swift", "func core() -> Int { base() }\n"),
+            sf(
+                "Tests/AppTests/T.swift",
+                "@Test func t() { #expect(core() == 1) }\n",
+            ),
+        ];
+        let programs = load_test_program(&files, None).unwrap();
+        assert_eq!(programs.len(), 1);
+        let paths: Vec<&str> = programs[0].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "Sources/Base/base.swift",
+                "Sources/Core/core.swift",
+                "Tests/AppTests/T.swift"
+            ]
+        );
+    }
+
+    /// A dependency cycle (`A -> B -> A`) must not hang or blow the stack —
+    /// each target's sources are still included exactly once.
+    #[test]
+    fn load_test_program_tolerates_dependency_cycle() {
+        let src = "let package = Package(\n    name: \"Foo\",\n    targets: [\n        .target(name: \"A\", dependencies: [\"B\"]),\n        .target(name: \"B\", dependencies: [\"A\"]),\n        .testTarget(name: \"AppTests\", dependencies: [\"A\"]),\n    ]\n)\n";
+        let files = [
+            sf("Package.swift", src),
+            sf("Sources/A/a.swift", "func a() {}\n"),
+            sf("Sources/B/b.swift", "func b() {}\n"),
+            sf("Tests/AppTests/T.swift", "@Test func t() { a() }\n"),
+        ];
+        let programs = load_test_program(&files, None).unwrap();
+        let paths: Vec<&str> = programs[0].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "Sources/A/a.swift",
+                "Sources/B/b.swift",
+                "Tests/AppTests/T.swift"
+            ]
+        );
     }
 
     #[test]
