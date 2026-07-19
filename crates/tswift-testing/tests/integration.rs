@@ -428,6 +428,77 @@ func go() throws { throw Other() }
 }
 
 #[test]
+fn expect_throws_without_closure_records_clear_issue() {
+    let src = "\
+struct Boom: Error {}
+@Test func t() { #expect(throws: Boom.self) }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(
+        msg.contains("requires a closure body"),
+        "expected a clear closure-body issue, got: {msg}"
+    );
+}
+
+#[test]
+fn require_throws_without_closure_records_clear_issue_and_aborts() {
+    let src = "\
+struct Boom: Error {}
+@Test func t() throws {
+  let _ = try #require(throws: Boom.self)
+  #expect(false)
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    assert_eq!(
+        report.tests[0].issues.len(),
+        1,
+        "the trailing #expect(false) must not run: {:?}",
+        report.tests[0].issues
+    );
+    let msg = &report.tests[0].issues[0].message;
+    assert!(
+        msg.contains("requires a closure body"),
+        "expected a clear closure-body issue, got: {msg}"
+    );
+}
+
+#[test]
+fn expect_comment_is_appended_to_failure_message() {
+    let src = "@Test func t() { #expect(1 == 2, \"custom message\") }\n";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("custom message"), "{msg}");
+}
+
+#[test]
+fn require_comment_is_appended_to_failure_message() {
+    let src = "@Test func t() { #require(1 == 2, \"custom message\") }\n";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("custom message"), "{msg}");
+}
+
+#[test]
+fn expect_throws_comment_is_appended_to_failure_message() {
+    let src = "\
+struct Boom: Error {}
+struct Other: Error {}
+func go() throws { throw Other() }
+@Test func t() { #expect(throws: Boom.self, \"custom message\") { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("custom message"), "{msg}");
+}
+
+#[test]
 fn compile_error_yields_no_tests() {
     let report = run("@Test func t() { let x = }\n");
     assert!(report.compile_error.is_some());

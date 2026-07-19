@@ -24,23 +24,36 @@ pub fn expect_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResult
     if !session::is_active() {
         return Err(trap("#expect used outside a test"));
     }
-    if let Some((expected, closure)) = throws_operands(node) {
+    let ops = classify_operands(node);
+    if let Some(expected) = ops.throws_expected {
+        let Some(closure) = ops.closure else {
+            session::record_issue(no_closure_message(node), node.line());
+            return Ok(SwiftValue::Void);
+        };
+        let comment = comment_suffix(ctx, ops.plain.first())?;
         return match check_throws(ctx, &expected, &closure)? {
             ThrowsOutcome::Passed(_) => Ok(SwiftValue::Void),
             ThrowsOutcome::Failed(detail) => {
-                session::record_issue(format!("Expectation failed: {detail}"), node.line());
+                session::record_issue(
+                    format!("Expectation failed: {detail}{comment}"),
+                    node.line(),
+                );
                 Ok(SwiftValue::Void)
             }
         };
     }
-    let Some(operand) = node.first_child() else {
+    let Some(operand) = ops.plain.first().cloned() else {
         session::record_issue("Expectation failed: empty #expect()".into(), node.line());
         return Ok(SwiftValue::Void);
     };
+    let comment = comment_suffix(ctx, ops.plain.get(1))?;
     match evaluate(ctx, &operand)? {
         Outcome::Passed => Ok(SwiftValue::Void),
         Outcome::Failed(detail) => {
-            session::record_issue(format!("Expectation failed: {detail}"), operand.line());
+            session::record_issue(
+                format!("Expectation failed: {detail}{comment}"),
+                operand.line(),
+            );
             Ok(SwiftValue::Void)
         }
     }
@@ -54,14 +67,21 @@ pub fn require_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResul
     if !session::is_active() {
         return Err(trap("#require used outside a test"));
     }
-    if let Some((expected, closure)) = throws_operands(node) {
+    let ops = classify_operands(node);
+    if let Some(expected) = ops.throws_expected {
+        let Some(closure) = ops.closure else {
+            session::record_issue(no_closure_message(node), node.line());
+            session::mark_aborted();
+            return Err(StdError::Throw(SwiftValue::Void));
+        };
+        let comment = comment_suffix(ctx, ops.plain.first())?;
         return match check_throws(ctx, &expected, &closure)? {
             // Per Apple, a satisfied `try #require(throws:)` returns the thrown
             // error so the caller can inspect it (`let e = try #require(…)`).
             ThrowsOutcome::Passed(thrown) => Ok(thrown.unwrap_or(SwiftValue::Void)),
             ThrowsOutcome::Failed(detail) => {
                 session::record_issue(
-                    format!("Required expectation failed: {detail}"),
+                    format!("Required expectation failed: {detail}{comment}"),
                     node.line(),
                 );
                 session::mark_aborted();
@@ -69,9 +89,10 @@ pub fn require_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResul
             }
         };
     }
-    let Some(operand) = node.first_child() else {
+    let Some(operand) = ops.plain.first().cloned() else {
         return Ok(SwiftValue::Void);
     };
+    let comment = comment_suffix(ctx, ops.plain.get(1))?;
     let value = ctx.eval_node(&operand)?;
     let satisfied = match &value {
         SwiftValue::Nil => false,
@@ -82,7 +103,10 @@ pub fn require_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResul
         return Ok(value);
     }
     session::record_issue(
-        format!("Required expectation failed: {}", render::expr(&operand)),
+        format!(
+            "Required expectation failed: {}{comment}",
+            render::expr(&operand)
+        ),
         operand.line(),
     );
     session::mark_aborted();
@@ -217,23 +241,67 @@ enum ThrowsOutcome {
     Failed(String),
 }
 
-/// The `throws:`-labelled subject and trailing closure of a throws-matcher
-/// `#expect(throws: …) { … }`, or `None` for the ordinary boolean form.
-fn throws_operands(node: &Node<'static>) -> Option<(Node<'static>, Node<'static>)> {
-    let mut expected = None;
+/// The classified argument children of an `#expect(…)` / `#require(…)`
+/// call: the `throws:`-labelled subject (if any), the trailing closure (if
+/// any), and every other argument in source order (the boolean operand and/or
+/// a trailing comment string).
+struct Operands {
+    throws_expected: Option<Node<'static>>,
+    closure: Option<Node<'static>>,
+    plain: Vec<Node<'static>>,
+}
+
+fn classify_operands(node: &Node<'static>) -> Operands {
+    let mut throws_expected = None;
     let mut closure = None;
+    let mut plain = Vec::new();
     for child in node.children() {
         if child.arg_label().as_deref() == Some("throws") {
-            expected = Some(child);
+            throws_expected = Some(child);
         } else if child.kind() == NodeKind::ClosureExpr {
             closure = Some(child);
+        } else {
+            plain.push(child);
         }
     }
-    Some((expected?, closure?))
+    Operands {
+        throws_expected,
+        closure,
+        plain,
+    }
+}
+
+/// Evaluate an optional trailing comment argument (`#expect(expr, "msg")`) and
+/// render it as a `" - msg"` suffix to append to a failure message, or `""`
+/// when no comment argument is present.
+fn comment_suffix(
+    ctx: &mut dyn StdContext,
+    comment: Option<&Node<'static>>,
+) -> Result<String, StdError> {
+    let Some(comment) = comment else {
+        return Ok(String::new());
+    };
+    let value = ctx.eval_node(comment)?;
+    Ok(format!(" - {}", ctx.display(&value)))
+}
+
+/// The issue message for a `throws:` matcher missing its trailing closure
+/// body, e.g. `#expect(throws: E.self)` with no `{ … }` — the boolean form's
+/// evaluator would otherwise trap trying to read a `Bool` out of the `throws:`
+/// subject.
+fn no_closure_message(node: &Node<'static>) -> String {
+    let macro_name = node.text().unwrap_or_else(|| "expect".into());
+    format!("#{macro_name}(throws:) requires a closure body")
 }
 
 /// What a `throws:` subject expects: an error type by name (`E.self`,
 /// `Never.self`) or a specific error instance to equal (`MyError.bad`).
+///
+/// `Instance` equality (`thrown == expected` below) is `SwiftValue`'s
+/// structural `PartialEq` — field-by-field for structs/enums/tuples, no
+/// runtime `Equatable` conformance is checked. This is looser than real
+/// Swift Testing, which requires `Expected: Equatable` and calls its `==`,
+/// but matches every case the runtime can construct today.
 enum Expected {
     Type(String),
     Instance(SwiftValue),
@@ -253,6 +321,11 @@ fn metatype_name(node: &Node<'static>) -> Option<String> {
 /// Run `closure` and match its outcome against `expected` — a type metatype
 /// (`E.self`), the special `Never.self` (must not throw), or an error instance
 /// (equality). A trap inside the closure is not a throw and propagates.
+///
+/// `(any Error).self` — matching "any error at all" — is not supported:
+/// `metatype_name` renders its base as `<expression>` (an existential type
+/// has no single named base), which will then fail every comparison instead
+/// of matching universally.
 fn check_throws(
     ctx: &mut dyn StdContext,
     expected_node: &Node<'static>,
