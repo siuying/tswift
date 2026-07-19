@@ -314,12 +314,22 @@ fn prefix(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> S
         }
         return Ok(array(out));
     }
-    let n = count_arg(&args).unwrap_or(0).min(items.len());
+    let n = count_arg(
+        &args,
+        "Can't take a prefix of negative length from a collection",
+    )?
+    .unwrap_or(0)
+    .min(items.len());
     Ok(array(items[..n].to_vec()))
 }
 
 fn suffix(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
-    let n = count_arg(&args).unwrap_or(0).min(items.len());
+    let n = count_arg(
+        &args,
+        "Can't take a suffix of negative length from a collection",
+    )?
+    .unwrap_or(0)
+    .min(items.len());
     let start = items.len() - n;
     Ok(array(items[start..].to_vec()))
 }
@@ -339,12 +349,22 @@ fn drop_while(ctx: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) 
 }
 
 fn drop_first(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
-    let n = count_arg(&args).unwrap_or(1).min(items.len());
+    let n = count_arg(
+        &args,
+        "Can't drop a negative number of elements from a collection",
+    )?
+    .unwrap_or(1)
+    .min(items.len());
     Ok(array(items[n..].to_vec()))
 }
 
 fn drop_last(_c: &mut dyn StdContext, items: Vec<SwiftValue>, args: Vec<Arg>) -> StdResult {
-    let n = count_arg(&args).unwrap_or(1).min(items.len());
+    let n = count_arg(
+        &args,
+        "Can't drop a negative number of elements from a collection",
+    )?
+    .unwrap_or(1)
+    .min(items.len());
     Ok(array(items[..items.len() - n].to_vec()))
 }
 
@@ -496,11 +516,19 @@ fn labeled(args: &[Arg], label: &str) -> Option<SwiftValue> {
         .map(|a| a.value.clone())
 }
 
-fn count_arg(args: &[Arg]) -> Option<usize> {
-    args.iter().find_map(|a| match &a.value {
-        SwiftValue::Int(i) if i.raw >= 0 => Some(i.raw as usize),
+/// The `Int` count argument for `prefix`/`suffix`/`dropFirst`/`dropLast`.
+/// A missing argument is `Ok(None)` (the caller supplies its default); a
+/// negative count *traps* with `negative_msg`, matching Swift's precondition
+/// (Swift's `Array.dropFirst(-1)`/`prefix(-1)` do not clamp — they crash).
+fn count_arg(args: &[Arg], negative_msg: &str) -> Result<Option<usize>, StdError> {
+    match args.iter().find_map(|a| match &a.value {
+        SwiftValue::Int(i) => Some(i.raw),
         _ => None,
-    })
+    }) {
+        Some(raw) if raw >= 0 => Ok(Some(raw as usize)),
+        Some(_) => Err(StdError::Error(EvalError::Trap(negative_msg.to_string()))),
+        None => Ok(None),
+    }
 }
 
 fn type_err(msg: &str) -> StdError {
@@ -716,6 +744,33 @@ mod tests {
         assert_eq!(
             max_by(&mut c, ints(&[3, 1, 2]), vec![]).unwrap(),
             SwiftValue::int(3)
+        );
+    }
+
+    #[test]
+    fn negative_prefix_and_drop_counts_trap() {
+        let mut c = Calc;
+        let neg = || vec![Arg::positional(SwiftValue::int(-1))];
+        for (name, result) in [
+            ("prefix", prefix(&mut c, ints(&[1, 2, 3]), neg())),
+            ("suffix", suffix(&mut c, ints(&[1, 2, 3]), neg())),
+            ("dropFirst", drop_first(&mut c, ints(&[1, 2, 3]), neg())),
+            ("dropLast", drop_last(&mut c, ints(&[1, 2, 3]), neg())),
+        ] {
+            assert!(
+                matches!(result, Err(StdError::Error(EvalError::Trap(_)))),
+                "{name}(-1) should trap, not clamp: {result:?}"
+            );
+        }
+        // A non-negative count still works (dropFirst(1) drops one).
+        assert_eq!(
+            drop_first(
+                &mut c,
+                ints(&[1, 2, 3]),
+                vec![Arg::positional(SwiftValue::int(1))]
+            )
+            .unwrap(),
+            array(ints(&[2, 3]))
         );
     }
 
