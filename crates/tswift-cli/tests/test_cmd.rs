@@ -243,3 +243,55 @@ fn zero_tests_exits_zero_with_message() {
     );
     assert!(out.contains("0 tests"), "stdout: {out}");
 }
+
+/// `--filter tag:<name>` selects only tests carrying that tag.
+#[test]
+fn tag_filter_selects_only_tagged_tests() {
+    let file = fixtures_dir().join("tags.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--filter", "tag:fast"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("quick()"), "stdout: {out}");
+    assert!(!out.contains("lengthy()"), "stdout: {out}");
+    assert!(!out.contains("untagged()"), "stdout: {out}");
+    assert!(out.contains("Test run with 1 test"), "stdout: {out}");
+}
+
+/// `--filter tag:<name>` matching zero tests exits 0 (plan §2.5 policy) but
+/// must not do so silently: the summary names the tag filter so a typo'd tag
+/// name is diagnosable from console output, not indistinguishable from a
+/// directory with no `@Test`s at all.
+#[test]
+fn tag_filter_matching_nothing_names_the_filter_in_summary() {
+    let file = fixtures_dir().join("tags.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--filter", "tag:nope"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("0 tests"), "stdout: {out}");
+    assert!(out.contains("tag:nope"), "stdout: {out}");
+}
+
+/// A `withKnownIssue` body's failure is reported as a known issue and does not
+/// fail the run; the `.bug(…)` reference does not surface (the test passed).
+#[test]
+fn known_issue_run_exits_zero_and_reports_known() {
+    let file = fixtures_dir().join("known_issue.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "known issue must not fail the run:\nstdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("known issue"), "stdout: {out}");
+    assert!(out.contains("stillBroken() passed"), "stdout: {out}");
+    assert!(out.contains("healthy() passed"), "stdout: {out}");
+}

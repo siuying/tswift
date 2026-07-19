@@ -58,6 +58,9 @@ pub struct Issue {
     pub file: Option<String>,
     /// 1-based line in `file`.
     pub line: u32,
+    /// Recorded inside a `withKnownIssue { … }` block: reported distinctly and
+    /// does not fail the test.
+    pub known: bool,
 }
 
 /// The outcome of running one test.
@@ -86,6 +89,8 @@ pub struct TestResult {
     /// Why the test was skipped (`.disabled("…")` reason), when
     /// [`TestStatus::Skipped`]. `None` for a `.enabled(if:)`/reasonless skip.
     pub skip_reason: Option<String>,
+    /// `.bug(…)` references on the test, surfaced on failure.
+    pub bugs: Vec<String>,
 }
 
 impl TestResult {
@@ -122,9 +127,14 @@ impl RunReport {
         self.tests.iter().filter(|t| t.status == status).count()
     }
 
-    /// Total recorded issues across every test.
+    /// Total recorded *failing* issues across every test (known issues, which
+    /// do not fail the run, are excluded).
     pub fn issue_count(&self) -> usize {
-        self.tests.iter().map(|t| t.issues.len()).sum()
+        self.tests
+            .iter()
+            .flat_map(|t| &t.issues)
+            .filter(|i| !i.known)
+            .count()
     }
 
     /// Whether the run should be treated as success (exit 0): analysis

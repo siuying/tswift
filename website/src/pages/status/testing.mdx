@@ -43,12 +43,13 @@ See "Not yet supported" below.
 | ✅ | `Issue.record("…")` | Soft failure from inside test/helper code, without an `#expect` |
 | 🟡 | Exit codes | `0` all pass (skips only); `1` on any failure, issue, or compile error. Discovering zero tests is **not** an error (exits `0` with an explicit "0 tests" summary) |
 | ✅ | `#expect(throws:)` / `throws: Never.self` | Closure-form throwing matchers: match a thrown error's type (`E.self`), require no throw (`Never.self`), or equal a specific error instance. `try #require(throws:)` hard-aborts on mismatch and returns the thrown error. Works with async closures |
-| ⬜ | `.tags(…)` + tag-based filtering | Needs a `Tag` type and `--filter` tag syntax |
-| ⬜ | `.bug(…)` | Report-only annotation |
-| ⬜ | `.timeLimit(…)` | Needs a host timer policy for a hard kill |
+| ✅ | `.tags(…)` + tag-based filtering | `.tags(.fast)` (tag identity by name), inherited by suite members; select with `--filter tag:<name>` |
+| ✅ | `withKnownIssue { … }` | A body that fails or throws is an expected *known* issue — reported distinctly, does not fail the run; a body that passes cleanly is itself a failure |
+| ✅ | `.bug(…)` | Report-only annotation, surfaced as a `bug:` line under a failing test |
+| 🟡 | `.timeLimit(.minutes(n))` | **Soft** check: measures duration and records an issue when exceeded (`.minutes`/`.seconds`); no hard kill (tswift has no host timer policy) |
 | ⬜ | `confirmation { }` | Async confirmation helper |
-| ⬜ | `withKnownIssue` | Expected-failure semantics |
-| ⬜ | `CustomTestStringConvertible` | Custom value formatting in failure messages |
+| ⬜ | `CustomTestStringConvertible` | Parameterized case labels use the argument's source spelling, not an evaluated `testDescription` |
+| ✅ | `class` suite `deinit` teardown | A fresh instance per test; a `class` suite's `deinit` runs deterministically after each test |
 | ⬜ | Parallel test execution | tswift v1 runs **serially** (one interpreter instance); real Swift Testing parallelizes by default |
 
 ## Not yet supported (explicit non-goals for now)
@@ -78,7 +79,15 @@ tswift test … [--filter <substring>]
 ```
 
 `--filter` matches (case-sensitively, substring) against a test's display id —
-its function name, `Suite/test` path, or display name string.
+its function name, `Suite/test` path, or display name string. `--filter
+tag:<name>` instead selects tests carrying a matching `.tags(…)` name.
+
+**Divergence**: real Swift Testing's `Tag` has true nominal identity, so
+`Tag.fast` and `MyTags.fast` are distinct tags even though both are spelled
+`fast`. tswift has no `Tag` value and reads tags structurally by their
+unqualified final name component, so differently-typed tags with the same
+name collide — `.tags(Tag.fast)` and `.tags(MyTags.fast)` are indistinguishable
+and both match `--filter tag:fast`.
 
 ### Example
 
@@ -170,6 +179,46 @@ Test run with 1 test, 1 passed after 0.000 seconds.
 
 With no `--target`, every declared `.testTarget` in `Package.swift` runs, one
 after another (tswift v1 is serial — see "Not yet supported" above).
+
+### Tags, known issues, and annotations
+
+```swift
+import Testing
+
+@Test(.tags(.fast))
+func quick() { #expect(1 + 1 == 2) }
+
+@Test(.bug("https://example.com/issues/7"))
+func stillBroken() {
+    withKnownIssue("not fixed yet") {
+        #expect(1 == 2)   // recorded as a known issue — does not fail the run
+    }
+}
+```
+
+```text
+$ tswift test Traits.swift --filter tag:fast
+Test run started.
+✔ Test quick() passed after 0.000 seconds.
+Test run with 1 test, 1 passed after 0.000 seconds.
+
+$ tswift test Traits.swift
+Test run started.
+✔ Test quick() passed after 0.000 seconds.
+◇ Test stillBroken() recorded a known issue at Traits.swift:9: Expectation failed: 1 == 2 → false
+✔ Test stillBroken() passed after 0.000 seconds.
+Test run with 2 tests, 2 passed after 0.000 seconds.
+```
+
+A `.bug(…)` reference is surfaced as a `bug:` line under a failing test.
+`.timeLimit(.minutes(n))` is a **soft** check — it records an issue when the
+measured duration is exceeded but never hard-kills the test.
+
+**Divergence**: real Swift Testing's `timeLimit` trait only accepts
+`.minutes(n)`, rounding any sub-minute component up to the next whole minute.
+tswift also accepts `.timeLimit(.seconds(n))` and applies it exactly, with no
+rounding — a deliberate, documented convenience for fast test suites rather
+than a silent behavioral gap.
 
 ### Exit codes
 

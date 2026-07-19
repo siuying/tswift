@@ -234,6 +234,69 @@ pub fn issue_record(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
     Ok(SwiftValue::Void)
 }
 
+/// `withKnownIssue("reason") { … }` — run a body whose failure is *expected*.
+///
+/// Any issue the body records (a failing `#expect`, an `Issue.record`) is
+/// marked `known` so it is reported distinctly and does not fail the run; a
+/// thrown error or a `#require` abort inside the body is likewise an expected
+/// (known) failure. If the body instead completes *cleanly* — no issue, no
+/// throw — that is itself a real failure ("known issue was not recorded"),
+/// because the known problem has apparently been fixed. A runtime trap
+/// (`StdError::Error`) is not an expected failure and still fails the test.
+pub fn with_known_issue(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
+    if !session::is_active() {
+        return Err(trap("withKnownIssue used outside a test"));
+    }
+    // Arguments arrive evaluated: an optional leading comment string and the
+    // trailing closure (in either order defensively). Pick them out by shape.
+    let mut closure_id = None;
+    let mut comment = None;
+    for arg in &args {
+        match &arg.value {
+            SwiftValue::Closure(id) | SwiftValue::Function(id) => closure_id = Some(*id),
+            other => comment = Some(ctx.display(other)),
+        }
+    }
+    let Some(id) = closure_id else {
+        return Err(trap("withKnownIssue requires a closure body"));
+    };
+
+    let before = session::issue_count();
+    session::push_known();
+    let result = ctx.call_closure(id, Vec::new());
+    let threw = match &result {
+        // A trap is a genuine crash, not an expected failure: unwind cleanly
+        // (pop the known scope first) and let it fail the test.
+        Err(StdError::Error(_)) => {
+            session::pop_known();
+            return result;
+        }
+        // A throw or a `#require` abort inside the body is the expected
+        // failure and consumes the abort so it does not unwind the outer test
+        // body. A `#require` abort already recorded its own issue (via
+        // `record_issue` in `require_macro`) before throwing, so recording a
+        // second "an error was thrown" line here would double-count the same
+        // failure; only genuine thrown errors get this synthetic message.
+        Err(StdError::Throw(value)) => {
+            if !session::is_aborted() {
+                let detail = ctx.display(value);
+                session::record_issue(format!("Known issue (an error was thrown): {detail}"), 0);
+            }
+            session::clear_aborted();
+            true
+        }
+        Ok(_) => false,
+    };
+    session::pop_known();
+
+    let recorded = session::issue_count() - before;
+    if recorded == 0 && !threw {
+        let suffix = comment.map(|c| format!(": {c}")).unwrap_or_default();
+        session::record_issue(format!("Known issue was not recorded{suffix}"), 0);
+    }
+    Ok(SwiftValue::Void)
+}
+
 /// The result of a `#expect(throws:)` / `#require(throws:)` check, carrying the
 /// thrown error (for `#require`'s return value) or a preformatted failure.
 enum ThrowsOutcome {

@@ -14,12 +14,18 @@ use std::cell::RefCell;
 pub struct RawIssue {
     pub message: String,
     pub line: u32,
+    /// Recorded inside a `withKnownIssue { … }` block: reported distinctly and
+    /// does *not* fail the test (plan §1.2 "withKnownIssue").
+    pub known: bool,
 }
 
 struct Session {
     issues: Vec<RawIssue>,
     /// Set by a `#require` failure — the test body must abort.
     aborted: bool,
+    /// Nesting depth of active `withKnownIssue` blocks; while `> 0`, recorded
+    /// issues are marked `known`.
+    known_depth: usize,
 }
 
 thread_local! {
@@ -33,6 +39,7 @@ pub fn begin() {
         *s.borrow_mut() = Some(Session {
             issues: Vec::new(),
             aborted: false,
+            known_depth: 0,
         });
     });
 }
@@ -52,11 +59,66 @@ pub fn is_active() -> bool {
     SESSION.with(|s| s.borrow().is_some())
 }
 
-/// Record a soft failure (`#expect`) or the failing `#require` detail.
+/// Record a soft failure (`#expect`) or the failing `#require` detail. The
+/// issue is marked `known` when recorded inside a `withKnownIssue` block.
 pub fn record_issue(message: String, line: u32) {
     SESSION.with(|s| {
         if let Some(session) = s.borrow_mut().as_mut() {
-            session.issues.push(RawIssue { message, line });
+            let known = session.known_depth > 0;
+            session.issues.push(RawIssue {
+                message,
+                line,
+                known,
+            });
+        }
+    });
+}
+
+/// The number of issues recorded so far in the current session (0 when no
+/// session is open). Used by `withKnownIssue` to detect whether its body
+/// recorded any failure.
+pub fn issue_count() -> usize {
+    SESSION.with(|s| {
+        s.borrow()
+            .as_ref()
+            .map_or(0, |session| session.issues.len())
+    })
+}
+
+/// Enter a `withKnownIssue` block: subsequently recorded issues are marked
+/// `known` until the matching [`pop_known`].
+pub fn push_known() {
+    SESSION.with(|s| {
+        if let Some(session) = s.borrow_mut().as_mut() {
+            session.known_depth += 1;
+        }
+    });
+}
+
+/// Leave a `withKnownIssue` block.
+pub fn pop_known() {
+    SESSION.with(|s| {
+        if let Some(session) = s.borrow_mut().as_mut() {
+            session.known_depth = session.known_depth.saturating_sub(1);
+        }
+    });
+}
+
+/// Whether a `#require` failure has aborted the current session (not yet
+/// cleared by [`clear_aborted`]). Used by `withKnownIssue` to tell an
+/// already-recorded `#require` abort apart from a plain thrown error, so it
+/// does not record a second, mislabeled issue for the same failure.
+pub fn is_aborted() -> bool {
+    SESSION.with(|s| s.borrow().as_ref().is_some_and(|session| session.aborted))
+}
+
+/// Clear the abort flag after a `withKnownIssue` block consumed a `#require`
+/// abort (the abort is expected inside a known-issue block, so it must not
+/// unwind the whole test body).
+pub fn clear_aborted() {
+    SESSION.with(|s| {
+        if let Some(session) = s.borrow_mut().as_mut() {
+            session.aborted = false;
         }
     });
 }

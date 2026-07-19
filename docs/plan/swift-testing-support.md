@@ -54,17 +54,17 @@ Grounded in real-world usage (WWDC24 Swift Testing, Apple docs, migration playbo
 | Traits: `.enabled(if:)` | High | **Landed (slice C)** — evaluate condition once at run start |
 | `@Test(arguments:)` parameterized | High | **Landed (slice C)** — one case per element; cartesian multi-collection; `zip` |
 | `Issue.record(…)` / `Issue.record(Comment, …)` | Medium | **Landed (slice C)** — `Issue.record(_: String)` soft failure |
-| Traits: `.tags(…)` + filter by tag | Medium | Needs `Tag` type + CLI `--filter` tag syntax |
+| Traits: `.tags(…)` + filter by tag | Medium | **Landed (slice F)** — `.tags(.fast)` read structurally (tag identity by name), inherited by suite members; CLI `--filter tag:<name>` selects by tag |
 | `#expect(throws:)` / `throws: Never.self` | Medium | **Landed (slice E)** — closure-form overloads: type match, `Never.self`, and error-instance equality; `try #require(throws:)` returns the thrown error |
-| Traits: `.bug(…)` | Low | Annotation only in reports |
+| Traits: `.bug(…)` | Low | **Landed (slice F)** — `.bug("url"/id)` surfaced as a `bug:` annotation on a failing test |
 | Traits: `.serialized` | Low | Serial is **default** in tswift v1 anyway |
-| Traits: `.timeLimit` | Low | Soft timeout warning first; hard kill needs host timer policy |
+| Traits: `.timeLimit` | Low | **Landed (slice F)** — **soft** check: measures duration, records an issue when `.minutes(n)`/`.seconds(n)` exceeded; no hard kill (documented divergence) |
 | `confirmation { }` | Low | Depends on async wait helpers |
-| `withKnownIssue` | Low | Expected-failure semantics |
-| `CustomTestStringConvertible` | Low | Better value formatting |
+| `withKnownIssue` | Low | **Landed (slice F)** — body failure/throw is an expected *known* issue (reported distinctly, does not fail the run); a body that passes cleanly is itself a failure |
+| `CustomTestStringConvertible` | Low | **Deferred** — parameterized case labels use the argument node's source spelling, not an evaluated `testDescription`; params expansion is structural (nodes are never evaluated), so honouring the conformance would need per-element evaluation + a conformance seam. Reopen when parameterized labels need runtime value rendering |
 | Parallel test execution | Low | Real library default-parallel; tswift v1 is **serial** (one interpreter) |
-| Nested suite trait inheritance | Medium | Once suites land |
-| `class` suites with `deinit` teardown | Medium | `init`/`deinit` lifecycle |
+| Nested suite trait inheritance | Medium | **Landed (slice C)** |
+| `class` suites with `deinit` teardown | Medium | **Landed (slice F)** — the suite driver binds the instance to a `do`-block local (`do { var __suite = Suite(); … }`) so a `class` suite's `deinit` runs deterministically after each test (expression temporaries are not ARC-released, so the bare-temporary form never fired `deinit`) |
 
 ### 1.3 Document-unsupported (explicit non-goals for this plan)
 
@@ -567,13 +567,56 @@ TDD each slice: **write a failing test first**, then implement.
 
 ---
 
+### Slice F — Remaining “later” features — **landed**
+
+**Goal:** Cover the highest-value power features left in the §1.2 table.
+
+**Status (landed):**
+
+- **Tags:** `.tags(.fast, .slow)` parsed structurally (tag identity by name;
+  no runtime `Tag` value is constructed — the attribute is never evaluated),
+  inherited by suite members like every trait. CLI `--filter tag:<name>`
+  selects by an exact tag name; any other `--filter` needle stays a substring
+  match.
+- **`withKnownIssue("reason") { … }`:** a body that records an issue or throws
+  is an *expected* (known) failure — reported distinctly (`◇ … recorded a
+  known issue`) and does **not** fail the run. A body that instead completes
+  cleanly is itself a real failure (“Known issue was not recorded”). A runtime
+  trap inside the body is not an expected failure and still fails the test.
+- **`.bug("url"/id)`:** a report-only annotation; surfaced as a `bug:` line
+  under a failing test.
+- **`.timeLimit(.minutes(n)` / `.seconds(n))`:** a **soft** check — the runner
+  measures each test's duration and records an issue when the limit is
+  exceeded, but never hard-kills the test. **Divergence from Apple:** real
+  Swift Testing enforces the limit by cancelling the test; tswift has no host
+  timer policy, so this is measure-and-report only.
+- **`class` suite `deinit` teardown:** the suite driver binds the instance to a
+  `do`-block local (`do { var __suite = Suite(); try await __suite.m() }`) so a
+  `class` suite's `deinit` runs deterministically after each test. (Expression
+  temporaries are not ARC-released by the interpreter, so the previous
+  bare-temporary `Suite().m()` form never fired `deinit`.)
+
+**Deferred out of Slice F:**
+
+- **`CustomTestStringConvertible`:** parameterized case labels use each argument
+  node's source spelling, not an evaluated `testDescription`. Params expansion
+  is structural (element nodes are never evaluated), so honouring the
+  conformance would need per-element evaluation plus a conformance seam —
+  reopened when labels need runtime value rendering.
+- **`confirmation { }`** and **parallel execution** remain deferred (async wait
+  helpers / multi-interpreter policy).
+
+**LOC budget:** traits + known-issue session + driver change + goldens ≈ 500.
+
+---
+
 ### Suggested stack order
 
 ```text
-A (library) → B (CLI) → C (suites/traits/params) → D (website)
+A (library) → B (CLI) → C (suites/traits/params) → D (website) → E (throws) → F (tags/known-issue/bug/timeLimit/deinit)
 ```
 
-A can merge alone (tests call `run_tests` from Rust). B unblocks human use. C is additive. D last so status matches reality.
+A can merge alone (tests call `run_tests` from Rust). B unblocks human use. C is additive. D last so status matches reality. E/F are additive power-feature slices.
 
 ---
 
