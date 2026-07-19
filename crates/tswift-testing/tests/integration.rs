@@ -216,6 +216,19 @@ struct S {
 }
 
 #[test]
+fn suite_and_test_display_names_appear_in_label() {
+    let src = "\
+@Suite(\"Math Suite\") struct M {
+  @Test(\"adds two numbers\") func add() { #expect(true) }
+}
+";
+    let report = run(src);
+    let label = report.tests[0].label();
+    assert!(label.contains("adds two numbers"), "label: {label}");
+    assert!(label.contains("Math Suite"), "label: {label}");
+}
+
+#[test]
 fn nested_suite_types_are_discovered() {
     let src = "\
 struct Outer {

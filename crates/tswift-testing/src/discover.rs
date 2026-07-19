@@ -38,6 +38,24 @@ impl TestCase {
         }
     }
 
+    /// The human display label composing the owning suite's and the test's
+    /// display names (`"Math Suite/adds two numbers"`), falling back to the
+    /// func/type id when neither is set so a suite test never loses its
+    /// qualifying type name.
+    pub fn label_base(&self) -> String {
+        if self.suite_display.is_none() && self.display_name.is_none() {
+            return self.id();
+        }
+        let test_part = self
+            .display_name
+            .clone()
+            .unwrap_or_else(|| format!("{}()", self.func_name));
+        match &self.suite_display {
+            Some(suite) => format!("{suite}/{test_part}"),
+            None => test_part,
+        }
+    }
+
     /// Whether `needle` matches this test by id or display name (case-sensitive
     /// substring — the v1 `--filter` contract, plan §4.2).
     pub fn matches_filter(&self, needle: &str) -> bool {

@@ -180,10 +180,14 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
             .map(|row| {
                 let args: Vec<String> = row.iter().map(|n| render::expr(n)).collect();
                 let args = args.join(", ");
-                let base = case
+                let name = case
                     .display_name
                     .clone()
                     .unwrap_or_else(|| params::signature(&case.node, &case.func_name));
+                let base = match &case.suite_display {
+                    Some(suite) => format!("{suite}/{name}"),
+                    None => name,
+                };
                 Plan::Run {
                     case,
                     id: format!("{} - {args}", case.id()),
@@ -195,7 +199,7 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
         None => vec![Plan::Run {
             case,
             id: case.id(),
-            label: case.display_name.clone(),
+            label: Some(case.label_base()),
             driver: driver_line(case, ""),
         }],
     }
@@ -242,7 +246,7 @@ fn skipped_result(
     let (file, line) = analysis.locate(case.line);
     TestResult {
         id: case.id(),
-        display_name: case.display_name.clone(),
+        display_name: Some(case.label_base()),
         status: TestStatus::Skipped,
         issues: Vec::new(),
         duration: std::time::Duration::ZERO,
