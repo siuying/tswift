@@ -1,0 +1,186 @@
+---
+layout: ../../layouts/Doc.astro
+title: Swift Testing
+description: Swift Testing (@Test / #expect / #require) support in tswift — CLI usage and coverage.
+section: status
+---
+
+# Swift Testing
+
+[Swift Testing](https://github.com/swiftlang/swift-testing) is Apple's
+attribute- and macro-based test framework (`import Testing`, `@Test`,
+`#expect`, `#require`). tswift implements a native subset directly in the
+interpreter — no macro-expansion engine: `@Test`/`@Suite` are discovered
+structurally from the typed AST, and `#expect`/`#require` are freestanding
+macros registered the same way `#Predicate` is for SwiftData.
+
+**Legend:** ✅ Done · 🟡 Partial · ⬜ Todo
+
+**CLI-only for now:** tests run via `tswift test`, not the wasm playground —
+the playground's evaluator has no concept of a multi-test run/report loop yet.
+See "Not yet supported" below.
+
+---
+
+## Supported surface
+
+| Status | Feature | Notes |
+|--------|---------|-------|
+| ✅ | `@Test` free functions | Top-level `func` |
+| ✅ | `@Test` methods on `struct`/`class` | With or without an enclosing `@Suite` |
+| ✅ | Display names — `@Test("…")` | First unlabeled string argument on the attribute |
+| ✅ | `#expect(_:)` | Soft failure: records an issue, test body continues |
+| ✅ | `#require(_:)` | Hard failure: aborts the test immediately |
+| ✅ | `try #require(_:)` optional unwrap | Unwraps and returns the value, or aborts |
+| ✅ | Failure detail | Expression source spelling + operand values for `==` `!=` `<` `>` `<=` `>=` and unary `!` |
+| ✅ | Throwing tests (`func f() throws`) | An uncaught `throw` is one failing issue |
+| ✅ | Async tests (`func f() async` / `async throws`) | Runs on the existing cooperative executor |
+| ✅ | `@Suite` + display name | `@Suite("…") struct MathSuite { … }` |
+| ✅ | Nested suites | Traits on an outer suite are inherited by nested suites/tests |
+| ✅ | `.disabled("reason")` | Skips the test; reason is printed |
+| ✅ | `.enabled(if: condition)` | Condition evaluated once at run start |
+| ✅ | `@Test(arguments:)` parameterized tests | One test case per element; multiple collections expand as a cartesian product; `zip(_:_:)` pairs element-wise |
+| ✅ | `Issue.record("…")` | Soft failure from inside test/helper code, without an `#expect` |
+| 🟡 | Exit codes | `0` all pass (skips only); `1` on any failure, issue, or compile error. Discovering zero tests is **not** an error (exits `0` with an explicit "0 tests" summary) |
+| ⬜ | `#expect(throws:)` / `throws: Never.self` | Closure-form throwing matchers |
+| ⬜ | `.tags(…)` + tag-based filtering | Needs a `Tag` type and `--filter` tag syntax |
+| ⬜ | `.bug(…)` | Report-only annotation |
+| ⬜ | `.timeLimit(…)` | Needs a host timer policy for a hard kill |
+| ⬜ | `confirmation { }` | Async confirmation helper |
+| ⬜ | `withKnownIssue` | Expected-failure semantics |
+| ⬜ | `CustomTestStringConvertible` | Custom value formatting in failure messages |
+| ⬜ | Parallel test execution | tswift v1 runs **serially** (one interpreter instance); real Swift Testing parallelizes by default |
+
+## Not yet supported (explicit non-goals for now)
+
+- **XCTest** — a separate framework; no dual-framework coexistence.
+- **UI tests** (`XCUIApplication`) / **performance tests** (`XCTMetric`) — tswift has no host/process model for these.
+- **Full macro expansion** — `@Test`/`@Suite`/`#expect`/`#require` are handled as
+  structural discovery + two freestanding-macro builtins, not general
+  compiler-plugin macro expansion.
+- **`@testable` / true module isolation** — multi-file programs are
+  concatenated into one compilation unit; the system under test and its
+  tests are treated as a single unit.
+- **Compiler-plugin diagnostics** (e.g. "this expectation will always fail" warnings) — would need type-aware constant folding in sema.
+- **JSON / xUnit reporters** — console output only.
+- **Wasm/browser test running** — `tswift test` is a CLI command; the site's
+  live playground does not run test suites (see below).
+
+---
+
+## CLI usage
+
+```text
+tswift test <file.swift> [more.swift ...]
+tswift test <dir>                              # all *.swift in the directory
+tswift test <dir-with-Package.swift> [--target <testTargetName>]
+tswift test … [--filter <substring>]
+```
+
+`--filter` matches (case-sensitively, substring) against a test's display id —
+its function name, `Suite/test` path, or display name string.
+
+### Example
+
+```swift
+import Testing
+
+@Test func addsUp() {
+    #expect(1 + 1 == 2)
+}
+
+@Test("subtraction works")
+func subtracts() {
+    #expect(5 - 2 == 3)
+}
+
+@Test func broken() {
+    #expect(2 + 2 == 5)
+}
+
+@Suite("Math Suite")
+struct MathSuite {
+    @Test func passes() throws {
+        let maybe: Int? = 5
+        let x = try #require(maybe)
+        #expect(x == 5)
+    }
+
+    @Test(.disabled("flaky"))
+    func skipped() {
+        #expect(false)
+    }
+}
+
+@Test(arguments: [1, 2, 3])
+func isPositive(n: Int) {
+    #expect(n > 0)
+}
+```
+
+```text
+$ tswift test Basic.swift
+Test run started.
+✔ Test addsUp() passed after 0.000 seconds.
+✔ Test subtraction works passed after 0.000 seconds.
+✘ Test broken() recorded an issue at Basic.swift:13: Expectation failed: 2 + 2 == 5 → false
+  2 + 2 → 4
+✘ Test broken() failed after 0.000 seconds with 1 issue.
+✔ Test Math Suite/passes() passed after 0.000 seconds.
+↷ Test Math Suite/skipped() skipped: "flaky".
+✔ Test isPositive(n:) - 1 passed after 0.000 seconds.
+✔ Test isPositive(n:) - 2 passed after 0.000 seconds.
+✔ Test isPositive(n:) - 3 passed after 0.000 seconds.
+Test run with 8 tests failed after 0.000 seconds with 1 issue (1 skipped).
+
+$ echo $?
+1
+```
+
+Filtering to just the suite:
+
+```text
+$ tswift test Basic.swift --filter Math
+Test run started.
+✔ Test Math Suite/passes() passed after 0.000 seconds.
+↷ Test Math Suite/skipped() skipped: "flaky".
+Test run with 2 tests, 1 passed after 0.000 seconds (1 skipped).
+
+$ echo $?
+0
+```
+
+Running a SwiftPM-style package selects its `.testTarget`s:
+
+```text
+$ tswift test . --target AppTests
+Test run started.
+✔ Test addWorks() passed after 0.000 seconds.
+Test run with 1 test, 1 passed after 0.000 seconds.
+```
+
+With no `--target`, every declared `.testTarget` in `Package.swift` runs, one
+after another (tswift v1 is serial — see "Not yet supported" above).
+
+### Exit codes
+
+| Exit code | Meaning |
+|---|---|
+| `0` | All discovered tests passed (or were only skipped); this includes a run that discovers zero tests |
+| `1` | Any test failed, any issue was recorded, or the sources failed to compile/analyze |
+
+---
+
+## How it renders
+
+Discovery walks the typed AST after `analyze_program` — no compiler plugin, no
+symbol mangling, no binary reflection. `#expect`/`#require` are freestanding
+macros registered on the interpreter, the same seam SwiftData uses for
+`#Predicate`. Console output mirrors `swift test`'s structure and wording,
+with ASCII pass/fail/skip markers (`✔` `✘` `↷`) instead of SF Symbol
+codepoints, so CI logs stay readable on any terminal.
+
+Because the playground runs a single evaluated snippet rather than a
+file/package tree with a `Testing` install + report loop, `tswift test` is
+CLI-only for now; wiring a wasm test runner into the playground is tracked
+separately and not part of this page's scope.
