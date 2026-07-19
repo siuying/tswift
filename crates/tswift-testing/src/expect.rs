@@ -286,7 +286,12 @@ fn check_throws(
             ))),
             Err(StdError::Throw(thrown)) => {
                 let actual = thrown.type_name();
-                if actual == name {
+                // `thrown.type_name()` is unqualified (e.g. "Bad"), while the
+                // `throws:` subject may be spelled with its enclosing-type
+                // qualification (`Outer.Bad.self`); match on the expected
+                // spelling's last path component but keep the full spelling
+                // in messages.
+                if actual == last_path_component(&name) {
                     Ok(ThrowsOutcome::Passed(Some(thrown)))
                 } else {
                     Ok(ThrowsOutcome::Failed(format!(
@@ -315,6 +320,13 @@ fn check_throws(
             Err(other) => Err(other),
         },
     }
+}
+
+/// The last dotted path component of a type spelling (`"Outer.Bad"` ->
+/// `"Bad"`), used to match against `SwiftValue::type_name()`'s unqualified
+/// name while the full spelling stays in messages.
+fn last_path_component(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 fn trap(message: &str) -> StdError {

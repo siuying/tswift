@@ -399,6 +399,35 @@ func go() async throws { throw Boom() }
 }
 
 #[test]
+fn expect_throws_qualified_nested_type_matches_unqualified_thrown_name() {
+    // `Outer.Bad.self` spells the nested error type with its enclosing-type
+    // qualification, but `thrown.type_name()` is unqualified ("Bad"); the
+    // matcher must compare on the last path component, not the full spelling.
+    let src = "\
+enum Outer { struct Bad: Error {} }
+func go() throws { throw Outer.Bad() }
+@Test func t() { #expect(throws: Outer.Bad.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.passed(), 1, "issues: {:?}", report.tests[0].issues);
+}
+
+#[test]
+fn expect_throws_qualified_nested_type_still_fails_wrong_type() {
+    let src = "\
+enum Outer { struct Bad: Error {} }
+struct Other: Error {}
+func go() throws { throw Other() }
+@Test func t() { #expect(throws: Outer.Bad.self) { try go() } }
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 1);
+    let msg = &report.tests[0].issues[0].message;
+    assert!(msg.contains("Outer.Bad"), "{msg}");
+    assert!(msg.contains("Other"), "{msg}");
+}
+
+#[test]
 fn compile_error_yields_no_tests() {
     let report = run("@Test func t() { let x = }\n");
     assert!(report.compile_error.is_some());
