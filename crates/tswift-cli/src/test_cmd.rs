@@ -61,9 +61,15 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
     }
 
     if units.len() > 1 {
+        // Each unit already printed its own "Test run with N tests …" summary
+        // (`render_report`); label the cross-unit total distinctly ("Overall:")
+        // so it reads as a combined total, not a third, contradictory-looking
+        // "Test run with…" line.
         println!(
-            "{}",
+            "Overall: {}",
             overall_summary(total_tests, total_failed, total_issues, total_duration)
+                .strip_prefix("Test run with ")
+                .expect("overall_summary always starts with \"Test run with \"")
         );
     }
 

@@ -120,6 +120,27 @@ fn compile_error_is_nonzero_with_diagnostic() {
     assert!(combined.contains("@Test func broken("), "{combined}");
 }
 
+/// A package with two `.testTarget`s runs both, prints each unit's own
+/// `Test run with N tests …` summary, and one aggregate line clearly
+/// labeled `Overall:` — never two ambiguous `Test run with …` lines that
+/// read like a duplicate/contradictory total.
+#[test]
+fn two_test_targets_print_per_unit_and_labeled_overall_summary() {
+    let dir = fixtures_dir().join("two_targets");
+    let output = run_test_cmd(&[dir.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("Test target CoreTests:"), "stdout: {out}");
+    assert!(out.contains("Test target ExtraTests:"), "stdout: {out}");
+    let per_unit_summaries = out.matches("Test run with 1 test passed").count();
+    assert_eq!(per_unit_summaries, 2, "stdout: {out}");
+    assert!(out.contains("Overall: 2 tests passed"), "stdout: {out}");
+}
+
 /// Zero discovered tests is not an error (documented CLI policy, plan §2.5 /
 /// R3): exit 0 with a clear "0 tests" message, not a silent false-green.
 #[test]
