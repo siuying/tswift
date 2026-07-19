@@ -292,35 +292,23 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
                 (None, Some(suite)) => format!("{}/{name}", suite.replace('.', "/")),
                 (None, None) => name,
             };
+            // Duplicate-argument cases (e.g. `arguments: [1, 1]`) get a
+            // disambiguating occurrence suffix so no two labels/ids collide;
+            // shared with `descriptor::list_tests` so a listed case id always
+            // matches the id this run actually uses.
+            let suffixes = params::case_id_suffixes(&rows);
             let rendered: Vec<String> = rows
                 .iter()
                 .map(|row| row.iter().map(render::expr).collect::<Vec<_>>().join(", "))
                 .collect();
-            // Disambiguate duplicate-argument cases (e.g. `arguments: [1, 1]`)
-            // with a 1-based occurrence suffix so no two labels collide.
-            let mut total_occurrences: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::new();
-            for args in &rendered {
-                *total_occurrences.entry(args.as_str()).or_insert(0) += 1;
-            }
-            let mut seen_so_far: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::new();
             rendered
                 .iter()
-                .map(|args| {
-                    let suffix = if total_occurrences[args.as_str()] > 1 {
-                        let n = seen_so_far.entry(args.as_str()).or_insert(0);
-                        *n += 1;
-                        format!(" (#{n})")
-                    } else {
-                        String::new()
-                    };
-                    Plan::Run {
-                        case,
-                        id: format!("{} - {args}{suffix}", case.id()),
-                        label: Some(format!("{base} - {args}{suffix}")),
-                        driver: driver_line(case, args),
-                    }
+                .zip(suffixes.iter())
+                .map(|(args, suffix)| Plan::Run {
+                    case,
+                    id: format!("{}{suffix}", case.id()),
+                    label: Some(format!("{base}{suffix}")),
+                    driver: driver_line(case, args),
                 })
                 .collect()
         }
