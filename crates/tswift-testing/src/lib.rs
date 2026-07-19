@@ -211,27 +211,52 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
             case,
             reason: Some("no argument cases".to_string()),
         }],
-        params::Expansion::Cases(rows) => rows
-            .iter()
-            .map(|row| {
-                let args: Vec<String> = row.iter().map(|n| render::expr(n)).collect();
-                let args = args.join(", ");
-                let name = case
-                    .display_name
-                    .clone()
-                    .unwrap_or_else(|| params::signature(&case.node, &case.func_name));
-                let base = match &case.suite_display {
-                    Some(suite) => format!("{suite}/{name}"),
-                    None => name,
-                };
-                Plan::Run {
-                    case,
-                    id: format!("{} - {args}", case.id()),
-                    label: Some(format!("{base} - {args}")),
-                    driver: driver_line(case, &args),
-                }
-            })
-            .collect(),
+        params::Expansion::Cases(rows) => {
+            let name = case
+                .display_name
+                .clone()
+                .unwrap_or_else(|| params::signature(&case.node, &case.func_name));
+            // Qualify with the suite when there's no display name to fall
+            // back on: `suite_display` (an `@Suite("…")` name) if set, else
+            // the suite's type path itself, matching `label_base()`/`id()`
+            // (a suite test's label must never lose its qualifying type).
+            let base = match (&case.suite_display, &case.suite_type) {
+                (Some(suite), _) => format!("{suite}/{name}"),
+                (None, Some(suite)) => format!("{}/{name}", suite.replace('.', "/")),
+                (None, None) => name,
+            };
+            let rendered: Vec<String> = rows
+                .iter()
+                .map(|row| row.iter().map(render::expr).collect::<Vec<_>>().join(", "))
+                .collect();
+            // Disambiguate duplicate-argument cases (e.g. `arguments: [1, 1]`)
+            // with a 1-based occurrence suffix so no two labels collide.
+            let mut total_occurrences: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for args in &rendered {
+                *total_occurrences.entry(args.as_str()).or_insert(0) += 1;
+            }
+            let mut seen_so_far: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            rendered
+                .iter()
+                .map(|args| {
+                    let suffix = if total_occurrences[args.as_str()] > 1 {
+                        let n = seen_so_far.entry(args.as_str()).or_insert(0);
+                        *n += 1;
+                        format!(" (#{n})")
+                    } else {
+                        String::new()
+                    };
+                    Plan::Run {
+                        case,
+                        id: format!("{} - {args}{suffix}", case.id()),
+                        label: Some(format!("{base} - {args}{suffix}")),
+                        driver: driver_line(case, args),
+                    }
+                })
+                .collect()
+        }
     }
 }
 
@@ -619,6 +644,31 @@ mod tests {
             message.contains("expected collection literal or zip"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn parameterized_suite_test_label_includes_suite_qualifier() {
+        // No `@Test`/`@Suite` display names: the parameterized label must
+        // still carry the suite qualifier, matching `label_base()`/`id()`.
+        let src = "struct MathSuite {\n  @Test(arguments: [1, 2]) func p(x: Int) {}\n}\n";
+        let report = run(src);
+        assert_eq!(report.tests.len(), 2);
+        for t in &report.tests {
+            let label = t.label();
+            assert!(
+                label.starts_with("MathSuite/"),
+                "expected suite-qualified label, got: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_argument_values_get_disambiguated_labels() {
+        let report = run("@Test(arguments: [1, 1]) func p(x: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 2);
+        let labels: std::collections::HashSet<&str> =
+            report.tests.iter().map(|t| t.label()).collect();
+        assert_eq!(labels.len(), 2, "duplicate-argument labels must be unique");
     }
 
     #[test]
