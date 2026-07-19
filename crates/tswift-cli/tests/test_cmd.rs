@@ -112,6 +112,12 @@ fn compile_error_is_nonzero_with_diagnostic() {
     let combined = format!("{}{}", stdout(&output), stderr(&output));
     assert!(combined.contains("compile_error.swift"), "{combined}");
     assert!(!combined.contains("Test run started"), "{combined}");
+    // Same rendering as `tswift run`'s diagnostics: `error:` kind, the
+    // offending source line, and a caret pointing at the column—not a bare
+    // `file:line:col: msg` string.
+    assert!(combined.contains(": error:"), "{combined}");
+    assert!(combined.contains('^'), "{combined}");
+    assert!(combined.contains("@Test func broken("), "{combined}");
 }
 
 /// Zero discovered tests is not an error (documented CLI policy, plan §2.5 /

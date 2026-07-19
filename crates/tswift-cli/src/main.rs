@@ -365,7 +365,7 @@ fn collect_swift_files_recursive(
 /// prefix preserves tabs from the source so the caret stays column-aligned in a
 /// tab-indented file. `fallback_path` names the file when a diagnostic carries
 /// no `file` (single-file `analyze` always sets one; this is defensive).
-fn render_diagnostic(
+pub(crate) fn render_diagnostic(
     diag: &tswift_frontend::Diagnostic,
     files: &[SourceFile],
     fallback_path: &str,

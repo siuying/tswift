@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use tswift_frontend::SourceFile;
-use tswift_testing::{RunOptions, RunReport, TestStatus};
+use tswift_testing::{CompileError, RunOptions, RunReport, TestStatus};
 
 /// Run `tswift test` over `paths`, printing console output and returning the
 /// process exit code.
@@ -48,7 +48,7 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
         }
         let report = tswift_testing::run_tests(files, &options);
         if let Some(err) = &report.compile_error {
-            eprintln!("{err}");
+            render_compile_error(err, files, name);
             all_ok = false;
             continue;
         }
@@ -71,6 +71,24 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// Render a [`CompileError`] the same way `tswift run` renders analysis
+/// diagnostics (`render_diagnostic`: `file:line:col: error: msg` + source
+/// line + caret), so a compile failure reads identically whether it came from
+/// `tswift run` or `tswift test`. `unit_name` is the fallback path for a
+/// diagnostic that (defensively) carries no `file` of its own; `files` is the
+/// unit's own source set, used to look up the offending line for the caret.
+fn render_compile_error(err: &CompileError, files: &[SourceFile], unit_name: &str) {
+    match err {
+        CompileError::Diagnostics(diags) => {
+            let fallback = files.first().map(|f| f.path.as_str()).unwrap_or(unit_name);
+            for diag in diags {
+                eprint!("{}", crate::render_diagnostic(diag, files, fallback));
+            }
+        }
+        CompileError::Message(msg) => eprintln!("{msg}"),
     }
 }
 
