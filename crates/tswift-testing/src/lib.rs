@@ -281,4 +281,37 @@ mod tests {
         assert!(drivers_from(driver, 2).is_err());
     }
 
+    #[test]
+    fn expect_non_bool_operand_fails_hard() {
+        let report = run("@Test func t() { #expect(\"hello\") }\n");
+        assert_eq!(report.passed(), 0);
+        assert_eq!(report.failed(), 1);
+        assert!(report.tests[0].issues[0].message.contains("Bool"));
+    }
+
+    #[test]
+    fn expect_outside_test_traps() {
+        // A top-level `#expect` runs during load, before any session is open.
+        let report = run("#expect(true)\n");
+        assert!(!report.is_success());
+        let err = report.compile_error.expect("top-level #expect must trap");
+        assert!(err.contains("outside a test"));
+    }
+
+    #[test]
+    fn expect_evaluates_impure_operand_once() {
+        // `bump()` increments a global; a failing comparison must call it once,
+        // so the captured detail shows `bump() → 1`, not a re-evaluated `→ 2`.
+        let report = run(concat!(
+            "var counter = 0\n",
+            "func bump() -> Int { counter += 1; return counter }\n",
+            "@Test func t() { #expect(bump() == 99) }\n",
+        ));
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(
+            message.contains("bump() → 1"),
+            "expected single evaluation, got: {message}"
+        );
+    }
 }

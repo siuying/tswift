@@ -5,33 +5,46 @@
 //! inspects the `CompilerDirective` node's operand, evaluates it, and records
 //! against the current [`crate::session`] (plan §3).
 
-use tswift_core::{EvalError, StdContext, StdError, StdResult, SwiftValue};
+use tswift_core::{ops, EvalError, StdContext, StdError, StdResult, SwiftValue};
 use tswift_frontend::{Node, NodeKind};
 
 use crate::render;
 use crate::session;
 
+/// The result of checking one expectation, carrying a preformatted failure
+/// detail so callers never re-evaluate operands.
+enum Outcome {
+    Passed,
+    Failed(String),
+}
+
 /// `#expect(expr)` — soft check. Records an issue on failure but lets the test
-/// body continue.
+/// body continue. A non-`Bool` operand or use outside a test is a hard error.
 pub fn expect_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResult {
+    if !session::is_active() {
+        return Err(trap("#expect used outside a test"));
+    }
     let Some(operand) = node.first_child() else {
+        session::record_issue("Expectation failed: empty #expect()".into(), node.line());
         return Ok(SwiftValue::Void);
     };
-    let value = ctx.eval_node(&operand)?;
-    if value.as_bool() == Some(true) {
-        return Ok(SwiftValue::Void);
+    match evaluate(ctx, &operand)? {
+        Outcome::Passed => Ok(SwiftValue::Void),
+        Outcome::Failed(detail) => {
+            session::record_issue(format!("Expectation failed: {detail}"), operand.line());
+            Ok(SwiftValue::Void)
+        }
     }
-    session::record_issue(
-        format!("Expectation failed: {}", failure_detail(ctx, &operand)),
-        operand.line(),
-    );
-    Ok(SwiftValue::Void)
 }
 
 /// `#require(expr)` — hard check. On failure records an issue and aborts the
 /// test body via a throw signal; on success unwraps an optional (a present
-/// optional is already its wrapped value) and yields it.
+/// optional is already its wrapped value) and yields it. Use outside a test is
+/// a hard error.
 pub fn require_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResult {
+    if !session::is_active() {
+        return Err(trap("#require used outside a test"));
+    }
     let Some(operand) = node.first_child() else {
         return Ok(SwiftValue::Void);
     };
@@ -54,43 +67,109 @@ pub fn require_macro(ctx: &mut dyn StdContext, node: &Node<'static>) -> StdResul
     Err(StdError::Throw(SwiftValue::Void))
 }
 
-/// Build the `#expect` failure detail: the expression spelling, plus operand
-/// values for a binary comparison or a bare boolean identifier (plan §3.5).
-fn failure_detail(ctx: &mut dyn StdContext, operand: &Node<'static>) -> String {
+/// Check `operand`, evaluating each subexpression exactly once.
+///
+/// For a comparison (`==`, `<`, …) the two operands are evaluated once each and
+/// the operator applied to the captured values, so an impure operand (a
+/// counter, a logging call) runs a single time and the failure detail reuses
+/// those same values — no re-evaluation on failure. Operands needing contextual
+/// typing (a leading-dot `.case`) or a non-structural custom operator fall back
+/// to one whole-operand evaluation, which preserves the interpreter's operator
+/// resolution at the cost of a spelling-only detail.
+fn evaluate(ctx: &mut dyn StdContext, operand: &Node<'static>) -> Result<Outcome, StdError> {
+    if operand.kind() == NodeKind::BinaryExpr {
+        let op = operand.text().unwrap_or_default();
+        if is_comparison(&op) {
+            let mut it = operand.children();
+            if let (Some(lhs), Some(rhs)) = (it.next(), it.next()) {
+                let l = ctx.eval_node(&lhs);
+                let r = ctx.eval_node(&rhs);
+                if let (Ok(l), Ok(r)) = (l, r) {
+                    if let Some(passed) = compare(&op, &l, &r) {
+                        return Ok(if passed {
+                            Outcome::Passed
+                        } else {
+                            Outcome::Failed(binary_detail(operand, &lhs, &l, &rhs, &r))
+                        });
+                    }
+                }
+                // Contextual-typing operand or a custom operator we cannot apply
+                // structurally: fall back to one whole-operand evaluation.
+            }
+        }
+    }
+    whole_operand(ctx, operand)
+}
+
+/// Evaluate `operand` once as a whole and require it to be a `Bool`.
+fn whole_operand(ctx: &mut dyn StdContext, operand: &Node<'static>) -> Result<Outcome, StdError> {
+    let value = ctx.eval_node(operand)?;
+    match value.as_bool() {
+        Some(true) => Ok(Outcome::Passed),
+        Some(false) => Ok(Outcome::Failed(bool_detail(operand))),
+        None => Err(trap("#expect requires a Bool expression")),
+    }
+}
+
+/// Apply a comparison operator to two already-evaluated values, mirroring the
+/// interpreter's structural equality for nil/reference/enum/struct operands and
+/// otherwise deferring to the shared scalar operator table. Returns `None` when
+/// the values cannot be compared structurally (e.g. a custom `Comparable`).
+fn compare(op: &str, l: &SwiftValue, r: &SwiftValue) -> Option<bool> {
+    if (op == "==" || op == "!=")
+        && matches!(
+            (l, r),
+            (SwiftValue::Nil, _)
+                | (_, SwiftValue::Nil)
+                | (SwiftValue::Object(_), _)
+                | (_, SwiftValue::Object(_))
+                | (SwiftValue::Enum(_), _)
+                | (_, SwiftValue::Enum(_))
+                | (SwiftValue::Struct(_), _)
+                | (_, SwiftValue::Struct(_))
+        )
+    {
+        let same = l == r;
+        return Some(if op == "==" { same } else { !same });
+    }
+    ops::binary(op, l, r).ok().and_then(|v| v.as_bool())
+}
+
+fn is_comparison(op: &str) -> bool {
+    matches!(op, "==" | "!=" | "<" | "<=" | ">" | ">=")
+}
+
+/// Build the `#expect` failure detail for a comparison from captured operand
+/// values, appending each non-literal operand's value (plan §3.5).
+fn binary_detail(
+    operand: &Node<'static>,
+    lhs: &Node<'static>,
+    l: &SwiftValue,
+    rhs: &Node<'static>,
+    r: &SwiftValue,
+) -> String {
+    let mut detail = format!("{} → false", render::expr(operand));
+    if !is_literal(lhs.kind()) {
+        detail.push_str(&format!("\n  {} → {l}", render::expr(lhs)));
+    }
+    if !is_literal(rhs.kind()) {
+        detail.push_str(&format!("\n  {} → {r}", render::expr(rhs)));
+    }
+    detail
+}
+
+/// Failure detail for a non-comparison operand: a bare boolean identifier or
+/// member gets `→ false`; anything else shows just its spelling.
+fn bool_detail(operand: &Node<'static>) -> String {
     let spelling = render::expr(operand);
     match operand.kind() {
-        NodeKind::BinaryExpr => {
-            let mut it = operand.children();
-            let (lhs, rhs) = (it.next(), it.next());
-            let mut detail = format!("{spelling} → false");
-            if let Some(lhs) = lhs {
-                if let Some(line) = operand_value(ctx, &lhs) {
-                    detail.push_str(&format!("\n  {} → {line}", render::expr(&lhs)));
-                }
-            }
-            if let Some(rhs) = rhs {
-                if let Some(line) = operand_value(ctx, &rhs) {
-                    detail.push_str(&format!("\n  {} → {line}", render::expr(&rhs)));
-                }
-            }
-            detail
-        }
         NodeKind::IdentExpr | NodeKind::MemberExpr => format!("{spelling} → false"),
         _ => spelling,
     }
 }
 
-/// Evaluate an operand purely for its display value, suppressing side-effect
-/// errors. Literals are skipped (their spelling already shows the value).
-fn operand_value(ctx: &mut dyn StdContext, node: &Node<'static>) -> Option<String> {
-    if is_literal(node.kind()) {
-        return None;
-    }
-    match ctx.eval_node(node) {
-        Ok(value) => Some(value.to_string()),
-        Err(StdError::Throw(_)) | Err(StdError::Error(EvalError::Trap(_))) => None,
-        Err(_) => None,
-    }
+fn trap(message: &str) -> StdError {
+    StdError::Error(EvalError::Trap(message.to_string()))
 }
 
 fn is_literal(kind: NodeKind) -> bool {

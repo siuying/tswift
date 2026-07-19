@@ -46,6 +46,12 @@ pub fn end() -> (Vec<RawIssue>, bool) {
     })
 }
 
+/// Whether a recording session is currently open. `#expect`/`#require` used
+/// outside an active session is a hard error, not a silent no-op.
+pub fn is_active() -> bool {
+    SESSION.with(|s| s.borrow().is_some())
+}
+
 /// Record a soft failure (`#expect`) or the failing `#require` detail.
 pub fn record_issue(message: String, line: u32) {
     SESSION.with(|s| {
