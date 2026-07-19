@@ -195,7 +195,23 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
         SkipDecision::Run => {}
     }
     match params::expand(&case.node) {
-        Some(rows) => rows
+        params::Expansion::None => vec![Plan::Run {
+            case,
+            id: case.id(),
+            label: Some(case.label_base()),
+            driver: driver_line(case, ""),
+        }],
+        params::Expansion::Unsupported(spelling) => vec![Plan::Fail {
+            case,
+            message: format!(
+                "unsupported arguments: {spelling} (expected collection literal or zip)"
+            ),
+        }],
+        params::Expansion::Cases(rows) if rows.is_empty() => vec![Plan::Skip {
+            case,
+            reason: Some("no argument cases".to_string()),
+        }],
+        params::Expansion::Cases(rows) => rows
             .iter()
             .map(|row| {
                 let args: Vec<String> = row.iter().map(|n| render::expr(n)).collect();
@@ -216,12 +232,6 @@ fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'
                 }
             })
             .collect(),
-        None => vec![Plan::Run {
-            case,
-            id: case.id(),
-            label: Some(case.label_base()),
-            driver: driver_line(case, ""),
-        }],
     }
 }
 
@@ -566,6 +576,49 @@ mod tests {
         let report = run("@Test(.enabled(if: 1 > 2)) func t() { #expect(true) }\n");
         assert_eq!(report.skipped(), 1);
         assert_eq!(report.failed(), 0);
+    }
+
+    #[test]
+    fn empty_arguments_array_is_visible_not_silent() {
+        // `Expansion::Cases(vec![])` used to vanish into zero plans; it must
+        // surface as a visible Skip, not disappear from the report entirely.
+        let report = run("@Test(arguments: []) func p(x: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1, "empty expansion must still report");
+        assert_eq!(report.skipped(), 1);
+        assert_eq!(
+            report.tests[0].skip_reason.as_deref(),
+            Some("no argument cases")
+        );
+    }
+
+    #[test]
+    fn empty_zip_factor_is_visible_not_silent() {
+        let report =
+            run("@Test(arguments: zip([1, 2], [])) func p(a: Int, b: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.skipped(), 1);
+    }
+
+    #[test]
+    fn empty_cartesian_factor_is_visible_not_silent() {
+        let report = run("@Test(arguments: [1, 2], []) func p(x: Int, y: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.skipped(), 1);
+    }
+
+    #[test]
+    fn non_collection_arguments_fails_with_clear_message() {
+        let report = run(concat!(
+            "let bag = [1, 2]\n",
+            "@Test(arguments: bag) func p(x: Int) { #expect(true) }\n",
+        ));
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(message.contains("unsupported arguments"), "{message}");
+        assert!(
+            message.contains("expected collection literal or zip"),
+            "{message}"
+        );
     }
 
     #[test]

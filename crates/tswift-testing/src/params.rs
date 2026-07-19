@@ -16,26 +16,52 @@
 
 use tswift_frontend::{Node, NodeKind};
 
-/// Expand the `@Test(arguments:)` of `func_decl` into per-case argument node
-/// lists (one node per function parameter). `None` when the test is not
-/// parameterized; an empty `Vec` when it is but no combination is produced.
-pub fn expand(func_decl: &Node<'static>) -> Option<Vec<Vec<Node<'static>>>> {
-    let attr = func_decl
+use crate::render;
+
+/// Outcome of examining a `@Test`'s `arguments:` attribute.
+pub enum Expansion {
+    /// No `arguments:` label — an ordinary, non-parameterized test.
+    None,
+    /// Parameterized with these per-case argument node rows (one node per
+    /// function parameter). May be empty (`arguments: []`, an empty `zip`, or
+    /// an empty cartesian factor) — the caller decides how to report that.
+    Cases(Vec<Vec<Node<'static>>>),
+    /// Has `arguments:`, but the expression shape isn't a collection literal
+    /// or `zip(...)` we can expand structurally. Carries a rendered spelling
+    /// of the unsupported collection(s) for the error message.
+    Unsupported(String),
+}
+
+/// Expand the `@Test(arguments:)` of `func_decl`. See [`Expansion`].
+pub fn expand(func_decl: &Node<'static>) -> Expansion {
+    let Some(attr) = func_decl
         .children()
-        .find(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("Test"))?;
+        .find(|c| c.kind() == NodeKind::Attribute && c.text().as_deref() == Some("Test"))
+    else {
+        return Expansion::None;
+    };
     let children: Vec<Node<'static>> = attr.children().collect();
-    let start = children
+    let Some(start) = children
         .iter()
-        .position(|c| c.arg_label().as_deref() == Some("arguments"))?;
+        .position(|c| c.arg_label().as_deref() == Some("arguments"))
+    else {
+        return Expansion::None;
+    };
     let collections = &children[start..];
 
     if collections.len() == 1 {
         if let Some(zipped) = zip_cases(&collections[0]) {
-            return Some(zipped);
+            return Expansion::Cases(zipped);
         }
     }
     let lists: Option<Vec<Vec<Node<'static>>>> = collections.iter().map(elements).collect();
-    Some(cartesian(&lists?))
+    match lists {
+        Some(lists) => Expansion::Cases(cartesian(&lists)),
+        None => {
+            let spelling: Vec<String> = collections.iter().map(render::expr).collect();
+            Expansion::Unsupported(spelling.join(", "))
+        }
+    }
 }
 
 /// A human-readable call signature for the test function (`div(x:)`), used as
@@ -111,36 +137,74 @@ mod tests {
         analysis.root().children().next().unwrap()
     }
 
+    fn cases_of(decl: &Node<'static>) -> Vec<Vec<Node<'static>>> {
+        match expand(decl) {
+            Expansion::Cases(rows) => rows,
+            _ => panic!("expected Expansion::Cases"),
+        }
+    }
+
     #[test]
     fn single_array_expands_per_element() {
-        let cases = expand(&func("@Test(arguments: [1, 2, 3]) func p(x: Int) {}\n")).unwrap();
+        let cases = cases_of(&func("@Test(arguments: [1, 2, 3]) func p(x: Int) {}\n"));
         assert_eq!(cases.len(), 3);
         assert!(cases.iter().all(|row| row.len() == 1));
     }
 
     #[test]
     fn two_arrays_are_cartesian() {
-        let cases = expand(&func(
+        let cases = cases_of(&func(
             "@Test(arguments: [1, 2], [3, 4]) func p(x: Int, y: Int) {}\n",
-        ))
-        .unwrap();
+        ));
         assert_eq!(cases.len(), 4);
         assert!(cases.iter().all(|row| row.len() == 2));
     }
 
     #[test]
     fn zip_pairs_element_wise() {
-        let cases = expand(&func(
+        let cases = cases_of(&func(
             "@Test(arguments: zip([1, 2], [3, 4])) func p(a: Int, b: Int) {}\n",
-        ))
-        .unwrap();
+        ));
         assert_eq!(cases.len(), 2);
         assert!(cases.iter().all(|row| row.len() == 2));
     }
 
     #[test]
     fn non_parameterized_is_none() {
-        assert!(expand(&func("@Test func p() {}\n")).is_none());
+        assert!(matches!(
+            expand(&func("@Test func p() {}\n")),
+            Expansion::None
+        ));
+    }
+
+    #[test]
+    fn empty_array_literal_expands_to_zero_cases() {
+        let cases = cases_of(&func("@Test(arguments: []) func p(x: Int) {}\n"));
+        assert!(cases.is_empty());
+    }
+
+    #[test]
+    fn empty_zip_factor_expands_to_zero_cases() {
+        let cases = cases_of(&func(
+            "@Test(arguments: zip([1, 2], [])) func p(a: Int, b: Int) {}\n",
+        ));
+        assert!(cases.is_empty());
+    }
+
+    #[test]
+    fn empty_cartesian_factor_expands_to_zero_cases() {
+        let cases = cases_of(&func(
+            "@Test(arguments: [1, 2], []) func p(x: Int, y: Int) {}\n",
+        ));
+        assert!(cases.is_empty());
+    }
+
+    #[test]
+    fn non_collection_arguments_is_unsupported() {
+        let outcome = expand(&func(
+            "@Test(arguments: someNamedCollection) func p(x: Int) {}\n",
+        ));
+        assert!(matches!(outcome, Expansion::Unsupported(_)));
     }
 
     #[test]
