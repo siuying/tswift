@@ -316,6 +316,50 @@ fn collect_swift_files_recursive(
     Ok(())
 }
 
+/// Render one diagnostic in swiftc's format:
+///
+/// ```text
+/// path/file.swift:12:7: error: cannot find 'foo' in scope
+///     print(foo)
+///           ^
+/// ```
+///
+/// The `file:line:col: severity: message` header is always emitted. When the
+/// originating source line can be located (its `file` matches one of the
+/// program's [`SourceFile`]s and `line`/`col` are in range), a source-snippet
+/// line and a caret pointing at `col` are appended. `col` is 1-based; the caret
+/// prefix preserves tabs from the source so the caret stays column-aligned in a
+/// tab-indented file. `fallback_path` names the file when a diagnostic carries
+/// no `file` (single-file `analyze` always sets one; this is defensive).
+fn render_diagnostic(
+    diag: &tswift_frontend::Diagnostic,
+    files: &[SourceFile],
+    fallback_path: &str,
+) -> String {
+    let file = diag.file.as_deref().unwrap_or(fallback_path);
+    let kind = if diag.is_error() { "error" } else { "warning" };
+    let mut out = format!(
+        "{file}:{}:{}: {kind}: {}\n",
+        diag.line, diag.col, diag.message
+    );
+    let line_text = files
+        .iter()
+        .find(|f| f.path == file)
+        .and_then(|f| f.source.lines().nth((diag.line as usize).saturating_sub(1)));
+    if let Some(line_text) = line_text {
+        out.push_str(line_text);
+        out.push('\n');
+        let prefix: String = line_text
+            .chars()
+            .take((diag.col as usize).saturating_sub(1))
+            .map(|c| if c == '\t' { '\t' } else { ' ' })
+            .collect();
+        out.push_str(&prefix);
+        out.push_str("^\n");
+    }
+    out
+}
+
 /// Read every path into a [`SourceFile`], preserving order.
 fn read_all(paths: &[String]) -> Result<Vec<SourceFile>, String> {
     paths
@@ -364,15 +408,11 @@ fn run(paths: &[String], allow_network: bool, target: Option<&str>) -> ExitCode 
     };
     // Surface diagnostics: warnings (e.g. `#warning`) print and continue;
     // errors (e.g. `#error`, type errors) abort before execution. Each
-    // diagnostic reports its own file path (multi-file aware).
+    // diagnostic reports its own file path (multi-file aware) with a
+    // swiftc-style caret pointing at the offending column.
     let mut had_error = false;
     for diag in analysis.diagnostics() {
-        let kind = if diag.is_error() { "error" } else { "warning" };
-        let file = diag.file.as_deref().unwrap_or(path);
-        eprintln!(
-            "{file}:{}:{}: {kind}: {}",
-            diag.line, diag.col, diag.message
-        );
+        eprint!("{}", render_diagnostic(&diag, &files, path));
         had_error |= diag.is_error();
     }
     if had_error {

@@ -280,6 +280,102 @@ fn diagnostic_reports_correct_file_and_line() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Write `files` (name -> contents) into a fresh temp dir and `tswift run`
+/// them in order, returning `(success, stdout, stderr)`. The first file is
+/// always a valid declaration-only `models.swift`; the caller supplies a
+/// second `main.swift` carrying the error under test, so every diagnostic
+/// must attribute to `main.swift` with its *file-local* line and column.
+fn run_two_file_module(models: &str, main: &str) -> (bool, String, String) {
+    let dir = unique_temp_dir("diag-two-file");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(dir.join("models.swift"), models).expect("write models.swift");
+    std::fs::write(dir.join("main.swift"), main).expect("write main.swift");
+    let output = Command::new(env!("CARGO_BIN_EXE_tswift"))
+        .arg("run")
+        .arg(dir.join("models.swift"))
+        .arg(dir.join("main.swift"))
+        .output()
+        .expect("spawn tswift");
+    let _ = std::fs::remove_dir_all(&dir);
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// A **lexer** error in the second file reports `main.swift:line:col`, the
+/// exact swiftc-style header, and a caret snippet pointing at the column.
+#[test]
+fn lexer_error_reports_exact_file_line_col_across_two_files() {
+    let (ok, _, err) = run_two_file_module("struct A {}\n", "let x = \"unterminated\n");
+    assert!(!ok, "a lexer error must fail the build");
+    assert!(
+        err.contains("main.swift:1:9: error: unterminated string literal"),
+        "expected exact lexer header, got:\n{err}"
+    );
+    assert!(
+        err.contains("let x = \"unterminated\n        ^\n"),
+        "expected a caret snippet under the offending column, got:\n{err}"
+    );
+    // The valid first file must not be blamed.
+    assert!(!err.contains("models.swift:"), "got:\n{err}");
+}
+
+/// A **parser** error in the second file reports `main.swift:line:col` with
+/// the exact header and a caret snippet.
+#[test]
+fn parser_error_reports_exact_file_line_col_across_two_files() {
+    let (ok, _, err) = run_two_file_module("struct A {}\n", "func f( {\n");
+    assert!(!ok, "a parser error must fail the build");
+    assert!(
+        err.contains("main.swift:1:9: error: expected a parameter name, found LBrace"),
+        "expected exact parser header, got:\n{err}"
+    );
+    assert!(
+        err.contains("func f( {\n        ^\n"),
+        "expected a caret snippet, got:\n{err}"
+    );
+    assert!(!err.contains("models.swift:"), "got:\n{err}");
+}
+
+/// A **sema** (type) error in the second file reports `main.swift:line:col`
+/// with the exact header and a caret snippet — proving semantic diagnostics
+/// are attributed to the correct file in a multi-file build.
+#[test]
+fn sema_error_reports_exact_file_line_col_across_two_files() {
+    let (ok, _, err) = run_two_file_module("struct A {}\n", "let n: Int = \"str\"\n");
+    assert!(!ok, "a sema type error must fail the build");
+    assert!(
+        err.contains(
+            "main.swift:1:1: error: cannot convert value of type 'String' to specified type 'Int'"
+        ),
+        "expected exact sema header, got:\n{err}"
+    );
+    assert!(
+        err.contains("let n: Int = \"str\"\n^\n"),
+        "expected a caret snippet, got:\n{err}"
+    );
+    assert!(!err.contains("models.swift:"), "got:\n{err}");
+}
+
+/// A sema error whose true origin is the **first** file (a type declared and
+/// misused only in `models.swift`) must attribute to `models.swift` with its
+/// file-local line — not to `main.swift` and not to a combined line.
+#[test]
+fn diagnostic_attributes_to_first_file_when_error_lives_there() {
+    // `models.swift` line 2 assigns to a `let` — a semantic error local to it.
+    let (ok, _, err) = run_two_file_module(
+        "struct A {\n    func bad() { let c = 1; c = 2; _ = c }\n}\n",
+        "print(\"ok\")\n",
+    );
+    assert!(!ok, "assigning to a let must fail");
+    assert!(
+        err.contains("models.swift:2:"),
+        "error must point at models.swift line 2, got:\n{err}"
+    );
+}
+
 /// Every `fixtures/ast/<name>.swift` with a sibling `<name>.ast` pins the typed
 /// AST shape: `tswift dump` must reproduce the snapshot byte-for-byte.
 
