@@ -841,7 +841,10 @@ mod tests {
         )
         .unwrap();
         let listed = unsafe { tswift_list_tests(module.as_ptr()) };
-        let list_json = unsafe { CStr::from_ptr(listed) }.to_str().unwrap().to_string();
+        let list_json = unsafe { CStr::from_ptr(listed) }
+            .to_str()
+            .unwrap()
+            .to_string();
         unsafe { tswift_string_free(listed) };
         assert!(list_json.contains("\"ok\":true"), "{list_json}");
         assert!(list_json.contains("\"id\":\"passes()\""), "{list_json}");
@@ -850,7 +853,10 @@ mod tests {
         // Select only the passing test by exact id.
         let opts = CString::new(r#"{"ids":["passes()"]}"#).unwrap();
         let report = unsafe { tswift_run_tests(module.as_ptr(), opts.as_ptr()) };
-        let report_json = unsafe { CStr::from_ptr(report) }.to_str().unwrap().to_string();
+        let report_json = unsafe { CStr::from_ptr(report) }
+            .to_str()
+            .unwrap()
+            .to_string();
         unsafe { tswift_string_free(report) };
         assert!(report_json.contains("\"ok\":true"), "{report_json}");
         assert!(report_json.contains("\"passed\":1"), "{report_json}");

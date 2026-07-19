@@ -40,8 +40,7 @@ fn descriptor_json(t: &TestDescriptor) -> Json {
         ),
         (
             "caseCount".into(),
-            t.case_count
-                .map_or(Json::Null, |n| Json::Int(n as i64)),
+            t.case_count.map_or(Json::Null, |n| Json::Int(n as i64)),
         ),
         ("skipped".into(), Json::Bool(t.skipped)),
         ("skipReason".into(), opt_str(&t.skip_reason)),
@@ -78,10 +77,7 @@ pub fn report_to_json(report: &RunReport) -> String {
 fn result_json(t: &TestResult) -> Json {
     Json::Object(vec![
         ("id".into(), Json::Str(t.id.clone())),
-        (
-            "displayName".into(),
-            opt_str(&t.display_name),
-        ),
+        ("displayName".into(), opt_str(&t.display_name)),
         ("status".into(), Json::Str(status_name(t.status).into())),
         ("file".into(), opt_str(&t.file)),
         ("line".into(), Json::Int(t.line as i64)),
@@ -202,10 +198,7 @@ mod tests {
     fn parse_options_reads_filter_and_ids() {
         let opts = parse_run_options("{\"filter\":\"a\",\"ids\":[\"t()\",\"s/u()\"]}");
         assert_eq!(opts.filter.as_deref(), Some("a"));
-        assert_eq!(
-            opts.ids,
-            Some(vec!["t()".to_string(), "s/u()".to_string()])
-        );
+        assert_eq!(opts.ids, Some(vec!["t()".to_string(), "s/u()".to_string()]));
     }
 
     #[test]

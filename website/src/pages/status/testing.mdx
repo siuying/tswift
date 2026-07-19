@@ -63,9 +63,12 @@ See "Not yet supported" below.
   concatenated into one compilation unit; the system under test and its
   tests are treated as a single unit.
 - **Compiler-plugin diagnostics** (e.g. "this expectation will always fail" warnings) — would need type-aware constant folding in sema.
-- **JSON / xUnit reporters** — console output only.
-- **Wasm/browser test running** — `tswift test` is a CLI command; the site's
-  live playground does not run test suites (see below).
+- **xUnit reporters** — console output only. (A structured JSON seam *does*
+  exist — see "Programmatic seam" below — but there is no xUnit/JUnit adapter.)
+- **Wasm/browser test *UI*** — the `listTests` / `runTests` wasm exports and the
+  matching `tswift_list_tests` / `tswift_run_tests` FFI entry points exist (see
+  "Programmatic seam"), but wiring a test-runner UI into the live playground is
+  still out of scope.
 
 ---
 
@@ -76,11 +79,43 @@ tswift test <file.swift> [more.swift ...]
 tswift test <dir>                              # all *.swift in the directory
 tswift test <dir-with-Package.swift> [--target <testTargetName>]
 tswift test … [--filter <substring>]
+tswift test … --list [--json]                  # discover without running
+tswift test … --test <id> [--test <id> …]      # run exact canonical ids
 ```
 
 `--filter` matches (case-sensitively, substring) against a test's display id —
 its function name, `Suite/test` path, or display name string. `--filter
 tag:<name>` instead selects tests carrying a matching `.tags(…)` name.
+
+`--list` prints the discovered tests (each canonical id, a `[N cases]` badge
+for a parameterized test, `#tag` badges, and a `(skipped: reason)` suffix for a
+statically-`.disabled` test) **without running them**; add `--json` for the
+machine-readable descriptor shape. `--test <id>` (repeatable) runs exactly the
+named canonical ids: a base id like `MathSuite/pass()` runs all of a
+parameterized test's cases, an exact case id like `p() - 2` runs just that
+case, and an unknown id is an error listing it. `--test` and `--filter` are
+mutually exclusive.
+
+### Programmatic seam (CLI / wasm / FFI)
+
+Discovery and selection live in the `tswift-testing` crate as a
+platform-neutral seam, shared by all three hosts:
+
+- **Library:** `list_tests(files) -> [TestDescriptor]` discovers without
+  running; `run_tests(files, RunOptions { filter, ids })` runs a selected
+  subset and returns a `RunReport`. Both serialize to JSON via the crate's
+  wire module (hand-rolled JSON, no `serde`).
+- **Wasm:** `listTests(filesJson)` and `runTests(filesJson, optionsJson)`.
+- **FFI:** `tswift_list_tests(module_json)` and
+  `tswift_run_tests(module_json, options_json)`.
+
+The descriptor JSON is
+`{"ok":bool,"tests":[{"id","displayName","suitePath","file","line","tags",
+"caseCount","skipped","skipReason"},…]}`; the report JSON is
+`{"ok":bool,"passed","failed","skipped","issueCount","durationMs",
+"compileError","tests":[…]}`. Note `list_tests` never evaluates code, so a
+`.enabled(if:)` condition is not reflected in a descriptor's `skipped` field
+(only the static `.disabled` trait is).
 
 **Divergence**: real Swift Testing's `Tag` has true nominal identity, so
 `Tag.fast` and `MyTags.fast` are distinct tags even though both are spelled

@@ -610,6 +610,43 @@ TDD each slice: **write a failing test first**, then implement.
 
 ---
 
+### Slice G — List/select tests as a platform-neutral seam — **landed**
+
+**Goal:** Let a host (CLI, web playground, iOS) enumerate the tests in a
+program and run an explicit subset, without a bespoke integration per host.
+
+**Status (landed):**
+
+- **Library seam** (`tswift-testing`, single source of truth):
+  - `list_tests(files) -> Vec<TestDescriptor>` — discovery **without running**
+    (id, display name, suite path, file/line, tags, parameterized case count,
+    static `.disabled` skip status/reason). A `.enabled(if:)` condition needs
+    the program run, so it is *not* reflected in a descriptor's `skipped`
+    field — documented.
+  - `RunOptions` gains `ids: Option<Vec<String>>`: exact canonical-id
+    selection, distinct from the substring/tag `filter`. A base test id runs
+    all of a parameterized test's cases; an exact case id (`p() - 2`, argument
+    value suffixed — the base id carries no parameter labels) runs one. An id
+    matching no discovered test is an error listing the unknown ids, never a
+    silent zero-tests success. `ids` takes precedence over `filter`.
+  - `wire.rs` serializes descriptors + `RunReport` to JSON and parses run
+    options, using the hand-rolled `tswift_core::json` layer (the workspace
+    avoids `serde` for offline builds — the plan's "serde" note is superseded).
+- **CLI:** `tswift test <inputs> --list [--json]` prints the list (human table
+  or JSON); `tswift test <inputs> --test <id>` (repeatable) runs exactly those
+  ids. `--test` and `--filter` are mutually exclusive (usage error on both).
+- **Wasm:** `listTests(filesJson)` / `runTests(filesJson, optionsJson)`.
+- **FFI:** `tswift_list_tests(module_json)` /
+  `tswift_run_tests(module_json, options_json)` (stateless, following the
+  `tswift_list_symbols` convention; header + ABI drift-guard updated).
+
+**Out of Slice G:** the web playground's test-runner *UI* itself (the wasm/FFI
+exports exist, but wiring a UI is separate).
+
+**LOC budget:** descriptor + wire + selection + CLI/wasm/FFI wiring + tests ≈ 900.
+
+---
+
 ### Suggested stack order
 
 ```text
