@@ -20,7 +20,7 @@ mod session;
 use std::rc::Rc;
 use std::time::Instant;
 
-use tswift_core::{Interpreter, StdContext, StdError, SwiftValue};
+use tswift_core::{Interpreter, StdContext, StdError};
 use tswift_frontend::{Analysis, SourceFile};
 
 pub use discover::TestCase;
@@ -102,8 +102,17 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     }
 
     // Build one synthetic driver holding a call per test, retained (not leaked)
-    // for the interpreter's lifetime; index i maps to cases[i].
-    let driver_nodes = build_drivers(&mut interp, &cases);
+    // for the interpreter's lifetime; index i maps to cases[i]. A driver that
+    // fails to build must fail the whole run — never silently pass tests.
+    let driver_nodes = match build_drivers(&mut interp, &cases) {
+        Ok(nodes) => nodes,
+        Err(err) => {
+            return RunReport {
+                compile_error: Some(err),
+                ..RunReport::default()
+            }
+        }
+    };
 
     let run_start = Instant::now();
     let mut results = Vec::with_capacity(cases.len());
@@ -124,16 +133,13 @@ fn run_one(
     interp: &mut Interpreter<'_>,
     analysis: &'static Analysis,
     case: &TestCase,
-    call: Option<tswift_frontend::Node<'static>>,
+    call: tswift_frontend::Node<'static>,
 ) -> TestResult {
     session::begin();
     let start = Instant::now();
-    let outcome = match call {
-        Some(node) => {
-            let ctx: &mut dyn StdContext = interp;
-            ctx.eval_node(&node)
-        }
-        None => Ok(SwiftValue::Void),
+    let outcome = {
+        let ctx: &mut dyn StdContext = interp;
+        ctx.eval_node(&call)
     };
     let duration = start.elapsed();
     let (raw_issues, aborted) = session::end();
@@ -194,7 +200,7 @@ fn run_one(
 fn build_drivers(
     interp: &mut Interpreter<'_>,
     cases: &[TestCase],
-) -> Vec<Option<tswift_frontend::Node<'static>>> {
+) -> Result<Vec<tswift_frontend::Node<'static>>, String> {
     let mut source = String::new();
     for case in cases {
         match &case.suite_type {
@@ -202,16 +208,38 @@ fn build_drivers(
             None => source.push_str(&format!("try await {}()\n", case.func_name)),
         }
     }
-    let driver = match Analysis::analyze(&source, "<test-driver>") {
-        Ok(driver) => driver,
-        Err(_) => return vec![None; cases.len()],
-    };
+    let driver = Analysis::analyze(&source, "<test-driver>")
+        .map_err(|e| format!("failed to build test driver: {e}"))?;
     let driver: &'static Analysis = interp.retain_analysis(Rc::new(driver));
+    drivers_from(driver, cases.len())
+}
+
+/// Validate a parsed driver against the expected test count and return one call
+/// node per test. A driver that failed to parse (syntax error → empty root) or
+/// whose statement count does not match the discovered tests is a hard build
+/// failure: a missing call node must never be treated as a passing test.
+fn drivers_from(
+    driver: &'static Analysis,
+    expected: usize,
+) -> Result<Vec<tswift_frontend::Node<'static>>, String> {
+    if !driver.is_ok() {
+        let diags = driver
+            .diagnostics()
+            .iter()
+            .filter(|d| d.is_error())
+            .map(|d| format!("  {}:{}: {}", d.line, d.col, d.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!("failed to build test driver:\n{diags}"));
+    }
     let statements: Vec<tswift_frontend::Node<'static>> = driver.root().children().collect();
-    // Index alignment holds because we emit exactly one statement per case.
-    (0..cases.len())
-        .map(|i| statements.get(i).copied())
-        .collect()
+    if statements.len() != expected {
+        return Err(format!(
+            "failed to build test driver: expected {expected} driver statement(s), parsed {}",
+            statements.len()
+        ));
+    }
+    Ok(statements)
 }
 
 #[cfg(test)]
@@ -232,4 +260,25 @@ mod tests {
         assert_eq!(report.failed(), 0);
         assert!(report.is_success());
     }
+
+    fn leak(src: &str) -> &'static Analysis {
+        Box::leak(Box::new(Analysis::analyze(src, "<d>").unwrap()))
+    }
+
+    #[test]
+    fn driver_parse_failure_is_not_success() {
+        // A driver that fails to parse must fail the whole build, never yield a
+        // silently-passing (missing) call node.
+        let driver = leak("@#!(\n");
+        assert!(drivers_from(driver, 1).is_err());
+    }
+
+    #[test]
+    fn driver_count_mismatch_is_error() {
+        // Fewer parsed statements than discovered tests must be a hard error, so
+        // no test is mapped to a `None`/`Void` "pass".
+        let driver = leak("foo()\n");
+        assert!(drivers_from(driver, 2).is_err());
+    }
+
 }
