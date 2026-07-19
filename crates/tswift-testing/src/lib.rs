@@ -23,7 +23,7 @@ mod wire;
 
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tswift_core::{Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, SourceFile};
@@ -181,7 +181,7 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         }
     };
 
-    let run_start = Instant::now();
+    let run_start = timer_start();
     let mut results = Vec::with_capacity(plans.len());
     let mut driver_nodes = driver_nodes.into_iter();
     for plan in &plans {
@@ -209,7 +209,7 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     }
     RunReport {
         tests: results,
-        duration: run_start.elapsed(),
+        duration: timer_elapsed(run_start),
         compile_error: None,
     }
 }
@@ -396,6 +396,26 @@ fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> SkipDecision {
     SkipDecision::Run
 }
 
+/// Start a monotonic timer, or `None` on `wasm32-unknown-unknown` where the
+/// std clock is unimplemented and `Instant::now()` panics (`unreachable`). On
+/// wasm, test durations degrade to zero rather than aborting the whole run.
+fn timer_start() -> Option<Instant> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(Instant::now())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+}
+
+/// Elapsed time since a [`timer_start`], or [`Duration::ZERO`] when timing is
+/// unavailable (wasm).
+fn timer_elapsed(start: Option<Instant>) -> Duration {
+    start.map_or(Duration::ZERO, |s| s.elapsed())
+}
+
 /// A human-readable rendering of a `StdError` for use in a runner-authored
 /// issue message (mirrors `run_one`'s outcome-to-issue mapping).
 fn describe_error(err: &StdError) -> String {
@@ -460,12 +480,12 @@ fn run_one(
     call: tswift_frontend::Node<'static>,
 ) -> TestResult {
     session::begin();
-    let start = Instant::now();
+    let start = timer_start();
     let outcome = {
         let ctx: &mut dyn StdContext = interp;
         ctx.eval_node(&call)
     };
-    let duration = start.elapsed();
+    let duration = timer_elapsed(start);
     let (raw_issues, aborted) = session::end();
 
     let mut issues: Vec<Issue> = raw_issues
