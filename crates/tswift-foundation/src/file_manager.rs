@@ -278,7 +278,10 @@ fn fm_contents(
         return Err(unavailable("FileManager"));
     }
     let path = require_path(&args, "contents(atPath:)")?;
-    let result = read_base64(ctx, path)?;
+    // `FileManager.contents(atPath:)` is non-throwing: any unreadable path
+    // (missing file *or* a sandbox-escape rejection the host reports as a
+    // thrown permission error) yields `nil`, not a propagated error.
+    let result = read_base64(ctx, path).unwrap_or(SwiftValue::Nil);
     Ok(Outcome {
         result,
         receiver: recv,

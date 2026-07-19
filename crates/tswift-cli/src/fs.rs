@@ -14,6 +14,14 @@ use std::path::{Component, Path, PathBuf};
 use tswift_core::json::{self, Json};
 use tswift_core::HostCallHandler;
 
+/// CocoaError code for a path that escapes the sandbox root. A sandbox
+/// rejection is a *permission* denial — the path names a location this process
+/// may not touch — so every operation that surfaces it as a thrown error uses
+/// this one code (reads, writes, and directory ops alike) rather than the
+/// generic 512 or a not-found 4. 513 is Foundation's `fileWriteNoPermission`,
+/// its closest "operation not permitted here" code.
+const SANDBOX_ESCAPE_CODE: i64 = 513;
+
 pub struct FsHandler {
     root: PathBuf,
 }
@@ -35,6 +43,13 @@ impl FsHandler {
 
     fn thrown(message: impl Into<String>) -> String {
         Self::thrown_code(512, message)
+    }
+
+    /// Thrown error for a sandbox escape — see [`SANDBOX_ESCAPE_CODE`]. Every
+    /// operation reports the *same* escape with the *same* code so callers can
+    /// catch it uniformly regardless of whether they read, wrote, or listed.
+    fn thrown_sandbox(message: impl Into<String>) -> String {
+        Self::thrown_code(SANDBOX_ESCAPE_CODE, message)
     }
 
     fn thrown_code(code: i64, message: impl Into<String>) -> String {
@@ -87,6 +102,33 @@ impl FsHandler {
                 checked.push(part);
                 if fs::symlink_metadata(&checked).is_ok_and(|meta| meta.file_type().is_symlink()) {
                     return Err(format!("path `{path}` uses unsupported symlink component"));
+                }
+            }
+        }
+        // Defense-in-depth against a symlink swapped into the resolved prefix
+        // between the per-component check above and the caller's open: `std`
+        // exposes no `openat`/`O_NOFOLLOW`, so canonicalize the deepest
+        // existing ancestor of `candidate` and require it to stay within the
+        // canonical sandbox root. Canonicalization follows any symlink that
+        // slipped in and this rejects one whose target escapes; only a
+        // vanishingly small check-then-open window on the not-yet-existing leaf
+        // remains (its parents are all confirmed in-sandbox real directories).
+        if let Ok(canonical_root) = fs::canonicalize(&self.root) {
+            let mut ancestor = candidate.as_path();
+            loop {
+                match fs::canonicalize(ancestor) {
+                    Ok(resolved) => {
+                        if !resolved.starts_with(&canonical_root) {
+                            return Err(format!(
+                                "path `{path}` escapes the tswift filesystem sandbox"
+                            ));
+                        }
+                        break;
+                    }
+                    Err(_) => match ancestor.parent() {
+                        Some(parent) => ancestor = parent,
+                        None => break,
+                    },
                 }
             }
         }
@@ -202,8 +244,14 @@ impl HostCallHandler for FsHandler {
             }
             "tswift.fs.read" => {
                 let path = str_arg(0)?;
-                let Ok(path) = self.resolve(&path) else {
-                    return Ok("null".to_string());
+                // A sandbox escape is a thrown permission error (the throwing
+                // consumers — `Data(contentsOf:)`/`String(contentsOf:)` —
+                // surface it; the non-throwing `FileManager.contents(atPath:)`
+                // maps any thrown read to `nil`). A genuinely-unreadable file
+                // stays `null`, becoming `nil`/`fileNoSuchFile` downstream.
+                let path = match self.resolve(&path) {
+                    Ok(path) => path,
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 Ok(match fs::read(path) {
                     Ok(bytes) => json::to_string(&Json::Str(tswift_core::base64::encode(&bytes))),
@@ -214,7 +262,7 @@ impl HostCallHandler for FsHandler {
                 let raw_path = str_arg(0)?;
                 let path = match self.resolve(&raw_path) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 match fs::metadata(&path) {
                     Ok(meta) => Ok(json::to_string(&Json::Str(json::to_string(&Json::Object(
@@ -236,7 +284,7 @@ impl HostCallHandler for FsHandler {
                 let path = str_arg(0)?;
                 let path = match self.resolve(&path) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let entries = match fs::read_dir(&path) {
                     Ok(read) => read,
@@ -266,7 +314,7 @@ impl HostCallHandler for FsHandler {
                 let path = str_arg(0)?;
                 let path = match self.resolve(&path) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let intermediate = bool_arg(1)?;
                 let result = if intermediate {
@@ -289,7 +337,7 @@ impl HostCallHandler for FsHandler {
                 let path = str_arg(0)?;
                 let p = match self.resolve(&path) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let result = if p.is_dir() {
                     fs::remove_dir_all(&p)
@@ -306,9 +354,13 @@ impl HostCallHandler for FsHandler {
             }
             "tswift.fs.write" => {
                 let path = str_arg(0)?;
+                // A sandbox escape is a thrown permission error; both write
+                // consumers (`Data.write(to:)`/`String.write(to:)`) are
+                // throwing, so surfacing it as `$thrown` (not a silent
+                // `false`) matches Swift and keeps escapes on one code.
                 let path = match self.resolve(&path) {
                     Ok(path) => path,
-                    Err(_) => return Ok(json::to_string(&Json::Bool(false))),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let content = str_arg(1)?;
                 // Third argument (`atomically`) was added alongside
@@ -337,11 +389,11 @@ impl HostCallHandler for FsHandler {
                 let to = str_arg(1)?;
                 let from_path = match self.resolve(&from) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let to_path = match self.resolve(&to) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 // Foundation's `copyItem(at:to:)` throws rather than
                 // overwriting an existing destination — see
@@ -363,11 +415,11 @@ impl HostCallHandler for FsHandler {
                 let to = str_arg(1)?;
                 let from_path = match self.resolve(&from) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 let to_path = match self.resolve(&to) {
                     Ok(path) => path,
-                    Err(message) => return Ok(Self::thrown(message)),
+                    Err(message) => return Ok(Self::thrown_sandbox(message)),
                 };
                 // Foundation's `moveItem(at:to:)` throws rather than
                 // overwriting an existing destination (same TOCTOU caveat as
@@ -639,6 +691,64 @@ mod tests {
         assert_eq!(handler.call("tswift.fs.move", &move_args).unwrap(), "null");
         assert_eq!(fs::read(dst.join("sub/b.txt")).unwrap(), b"b");
         assert!(!src.exists(), "move must remove the source tree");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn thrown_code_of(reply: &str) -> Option<i64> {
+        let parsed = json::parse(reply).ok()?;
+        let Json::Object(error) = parsed.get("$thrown")? else {
+            return None;
+        };
+        error
+            .iter()
+            .find_map(|(key, value)| match (key.as_str(), value) {
+                ("code", Json::Int(code)) => Some(*code),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn sandbox_escape_uses_one_permission_code_across_operations() {
+        let dir = tmp_dir("escape-code");
+        let handler = FsHandler::with_root(dir.clone());
+        // `..` climbs out of the sandbox root — every operation must reject it
+        // with the same CocoaError permission code, not a per-op mix of
+        // not-found/generic/silent-false.
+        let escape = dir
+            .join("..")
+            .join("escape.txt")
+            .to_string_lossy()
+            .into_owned();
+        let path_args = json::to_string(&Json::Array(vec![Json::Str(escape.clone())]));
+        let mkdir_args = json::to_string(&Json::Array(vec![
+            Json::Str(escape.clone()),
+            Json::Bool(false),
+        ]));
+        let write_args = json::to_string(&Json::Array(vec![
+            Json::Str(escape.clone()),
+            Json::Str(tswift_core::base64::encode(b"x")),
+        ]));
+        for (fn_name, args) in [
+            ("tswift.fs.read", &path_args),
+            ("tswift.fs.list", &path_args),
+            ("tswift.fs.remove", &path_args),
+            ("tswift.fs.attributes", &path_args),
+            ("tswift.fs.mkdir", &mkdir_args),
+            ("tswift.fs.write", &write_args),
+        ] {
+            let reply = handler.call(fn_name, args).unwrap();
+            assert_eq!(
+                thrown_code_of(&reply),
+                Some(SANDBOX_ESCAPE_CODE),
+                "{fn_name} should reject a sandbox escape with code {SANDBOX_ESCAPE_CODE}: {reply}"
+            );
+        }
+        // `fileExists(atPath:)` is a non-throwing Bool API: an escape is simply
+        // `false`, never a thrown CocoaError.
+        assert_eq!(
+            handler.call("tswift.fs.exists", &path_args).unwrap(),
+            json::to_string(&Json::Bool(false))
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
