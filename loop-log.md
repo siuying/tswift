@@ -1536,3 +1536,24 @@ Skipped / deferred:
 - Coverage type-scoping: took the documentation route rather than an algorithmic change — type-inferring fixture tokens back to receivers would destabilize calibrated per-slice baselines mid-cleanup; recorded as a tripwire, so no coverage numbers changed and no website/wasm regen was needed.
 
 Commits: `fix(cli): unify fs sandbox-escape error code and harden TOCTOU`, `refactor(core): share String.IndexRange offset decoder`, `fix(std): range(of:) returns nil for an empty needle`, `fix(std): trap on negative prefix/suffix/drop counts`, `docs(tools): document coverage token-verification limitation`.
+
+## agent multifile-diagnostics
+
+Multi-file compilation + swiftc-style diagnostics + incremental-compilation research. Presubmit green.
+
+- **Verified multi-file is already a real single-module model** (slices 11/12/13, ADR-0017): `tswift run a.swift b.swift`, `tswift run <dir>`, and `tswift run <dir-with-Package.swift>` all analyze the ordered `SourceFile`s as one compilation unit via `Analysis::analyze_program` (concatenate-once + `FileSpan` line-offset remap). Cross-file references resolve (type in `p.swift` used in `main.swift` → runs; `Symbols::collect` gathers every decl into one registry before passes run). wasm `runSwiftModule`/`swiftDiagnosticsModule` + FFI `tswift_run_module` already carry per-file `file:line:col`. No core changes needed — the seam was built earlier; this pass verified + tested it.
+- **Caret/source-snippet diagnostics** (`crates/tswift-cli/src/main.rs`): new `render_diagnostic` renders every compile diagnostic as `path:line:col: severity: message` + the source line + a `^` caret at the column, matching swiftc. Snippet line is looked up from the program's `SourceFile`s so multi-file builds show the correct file's line; caret prefix preserves tabs for alignment. Nonzero exit on any error diagnostic (unchanged). Multiple errors already collected (sema returns a `Vec`; parser is first-fail by design — noted).
+- **Golden CLI tests** (`crates/tswift-cli/tests/golden.rs`): exact-`file:line:col` assertions across two files for **lexer** (`main.swift:1:9: unterminated string literal`), **parser** (`1:9: expected a parameter name, found LBrace`), and **sema** (`1:1: cannot convert value of type 'String' to specified type 'Int'`) errors, each asserting the caret snippet and that the valid first file is not blamed; plus first-file attribution (assign-to-`let` in `models.swift:2`). All 21 golden tests pass.
+- **Research doc** (`docs/research/incremental-compilation.md`): analyzed what "incremental" can mean for an interpreter+frontend (not AOT), what the architecture supports today (whole-program `Analysis` cache ADR-0018; concatenation model ADR-0017; whole-unit sema), 4 options with effort estimates (A do-nothing/FFI-wire ~0.5d, B per-file parse cache ~1–2wk, C per-file sema + dep graph ~4–8wk, D session reuse ~1–3d), and a recommendation: **don't build B/C** — analysis is <~5% of wall time (execution is ~90%+), per-file reuse fights the least-forgiving layer (sema is whole-unit by construction) for sub-ms gains; prefer whole-program cache (A) + optional session reuse (D). Recorded a reopen tripwire.
+
+Scope calls:
+- **No wasm/FFI caret**: hosts consume structured JSON diagnostics (already per-file, rendered inline in the editor); a stderr caret is a CLI-only human concern. Documented, not a follow-up gap.
+- **Undefined-variable stays a runtime error** (`unknown variable: x`, no location): sema does not do full name resolution — that's architectural (ADR-0020 scope). Detailed `file:line:col` covers what the frontend actually diagnoses (lex/parse/type/exhaustiveness/let-mutation/…). Adding scope resolution to sema is out of scope (would be its own large slice).
+
+Commits:
+- `feat(cli): swiftc-style caret snippets in diagnostics`
+- `docs(research): analyze incremental compilation options`
+
+What works: multi-file compile+run (files/dir/Package.swift) as one module with cross-file resolution; swiftc-style `file:line:col: error:` + caret across lexer/parser/sema, correct file in multi-file builds; nonzero exit on error; 21 golden tests green; presubmit green.
+
+Follow-ups: (1) wire ADR-0018 warm cache into FFI `Context` if a native host resubmits identical input; (2) session/runtime reuse path in FFI (Option D) if a host needs "keep warm"; (3) sema name-resolution pass so "cannot find 'x' in scope" becomes a located compile diagnostic (own slice); (4) parser multi-error recovery (currently first-fail).
