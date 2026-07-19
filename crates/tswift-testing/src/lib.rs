@@ -314,4 +314,24 @@ mod tests {
             "expected single evaluation, got: {message}"
         );
     }
+
+    #[test]
+    fn expect_failure_remaps_to_originating_file() {
+        let report = run_tests(
+            &[
+                SourceFile::new("FileA.swift", "@Test func a() { #expect(true) }\n"),
+                SourceFile::new("FileB.swift", "@Test func b() {\n  #expect(1 == 2)\n}\n"),
+            ],
+            &RunOptions::default(),
+        );
+        assert_eq!(report.failed(), 1);
+        let failing = report
+            .tests
+            .iter()
+            .find(|t| t.id == "b()")
+            .expect("b() present");
+        let issue = &failing.issues[0];
+        assert_eq!(issue.file.as_deref(), Some("FileB.swift"));
+        assert_eq!(issue.line, 2);
+    }
 }

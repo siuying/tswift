@@ -82,6 +82,12 @@ impl RunReport {
 
     /// Whether the run should be treated as success (exit 0): analysis
     /// succeeded and no test failed.
+    ///
+    /// A run that discovered **zero** tests is currently a success (no failures,
+    /// no compile error). Whether an empty run should instead be a non-success
+    /// (e.g. `swift test`'s "no tests found" exit code) is a CLI policy decision
+    /// deferred to slice B, which owns exit-code mapping and can gate on
+    /// [`RunReport::tests`] being empty.
     pub fn is_success(&self) -> bool {
         self.compile_error.is_none() && self.failed() == 0
     }
