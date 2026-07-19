@@ -97,7 +97,7 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
             all_ok = false;
             continue;
         }
-        print!("{}", render_report(&report));
+        print!("{}", render_report(&report, filter));
         all_ok &= report.is_success();
         total_tests += report.tests.len();
         total_failed += report.failed();
@@ -118,7 +118,8 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
                 total_failed,
                 total_skipped,
                 total_issues,
-                total_duration
+                total_duration,
+                filter
             )
             .strip_prefix("Test run with ")
             .expect("overall_summary always starts with \"Test run with \"")
@@ -180,7 +181,11 @@ fn collect_test_units(
 /// Render one unit's [`RunReport`] as `swift test`-shaped console output:
 /// a `Test run started.` line, one line per test (plus an issue line per
 /// recorded failure, each carrying `file:line`), and a final summary line.
-fn render_report(report: &RunReport) -> String {
+/// `filter` is the run's `--filter` value (if any), surfaced in the summary
+/// when it excluded every test so a zero-test exit reads clearly instead of
+/// silently — a `tag:<name>` filter that matches nothing is otherwise
+/// indistinguishable from a directory with no `@Test`s at all.
+fn render_report(report: &RunReport, filter: Option<&str>) -> String {
     let mut out = String::new();
     out.push_str("Test run started.\n");
     for test in &report.tests {
@@ -238,6 +243,7 @@ fn render_report(report: &RunReport) -> String {
         report.skipped(),
         report.issue_count(),
         report.duration,
+        filter,
     ));
     out.push('\n');
     out
@@ -260,6 +266,7 @@ fn overall_summary(
     skipped: usize,
     issues: usize,
     duration: Duration,
+    filter: Option<&str>,
 ) -> String {
     let secs = duration.as_secs_f64();
     let skips = if skipped == 0 {
@@ -268,7 +275,14 @@ fn overall_summary(
         format!(" ({skipped} skipped)")
     };
     if tests == 0 {
-        format!("Test run with 0 tests (nothing matched) after {secs:.3} seconds.")
+        // Name the filter that excluded everything (e.g. a `tag:<name>` with
+        // no matching test) rather than a bare "nothing matched", which reads
+        // identically to a directory with no `@Test`s at all.
+        let cause = match filter {
+            Some(f) => format!("nothing matched --filter {f}"),
+            None => "nothing matched".to_string(),
+        };
+        format!("Test run with 0 tests ({cause}) after {secs:.3} seconds.")
     } else if failed == 0 {
         // `tests` includes any skipped tests; "N tests, M passed" must count
         // only the ones that actually ran and passed, with skips called out
@@ -340,7 +354,7 @@ mod tests {
             duration: Duration::from_millis(2),
             compile_error: None,
         };
-        let out = render_report(&report);
+        let out = render_report(&report, None);
         assert!(out.contains("Test a() passed"), "{out}");
         assert!(out.contains("Test run with 1 test, 1 passed"), "{out}");
     }
@@ -352,7 +366,7 @@ mod tests {
             duration: Duration::from_millis(2),
             compile_error: None,
         };
-        let out = render_report(&report);
+        let out = render_report(&report, None);
         assert!(out.contains("t.swift:3"), "{out}");
         assert!(out.contains("1 == 2"), "{out}");
         assert!(out.contains("with 1 issue"), "{out}");
@@ -406,7 +420,7 @@ mod tests {
             duration: Duration::from_millis(2),
             compile_error: None,
         };
-        let out = render_report(&report);
+        let out = render_report(&report, None);
         assert!(out.contains("Test run with 2 tests, 1 passed"), "{out}");
     }
 
@@ -417,8 +431,25 @@ mod tests {
             duration: Duration::ZERO,
             compile_error: None,
         };
-        let out = render_report(&report);
+        let out = render_report(&report, None);
         assert!(out.contains("0 tests"), "{out}");
         assert!(report.is_success(), "zero tests is a success (plan §2.5)");
+    }
+
+    #[test]
+    fn zero_tests_summary_names_the_tag_filter() {
+        // A `--filter tag:<name>` that matches nothing must not exit
+        // silently: the summary names the filter, not just "nothing
+        // matched", so a tag typo is diagnosable from the console output.
+        let report = RunReport {
+            tests: Vec::new(),
+            duration: Duration::ZERO,
+            compile_error: None,
+        };
+        let out = render_report(&report, Some("tag:nope"));
+        assert!(
+            out.contains("0 tests (nothing matched --filter tag:nope)"),
+            "{out}"
+        );
     }
 }
