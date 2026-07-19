@@ -3,6 +3,50 @@
 
 use std::time::Duration;
 
+use tswift_frontend::Diagnostic;
+
+/// Why analysis/loading failed before any test could run.
+///
+/// [`CompileError::Diagnostics`] carries the structured diagnostics straight
+/// out of `Analysis` (sema/parse errors) so a caller with the original
+/// [`tswift_frontend::SourceFile`]s can render them exactly like `tswift run`
+/// does (`file:line:col: error: msg` + source line + caret), rather than a
+/// pre-rendered bare string that diverges from that format. Some failure
+/// paths (an unparseable manifest, the synthetic test driver failing to
+/// build, an interior-NUL source) have no `Analysis` to point at — those stay
+/// a plain [`CompileError::Message`].
+#[derive(Debug, Clone)]
+pub enum CompileError {
+    /// Structured error diagnostics from `Analysis`; render with the
+    /// program's `SourceFile`s (e.g. `tswift-cli`'s `render_diagnostic`).
+    Diagnostics(Vec<Diagnostic>),
+    /// A failure with no associated `Analysis`/diagnostics to render.
+    Message(String),
+}
+
+impl std::fmt::Display for CompileError {
+    /// A bare `file:line:col: message` rendering (no `error:`/caret) — good
+    /// enough for a log line or an assertion in a test that doesn't have the
+    /// original source text handy. A caller that does have the source should
+    /// render each [`Diagnostic`] itself for the full swiftc-style output.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::Diagnostics(diags) => {
+                let rendered = diags
+                    .iter()
+                    .map(|d| {
+                        let file = d.file.as_deref().unwrap_or("<input>");
+                        format!("{file}:{}:{}: {}", d.line, d.col, d.message)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                f.write_str(&rendered)
+            }
+            CompileError::Message(msg) => f.write_str(msg),
+        }
+    }
+}
+
 /// A single recorded failure during a test (`#expect`/`#require` failure, an
 /// uncaught throw, or a runtime trap). Location is remapped to the originating
 /// source file (multi-file concatenation aware).
@@ -53,9 +97,9 @@ impl TestResult {
 pub struct RunReport {
     pub tests: Vec<TestResult>,
     pub duration: Duration,
-    /// Set when analysis failed before any test could run; carries the rendered
-    /// diagnostics. A run with a compile error is never a success.
-    pub compile_error: Option<String>,
+    /// Set when analysis failed before any test could run. A run with a
+    /// compile error is never a success.
+    pub compile_error: Option<CompileError>,
 }
 
 impl RunReport {

@@ -24,7 +24,7 @@ use tswift_core::{Interpreter, StdContext, StdError};
 use tswift_frontend::{Analysis, SourceFile};
 
 pub use discover::TestCase;
-pub use report::{Issue, RunReport, TestResult, TestStatus};
+pub use report::{CompileError, Issue, RunReport, TestResult, TestStatus};
 
 /// Options controlling a test run.
 #[derive(Debug, Clone, Default)]
@@ -57,24 +57,20 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         Ok(analysis) => analysis,
         Err(err) => {
             return RunReport {
-                compile_error: Some(err.to_string()),
+                compile_error: Some(CompileError::Message(err.to_string())),
                 ..RunReport::default()
             }
         }
     };
     if !analysis.is_ok() {
-        let diags = analysis
+        let diags: Vec<_> = analysis
             .diagnostics()
             .iter()
             .filter(|d| d.is_error())
-            .map(|d| {
-                let file = d.file.as_deref().unwrap_or("<input>");
-                format!("{file}:{}:{}: {}", d.line, d.col, d.message)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .cloned()
+            .collect();
         return RunReport {
-            compile_error: Some(diags),
+            compile_error: Some(CompileError::Diagnostics(diags)),
             ..RunReport::default()
         };
     }
@@ -91,7 +87,7 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     let analysis: &'static Analysis = interp.retain_analysis(Rc::new(analysis));
     if let Err(err) = interp.load(analysis) {
         return RunReport {
-            compile_error: Some(err.to_string()),
+            compile_error: Some(CompileError::Message(err.to_string())),
             ..RunReport::default()
         };
     }
@@ -108,7 +104,7 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         Ok(nodes) => nodes,
         Err(err) => {
             return RunReport {
-                compile_error: Some(err),
+                compile_error: Some(CompileError::Message(err)),
                 ..RunReport::default()
             }
         }
@@ -295,7 +291,7 @@ mod tests {
         let report = run("#expect(true)\n");
         assert!(!report.is_success());
         let err = report.compile_error.expect("top-level #expect must trap");
-        assert!(err.contains("outside a test"));
+        assert!(err.to_string().contains("outside a test"));
     }
 
     #[test]

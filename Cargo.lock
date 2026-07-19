@@ -563,6 +563,7 @@ dependencies = [
  "tswift-std",
  "tswift-swiftdata",
  "tswift-swiftui",
+ "tswift-testing",
  "ureq",
 ]
 

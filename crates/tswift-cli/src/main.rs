@@ -23,6 +23,7 @@ mod httpmock;
 mod nethttp;
 mod sqlite_ffi;
 mod swiftui;
+mod test_cmd;
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -65,6 +66,27 @@ fn main() -> ExitCode {
                 run(&paths, allow_network, target.as_deref())
             }
         }
+        Some("test") => {
+            let rest: Vec<String> = args.collect();
+            let usage = "usage: tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>";
+            let parsed = match test_cmd::parse_test_args(&rest) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: {e}\n\n{usage}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if parsed.paths.is_empty() {
+                eprintln!("error: `test` requires a file, directory, or package path\n\n{usage}");
+                ExitCode::FAILURE
+            } else {
+                test_cmd::run(
+                    &parsed.paths,
+                    parsed.filter.as_deref(),
+                    parsed.target.as_deref(),
+                )
+            }
+        }
         Some("dump") => {
             let rest: Vec<String> = args.collect();
             let json = rest.iter().any(|a| a == "--json");
@@ -93,13 +115,13 @@ fn main() -> ExitCode {
         Some("swiftui") => swiftui::run(args),
         Some(other) => {
             eprintln!(
-                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift dump [--json] <file.swift> | tswift symbols <file.swift|dir> | tswift swiftui render|dispatch <file.swift> [events.json]"
+                "error: unknown command `{other}`\n\nusage: tswift run <file.swift> | tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir> | tswift dump [--json] <file.swift> | tswift symbols <file.swift|dir> | tswift swiftui render|dispatch <file.swift> [events.json]"
             );
             ExitCode::FAILURE
         }
         None => {
             eprintln!(
-                "usage: tswift run <file.swift> [more.swift ...]\n       tswift run <dir>\n       tswift dump [--json] <file.swift>\n       tswift symbols <file.swift|dir>"
+                "usage: tswift run <file.swift> [more.swift ...]\n       tswift run <dir>\n       tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>\n       tswift dump [--json] <file.swift>\n       tswift symbols <file.swift|dir>"
             );
             ExitCode::FAILURE
         }
@@ -331,7 +353,7 @@ fn collect_swift_files_recursive(
 /// prefix preserves tabs from the source so the caret stays column-aligned in a
 /// tab-indented file. `fallback_path` names the file when a diagnostic carries
 /// no `file` (single-file `analyze` always sets one; this is defensive).
-fn render_diagnostic(
+pub(crate) fn render_diagnostic(
     diag: &tswift_frontend::Diagnostic,
     files: &[SourceFile],
     fallback_path: &str,
