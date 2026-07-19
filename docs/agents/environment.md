@@ -34,18 +34,34 @@ all cost time to rediscover.
     (see below): its exact locked `serde`/`serde_json` versions are already
     vendored transitively and pinned in the workspace manifest.
 - Prefer a small self-contained module over a new dependency. If a crate is
-  genuinely required, confirm it's already vendored / in the lockfile first,
-  and keep it out of `tswift-core`/`tswift-ffi`/`tswift-wasm`.
+  genuinely required, confirm it's already vendored / in the lockfile first.
   - Sanctioned exception: `ureq` (rustls HTTPS) in **tswift-cli only**, backing
     `--allow-network` (ADR-0010).
-  - Sanctioned exception: `serde`/`serde_json`, in **tswift-testing only**
-    (its `wire.rs` JSON layer), pinned to the exact versions already vendored
-    transitively (via `criterion`, a dev-dependency) in `Cargo.lock`. `serde`
-    itself isn't banned — it just wasn't a *direct* dependency of anything
-    before; `tswift_core::json` remains the hand-rolled layer for everywhere
-    else (`tswift-frontend::symbols`, etc.), since a genuinely new/unvendored
-    `serde` pull (e.g. a different major version) is still subject to the
-    no-network-access rule above.
+
+### JSON policy: serde vs the runtime `json` layer
+
+Two JSON layers coexist, split by *what* is being encoded — not by crate:
+
+- **`serde`/`serde_json` — static Rust wire types.** When the JSON shape is a
+  fixed Rust `struct`/`enum` (a wire contract, not program data), derive
+  `serde::Serialize`/`Deserialize` and go through `serde_json`. Current
+  adopters: `tswift-testing` (`wire.rs` — `TestDescriptor`/`RunReport`/
+  `RunOptions`) and `tswift-frontend` (`symbols::Symbol`, the `dump_json` AST
+  snapshot). Pin any migration behind a schema-stability test that compares
+  the parsed output against the pre-serde bytes before switching. Both crates
+  use the exact `serde`/`serde_json` versions already vendored transitively
+  (via `criterion`) and pinned in the workspace manifest — a genuinely
+  new/unvendored `serde` pull (e.g. a different major) is still subject to the
+  no-network rule above.
+- **`crates/tswift-core/src/json.rs` — Swift-semantics / dynamic values.** The
+  hand-written `Json` model implements Swift `JSONEncoder`/`JSONDecoder`
+  behaviour for *interpreted-program* values, and stays the layer for any
+  JSON whose shape is driven by runtime `SwiftValue`s (the SwiftUI UIIR trees
+  in `tswift-swiftui::uiir`/`diff`, the host-bridge FFI arg/reply envelopes in
+  `tswift-cli`, the interpreter's `Codable` coding, `tswift-core::http`'s
+  transport codecs whose decoders need domain-specific `URLError` messages).
+  Don't route these through serde: the shape is dynamic and/or the bespoke
+  error text is part of the contract.
 
 ## Tooling notes
 

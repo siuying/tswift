@@ -607,6 +607,8 @@ dependencies = [
 name = "tswift-frontend"
 version = "0.0.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tswift-ast",
  "tswift-lexer",
  "tswift-parser",

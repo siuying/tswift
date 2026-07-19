@@ -16,10 +16,14 @@
 //! members, top-level functions/properties), matching what an IDE "Outline"
 //! or `ctags`-style view shows.
 
+use serde::Serialize;
+
 use crate::{Node, NodeKind, SourceFile};
 
-/// The declaration category of a [`Symbol`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The declaration category of a [`Symbol`]. Serializes as its lowercase
+/// Swift keyword (`func`, `struct`, `typealias`, …) — the JSON `kind` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SymbolKind {
     Func,
     Struct,
@@ -97,7 +101,12 @@ impl SymbolKind {
 }
 
 /// One declaration found while listing symbols.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializes (via `serde`) to the shared `list_symbols` wire object
+/// `{"name","kind","file","line","container"?,"signature"?}` — field order
+/// is declaration order, and the two `Option` fields are omitted when `None`
+/// (`skip_serializing_if`), matching the pre-serde hand-written shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
@@ -107,11 +116,13 @@ pub struct Symbol {
     pub line: u32,
     /// The name of the nearest enclosing container declaration (a
     /// struct/class/enum/protocol/actor/extension), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub container: Option<String>,
     /// A cheap, non-canonical text rendering of the declaration's shape
     /// (parameter list/return type for a func, element type for a var/let,
     /// …). Built from already-decoded node text, not re-derived from a type
     /// checker — good for a UI label, not for overload resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
 
@@ -119,30 +130,7 @@ pub struct Symbol {
 /// (`{"name","kind","file","line","container"?,"signature"?}`), the wire
 /// format the wasm/FFI/CLI `list_symbols` entry points all share.
 pub fn to_json(symbols: &[Symbol]) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::from("[");
-    for (i, s) in symbols.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        let _ = write!(
-            out,
-            "{{\"name\":{},\"kind\":{},\"file\":{},\"line\":{}",
-            crate::json_string(&s.name),
-            crate::json_string(s.kind.name()),
-            crate::json_string(&s.file),
-            s.line
-        );
-        if let Some(c) = &s.container {
-            let _ = write!(out, ",\"container\":{}", crate::json_string(c));
-        }
-        if let Some(sig) = &s.signature {
-            let _ = write!(out, ",\"signature\":{}", crate::json_string(sig));
-        }
-        out.push('}');
-    }
-    out.push(']');
-    out
+    serde_json::to_string(symbols).expect("Symbol serialization is infallible")
 }
 
 /// List every declaration symbol across `files`. Each file is analyzed
@@ -395,6 +383,66 @@ mod tests {
             "[{\"name\":\"S\",\"kind\":\"struct\",\"file\":\"main.swift\",\"line\":1,\"signature\":\"S\"},\
 {\"name\":\"x\",\"kind\":\"let\",\"file\":\"main.swift\",\"line\":2,\"container\":\"S\",\"signature\":\"x: Int\"}]"
         );
+    }
+
+    /// Reconstruct the pre-serde hand-written `to_json` output and compare,
+    /// as parsed JSON, against today's serde-derived output — pinning the
+    /// wire schema (key set, order-insensitive) across the refactor.
+    #[test]
+    fn to_json_matches_pre_serde_writer() {
+        let files = [SourceFile::new(
+            "main.swift",
+            "struct Box {\n    let x: Int\n    func f() {}\n}\nenum E { case a(Int) }\n",
+        )];
+        let syms = list_symbols(&files);
+        let old = old_to_json(&syms);
+        let old_v: serde_json::Value = serde_json::from_str(&old).unwrap();
+        let new_v: serde_json::Value = serde_json::from_str(&to_json(&syms)).unwrap();
+        assert_eq!(old_v, new_v);
+    }
+
+    /// Frozen copy of the pre-serde hand-rolled `to_json` writer, the oracle
+    /// for [`to_json_matches_pre_serde_writer`].
+    fn old_to_json(symbols: &[Symbol]) -> String {
+        fn esc(s: &str) -> String {
+            let mut out = String::from("\"");
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    '\r' => out.push_str("\\r"),
+                    _ => out.push(c),
+                }
+            }
+            out.push('"');
+            out
+        }
+        use std::fmt::Write as _;
+        let mut out = String::from("[");
+        for (i, s) in symbols.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "{{\"name\":{},\"kind\":{},\"file\":{},\"line\":{}",
+                esc(&s.name),
+                esc(s.kind.name()),
+                esc(&s.file),
+                s.line
+            );
+            if let Some(c) = &s.container {
+                let _ = write!(out, ",\"container\":{}", esc(c));
+            }
+            if let Some(sig) = &s.signature {
+                let _ = write!(out, ",\"signature\":{}", esc(sig));
+            }
+            out.push('}');
+        }
+        out.push(']');
+        out
     }
 
     /// A file with a syntax error contributes no symbols, but sibling files

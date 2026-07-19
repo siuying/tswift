@@ -10,6 +10,8 @@ description = "Pure-Rust Swift frontend: drives the lexer/parser/sema pipeline a
 tswift-ast = { path = "../tswift-ast" }
 tswift-parser = { path = "../tswift-parser" }
 tswift-sema = { path = "../tswift-sema" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tswift-lexer = { path = "../tswift-lexer" }
