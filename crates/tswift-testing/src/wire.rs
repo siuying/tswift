@@ -8,9 +8,10 @@
 //! than hand-building [`tswift_core::json::Json`] trees. `serde`/`serde_json`
 //! are already vendored transitively (via `criterion`, a dev-dependency) and
 //! their exact locked versions are pinned in the workspace manifest, so this
-//! is offline-safe (`docs/agents/environment.md`); `tswift_core::json` stays
-//! the shared layer for everything *outside* this crate (e.g.
-//! `tswift_frontend::symbols::to_json`), which this change does not touch.
+//! is offline-safe (`docs/agents/environment.md`). `serde` is now the layer
+//! for static Rust wire types generally (e.g. `tswift_frontend::symbols` also
+//! derives it); `tswift_core::json` remains the layer for Swift-semantics /
+//! dynamic-runtime-value JSON (see `docs/agents/environment.md`).
 //!
 //! - [`descriptors_to_json`] serializes a [`TestDescriptor`] list (the
 //!   `listTests` / `tswift_list_tests` response, and a successful
