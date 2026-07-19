@@ -1,7 +1,7 @@
 /* @ts-self-types="./tswift_wasm.d.ts" */
-import { tswift_host_services } from './snippets/tswift-wasm-5859c2033208ac3c/inline0.js';
+import { tswift_host_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline0.js';
 import { tswift_http_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline1.js';
-import { tswift_host_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline2.js';
+import { tswift_host_services } from './snippets/tswift-wasm-5859c2033208ac3c/inline2.js';
 
 
 /**
