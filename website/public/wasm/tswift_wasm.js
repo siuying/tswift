@@ -1,7 +1,7 @@
 /* @ts-self-types="./tswift_wasm.d.ts" */
 import { tswift_host_services } from './snippets/tswift-wasm-5859c2033208ac3c/inline0.js';
-import { tswift_host_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline1.js';
-import { tswift_http_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline2.js';
+import { tswift_http_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline1.js';
+import { tswift_host_call } from './snippets/tswift-wasm-5859c2033208ac3c/inline2.js';
 
 
 /**
@@ -35,6 +35,36 @@ export function listSymbols(files_json) {
         const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.listSymbols(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Discover every `@Test` in a multi-file module and return descriptor JSON,
+ * **without** running any test — the web playground's "list tests" seam.
+ *
+ * `files_json` is `{"files":[{"path":"…","contents":"…"},…]}` (the same wire
+ * shape [`run_swift_module`] takes). Response:
+ * `{"ok":bool,"tests":[{"id","displayName","suitePath","file","line","tags",
+ * "caseCount","cases","skipped","skipReason","target"},…],"error"?:string,
+ * "compileError"?:string}` — `ok` is false when `files_json` itself fails to
+ * parse (`error`) *or* when the module compiles but fails analysis
+ * (`compileError`; unlike a parse failure, that means the module *did*
+ * parse, it just doesn't type-check/build).
+ * @param {string} files_json
+ * @returns {string}
+ */
+export function listTests(files_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.listTests(ptr0, len0);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -121,6 +151,37 @@ export function runSwiftModule(module_json) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Run a multi-file module's `@Test`s and return the structured report as JSON.
+ *
+ * `files_json` is `{"files":[{"path":"…","contents":"…"},…]}`. `options_json`
+ * is `{"filter":"…","ids":["…",…]}` (both optional; an empty string or `null`
+ * runs everything). Response:
+ * `{"ok":bool,"passed","failed","skipped","issueCount","durationMs",
+ * "compileError","tests":[…]}`. Analysis/compile errors surface in
+ * `compileError` with `ok:false`; there is no wasm-only side effect (the
+ * runner captures stdout to a sink).
+ * @param {string} files_json
+ * @param {string} options_json
+ * @returns {string}
+ */
+export function runTests(files_json, options_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(files_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.runTests(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
