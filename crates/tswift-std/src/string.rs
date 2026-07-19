@@ -308,6 +308,23 @@ pub(super) fn str_of(recv: &SwiftValue) -> Result<String, StdError> {
     }
 }
 
+/// The receiver's grapheme clusters and its base-relative start offset, in a
+/// single segmentation pass. `str_of` + `graphemes` re-segments a Substring
+/// twice (once to materialize the slice, once to re-split it); callers that
+/// need both the clusters and the start offset should use this instead.
+pub(super) fn window_graphemes(recv: &SwiftValue) -> Result<(Vec<String>, usize), StdError> {
+    match recv {
+        SwiftValue::Str(s) => Ok((graphemes(s), 0)),
+        SwiftValue::Substring { base, start, end } => {
+            Ok((graphemes(base)[*start..*end].to_vec(), *start))
+        }
+        other => Err(type_err(format!(
+            "expected String or Substring, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 /// The backing string and base-relative half-open bounds of a text value.
 /// `String` owns the complete `[0, count)` window; `Substring` preserves the
 /// original base and its coordinates so returned indices interoperate with it.
@@ -686,26 +703,26 @@ fn last_index(ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>)
 /// `range(of:)` finds an exact sequence of grapheme clusters and returns a
 /// base-relative `Range<String.Index>` (represented by its offset bounds).
 fn range_of(_ctx: &mut dyn StdContext, recv: SwiftValue, args: Vec<SwiftValue>) -> Outcomes {
-    let (_, start, end) = text_window(&recv)?;
     let needle = args
         .first()
         .ok_or_else(|| type_err("range(of:) expects a String".into()))
         .and_then(|value| {
             str_of(value).map_err(|_| type_err("range(of:) expects a String".into()))
         })?;
-    let haystack = graphemes(&str_of(&recv)?);
     let target = graphemes(&needle);
-    let local = if target.is_empty() {
-        Some(0)
-    } else {
-        haystack
-            .windows(target.len())
-            .position(|window| window == target)
-    };
-    let result = local
+    // Foundation's `range(of:)` returns `nil` for an empty needle rather than
+    // an empty range at the start.
+    if target.is_empty() {
+        return val(SwiftValue::Nil, recv);
+    }
+    // Segment the receiver window once (str_of + graphemes would split a
+    // Substring twice).
+    let (haystack, start) = window_graphemes(&recv)?;
+    let result = haystack
+        .windows(target.len())
+        .position(|window| window == target)
         .map(|local| make_index_range(start + local, start + local + target.len()))
         .unwrap_or(SwiftValue::Nil);
-    debug_assert_eq!(start + haystack.len(), end);
     val(result, recv)
 }
 
@@ -1430,6 +1447,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn range_of_empty_needle_returns_nil() {
+        let mut m = M;
+        // Foundation returns nil for an empty search string (not an empty
+        // range at the start).
+        assert_eq!(
+            range_of(&mut m, s("hello"), vec![s("")]).unwrap().result,
+            SwiftValue::Nil
+        );
+        // A found needle still yields its grapheme range.
+        assert_eq!(
+            range_of(&mut m, s("hello"), vec![s("ll")]).unwrap().result,
+            make_index_range(2, 4)
+        );
     }
 
     struct CharacterMatcher;
