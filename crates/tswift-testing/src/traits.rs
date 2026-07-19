@@ -98,9 +98,15 @@ fn bug_reference(node: &Node<'_>) -> String {
 }
 
 /// Parse a `.timeLimit(...)` duration argument. Only the `.minutes(n)` and
-/// `.seconds(n)` unit forms are recognised (matching Swift Testing's
-/// `Duration` factory members most tests use); anything else yields `None`
-/// and the trait is ignored.
+/// `.seconds(n)` unit forms are recognised; anything else yields `None` and
+/// the trait is ignored.
+///
+/// **Divergence from real Swift Testing**: Apple's `timeLimit` trait only
+/// accepts a `.minutes(n)` `Duration` and rounds sub-minute components up to
+/// the next whole minute — there is no `.seconds` overload. tswift also
+/// accepts `.seconds(n)` and applies it exactly (no rounding), which is more
+/// convenient for fast test suites and documented here rather than silently
+/// diverging; see `website/src/pages/status/testing.mdx`.
 fn time_limit(node: &Node<'_>) -> Option<Duration> {
     if node.kind() != NodeKind::CallExpr {
         return None;
@@ -179,6 +185,18 @@ mod tests {
         let traits = traits_src("@Test(.timeLimit(.minutes(2))) func t() {}\n");
         assert!(
             matches!(&traits[0], Trait::TimeLimit(d) if *d == std::time::Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn parses_time_limit_seconds_without_rounding() {
+        // Divergence from real Swift Testing (which has no `.seconds`
+        // overload and rounds `.minutes` sub-components up): tswift accepts
+        // `.seconds(n)` and applies it exactly, with no rounding up to a
+        // whole minute.
+        let traits = traits_src("@Test(.timeLimit(.seconds(90))) func t() {}\n");
+        assert!(
+            matches!(&traits[0], Trait::TimeLimit(d) if *d == std::time::Duration::from_secs(90))
         );
     }
 

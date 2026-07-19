@@ -207,6 +207,12 @@ A `.bug(…)` reference is surfaced as a `bug:` line under a failing test.
 `.timeLimit(.minutes(n))` is a **soft** check — it records an issue when the
 measured duration is exceeded but never hard-kills the test.
 
+**Divergence**: real Swift Testing's `timeLimit` trait only accepts
+`.minutes(n)`, rounding any sub-minute component up to the next whole minute.
+tswift also accepts `.timeLimit(.seconds(n))` and applies it exactly, with no
+rounding — a deliberate, documented convenience for fast test suites rather
+than a silent behavioral gap.
+
 ### Exit codes
 
 | Exit code | Meaning |
