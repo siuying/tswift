@@ -136,9 +136,45 @@ fn two_test_targets_print_per_unit_and_labeled_overall_summary() {
     );
     assert!(out.contains("Test target CoreTests:"), "stdout: {out}");
     assert!(out.contains("Test target ExtraTests:"), "stdout: {out}");
-    let per_unit_summaries = out.matches("Test run with 1 test passed").count();
+    let per_unit_summaries = out.matches("Test run with 1 test, 1 passed").count();
     assert_eq!(per_unit_summaries, 2, "stdout: {out}");
-    assert!(out.contains("Overall: 2 tests passed"), "stdout: {out}");
+    assert!(out.contains("Overall: 2 tests, 2 passed"), "stdout: {out}");
+}
+
+/// A `@Test(arguments:)` runs one case per element, each labelled with its
+/// argument value in the console output.
+#[test]
+fn parameterized_reports_one_case_per_argument() {
+    let file = fixtures_dir().join("parameterized.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("divisible(x:) - 4"), "stdout: {out}");
+    assert!(out.contains("divisible(x:) - 8"), "stdout: {out}");
+    assert!(out.contains("divisible(x:) - 12"), "stdout: {out}");
+    assert!(out.contains("3 tests"), "stdout: {out}");
+}
+
+/// A `.disabled("reason")` test is skipped (reason shown) and does not fail
+/// the run: exit 0, a skip line carrying the reason, and a passing summary
+/// that notes the skip count.
+#[test]
+fn disabled_test_skips_with_reason_and_exits_zero() {
+    let file = fixtures_dir().join("skipped.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap()]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "a skip is not a failure:\nstdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("skipMe() skipped"), "stdout: {out}");
+    assert!(out.contains("under maintenance"), "stdout: {out}");
+    assert!(out.contains("1 skipped"), "stdout: {out}");
 }
 
 /// An unrecognized `--flag` is a usage error, not silently ignored.

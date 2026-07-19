@@ -13,15 +13,19 @@
 
 mod discover;
 mod expect;
+mod params;
 mod render;
 mod report;
 mod session;
+mod traits;
 
 use std::rc::Rc;
 use std::time::Instant;
 
-use tswift_core::{Interpreter, StdContext, StdError};
+use tswift_core::{Interpreter, StdContext, StdError, SwiftValue};
 use tswift_frontend::{Analysis, SourceFile};
+
+use traits::Trait;
 
 pub use discover::TestCase;
 pub use report::{CompileError, Issue, RunReport, TestResult, TestStatus};
@@ -42,6 +46,8 @@ pub fn install(interp: &mut Interpreter<'_>) {
     interp.module("Testing", |interp| {
         interp.register_macro("expect", expect::expect_macro);
         interp.register_macro("require", expect::require_macro);
+        let issue = tswift_core::BuiltinReceiver::register_extension("Issue");
+        interp.register_static(issue, "record", expect::issue_record);
     });
 }
 
@@ -97,10 +103,26 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
         cases.retain(|c| c.matches_filter(filter));
     }
 
-    // Build one synthetic driver holding a call per test, retained (not leaked)
-    // for the interpreter's lifetime; index i maps to cases[i]. A driver that
-    // fails to build must fail the whole run — never silently pass tests.
-    let driver_nodes = match build_drivers(&mut interp, &cases) {
+    // Resolve each test into a flat list of plans — a skip, or one run per
+    // parameterized case (a single run for an ordinary test). Only runs need a
+    // synthetic driver call, so `.enabled(if:)` conditions are evaluated here
+    // (against the loaded program) before any driver is built.
+    let plans: Vec<Plan> = cases
+        .iter()
+        .flat_map(|c| plan_case(&mut interp, c))
+        .collect();
+    let driver_lines: Vec<String> = plans
+        .iter()
+        .filter_map(|p| match p {
+            Plan::Run { driver, .. } => Some(driver.clone()),
+            Plan::Skip { .. } | Plan::Fail { .. } => None,
+        })
+        .collect();
+
+    // Build one synthetic driver holding a call per run, retained (not leaked)
+    // for the interpreter's lifetime. A driver that fails to build must fail
+    // the whole run — never silently pass tests.
+    let driver_nodes = match build_drivers(&mut interp, &driver_lines) {
         Ok(nodes) => nodes,
         Err(err) => {
             return RunReport {
@@ -111,14 +133,235 @@ pub fn run_tests(files: &[SourceFile], options: &RunOptions) -> RunReport {
     };
 
     let run_start = Instant::now();
-    let mut results = Vec::with_capacity(cases.len());
-    for (case, node) in cases.iter().zip(driver_nodes) {
-        results.push(run_one(&mut interp, analysis, case, node));
+    let mut results = Vec::with_capacity(plans.len());
+    let mut driver_nodes = driver_nodes.into_iter();
+    for plan in &plans {
+        match plan {
+            Plan::Skip { case, reason } => {
+                results.push(skipped_result(analysis, case, reason.clone()))
+            }
+            Plan::Fail { case, message } => {
+                results.push(failed_result(analysis, case, message.clone()))
+            }
+            Plan::Run {
+                case, id, label, ..
+            } => {
+                let node = driver_nodes.next().expect("one driver node per run");
+                results.push(run_one(
+                    &mut interp,
+                    analysis,
+                    case,
+                    id,
+                    label.clone(),
+                    node,
+                ));
+            }
+        }
     }
     RunReport {
         tests: results,
         duration: run_start.elapsed(),
         compile_error: None,
+    }
+}
+
+/// A single unit of work for the runner: a trait-driven skip, a hard failure
+/// discovered before any driver runs (a broken `.enabled(if:)` predicate),
+/// or a concrete run (an ordinary test, or one parameterized case) carrying
+/// its display id/label and the driver source line that invokes it.
+enum Plan<'a> {
+    Skip {
+        case: &'a TestCase,
+        reason: Option<String>,
+    },
+    Fail {
+        case: &'a TestCase,
+        message: String,
+    },
+    Run {
+        case: &'a TestCase,
+        id: String,
+        label: Option<String>,
+        driver: String,
+    },
+}
+
+/// Turn one discovered `case` into its plans: a single skip, or one run per
+/// parameterized argument case (a single run for an ordinary test).
+fn plan_case<'a>(interp: &mut Interpreter<'_>, case: &'a TestCase) -> Vec<Plan<'a>> {
+    match skip_reason(interp, case) {
+        SkipDecision::Skip(reason) => return vec![Plan::Skip { case, reason }],
+        SkipDecision::Fail(message) => return vec![Plan::Fail { case, message }],
+        SkipDecision::Run => {}
+    }
+    match params::expand(&case.node) {
+        params::Expansion::None => vec![Plan::Run {
+            case,
+            id: case.id(),
+            label: Some(case.label_base()),
+            driver: driver_line(case, ""),
+        }],
+        params::Expansion::Unsupported(spelling) => vec![Plan::Fail {
+            case,
+            message: format!(
+                "unsupported arguments: {spelling} (expected collection literal or zip)"
+            ),
+        }],
+        params::Expansion::Cases(rows) if rows.is_empty() => vec![Plan::Skip {
+            case,
+            reason: Some("no argument cases".to_string()),
+        }],
+        params::Expansion::Cases(rows) => {
+            let name = case
+                .display_name
+                .clone()
+                .unwrap_or_else(|| params::signature(&case.node, &case.func_name));
+            // Qualify with the suite when there's no display name to fall
+            // back on: `suite_display` (an `@Suite("…")` name) if set, else
+            // the suite's type path itself, matching `label_base()`/`id()`
+            // (a suite test's label must never lose its qualifying type).
+            let base = match (&case.suite_display, &case.suite_type) {
+                (Some(suite), _) => format!("{suite}/{name}"),
+                (None, Some(suite)) => format!("{}/{name}", suite.replace('.', "/")),
+                (None, None) => name,
+            };
+            let rendered: Vec<String> = rows
+                .iter()
+                .map(|row| row.iter().map(render::expr).collect::<Vec<_>>().join(", "))
+                .collect();
+            // Disambiguate duplicate-argument cases (e.g. `arguments: [1, 1]`)
+            // with a 1-based occurrence suffix so no two labels collide.
+            let mut total_occurrences: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            for args in &rendered {
+                *total_occurrences.entry(args.as_str()).or_insert(0) += 1;
+            }
+            let mut seen_so_far: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::new();
+            rendered
+                .iter()
+                .map(|args| {
+                    let suffix = if total_occurrences[args.as_str()] > 1 {
+                        let n = seen_so_far.entry(args.as_str()).or_insert(0);
+                        *n += 1;
+                        format!(" (#{n})")
+                    } else {
+                        String::new()
+                    };
+                    Plan::Run {
+                        case,
+                        id: format!("{} - {args}{suffix}", case.id()),
+                        label: Some(format!("{base} - {args}{suffix}")),
+                        driver: driver_line(case, args),
+                    }
+                })
+                .collect()
+        }
+    }
+}
+
+/// The `try await`-wrapped driver statement that invokes `case` with `args`
+/// (a comma-separated argument source, empty for a no-argument test). A suite
+/// test constructs a fresh instance first (`Suite().method(args)`).
+fn driver_line(case: &TestCase, args: &str) -> String {
+    match &case.suite_type {
+        Some(suite) => format!("try await {suite}().{}({args})", case.func_name),
+        None => format!("try await {}({args})", case.func_name),
+    }
+}
+
+/// The result of consulting `case`'s traits before building a driver.
+enum SkipDecision {
+    /// No skip-causing trait triggered; build a driver and run the test.
+    Run,
+    /// `.disabled("…")`, or a `.enabled(if:)` condition that evaluated to
+    /// `false` (reason `None`) — not a failure.
+    Skip(Option<String>),
+    /// A `.enabled(if:)` condition that trapped, threw, or evaluated to a
+    /// non-`Bool` value. A broken predicate must fail the test with a clear
+    /// issue, never silently skip it (a skip stays CI-green).
+    Fail(String),
+}
+
+/// Decide whether `case` is skipped/failed by a trait, or should run. The
+/// first skip/fail-causing trait in source order wins.
+fn skip_reason(interp: &mut Interpreter<'_>, case: &TestCase) -> SkipDecision {
+    for trait_ in &case.traits {
+        match trait_ {
+            Trait::Disabled(reason) => return SkipDecision::Skip(reason.clone()),
+            Trait::EnabledIf(cond) => {
+                let outcome = {
+                    let ctx: &mut dyn StdContext = interp;
+                    ctx.eval_node(cond)
+                };
+                match outcome {
+                    Ok(SwiftValue::Bool(true)) => {}
+                    Ok(SwiftValue::Bool(false)) => return SkipDecision::Skip(None),
+                    Ok(other) => {
+                        return SkipDecision::Fail(format!(
+                            "failed to evaluate .enabled(if:) condition: expected Bool, got {}",
+                            other.type_name()
+                        ))
+                    }
+                    Err(err) => {
+                        return SkipDecision::Fail(format!(
+                            "failed to evaluate .enabled(if:) condition: {}",
+                            describe_error(&err)
+                        ))
+                    }
+                }
+            }
+        }
+    }
+    SkipDecision::Run
+}
+
+/// A human-readable rendering of a `StdError` for use in a runner-authored
+/// issue message (mirrors `run_one`'s outcome-to-issue mapping).
+fn describe_error(err: &StdError) -> String {
+    match err {
+        StdError::Throw(value) => format!("condition threw an error: {value}"),
+        StdError::Error(e) => e.to_string(),
+    }
+}
+
+/// Build the [`TestResult`] for a test skipped by a trait (never a failure).
+fn skipped_result(
+    analysis: &'static Analysis,
+    case: &TestCase,
+    reason: Option<String>,
+) -> TestResult {
+    let (file, line) = analysis.locate(case.line);
+    TestResult {
+        id: case.id(),
+        display_name: Some(case.label_base()),
+        status: TestStatus::Skipped,
+        issues: Vec::new(),
+        duration: std::time::Duration::ZERO,
+        file,
+        line,
+        skip_reason: reason,
+    }
+}
+
+/// Build the [`TestResult`] for a test that failed before any driver ran (a
+/// broken `.enabled(if:)` predicate) — carries a single synthetic [`Issue`]
+/// with `message`, never a silent skip.
+fn failed_result(analysis: &'static Analysis, case: &TestCase, message: String) -> TestResult {
+    let (file, line) = analysis.locate(case.line);
+    TestResult {
+        id: case.id(),
+        display_name: Some(case.label_base()),
+        status: TestStatus::Failed,
+        issues: vec![Issue {
+            message,
+            file: file.clone(),
+            line,
+        }],
+        duration: std::time::Duration::ZERO,
+        file,
+        line,
+        skip_reason: None,
     }
 }
 
@@ -129,6 +372,8 @@ fn run_one(
     interp: &mut Interpreter<'_>,
     analysis: &'static Analysis,
     case: &TestCase,
+    id: &str,
+    label: Option<String>,
     call: tswift_frontend::Node<'static>,
 ) -> TestResult {
     session::begin();
@@ -143,7 +388,11 @@ fn run_one(
     let mut issues: Vec<Issue> = raw_issues
         .into_iter()
         .map(|raw| {
-            let (file, line) = analysis.locate(raw.line);
+            // A raw line of 0 means "no source location" (e.g. `Issue.record`,
+            // which is a static call with no node); attribute it to the test's
+            // own declaration line rather than remapping the invalid line 0.
+            let source_line = if raw.line == 0 { case.line } else { raw.line };
+            let (file, line) = analysis.locate(source_line);
             Issue {
                 message: raw.message,
                 file,
@@ -175,18 +424,19 @@ fn run_one(
     };
     let (file, line) = analysis.locate(case.line);
     TestResult {
-        id: case.id(),
-        display_name: case.display_name.clone(),
+        id: id.to_string(),
+        display_name: label,
         status,
         issues,
         duration,
         file,
         line,
+        skip_reason: None,
     }
 }
 
-/// Parse one synthetic driver statement per test into a single retained
-/// analysis, returning the per-test call node (index-aligned with `cases`).
+/// Parse one synthetic driver statement per run into a single retained
+/// analysis, returning the per-run call node (index-aligned with `lines`).
 ///
 /// Every call is wrapped in `try await` so throwing and async tests run through
 /// the same node without per-test codegen (both are transparent for
@@ -195,19 +445,17 @@ fn run_one(
 /// program and we evaluate each statement node directly.
 fn build_drivers(
     interp: &mut Interpreter<'_>,
-    cases: &[TestCase],
+    lines: &[String],
 ) -> Result<Vec<tswift_frontend::Node<'static>>, String> {
     let mut source = String::new();
-    for case in cases {
-        match &case.suite_type {
-            Some(suite) => source.push_str(&format!("try await {suite}().{}()\n", case.func_name)),
-            None => source.push_str(&format!("try await {}()\n", case.func_name)),
-        }
+    for line in lines {
+        source.push_str(line);
+        source.push('\n');
     }
     let driver = Analysis::analyze(&source, "<test-driver>")
         .map_err(|e| format!("failed to build test driver: {e}"))?;
     let driver: &'static Analysis = interp.retain_analysis(Rc::new(driver));
-    drivers_from(driver, cases.len())
+    drivers_from(driver, lines.len())
 }
 
 /// Validate a parsed driver against the expected test count and return one call
@@ -309,6 +557,118 @@ mod tests {
             message.contains("bump() → 1"),
             "expected single evaluation, got: {message}"
         );
+    }
+
+    #[test]
+    fn enabled_if_non_bool_condition_fails_not_skips() {
+        // A broken predicate must FAIL the test with a clear issue, never
+        // silently skip it (a skip stays CI-green).
+        let report = run("@Test(.enabled(if: 1)) func t() {}\n");
+        assert_eq!(report.passed(), 0);
+        assert_eq!(report.skipped(), 0);
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(
+            message.contains("failed to evaluate .enabled(if:) condition"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn enabled_if_throwing_condition_fails_not_skips() {
+        let report = run(concat!(
+            "func explode() -> Bool { fatalError(\"boom\") }\n",
+            "@Test(.enabled(if: explode())) func t() {}\n",
+        ));
+        assert_eq!(report.passed(), 0);
+        assert_eq!(report.skipped(), 0);
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(
+            message.contains("failed to evaluate .enabled(if:) condition"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn enabled_if_true_condition_still_runs() {
+        let report = run("@Test(.enabled(if: 1 > 0)) func t() { #expect(true) }\n");
+        assert_eq!(report.passed(), 1);
+    }
+
+    #[test]
+    fn enabled_if_false_condition_still_skips() {
+        let report = run("@Test(.enabled(if: 1 > 2)) func t() { #expect(true) }\n");
+        assert_eq!(report.skipped(), 1);
+        assert_eq!(report.failed(), 0);
+    }
+
+    #[test]
+    fn empty_arguments_array_is_visible_not_silent() {
+        // `Expansion::Cases(vec![])` used to vanish into zero plans; it must
+        // surface as a visible Skip, not disappear from the report entirely.
+        let report = run("@Test(arguments: []) func p(x: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1, "empty expansion must still report");
+        assert_eq!(report.skipped(), 1);
+        assert_eq!(
+            report.tests[0].skip_reason.as_deref(),
+            Some("no argument cases")
+        );
+    }
+
+    #[test]
+    fn empty_zip_factor_is_visible_not_silent() {
+        let report =
+            run("@Test(arguments: zip([1, 2], [])) func p(a: Int, b: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.skipped(), 1);
+    }
+
+    #[test]
+    fn empty_cartesian_factor_is_visible_not_silent() {
+        let report = run("@Test(arguments: [1, 2], []) func p(x: Int, y: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.skipped(), 1);
+    }
+
+    #[test]
+    fn non_collection_arguments_fails_with_clear_message() {
+        let report = run(concat!(
+            "let bag = [1, 2]\n",
+            "@Test(arguments: bag) func p(x: Int) { #expect(true) }\n",
+        ));
+        assert_eq!(report.failed(), 1);
+        let message = &report.tests[0].issues[0].message;
+        assert!(message.contains("unsupported arguments"), "{message}");
+        assert!(
+            message.contains("expected collection literal or zip"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn parameterized_suite_test_label_includes_suite_qualifier() {
+        // No `@Test`/`@Suite` display names: the parameterized label must
+        // still carry the suite qualifier, matching `label_base()`/`id()`.
+        let src = "struct MathSuite {\n  @Test(arguments: [1, 2]) func p(x: Int) {}\n}\n";
+        let report = run(src);
+        assert_eq!(report.tests.len(), 2);
+        for t in &report.tests {
+            let label = t.label();
+            assert!(
+                label.starts_with("MathSuite/"),
+                "expected suite-qualified label, got: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_argument_values_get_disambiguated_labels() {
+        let report = run("@Test(arguments: [1, 1]) func p(x: Int) { #expect(true) }\n");
+        assert_eq!(report.tests.len(), 2);
+        let labels: std::collections::HashSet<&str> =
+            report.tests.iter().map(|t| t.label()).collect();
+        assert_eq!(labels.len(), 2, "duplicate-argument labels must be unique");
     }
 
     #[test]

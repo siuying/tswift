@@ -4,6 +4,8 @@
 
 use tswift_frontend::{Node, NodeKind};
 
+use crate::traits::{traits_of, Trait};
+
 /// One discovered test: a free `@Test` function or a `@Test` method on a type.
 #[derive(Clone)]
 pub struct TestCase {
@@ -20,14 +22,37 @@ pub struct TestCase {
     /// 1-based combined-source line of the declaration (for stable ordering and
     /// location remapping).
     pub line: u32,
+    /// The test's own traits followed by any inherited from its suite
+    /// (suite-level traits apply to every member, plan §1.2).
+    pub traits: Vec<Trait>,
 }
 
 impl TestCase {
-    /// The fully-qualified id: `"free()"` or `"MathSuite/pass()"`.
+    /// The fully-qualified id: `"free()"`, `"MathSuite/pass()"`, or a nested
+    /// `"Outer/Inner/b()"`. The suite path is stored dot-joined for runtime
+    /// construction (`Outer.Inner()`); the id shows it slash-separated.
     pub fn id(&self) -> String {
         match &self.suite_type {
-            Some(suite) => format!("{suite}/{}()", self.func_name),
+            Some(suite) => format!("{}/{}()", suite.replace('.', "/"), self.func_name),
             None => format!("{}()", self.func_name),
+        }
+    }
+
+    /// The human display label composing the owning suite's and the test's
+    /// display names (`"Math Suite/adds two numbers"`), falling back to the
+    /// func/type id when neither is set so a suite test never loses its
+    /// qualifying type name.
+    pub fn label_base(&self) -> String {
+        if self.suite_display.is_none() && self.display_name.is_none() {
+            return self.id();
+        }
+        let test_part = self
+            .display_name
+            .clone()
+            .unwrap_or_else(|| format!("{}()", self.func_name));
+        match &self.suite_display {
+            Some(suite) => format!("{suite}/{test_part}"),
+            None => test_part,
         }
     }
 
@@ -52,17 +77,19 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
     for decl in root.children() {
         match decl.kind() {
             NodeKind::FuncDecl if has_attribute(&decl, "Test") => {
+                let traits = traits_of(&decl, "Test");
                 cases.push(TestCase {
                     suite_type: None,
                     suite_display: None,
                     func_name: decl.decl_name().unwrap_or_default(),
                     display_name: attribute_display_name(&decl, "Test"),
-                    node: decl,
                     line: decl.line(),
+                    node: decl,
+                    traits,
                 });
             }
             NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
-                collect_suite(&decl, &mut cases);
+                collect_suite(&decl, None, &[], &mut cases);
             }
             _ => {}
         }
@@ -71,24 +98,48 @@ pub fn discover(root: Node<'static>) -> Vec<TestCase> {
     cases
 }
 
-/// Collect `@Test` methods of a type. A type with any `@Test` method is a suite
-/// even without `@Suite` (implicit suites, matching Apple).
-fn collect_suite(type_decl: &Node<'static>, cases: &mut Vec<TestCase>) {
-    let suite_type = type_decl.decl_name();
-    let Some(suite_type) = suite_type else {
+/// Collect `@Test` methods of a type, recursing into nested suite types. A type
+/// with any `@Test` method is a suite even without `@Suite` (implicit suites,
+/// matching Apple). `parent` is the dot-joined construction path of the
+/// enclosing suite, so a nested `Inner` under `Outer` is constructed as
+/// `Outer.Inner()`.
+fn collect_suite(
+    type_decl: &Node<'static>,
+    parent: Option<&str>,
+    inherited: &[Trait],
+    cases: &mut Vec<TestCase>,
+) {
+    let Some(name) = type_decl.decl_name() else {
         return;
     };
+    let suite_type = match parent {
+        Some(prefix) => format!("{prefix}.{name}"),
+        None => name,
+    };
     let suite_display = attribute_display_name(type_decl, "Suite");
+    // A nested suite inherits its enclosing suite's traits plus its own
+    // `@Suite` traits; every `@Test` member inherits that combined set.
+    let mut suite_traits = inherited.to_vec();
+    suite_traits.extend(traits_of(type_decl, "Suite"));
     for member in type_decl.children() {
-        if member.kind() == NodeKind::FuncDecl && has_attribute(&member, "Test") {
-            cases.push(TestCase {
-                suite_type: Some(suite_type.clone()),
-                suite_display: suite_display.clone(),
-                func_name: member.decl_name().unwrap_or_default(),
-                display_name: attribute_display_name(&member, "Test"),
-                node: member,
-                line: member.line(),
-            });
+        match member.kind() {
+            NodeKind::FuncDecl if has_attribute(&member, "Test") => {
+                let mut traits = traits_of(&member, "Test");
+                traits.extend(suite_traits.iter().cloned());
+                cases.push(TestCase {
+                    suite_type: Some(suite_type.clone()),
+                    suite_display: suite_display.clone(),
+                    func_name: member.decl_name().unwrap_or_default(),
+                    display_name: attribute_display_name(&member, "Test"),
+                    line: member.line(),
+                    node: member,
+                    traits,
+                });
+            }
+            NodeKind::StructDecl | NodeKind::ClassDecl | NodeKind::ActorDecl => {
+                collect_suite(&member, Some(&suite_type), &suite_traits, cases);
+            }
+            _ => {}
         }
     }
 }
@@ -157,6 +208,14 @@ mod tests {
         let cases = discover_src(src);
         let ids: Vec<String> = cases.iter().map(|c| c.id()).collect();
         assert_eq!(ids, vec!["b()", "a()"]);
+    }
+
+    #[test]
+    fn discovers_nested_suite_with_dotted_path() {
+        let src = "struct Outer {\n  struct Inner {\n    @Test func b() {}\n  }\n}\n";
+        let cases = discover_src(src);
+        assert_eq!(cases[0].id(), "Outer/Inner/b()");
+        assert_eq!(cases[0].suite_type.as_deref(), Some("Outer.Inner"));
     }
 
     #[test]

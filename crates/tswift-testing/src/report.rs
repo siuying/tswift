@@ -65,7 +65,7 @@ pub struct Issue {
 pub enum TestStatus {
     Passed,
     Failed,
-    /// Reserved for trait-driven skips (slice C).
+    /// Skipped by a `.disabled`/`.enabled(if:)` trait; never a failure.
     Skipped,
 }
 
@@ -83,6 +83,9 @@ pub struct TestResult {
     pub file: Option<String>,
     /// 1-based declaration line.
     pub line: u32,
+    /// Why the test was skipped (`.disabled("…")` reason), when
+    /// [`TestStatus::Skipped`]. `None` for a `.enabled(if:)`/reasonless skip.
+    pub skip_reason: Option<String>,
 }
 
 impl TestResult {

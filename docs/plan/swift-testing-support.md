@@ -49,11 +49,11 @@ Grounded in real-world usage (WWDC24 Swift Testing, Apple docs, migration playbo
 
 | Feature | Priority within “later” | Notes |
 |---|---|---|
-| `@Suite` display name + nesting | High | Nested suite types; suite traits inherited by children |
-| Traits: `.disabled("…")` | High | Skip with reason (very common) |
-| Traits: `.enabled(if:)` | High | Evaluate condition once at discovery/run start |
-| `@Test(arguments:)` parameterized | High | One case per element; cartesian multi-collection; `zip` if present |
-| `Issue.record(…)` / `Issue.record(Comment, …)` | Medium | Manual soft failure |
+| `@Suite` display name + nesting | High | **Landed (slice C)** — nested suite types; suite traits inherited by children |
+| Traits: `.disabled("…")` | High | **Landed (slice C)** — skip with reason (very common) |
+| Traits: `.enabled(if:)` | High | **Landed (slice C)** — evaluate condition once at run start |
+| `@Test(arguments:)` parameterized | High | **Landed (slice C)** — one case per element; cartesian multi-collection; `zip` |
+| `Issue.record(…)` / `Issue.record(Comment, …)` | Medium | **Landed (slice C)** — `Issue.record(_: String)` soft failure |
 | Traits: `.tags(…)` + filter by tag | Medium | Needs `Tag` type + CLI `--filter` tag syntax |
 | `#expect(throws:)` / `throws: Never.self` | Medium | Closure-form overloads |
 | Traits: `.bug(…)` | Low | Annotation only in reports |
@@ -491,9 +491,37 @@ TDD each slice: **write a failing test first**, then implement.
 
 ---
 
-### Slice C — Suites, traits, parameterized
+### Slice C — Suites, traits, parameterized — **landed**
 
 **Goal:** Cover the organizational surface most real suites use.
+
+**Status (landed):**
+
+- `@Suite` display names surface in the reported label; nested suite types are
+  discovered recursively (`Outer.Inner()` construction, `Outer/Inner/b()` id).
+- Traits `.disabled("reason")` and `.enabled(if: cond)` skip a test (reason
+  shown, skip never fails the run); suite-level traits are inherited by every
+  member, including nested suites.
+- `@Test(arguments:)` expands structurally: a single array literal, the
+  cartesian product of several array literals, or element-wise `zip(a, b)`.
+  Each case runs independently with its argument value in the label
+  (`div(x:) - 4`); a failing case fails only itself.
+- `Issue.record(_: String)` records a manual soft failure (Testing-module
+  static; attributed to the test's declaration line, no per-call location).
+- CLI renders skip lines with reason + a skip count, and one line per
+  parameterized case.
+
+**Deferred out of Slice C:**
+
+- `#expect(throws:)` closure form: the frontend parser rejects the `throws:`
+  argument label (it collides with the `throws` keyword — `dump` reports
+  "expected an expression, found Keyword"), so the closure-form overload is
+  not reachable without parser work. Deferred until the parser accepts
+  `throws:` as a call-argument label.
+- Argument values in parameterized labels are the source spelling of each
+  element node (not an evaluated `CustomTestStringConvertible` rendering);
+  fine for the common literal case.
+- Tag filtering / `.tags` remains name-based only.
 
 | Deliverable | Detail |
 |---|---|
