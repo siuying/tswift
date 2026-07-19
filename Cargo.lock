@@ -657,6 +657,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tswift-testing"
+version = "0.0.0"
+dependencies = [
+ "tswift-core",
+ "tswift-foundation",
+ "tswift-frontend",
+ "tswift-std",
+]
+
+[[package]]
 name = "tswift-wasm"
 version = "0.0.0"
 dependencies = [
