@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use tswift_frontend::SourceFile;
-use tswift_testing::{CompileError, RunOptions, RunReport, TestStatus};
+use tswift_testing::{CompileError, RunOptions, RunReport, TestDescriptor, TestStatus};
 
 /// The parsed `tswift test` argument list: `--filter`/`--target` values plus
 /// the positional path arguments, in order.
@@ -29,6 +29,12 @@ pub struct TestArgs {
     pub filter: Option<String>,
     pub target: Option<String>,
     pub paths: Vec<String>,
+    /// `--list`: print the discovered tests instead of running them.
+    pub list: bool,
+    /// `--json`: with `--list`, emit machine-readable JSON.
+    pub json: bool,
+    /// `--test <id>` (repeatable): exact canonical ids to run.
+    pub tests: Vec<String>,
 }
 
 /// Parse `tswift test`'s argument list.
@@ -57,19 +63,36 @@ pub fn parse_test_args(rest: &[String]) -> Result<TestArgs, String> {
                         .clone(),
                 );
             }
+            "--test" => {
+                out.tests.push(
+                    it.next()
+                        .ok_or_else(|| "`--test` requires a value".to_string())?
+                        .clone(),
+                );
+            }
+            "--list" => out.list = true,
+            "--json" => out.json = true,
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown flag `{flag}`"));
             }
             path => out.paths.push(path.to_string()),
         }
     }
+    // `--test` (exact id selection) and `--filter` (substring match) are
+    // mutually exclusive: pick one. Combining them is a usage error rather
+    // than a silently-resolved precedence.
+    if !out.tests.is_empty() && out.filter.is_some() {
+        return Err("`--test` and `--filter` are mutually exclusive".to_string());
+    }
     Ok(out)
 }
 
-/// Run `tswift test` over `paths`, printing console output and returning the
-/// process exit code.
-pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> ExitCode {
-    let units = match collect_test_units(paths, target) {
+/// Run `tswift test` over the parsed arguments, printing console output and
+/// returning the process exit code. In `--list` mode it prints the discovered
+/// tests (human table or, with `--json`, machine-readable JSON) without
+/// running any.
+pub fn run(args: &TestArgs) -> ExitCode {
+    let units = match collect_test_units(&args.paths, args.target.as_deref()) {
         Ok(u) => u,
         Err(e) => {
             eprintln!("error: {e}");
@@ -77,8 +100,18 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
         }
     };
 
+    if args.list {
+        return list(&units, args.json);
+    }
+
+    let filter = args.filter.as_deref();
     let options = RunOptions {
-        filter: filter.map(str::to_string),
+        filter: args.filter.clone(),
+        ids: if args.tests.is_empty() {
+            None
+        } else {
+            Some(args.tests.clone())
+        },
     };
     let mut all_ok = true;
     let mut total_tests = 0usize;
@@ -131,6 +164,53 @@ pub fn run(paths: &[String], filter: Option<&str>, target: Option<&str>) -> Exit
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Print the discovered tests across every unit without running them. With
+/// `json`, emit one combined `{"ok":true,"tests":[…]}` document (the same wire
+/// shape the wasm `listTests` / FFI `tswift_list_tests` seams return); else a
+/// human table, one test per line, grouped by unit when there is more than one.
+fn list(units: &[(String, Vec<SourceFile>)], json: bool) -> ExitCode {
+    let mut all: Vec<TestDescriptor> = Vec::new();
+    for (name, files) in units {
+        let mut tests = tswift_testing::list_tests(files);
+        if !json && units.len() > 1 {
+            println!("Test target {name}:");
+        }
+        if !json {
+            for t in &tests {
+                println!("{}", list_line(t));
+            }
+        }
+        all.append(&mut tests);
+    }
+    if json {
+        println!("{}", tswift_testing::descriptors_to_json(&all));
+    }
+    ExitCode::SUCCESS
+}
+
+/// One human-readable line for a discovered test: id, a `[N cases]` badge for a
+/// parameterized test, `#tag` badges, and a `(skipped: reason)` suffix for a
+/// statically-disabled test.
+fn list_line(t: &TestDescriptor) -> String {
+    let mut line = t.id.clone();
+    if let Some(name) = &t.display_name {
+        line.push_str(&format!("  \"{name}\""));
+    }
+    if let Some(n) = t.case_count {
+        line.push_str(&format!("  [{n} case{}]", if n == 1 { "" } else { "s" }));
+    }
+    for tag in &t.tags {
+        line.push_str(&format!("  #{tag}"));
+    }
+    if t.skipped {
+        match &t.skip_reason {
+            Some(reason) => line.push_str(&format!("  (skipped: {reason})")),
+            None => line.push_str("  (skipped)"),
+        }
+    }
+    line
 }
 
 /// Render a [`CompileError`] the same way `tswift run` renders analysis

@@ -68,7 +68,7 @@ fn main() -> ExitCode {
         }
         Some("test") => {
             let rest: Vec<String> = args.collect();
-            let usage = "usage: tswift test [--filter <substring>] [--target <name>] <file.swift|dir|package-dir>";
+            let usage = "usage: tswift test [--filter <substring>] [--target <name>] [--list [--json]] [--test <id>]... <file.swift|dir|package-dir>";
             let parsed = match test_cmd::parse_test_args(&rest) {
                 Ok(p) => p,
                 Err(e) => {
@@ -80,11 +80,7 @@ fn main() -> ExitCode {
                 eprintln!("error: `test` requires a file, directory, or package path\n\n{usage}");
                 ExitCode::FAILURE
             } else {
-                test_cmd::run(
-                    &parsed.paths,
-                    parsed.filter.as_deref(),
-                    parsed.target.as_deref(),
-                )
+                test_cmd::run(&parsed)
             }
         }
         Some("dump") => {

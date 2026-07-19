@@ -279,6 +279,105 @@ fn tag_filter_matching_nothing_names_the_filter_in_summary() {
     assert!(out.contains("tag:nope"), "stdout: {out}");
 }
 
+/// `--list` prints the discovered tests without running them: each id, a case
+/// badge for a parameterized test, and a skip suffix for a disabled one.
+#[test]
+fn list_prints_discovered_tests_without_running() {
+    let file = fixtures_dir().join("list.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("addition()"), "stdout: {out}");
+    assert!(out.contains("adds two numbers"), "stdout: {out}");
+    assert!(out.contains("MathSuite/inSuite()"), "stdout: {out}");
+    assert!(out.contains("[3 cases]"), "stdout: {out}");
+    assert!(out.contains("skipMe()"), "stdout: {out}");
+    assert!(out.contains("under maintenance"), "stdout: {out}");
+    // Listing never runs: the disabled test's failing #expect must not surface.
+    assert!(!out.contains("recorded an issue"), "stdout: {out}");
+    assert!(!out.contains("Test run"), "stdout: {out}");
+}
+
+/// `--list --json` emits the shared descriptor wire shape.
+#[test]
+fn list_json_emits_descriptor_wire_shape() {
+    let file = fixtures_dir().join("list.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--list", "--json"]);
+    let out = stdout(&output);
+    assert!(output.status.success(), "stdout:\n{out}");
+    assert!(out.contains("\"ok\":true"), "stdout: {out}");
+    assert!(out.contains("\"id\":\"addition()\""), "stdout: {out}");
+    assert!(out.contains("\"caseCount\":3"), "stdout: {out}");
+    assert!(out.contains("\"suitePath\":\"MathSuite\""), "stdout: {out}");
+    assert!(out.contains("\"skipped\":true"), "stdout: {out}");
+}
+
+/// `--test <id>` runs exactly the named test.
+#[test]
+fn test_flag_runs_only_named_test() {
+    let file = fixtures_dir().join("filter.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--test", "mathAdd()"]);
+    let out = stdout(&output);
+    assert!(
+        output.status.success(),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    assert!(out.contains("mathAdd()"), "stdout: {out}");
+    assert!(!out.contains("mathSub()"), "stdout: {out}");
+    assert!(out.contains("1 test,"), "stdout: {out}");
+}
+
+/// `--test` is repeatable: each occurrence adds an id to the selection.
+#[test]
+fn repeated_test_flags_run_each_named_test() {
+    let file = fixtures_dir().join("filter.swift");
+    let output = run_test_cmd(&[
+        file.to_str().unwrap(),
+        "--test",
+        "mathAdd()",
+        "--test",
+        "mathSub()",
+    ]);
+    let out = stdout(&output);
+    assert!(output.status.success(), "stdout:\n{out}");
+    assert!(out.contains("mathAdd()"), "stdout: {out}");
+    assert!(out.contains("mathSub()"), "stdout: {out}");
+    assert!(out.contains("2 tests"), "stdout: {out}");
+}
+
+/// `--test` with an unknown id is an error naming the unknown id, not a silent
+/// zero-tests success.
+#[test]
+fn test_flag_unknown_id_is_an_error() {
+    let file = fixtures_dir().join("filter.swift");
+    let output = run_test_cmd(&[file.to_str().unwrap(), "--test", "nope()"]);
+    assert!(!output.status.success(), "expected a failure");
+    let combined = format!("{}{}", stdout(&output), stderr(&output));
+    assert!(combined.contains("nope()"), "{combined}");
+    assert!(combined.contains("unknown test id"), "{combined}");
+}
+
+/// `--test` and `--filter` together are a usage error (mutually exclusive).
+#[test]
+fn test_and_filter_together_is_a_usage_error() {
+    let file = fixtures_dir().join("filter.swift");
+    let output = run_test_cmd(&[
+        file.to_str().unwrap(),
+        "--test",
+        "mathAdd()",
+        "--filter",
+        "math",
+    ]);
+    assert!(!output.status.success(), "expected a usage error");
+    let err = stderr(&output);
+    assert!(err.contains("mutually exclusive"), "{err}");
+}
+
 /// A `withKnownIssue` body's failure is reported as a known issue and does not
 /// fail the run; the `.bug(…)` reference does not surface (the test passed).
 #[test]
