@@ -272,11 +272,16 @@ pub fn with_known_issue(ctx: &mut dyn StdContext, args: Vec<Arg>) -> StdResult {
             return result;
         }
         // A throw or a `#require` abort inside the body is the expected
-        // failure. Record it as a known issue and consume the abort so it does
-        // not unwind the outer test body.
+        // failure and consumes the abort so it does not unwind the outer test
+        // body. A `#require` abort already recorded its own issue (via
+        // `record_issue` in `require_macro`) before throwing, so recording a
+        // second "an error was thrown" line here would double-count the same
+        // failure; only genuine thrown errors get this synthetic message.
         Err(StdError::Throw(value)) => {
-            let detail = ctx.display(value);
-            session::record_issue(format!("Known issue (an error was thrown): {detail}"), 0);
+            if !session::is_aborted() {
+                let detail = ctx.display(value);
+                session::record_issue(format!("Known issue (an error was thrown): {detail}"), 0);
+            }
             session::clear_aborted();
             true
         }

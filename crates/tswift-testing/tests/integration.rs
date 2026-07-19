@@ -574,6 +574,32 @@ func go() throws { throw Boom() }
 }
 
 #[test]
+fn with_known_issue_require_abort_records_exactly_one_issue() {
+    // A `#require` failure inside `withKnownIssue` already records its own
+    // "Required expectation failed" issue before throwing; the block must not
+    // additionally record a synthetic "an error was thrown" line for the same
+    // abort (regression for the double-counting bug).
+    let src = "\
+@Test func t() {
+  withKnownIssue(\"not fixed yet\") { try #require(1 == 2) }
+}
+";
+    let report = run(src);
+    assert_eq!(report.failed(), 0, "known issue must not fail the run");
+    assert_eq!(report.passed(), 1);
+    assert_eq!(
+        report.tests[0].issues.len(),
+        1,
+        "a #require abort must be recorded exactly once: {:?}",
+        report.tests[0].issues
+    );
+    assert!(report.tests[0].issues[0]
+        .message
+        .contains("Required expectation failed"));
+    assert!(report.tests[0].issues[0].known);
+}
+
+#[test]
 fn with_known_issue_unexpected_pass_is_a_failure() {
     let src = "\
 @Test func t() {

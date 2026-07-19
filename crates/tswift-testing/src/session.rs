@@ -104,6 +104,14 @@ pub fn pop_known() {
     });
 }
 
+/// Whether a `#require` failure has aborted the current session (not yet
+/// cleared by [`clear_aborted`]). Used by `withKnownIssue` to tell an
+/// already-recorded `#require` abort apart from a plain thrown error, so it
+/// does not record a second, mislabeled issue for the same failure.
+pub fn is_aborted() -> bool {
+    SESSION.with(|s| s.borrow().as_ref().is_some_and(|session| session.aborted))
+}
+
 /// Clear the abort flag after a `withKnownIssue` block consumed a `#require`
 /// abort (the abort is expected inside a known-issue block, so it must not
 /// unwind the whole test body).
