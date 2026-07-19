@@ -569,63 +569,48 @@ impl<'a> Node<'a> {
 
     /// A structured JSON dump of this subtree (kind, text, line, type,
     /// modifiers, children), for tooling that wants to consume the AST shape.
+    ///
+    /// Serializes an owned [`DumpNode`] snapshot via `serde_json`; keys are
+    /// emitted in declaration order (`kind`, then any of `text`/`line`/`type`/
+    /// `modifiers`/`children` that are present), matching the historical
+    /// hand-written shape.
     pub fn dump_json(&self) -> String {
-        let mut out = String::new();
-        self.dump_json_into(&mut out);
-        out
-    }
-
-    fn dump_json_into(&self, out: &mut String) {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{{\"kind\":\"{}\"", self.kind().name());
-        if let Some(text) = self.text() {
-            if !text.is_empty() {
-                let _ = write!(out, ",\"text\":{}", json_string(&text));
-            }
-        }
-        let line = self.line();
-        if line > 0 {
-            let _ = write!(out, ",\"line\":{line}");
-        }
-        if let Some(ty) = self.type_name() {
-            let _ = write!(out, ",\"type\":{}", json_string(&ty));
-        }
-        let mods = self.modifier_names();
-        if !mods.is_empty() {
-            let parts: Vec<String> = mods.iter().map(|m| json_string(m)).collect();
-            let _ = write!(out, ",\"modifiers\":[{}]", parts.join(","));
-        }
-        let mut children = self.children().peekable();
-        if children.peek().is_some() {
-            out.push_str(",\"children\":[");
-            for (i, child) in children.enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                child.dump_json_into(out);
-            }
-            out.push(']');
-        }
-        out.push('}');
+        serde_json::to_string(&DumpNode::of(self)).expect("AST dump serialization is infallible")
     }
 }
 
-/// Minimal JSON string escaping for [`Node::dump_json`].
-fn json_string(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
-            _ => out.push(c),
+/// Owned, serde-serializable snapshot of a [`Node`] subtree backing
+/// [`Node::dump_json`]. Optional facts are omitted when absent
+/// (`skip_serializing_if`), so the wire shape stays identical to the previous
+/// hand-rolled writer: `text` only when non-empty, `line` only when > 0,
+/// `type`/`modifiers`/`children` only when present.
+#[derive(serde::Serialize)]
+struct DumpNode {
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<u32>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    ty: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    modifiers: Vec<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<DumpNode>,
+}
+
+impl DumpNode {
+    fn of(node: &Node<'_>) -> DumpNode {
+        let line = node.line();
+        DumpNode {
+            kind: node.kind().name(),
+            text: node.text().filter(|t| !t.is_empty()),
+            line: (line > 0).then_some(line),
+            ty: node.type_name(),
+            modifiers: node.modifier_names(),
+            children: node.children().map(|c| DumpNode::of(&c)).collect(),
         }
     }
-    out.push('"');
-    out
 }
 
 /// Iterator over a node's children produced by [`Node::children`].
@@ -1048,6 +1033,91 @@ mod tests {
             a.root().dump(),
             "SourceFile L1\n  ExprStmt L1\n    CallExpr L1 :Void\n      IdentExpr \"print\" L1\n      IntegerLiteral \"42\" L1 :Int\n"
         );
+    }
+
+    /// `dump_json` keeps its exact pre-serde wire bytes: `kind` first, then
+    /// only the present optional facts, children nested in source order.
+    #[test]
+    fn dump_json_pins_wire_shape() {
+        let a = Analysis::analyze("print(42)\n", "main.swift").unwrap();
+        assert_eq!(
+            a.root().dump_json(),
+            "{\"kind\":\"source_file\",\"line\":1,\"children\":[\
+{\"kind\":\"expr_stmt\",\"line\":1,\"children\":[\
+{\"kind\":\"call_expr\",\"line\":1,\"type\":\"Void\",\"children\":[\
+{\"kind\":\"ident_expr\",\"text\":\"print\",\"line\":1},\
+{\"kind\":\"integer_literal\",\"text\":\"42\",\"line\":1,\"type\":\"Int\"}]}]}]}"
+        );
+    }
+
+    /// The serde-derived `dump_json` reproduces the historical hand-written
+    /// writer's output for a modifier/type-bearing subtree (compared as
+    /// parsed JSON, key-order-insensitive).
+    #[test]
+    fn dump_json_matches_pre_serde_writer() {
+        let a = Analysis::analyze("struct S { static func f() throws {} }\n", "m.swift").unwrap();
+        let old = old_dump_json(&a.root());
+        let new = a.root().dump_json();
+        let old_v: serde_json::Value = serde_json::from_str(&old).unwrap();
+        let new_v: serde_json::Value = serde_json::from_str(&new).unwrap();
+        assert_eq!(old_v, new_v);
+    }
+
+    /// Frozen copy of the pre-serde hand-rolled `dump_json` writer, kept only
+    /// as the schema-stability oracle above.
+    fn old_dump_json(node: &Node<'_>) -> String {
+        fn esc(s: &str) -> String {
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    '\r' => out.push_str("\\r"),
+                    _ => out.push(c),
+                }
+            }
+            out.push('"');
+            out
+        }
+        fn go(node: &Node<'_>, out: &mut String) {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{{\"kind\":\"{}\"", node.kind().name());
+            if let Some(text) = node.text() {
+                if !text.is_empty() {
+                    let _ = write!(out, ",\"text\":{}", esc(&text));
+                }
+            }
+            let line = node.line();
+            if line > 0 {
+                let _ = write!(out, ",\"line\":{line}");
+            }
+            if let Some(ty) = node.type_name() {
+                let _ = write!(out, ",\"type\":{}", esc(&ty));
+            }
+            let mods = node.modifier_names();
+            if !mods.is_empty() {
+                let parts: Vec<String> = mods.iter().map(|m| esc(m)).collect();
+                let _ = write!(out, ",\"modifiers\":[{}]", parts.join(","));
+            }
+            let mut children = node.children().peekable();
+            if children.peek().is_some() {
+                out.push_str(",\"children\":[");
+                for (i, child) in children.enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    go(&child, out);
+                }
+                out.push(']');
+            }
+            out.push('}');
+        }
+        let mut out = String::new();
+        go(node, &mut out);
+        out
     }
 
     /// Nominal declarations lower into the runtime-facing shape: name as text,
