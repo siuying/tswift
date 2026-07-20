@@ -3221,10 +3221,13 @@ impl<'a> Parser<'a> {
                     expr = node;
                 }
                 // Optional chaining `expr?.member`: drop the `?`, let `.` handle
-                // it, but remember to tag the following member as chained. The
-                // `?` must hug its expression (Swift's whitespace rule),
-                // distinguishing `x?.a` from a ternary whose then-branch is an
-                // implicit member expression (`x ? .a : .b`).
+                // it, but remember to tag the following member as chained. Per
+                // Swift's whitespace rule the `?` must immediately follow its
+                // expression, so only the *left-side* adjacency is checked
+                // (`prev` hugs `?`). A gap on the right (`x? .a`) is still
+                // chaining; the disambiguation that matters is `x?.a` (chain)
+                // vs `x ? .a : .b` (ternary with an implicit-member branch),
+                // which the left-side check alone resolves.
                 TokenKind::Question
                     if self.tokens[self.pos + 1].kind == TokenKind::Dot
                         && self.pos > 0
@@ -4507,12 +4510,101 @@ mod tests {
 
     #[test]
     fn tight_question_dot_stays_optional_chaining() {
-        // `x?.a` (no space) must remain optional chaining, not a ternary.
+        // `x?.a` (no space) must remain optional chaining, not a ternary. The
+        // `?.` optional-chain modifier distinguishes it from a plain `x.a`.
         let ast = ast_of("let w = a?.b\n");
         let chain = first_stmt(&ast).children().nth(1).unwrap();
         assert_eq!(chain.kind(), NodeKind::MemberExpr);
         assert_eq!(chain.text(), Some("b"));
         assert_eq!(chain.children().next().unwrap().kind(), NodeKind::IdentExpr);
+        assert!(
+            chain.modifiers().iter().any(|m| m == "?."),
+            "expected `?.` optional-chain modifier, got {:?}",
+            chain.modifiers()
+        );
+        // A plain member access carries no such modifier — proving the check
+        // above is meaningful.
+        let ast = ast_of("let w = a.b\n");
+        let plain = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(plain.kind(), NodeKind::MemberExpr);
+        assert!(!plain.modifiers().iter().any(|m| m == "?."));
+    }
+
+    #[test]
+    fn question_dot_whitespace_boundary_disambiguation() {
+        // Whether a `?` before `.` is optional chaining or a ternary hinges on
+        // left-side adjacency: the `?` must immediately follow its expression
+        // to chain. Each case pins the resulting shape (and `?.` modifier).
+        enum Shape {
+            // Initializer is a ternary; its then-branch is a MemberExpr with
+            // the given optional-chain flag.
+            Ternary { then_chained: bool },
+            // Initializer is a chained MemberExpr (`?.`).
+            Chain,
+        }
+        use Shape::*;
+
+        // Anchor each case on a `let` initializer and inspect its expression.
+        for (src, shape) in [
+            // `?` hugs `x` (no space either side): optional chaining.
+            ("let c = x?.a\n", Chain),
+            // Space *before* `?` breaks left-adjacency: ternary, even though the
+            // `?` hugs `.a` on the right. The then-branch is a plain implicit
+            // member (no `?.` modifier).
+            (
+                "let c = x ?.a : .b\n",
+                Ternary {
+                    then_chained: false,
+                },
+            ),
+            // Spaced `?`, tight `:` after the then-branch: still a ternary.
+            (
+                "let c = x ? .a: .b\n",
+                Ternary {
+                    then_chained: false,
+                },
+            ),
+            // then-branch itself optional-chains: `b?.c` hugs, so chained.
+            ("let c = a ? b?.c : d\n", Ternary { then_chained: true }),
+            // Line-break before the `.b` else-branch keeps the ternary intact.
+            (
+                "let c = a ? .a :\n.b\n",
+                Ternary {
+                    then_chained: false,
+                },
+            ),
+        ] {
+            let ast = ast_of(src);
+            let init = first_stmt(&ast).children().nth(1).unwrap();
+            match shape {
+                Chain => {
+                    assert_eq!(
+                        init.kind(),
+                        NodeKind::MemberExpr,
+                        "expected optional-chain member in {src:?}"
+                    );
+                    assert!(
+                        init.modifiers().iter().any(|m| m == "?."),
+                        "expected `?.` modifier in {src:?}, got {:?}",
+                        init.modifiers()
+                    );
+                }
+                Ternary { then_chained } => {
+                    assert_eq!(
+                        init.kind(),
+                        NodeKind::TernaryExpr,
+                        "expected a ternary in {src:?}"
+                    );
+                    let then_branch = init.children().nth(1).unwrap();
+                    assert_eq!(then_branch.kind(), NodeKind::MemberExpr);
+                    assert_eq!(
+                        then_branch.modifiers().iter().any(|m| m == "?."),
+                        then_chained,
+                        "then-branch chaining mismatch in {src:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
