@@ -3221,8 +3221,15 @@ impl<'a> Parser<'a> {
                     expr = node;
                 }
                 // Optional chaining `expr?.member`: drop the `?`, let `.` handle
-                // it, but remember to tag the following member as chained.
-                TokenKind::Question if self.tokens[self.pos + 1].kind == TokenKind::Dot => {
+                // it, but remember to tag the following member as chained. The
+                // `?` must hug its expression (Swift's whitespace rule),
+                // distinguishing `x?.a` from a ternary whose then-branch is an
+                // implicit member expression (`x ? .a : .b`).
+                TokenKind::Question
+                    if self.tokens[self.pos + 1].kind == TokenKind::Dot
+                        && self.pos > 0
+                        && tokens_adjacent(&self.tokens[self.pos - 1], &self.tokens[self.pos]) =>
+                {
                     self.bump();
                     optional_chain_next = true;
                 }
@@ -4463,6 +4470,49 @@ mod tests {
             let has_ternary = decl.children().any(|c| c.kind() == NodeKind::TernaryExpr);
             assert!(has_ternary, "expected a ternary in {src:?}");
         }
+    }
+
+    #[test]
+    fn ternary_with_implicit_member_branches_is_not_optional_chaining() {
+        // A spaced `?` before `.a` is a ternary whose branches are implicit
+        // member expressions, not optional chaining (`x?.a`).
+        let ast = ast_of("let c = x ? .a : .b\n");
+        let tern = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(tern.kind(), NodeKind::TernaryExpr);
+        let mut branches = tern.children();
+        assert_eq!(branches.next().unwrap().kind(), NodeKind::IdentExpr);
+        let then_branch = branches.next().unwrap();
+        assert_eq!(then_branch.kind(), NodeKind::MemberExpr);
+        assert_eq!(then_branch.text(), Some("a"));
+        assert_eq!(then_branch.children().count(), 0); // implicit: no base
+        let else_branch = branches.next().unwrap();
+        assert_eq!(else_branch.kind(), NodeKind::MemberExpr);
+        assert_eq!(else_branch.text(), Some("b"));
+        assert_eq!(else_branch.children().count(), 0);
+    }
+
+    #[test]
+    fn ternary_with_implicit_members_nested_in_call_args() {
+        // The SwiftUI case: `.foregroundColor(task.isDone ? .green : .secondary)`
+        // — the ternary lives inside a call argument list.
+        let ast = ast_of("foregroundColor(task.isDone ? .green : .secondary)\n");
+        let call = first_stmt(&ast).children().next().unwrap();
+        assert_eq!(call.kind(), NodeKind::CallExpr);
+        let arg = call.children().nth(1).unwrap();
+        assert_eq!(arg.kind(), NodeKind::TernaryExpr);
+        let then_branch = arg.children().nth(1).unwrap();
+        assert_eq!(then_branch.kind(), NodeKind::MemberExpr);
+        assert_eq!(then_branch.text(), Some("green"));
+    }
+
+    #[test]
+    fn tight_question_dot_stays_optional_chaining() {
+        // `x?.a` (no space) must remain optional chaining, not a ternary.
+        let ast = ast_of("let w = a?.b\n");
+        let chain = first_stmt(&ast).children().nth(1).unwrap();
+        assert_eq!(chain.kind(), NodeKind::MemberExpr);
+        assert_eq!(chain.text(), Some("b"));
+        assert_eq!(chain.children().next().unwrap().kind(), NodeKind::IdentExpr);
     }
 
     #[test]
